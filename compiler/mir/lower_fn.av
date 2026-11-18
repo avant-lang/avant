@@ -29,6 +29,7 @@ import mir.lower_stmt
 import mir.lower_agg
 import mir.lower_union
 import mir.lower_cov
+import receiver_writes
 
 // ---- types
 
@@ -198,8 +199,12 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     // (the checker boxes their locals there).
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
+      lw.prewalk_hold(e, recv)
       if rt = recv.ty, rt.is_array() && e.callee == "parallel" && mir_has_block(e) {
         lw.prewalk_par(e, encl)
+      }
+      if mir_handler_freezes(e) {
+        lw.lw_m.shared = true
       }
     } else if e.callee == "spawn" && mir_has_block(e) {
       lw.prewalk_spawn(e, encl)
@@ -215,9 +220,14 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     lw.prewalk_opt(e.right, encl)
   } else if k == ex_field() {
     lw.prewalk_opt(e.object, encl)
+    if e.method_call {
+      if obj = e.object {
+        lw.prewalk_hold(e, obj)
+      }
+    }
   } else if k == ex_struct() {
     lw.prewalk_list(e.field_exprs, encl)
-  } else if k == ex_array() {
+  } else if k == ex_array() || k == ex_hash_lit() {
     lw.prewalk_list(e.elems, encl)
   } else if k == ex_array_new() {
     lw.prewalk_opt(e.size_expr, encl)
@@ -309,7 +319,7 @@ pub fn (lw: MirLower) name_in_box(name: String): Bool {
 // The local holding name's box in this frame, created (not allocated)
 // on first mention.
 pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
-  if got = lw.lw_cl.box_local.get(name) {
+  if got = lw.lw_cl.box_local.get(mir_box_key(name, t)) {
     return got
   }
   bl = lw.box_layout(t, loc)
@@ -317,8 +327,17 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
     return 0
   }
   k = lw.lw_b.local(lw.lw_m.types.ref_to(bl), name)
-  lw.lw_cl.box_local[name] = k
+  lw.lw_cl.box_local[mir_box_key(name, t)] = k
   k
+}
+
+// A box by its name and its value's type: two variables of one name and
+// two types in one frame (a captured `server` in one block, another
+// `server` in a sibling block) are two boxes, as their locals are two
+// (lower.av var_key; before, the second stored into the first's box and
+// stopped the MIR verifier).
+pub fn mir_box_key(name: String, t: Ty): String {
+  "${name}|${t.show()}"
 }
 
 // ensure_box (calls.av:1740-1754): the box of a boxed variable of this
@@ -326,7 +345,7 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
 // the old back end's explicit zero store).
 pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   k = lw.box_local_of(name, t, loc)
-  if lw.failed() || lw.lw_cl.box_ready.has_key(name) {
+  if lw.failed() || lw.lw_cl.box_ready.has_key(mir_box_key(name, t)) {
     return k
   }
   b = lw.lw_b
@@ -336,7 +355,7 @@ pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
   args.push(b.c_u32(b.type_id(bl)))
   b.call(k, "avant_alloc", args)
-  lw.lw_cl.box_ready[name] = 1
+  lw.lw_cl.box_ready[mir_box_key(name, t)] = 1
   k
 }
 
@@ -387,7 +406,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
   if lw.name_in_box(name) {
     if mir_name_index(lw.lw_cl.caps, name) < 0 {
       if fresh {
-        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, name)
+        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, mir_box_key(name, t))
       }
       lw.ensure_box(name, t, loc)
     }
@@ -476,6 +495,13 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
     if st.op == tk_eq() {
       val = lw.lower_coerced(v, ty, tt)
       if lw.failed() {
+        return
+      }
+      if st.for_kind == 4 || st.step {
+        // A `for` variable a lambda captures: each iteration binds a new
+        // cell (the value computed from the old one first), so a lambda
+        // made in one iteration keeps that iteration's value.
+        lw.bind_name(t.ident, tt, ty, val, st.loc, true)
         return
       }
       lw.box_store(t.ident, tt, val, st.loc)
@@ -581,12 +607,37 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       }
     }
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
+    if e.copy_caps {
+      // A recover function's capture: a fresh cell holding the value
+      // now, so a later assignment to the name does not reach it.
+      p = lw.box_copy(p, e.loc)
+    }
     lw.at(e.loc)
     b.barrier(env)
     b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
     i += 1
   }
   lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
+}
+
+// A new box holding the value the box in local p holds now (the
+// recover function's copied capture, checker/guard.av
+// check_mutex_recover): the local holding the new box.
+pub fn (lw: MirLower) box_copy(p: Int, loc: Location): Int {
+  b = lw.lw_b
+  bt = b.func.locals[p].ty
+  bl = b.types.layout_of(bt)
+  ft = b.types.layouts[bl].fields[0]
+  lw.at(loc)
+  v = b.temp(ft)
+  b.assign(b.pl(v), b.rv_use(b.copy(b.field(b.deref(b.pl(p)), 0))))
+  q = b.temp(bt)
+  args: Array(MOperand) = []
+  args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
+  args.push(b.c_u32(b.type_id(bl)))
+  b.call(q, "avant_alloc", args)
+  lw.store_place(b.field(b.deref(b.pl(q)), 0), ft, b.copy_local(v))
+  q
 }
 
 // The box a lambda captures name with: a capture's box from the
@@ -787,5 +838,39 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
       }
     }
     i += 1
+  }
+}
+
+// Whether the call e of a struct method on recv freezes the Array that
+// holds its receiver: the method changes its receiver (receiver_writes.av),
+// the receiver is an Array's element, and an argument or the receiver's
+// own type may lead to that Array (a function value, a type variable or
+// an interface may lead anywhere). While it runs, any change to the
+// Array's size or order traps; an element store stays allowed.
+pub fn (lw: MirLower) prewalk_hold(e: Expr, recv: Expr) {
+  if e.resolved.size == 0 {
+    return
+  }
+  if rt = recv.ty, rt.is_struct(), at = rw_element_array(recv) {
+    if !lw.method_writes(e.resolved) {
+      return
+    }
+    seen: Array(String) = []
+    reach = ty_may_reach(rt, at, seen)
+    for a in e.args {
+      if reach {
+        break
+      }
+      if t = a.ty {
+        seen2: Array(String) = []
+        reach = ty_may_reach(t, at, seen2)
+      } else {
+        reach = true
+      }
+    }
+    if reach {
+      e.elem_hold = true
+      lw.lw_m.elem_holds = true
+    }
   }
 }

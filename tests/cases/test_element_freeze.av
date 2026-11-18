@@ -1,0 +1,135 @@
+import harness
+import backends
+
+// A method that changes its struct receiver, called on an element of an
+// array (`xs[i].m(...)`, a nested path, the `for` or `each` place), gets
+// the element's address. When the call may reach the array (an argument,
+// a lambda or the receiver's own fields may lead to it), the array is
+// frozen while the method runs: a growth (a push, even one with room), a
+// `clear`, a `pop`, a `reverse` or a sort through any path stops the
+// program, naming the method call. Before, the write after a growth
+// landed in the old buffer and was lost, a write after a removal went
+// past the size, and one after a reorder changed another element.
+//   - traps: every such path (the holder, the array as the argument, a
+//     lambda, a type's own to_s, hash or compare, a nested element path,
+//     a struct field of an element, the receiver's own field, the for and
+//     each places, a method of self), and every kind of change
+//   - runs: what the freeze allows (reassigning the field or the holder,
+//     a growth of an outer array, element stores and reads through
+//     another path, in a program that spawns too), what it does not touch
+//     (a class element, a method that only reads), the array thawed after
+//     the call and after nested calls, and a task ended by the trap.
+
+class FCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  // 3 compiles and traps with the text; 4 runs and prints want.
+  pub kind: Int = 0
+}
+
+fn traps(tag: String, src: String, needle: String): FCase {
+  f = FCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 3
+  f
+}
+
+fn runs(tag: String, src: String, out: String): FCase {
+  f = FCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 4
+  f
+}
+
+fn cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(traps("growth-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn grow(b: Box) {\n    for k in 0..100000 {\n      b.ps.push(Pos { x: k, y: k })\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].grow(b)\n  puts(\"e01 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.grow, called on one of its elements, runs"))
+  xs.push(traps("clear-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn shift(b: Box) {\n    b.ps.clear()\n    self.x += 100\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[1].shift(b)\n  b.ps.push(Pos { x: 0, y: 0 })\n  b.ps.push(Pos { x: 0, y: 0 })\n  puts(\"e02 size \${b.ps.size} slot 1: \${b.ps[1].x}\")\n}\n", "clear on an array while Pos.shift, called on one of its elements, runs"))
+  xs.push(traps("pop-of-the-receiver", "struct Pos {\n  x: Int\n  y: Int\n\n  fn drop_me(b: Box) {\n    q = b.ps.pop()\n    self.x = 555\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[1].drop_me(b)\n  b.ps.push(Pos { x: 0, y: 0 })\n  puts(\"e03 size \${b.ps.size} slot 1: \${b.ps[1].x}\")\n}\n", "pop on an array while Pos.drop_me, called on one of its elements, runs"))
+  xs.push(traps("drain-in-a-called-function", "struct Pos {\n  x: Int\n  y: Int\n\n  fn shift(b: Box) {\n    drain(b)\n    self.x = 900\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn drain(b: Box) {\n  while b.ps.size > 0 {\n    q = b.ps.pop()\n  }\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].shift(b)\n  b.ps.push(Pos { x: 7, y: 7 })\n  puts(\"e04 size \${b.ps.size} slot 0: \${b.ps[0].x}\")\n}\n", "pop on an array while Pos.shift, called on one of its elements, runs"))
+  xs.push(traps("the-array-as-the-argument", "struct Pos {\n  x: Int\n  y: Int\n\n  fn grow(xs: Array(Pos)) {\n    for k in 0..100000 {\n      xs.push(Pos { x: k, y: k })\n    }\n    self.x = 777\n  }\n}\n\nfn main {\n  xs: Array(Pos) = [Pos { x: 1, y: 2 }]\n  xs[0].grow(xs)\n  puts(\"e07 \${xs[0].x}\")\n}\n", "push on an array while Pos.grow, called on one of its elements, runs"))
+  xs.push(traps("a-lambda-argument", "struct Pos {\n  x: Int\n  y: Int\n\n  fn run(f: fn()) {\n    f()\n    self.x = 777\n  }\n}\n\nfn main {\n  xs: Array(Pos) = [Pos { x: 1, y: 2 }]\n  ys = xs\n  g = () {\n    for k in 0..100000 {\n      ys.push(Pos { x: k, y: k })\n    }\n  }\n  xs[0].run(g)\n  puts(\"e08 \${xs[0].x}\")\n}\n", "push on an array while Pos.run, called on one of its elements, runs"))
+  xs.push(traps("growth-in-an-arguments-to_s", "struct Pos {\n  x: Int\n  y: Int\n\n  fn note(k: Key) {\n    s = \"\${k}\"\n    self.x = 777 + s.size - s.size\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nclass Key {\n  pub b: Box = Box.new()\n\n  pub fn to_s: String {\n    for k in 0..100000 {\n      self.b.ps.push(Pos { x: k, y: k })\n    }\n    \"key\"\n  }\n}\n\nfn main {\n  k = Key.new()\n  k.b.ps.push(Pos { x: 1, y: 2 })\n  k.b.ps[0].note(k)\n  puts(\"e09 \${k.b.ps[0].x}\")\n}\n", "push on an array while Pos.note, called on one of its elements, runs"))
+  xs.push(traps("growth-in-a-keys-hash", "struct Pos {\n  x: Int\n  y: Int\n\n  fn note(k: Key, t: Hash(Key, Int)) {\n    t[k] = 1\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nstruct Key {\n  b: Box\n\n  fn equals(other: Key): Bool {\n    true\n  }\n\n  fn hash(h: Hasher) {\n    for k in 0..100000 {\n      self.b.ps.push(Pos { x: k, y: k })\n    }\n    h.add(1)\n  }\n}\n\nfn main {\n  b = Box.new()\n  k = Key { b: b }\n  t = Hash(Key, Int).new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].note(k, t)\n  puts(\"e10 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.note, called on one of its elements, runs"))
+  xs.push(traps("growth-in-an-elements-compare", "struct Pos {\n  x: Int\n  y: Int\n\n  fn order(ks: Array(Key)) {\n    ks.sort()\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nclass Key {\n  pub b: Box = Box.new()\n  pub n: Int = 0\n\n  pub fn compare(o: Key): Int {\n    for k in 0..50000 {\n      self.b.ps.push(Pos { x: k, y: k })\n    }\n    self.n - o.n\n  }\n}\n\nfn main {\n  k = Key.new()\n  k2 = Key.new()\n  k2.b = k.b\n  k2.n = 1\n  ks = [k2, k]\n  k.b.ps.push(Pos { x: 1, y: 2 })\n  k.b.ps[0].order(ks)\n  puts(\"e11 \${k.b.ps[0].x}\")\n}\n", "push on an array while Pos.order, called on one of its elements, runs"))
+  xs.push(traps("nested-element-path", "struct C {\n  x: Int\n\n  fn grow(a: A) {\n    for k in 0..100000 {\n      a.bs[0].cs.push(C { x: k })\n    }\n    self.x = 777\n  }\n}\n\nstruct B {\n  cs: Array(C)\n}\n\nclass A {\n  pub bs: Array(B) = []\n}\n\nfn main {\n  a = A.new()\n  a.bs.push(B { cs: [C { x: 1 }] })\n  a.bs[0].cs[0].grow(a)\n  puts(\"e12 \${a.bs[0].cs[0].x}\")\n}\n", "push on an array while C.grow, called on one of its elements, runs"))
+  xs.push(traps("struct-field-of-an-element", "struct Q {\n  x: Int\n\n  fn grow(b: Box) {\n    for k in 0..100000 {\n      b.ps.push(Pos { q: Q { x: k }, y: k })\n    }\n    self.x = 777\n  }\n}\n\nstruct Pos {\n  q: Q\n  y: Int\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { q: Q { x: 1 }, y: 2 })\n  b.ps[0].q.grow(b)\n  puts(\"e14 \${b.ps[0].q.x}\")\n}\n", "push on an array while Q.grow, called on one of its elements, runs"))
+  xs.push(traps("the-for-place", "struct Pos {\n  x: Int\n  y: Int\n\n  fn grow(b: Box) {\n    if b.ps.size < 10 {\n      for k in 0..100000 {\n        b.ps.push(Pos { x: k, y: k })\n      }\n      self.x = 777\n    }\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  for p in b.ps {\n    p.grow(b)\n    break\n  }\n  puts(\"e19 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.grow, called on one of its elements, runs"))
+  xs.push(traps("the-receivers-own-field", "struct Pos {\n  x: Int\n  b: Box\n\n  fn grow {\n    for k in 0..100000 {\n      self.b.ps.push(Pos { x: k, b: self.b })\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, b: b })\n  b.ps[0].grow()\n  puts(\"e20 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.grow, called on one of its elements, runs"))
+  xs.push(traps("a-push-with-room", "struct Pos {\n  x: Int\n  y: Int\n\n  fn add(b: Box) {\n    b.ps.push(Pos { x: 9, y: 9 })\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.reserve(16)\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].add(b)\n  puts(\"e23 \${b.ps[0].x} \${b.ps.size}\")\n}\n", "push on an array while Pos.add, called on one of its elements, runs"))
+  xs.push(traps("the-each-place", "struct Pos {\n  x: Int\n  y: Int\n\n  fn grow(b: Box) {\n    if b.ps.size < 10 {\n      for k in 0..100000 {\n        b.ps.push(Pos { x: k, y: k })\n      }\n      self.x = 777\n    }\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  xs = b.ps\n  done = false\n  xs.each (p) {\n    if !done {\n      p.grow(b)\n      done = true\n    }\n  }\n  puts(\"e24 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.grow, called on one of its elements, runs"))
+  xs.push(traps("a-method-of-self-grows", "struct Pos {\n  x: Int\n  y: Int\n\n  fn outer(b: Box) {\n    self.inner(b)\n  }\n\n  fn inner(b: Box) {\n    for k in 0..100000 {\n      b.ps.push(Pos { x: k, y: k })\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].outer(b)\n  puts(\"e25 \${b.ps[0].x}\")\n}\n", "push on an array while Pos.outer, called on one of its elements, runs"))
+  xs.push(traps("reverse-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn flip(b: Box) {\n    b.ps.reverse()\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].flip(b)\n  puts(\"e29 \${b.ps[0].x} \${b.ps[1].x}\")\n}\n", "reverse on an array while Pos.flip, called on one of its elements, runs"))
+  xs.push(traps("delete-if-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn thin(b: Box) {\n    b.ps.delete_if((p) { p.x > 2 })\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].thin(b)\n  puts(\"e40 \${b.ps.size}\")\n}\n", "delete_if on an array while Pos.thin, called on one of its elements, runs"))
+  xs.push(runs("a-fill-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn reset(b: Box) {\n    b.ps.fill(Pos { x: 9, y: 9 })\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].reset(b)\n  puts(\"e41 \${b.ps[0].x} \${b.ps[0].y} \${b.ps[1].x}\")\n}\n", "e41 777 9 9\n"))
+  xs.push(traps("insert-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn add(b: Box, rng: Random) {\n    b.ps.insert(0, Pos { x: 5, y: 5 })\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].add(b, Random.new(5))\n  puts(\"e42 \${b.ps.size}\")\n}\n", "insert on an array while Pos.add, called on one of its elements, runs"))
+  xs.push(traps("insert-out-of-range-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn add(b: Box, rng: Random) {\n    b.ps.insert(9, Pos { x: 5, y: 5 })\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].add(b, Random.new(5))\n  puts(\"e43 \${b.ps.size}\")\n}\n", "insert at 9 out of range (size 2)"))
+  xs.push(traps("delete-at-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn drop(b: Box, rng: Random) {\n    _ = b.ps.delete_at(1)\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].drop(b, Random.new(5))\n  puts(\"e44 \${b.ps.size}\")\n}\n", "delete_at on an array while Pos.drop, called on one of its elements, runs"))
+  xs.push(traps("try-delete-at-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn drop(b: Box, rng: Random) {\n    _ = b.ps.try_delete_at(1)\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].drop(b, Random.new(5))\n  puts(\"e45 \${b.ps.size}\")\n}\n", "delete_at on an array while Pos.drop, called on one of its elements, runs"))
+  xs.push(traps("concat-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn join(b: Box, rng: Random) {\n    b.ps.concat([Pos { x: 5, y: 5 }])\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].join(b, Random.new(5))\n  puts(\"e46 \${b.ps.size}\")\n}\n", "concat on an array while Pos.join, called on one of its elements, runs"))
+  xs.push(traps("shuffle-through-the-holder", "import std.random\n\nstruct Pos {\n  x: Int\n  y: Int\n\n  fn mix(b: Box, rng: Random) {\n    b.ps.shuffle(rng)\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps.push(Pos { x: 3, y: 4 })\n  b.ps[0].mix(b, Random.new(5))\n  puts(\"e47 \${b.ps.size}\")\n}\n", "shuffle on an array while Pos.mix, called on one of its elements, runs"))
+  xs.push(traps("growth-after-the-write", "struct Pos {\n  x: Int\n  y: Int\n\n  fn mix(b: Box) {\n    self.x = 777\n    for k in 0..100000 {\n      b.ps.push(Pos { x: k, y: k })\n    }\n    b.ps[0].y = 5\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].mix(b)\n  puts(\"e30 \${b.ps[0].x} \${b.ps[0].y}\")\n}\n", "push on an array while Pos.mix, called on one of its elements, runs"))
+  xs.push(traps("sort-with-a-block", "struct Pos {\n  x: Int\n\n  fn order(b: Box) {\n    b.ps.sort (p, q) { p.x < q.x }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 3 })\n  b.ps.push(Pos { x: 1 })\n  b.ps[0].order(b)\n  puts(\"t5 \${b.ps[0].x}\")\n}\n", "sort on an array while Pos.order, called on one of its elements, runs"))
+  xs.push(runs("the-field-reassigned", "struct Pos {\n  x: Int\n  y: Int\n\n  fn swap(b: Box) {\n    b.ps = [Pos { x: 9, y: 9 }]\n    for k in 0..100000 {\n      b.ps.push(Pos { x: k, y: k })\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  old = b.ps\n  b.ps[0].swap(b)\n  puts(\"e05 new \${b.ps[0].x} old \${old[0].x}\")\n}\n", "e05 new 9 old 777\n"))
+  xs.push(runs("the-holder-replaced", "struct Pos {\n  x: Int\n  y: Int\n\n  fn swap(h: Holder) {\n    h.b = Box.new()\n    for k in 0..100000 {\n      h.b.ps.push(Pos { x: k, y: k })\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nclass Holder {\n  pub b: Box = Box.new()\n}\n\nfn main {\n  h = Holder.new()\n  h.b.ps.push(Pos { x: 1, y: 2 })\n  old = h.b\n  h.b.ps[0].swap(h)\n  puts(\"e06 new \${h.b.ps[0].x} old \${old.ps[0].x}\")\n}\n", "e06 new 0 old 777\n"))
+  xs.push(runs("the-outer-array-grows", "struct C {\n  x: Int\n\n  fn grow(a: A) {\n    for k in 0..100000 {\n      a.bs.push(B { cs: [] })\n    }\n    self.x = 777\n  }\n}\n\nstruct B {\n  cs: Array(C)\n}\n\nclass A {\n  pub bs: Array(B) = []\n}\n\nfn main {\n  a = A.new()\n  a.bs.push(B { cs: [C { x: 1 }] })\n  a.bs[0].cs[0].grow(a)\n  puts(\"e13 \${a.bs[0].cs[0].x}\")\n}\n", "e13 777\n"))
+  xs.push(runs("a-class-element", "class Pos {\n  pub x: Int = 1\n\n  pub fn grow(b: Box) {\n    for k in 0..100000 {\n      b.ps.push(Pos.new())\n    }\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos.new())\n  b.ps[0].grow(b)\n  puts(\"e15 \${b.ps[0].x}\")\n}\n", "e15 777\n"))
+  xs.push(runs("a-method-that-only-reads", "struct Pos {\n  x: Int\n  y: Int\n\n  fn peek(b: Box): Int {\n    for k in 0..100000 {\n      b.ps.push(Pos { x: k + 50, y: k })\n    }\n    self.x\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  v = b.ps[0].peek(b)\n  puts(\"e18 \${v}\")\n}\n", "e18 1\n"))
+  xs.push(runs("an-element-store-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn both(b: Box) {\n    b.ps[0].y = 5\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].both(b)\n  puts(\"e21 \${b.ps[0].y} \${b.ps[0].x}\")\n}\n", "e21 5 777\n"))
+  xs.push(runs("a-read-through-the-holder", "struct Pos {\n  x: Int\n  y: Int\n\n  fn look(b: Box): Int {\n    self.x = 777\n    b.ps[0].x\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  v = b.ps[0].look(b)\n  puts(\"e22 \${v}\")\n}\n", "e22 777\n"))
+  xs.push(runs("an-element-store-in-a-program-that-spawns", "struct Pos {\n  x: Int\n  y: Int\n\n  fn both(b: Box) {\n    b.ps[0].y = 5\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  b.ps[0].both(b)\n  puts(\"t1 \${b.ps[0].y} \${b.ps[0].x}\")\n  h = spawn { 3 }\n  puts(\"t1 task \${h.join() ?? 0}\")\n}\n", "t1 5 777\nt1 task 3\n"))
+  xs.push(runs("thawed-after-the-call", "struct Pos {\n  x: Int\n  y: Int\n\n  fn bump(b: Box): Int {\n    self.x = 777\n    b.ps.size + 40\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn main {\n  b = Box.new()\n  b.ps.push(Pos { x: 1, y: 2 })\n  v = b.ps[0].bump(b)\n  b.ps.push(Pos { x: 3, y: 4 })\n  puts(\"t3 \${v} \${b.ps[0].x} \${b.ps.size}\")\n}\n", "t3 41 777 2\n"))
+  xs.push(runs("nested-freezes-of-one-array", "struct Node {\n  v: Int\n\n  fn visit(ns: Array(Node), i: Int) {\n    self.v += 1\n    if i + 1 < ns.size {\n      ns[i + 1].visit(ns, i + 1)\n    }\n  }\n}\n\nfn main {\n  ns: Array(Node) = [Node { v: 0 }, Node { v: 1 }, Node { v: 2 }]\n  ns[0].visit(ns, 0)\n  ns.push(Node { v: 9 })\n  puts(\"t4 \${ns[2].v} \${ns.size + 1}\")\n}\n", "t4 3 5\n"))
+  xs.push(runs("a-task-ended-by-the-trap-thaws", "struct Pos {\n  x: Int\n  y: Int\n\n  fn grow(b: Box) {\n    b.ps.push(Pos { x: 0, y: 0 })\n    self.x = 777\n  }\n\n  fn set(b: Box) {\n    b.ps[0].y = 9\n    self.x = 777\n  }\n}\n\nclass Box {\n  pub ps: Array(Pos) = []\n}\n\nfn first(h: JoinHandle(Int)): Int {\n  v = h.join() else e {\n    puts(\"t2 first: \${e.what.split(\"Pos.grow\").size == 2}\")\n    return 0\n  }\n  v\n}\n\nfn main {\n  h1 = spawn {\n    b = Box.new()\n    b.ps.push(Pos { x: 1, y: 2 })\n    b.ps[0].grow(b)\n    b.ps[0].x\n  }\n  v1 = first(h1)\n  h2 = spawn {\n    b = Box.new()\n    b.ps.push(Pos { x: 1, y: 2 })\n    b.ps[0].set(b)\n    b.ps.push(Pos { x: 0, y: 0 })\n    b.ps[0].x + b.ps[0].y\n  }\n  puts(\"t2 second: \${h2.join() ?? 0} \${v1}\")\n}\n", "t2 first: true\nt2 second: 786 0\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/ef-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/ef-${f.tag}.bin", "${dir}/ef-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    runs.push(run_job(dir, "ef-${f2.tag}.bin", "ef-${f2.tag}.run"))
+  }
+  run_waves(runs)
+  for i in 0..cases.size {
+    f3 = cases[i]
+    c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+    if f3.kind == 3 {
+      c.expect(runs[i].code != 0, "${f3.tag}: fails")
+      c.expect(log_text("${dir}/ef-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+    } else {
+      c.eq_int(runs[i].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/ef-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_element_freeze.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

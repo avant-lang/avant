@@ -1,0 +1,120 @@
+// The nullable C pointer and the nullable C string field. `Ptr(T)?` is one
+// word, `nil` C's NULL: a `fun` result (a failed malloc reads nil), a
+// `fun` parameter (nil passes NULL), a C layout's field (a list's last
+// `next`), a local, an Avant struct's field and an array's element; `if
+// p = ...` and `while node = ...` test it. `String?` in a C layout reads
+// NULL as nil and stores nil as NULL. Before, `Ptr(T)?` was refused in a
+// `fun` signature (it had compiled to a tag and a pointer) and in a
+// layout, and no form tested a `Ptr` for NULL.
+
+lib c {
+  struct Pair {
+    a: Int32
+    b: Int32
+  }
+  struct Node {
+    v: Int32
+    next: Ptr(Node)?
+    name: String?
+    tag: String
+  }
+  fun malloc(size: Int): Ptr(Pair)?
+  fun calloc(n: Int, size: Int): Ptr(Node)
+  fun free(p: Ptr(Pair)?)
+  fun strchr(s: String, ch: Int32): Ptr(Void)?
+}
+
+struct Holder {
+  p: Ptr(Pair)?
+  n: Int
+}
+
+fn describe(p: Ptr(Pair)?): String {
+  if q = p {
+    return "pair ${q.a} ${q.b}"
+  }
+  "nil"
+}
+
+fn length(head: Ptr(Node)?): Int {
+  n = 0
+  cur = head
+  while node = cur {
+    n += 1
+    cur = node.next
+  }
+  n
+}
+
+fn names(head: Ptr(Node)): String {
+  out = ""
+  cur: Ptr(Node)? = head
+  while node = cur {
+    out = "${out}${node.name ?? "-"} "
+    cur = node.next
+  }
+  out
+}
+
+fn main {
+  if p = c.malloc(8) {
+    p.a = 40
+    p.b = 2
+    puts(describe(p))
+    h = Holder { p: p, n: 1 }
+    puts(describe(h.p))
+    c.free(p)
+  }
+  huge = c.malloc(1 << 62)
+  puts(describe(huge))
+  c.free(huge)
+  none: Ptr(Pair)? = nil
+  c.free(none)
+  puts(describe(Holder { p: nil, n: 2 }.p))
+  if w = c.strchr("key=value", 61) {
+    puts("found =")
+  }
+  if w = c.strchr("no equals", 61) {
+    puts("found = again")
+  } else {
+    puts("no =")
+  }
+
+  // A list through Ptr(Node)? fields: NULL ends it.
+  a = c.calloc(1, 32)
+  b = c.calloc(1, 32)
+  d = c.calloc(1, 32)
+  a.v = 1
+  b.v = 2
+  d.v = 3
+  puts(length(a))
+  a.next = b
+  b.next = d
+  puts(length(a))
+  a.next = nil
+  puts(length(a))
+  puts(length(nil))
+  a.next = b
+  nodes: Array(Ptr(Node)?) = [a, nil, d]
+  present = 0
+  for x in nodes {
+    if y = x {
+      present += y.v.to_i()
+    }
+  }
+  puts(present)
+
+  // A String? field: NULL reads nil, nil stores NULL.
+  puts(names(a))
+  a.name = "first"
+  d.name = "third-${d.v}"
+  puts(names(a))
+  a.name = nil
+  puts(names(a))
+  b.tag = "set"
+  puts(b.tag)
+  release(a)
+  release(d)
+  release(b)
+  puts(names(a))
+}

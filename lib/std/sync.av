@@ -145,7 +145,7 @@ pub class Mutex(T) {
     }
   }
 
-  // Whether a task trapped while it held this mutex in `with`: its value
+  // Whether a task or an HTTP handler trapped while it held this mutex in `with`: its value
   // may be half-changed, so `with` on it traps and `try_with` gives a
   // MutexError, unless the mutex has a recover function.
   pub fn poisoned: Bool {
@@ -200,11 +200,33 @@ class MutexHeal(T) {
 // function.
 pub class MutexError: Error {
   pub fn message: String {
-    "the mutex is poisoned: a task trapped while it held it, so its value may be half-changed"
+    "the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed"
   }
 }
 
 // The value `try_with` gives on a poisoned mutex (the lowering calls it).
 pub fn __avant_mutex_poisoned: MutexError {
   MutexError.new()
+}
+
+// The thread pool's size: at most this many tasks run at once, and
+// Http.listen without loops: runs this many event loops. It is
+// --avant-threads=N when the program was started with it, else the CPUs
+// the process may use. set_pool_size(n) sets it, 1 to 1024, so a program
+// that has its own option (--threads, a config file) passes the number
+// on. The size is fixed once the pool starts (the first spawn or
+// .parallel) or Http.listen without loops: reads it; a set after that
+// traps, as does a size out of range, so a program never runs on a size
+// it did not get (runtime/avant_task.c, avant_set_pool_size).
+lib pool_rt {
+  fun avant_chosen_threads: Int
+  fun avant_set_pool_size(n: Int)
+}
+
+pub fn pool_size: Int {
+  pool_rt.avant_chosen_threads()
+}
+
+pub fn set_pool_size(n: Int) {
+  pool_rt.avant_set_pool_size(n)
 }

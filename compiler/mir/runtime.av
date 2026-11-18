@@ -169,10 +169,24 @@ fn mir_rt_fill(t: MRtTable) {
   // and at its end; neither allocates.
   t.row("avant_array_freeze", "ref, i32", "void", n, "")
   t.row("avant_array_thaw", "ref, i32, u64", "void", n, "")
+  // A captured value holding a Hash (an Array or a Hash of them at any
+  // level): the same count, a level each.
+  t.row("avant_value_freeze", "ref, i32, u32", "void", n, "")
+  t.row("avant_value_thaw", "ref, i32, u32, u64", "void", n, "")
+  // The freeze of a method call on an element (lower_agg.av
+  // held_method_call): the holder's slot, the element size, the call's
+  // name and site; and the test of a frozen Array's change in a program
+  // with such calls (lower_arr.av frozen_check).
+  t.row("avant_array_hold", "ptr, u64, ref str, ref str", "void", n, "")
+  t.row("avant_array_unhold", "ptr", "void", n, "")
+  t.row("avant_array_frozen", "ref, i32", "void", n, "")
   t.row("avant_str_size", "ref str", "i64", n, "")
+  // The address of a string's bytes (a view's are its base's), used at
+  // once; the emitter inlines it.
+  t.row("avant_str_data", "ref str, i32", "ptr u8", n, "")
   // libc's memcmp for a String switch's labels: never collects; LLVM
   // expands it at a constant size.
-  t.row("memcmp", "ref str, ref str, i64", "i32", n, "")
+  t.row("memcmp", "ptr u8, ref str, i64", "i32", n, "")
   t.row("avant_str_byte", "ref str, i64", "i64", n, "")
   t.row("avant_str_eq", "ref str, ref str", "i32", n, "")
   t.row("avant_str_cmp", "ref str, ref str", "i32", n, "")
@@ -185,6 +199,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_checksum_f64", "f64", "i32", n, "")
   t.row("avant_buf_size", "ref", "i64", n, "")
   t.row("avant_buf_starts", "ref, ref str", "i32", n, "")
+  // The search methods of String, Bytes and Buf: both sides read in
+  // place, no allocation (a trap for a bad start or byte).
+  t.row("avant_seq_find", "ref, i32, ref, i32, i64, i32", "i64", n, "")
+  t.row("avant_seq_find_byte", "ref, i32, i64, i64, i32", "i64", n, "")
   t.row("avant_wide_op", "i64, i64, i64, i64, i64", "i64", n, "")
   t.row("avant_wide_hi", "", "i64", n, "")
   t.row("avant_now_ms", "", "i32", n, "")
@@ -194,6 +212,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_empty", "i32", "void", n, "noreturn")
   t.row("avant_trap_frozen", "i32", "void", n, "noreturn")
   t.row("avant_trap_poisoned", "", "void", n, "noreturn")
+  t.row("avant_trap_walk", "i32", "void", n, "noreturn")
   t.row("avant_trap_bounds", "i64, i64", "void", n, "noreturn")
   t.row("avant_trap_div_zero", "", "void", n, "noreturn")
   t.row("avant_trap_overflow", "", "void", n, "noreturn")
@@ -220,6 +239,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_overflow_in", "i32", "void", n, "noreturn")
   t.row("avant_trap_div_zero_in", "i32", "void", n, "noreturn")
   t.row("avant_trap_empty_at", "i32, i32", "void", n, "noreturn")
+  t.row("avant_trap_walk_at", "i32, i32", "void", n, "noreturn")
   t.row("avant_trap_frozen_at", "i32, i32", "void", n, "noreturn")
   t.row("avant_trap_poisoned_at", "i32", "void", n, "noreturn")
   t.row("avant_trap_bounds_at", "i64, i64, i32", "void", n, "noreturn")
@@ -261,13 +281,33 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("floor", "f64", "f64", n, "")
   t.row("sqrt", "f64", "f64", n, "")
   t.row("exp", "f64", "f64", n, "")
+  t.row("ceil", "f64", "f64", n, "")
+  t.row("round", "f64", "f64", n, "")
+  t.row("trunc", "f64", "f64", n, "")
+  t.row("sin", "f64", "f64", n, "")
+  t.row("cos", "f64", "f64", n, "")
+  t.row("tan", "f64", "f64", n, "")
+  t.row("log", "f64", "f64", n, "")
+  t.row("log2", "f64", "f64", n, "")
+  t.row("log10", "f64", "f64", n, "")
+  t.row("pow", "f64, f64", "f64", n, "")
+  t.row("atan2", "f64, f64", "f64", n, "")
+  // never: no C function at all; the emitter writes each as one LLVM
+  // operation (llvm/emit.av ll_bits_op): the bit counts and a float's
+  // bits, to and from UInt64.
+  t.row("avant_bits_ctpop_i64", "i64", "i64", n, "")
+  t.row("avant_bits_ctpop_i32", "i32", "i32", n, "")
+  t.row("avant_bits_ctlz_i64", "i64", "i64", n, "")
+  t.row("avant_bits_ctlz_i32", "i32", "i32", n, "")
+  t.row("avant_bits_cttz_i64", "i64", "i64", n, "")
+  t.row("avant_bits_cttz_i32", "i32", "i32", n, "")
+  t.row("avant_bits_f64_to_u64", "f64", "u64", n, "")
+  t.row("avant_bits_u64_to_f64", "u64", "f64", n, "")
   t.row("avant_gc_enter", "", "void", n, "")
   t.row("avant_gc_leave", "", "void", n, "")
   t.row("avant_gc_root_begin", "u32", "ptr", n, "")
   t.row("avant_gc_frame_enter", "ptr", "void", n, "")
   t.row("avant_gc_frame_leave", "ptr", "void", n, "")
-  t.row("avant_gc_root", "ptr", "void", n, "")
-  t.row("avant_gc_reload", "ptr", "ptr", n, "")
   t.row("__avant_type_maps", "", "void", n, "")
   // What was the old back end's quiet list, the Hash(K, V) entries
   // (runtime/avant_hash.c) first. Its class is gone: a row that neither
@@ -280,7 +320,30 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_hash_find_sk", "ref, ref str, ptr", "ptr", n, "")
   t.row("avant_hash_take_ik", "ref, i64, ptr", "ptr", n, "")
   t.row("avant_hash_take_sk", "ref, ref str, ptr", "ptr", n, "")
+  t.row("avant_hash_find_xk", "ref, ptr, ptr", "ptr", n, "")
+  t.row("avant_hash_take_xk", "ref, ptr, ptr", "ptr", n, "")
+  t.row("avant_hash_del_xk", "ref, ptr", "void", n, "")
+  t.row("avant_hash_create_typed", "u32, ref str, u32, u32, u32, u32, u32", "ref", c, "")
+  t.row("avant_hash_put_xk", "ref, ptr", "ptr", c, "")
+  t.row("avant_hash_upsert_xk", "ref, ptr, ptr", "ptr", c, "")
+  t.row("avant_hash_set_ref_xk", "ref, ptr, ref", "void", c, "")
+  t.row("avant_hash_slot_ik", "ref, i64", "addr", c, "slot")
+  t.row("avant_hash_slot_sk", "ref, ref str", "addr", c, "slot")
+  t.row("avant_hash_slot_xk", "ref, ptr", "addr", c, "slot")
   t.row("avant_hash_create", "u32", "ref", c, "")
+  // A key hashed and compared by its type's methods: the entries call
+  // back into generated code (the type's hash and ==), which may
+  // allocate, so every one of them collects, the lookups included.
+  t.row("avant_hash_user", "ref, ptr, ptr", "void", n, "")
+  t.row("avant_hasher_add", "ptr, u64", "void", n, "")
+  t.row("avant_hasher_add_str", "ptr, ref str", "void", n, "")
+  t.row("avant_hash_find_uk", "ref, ptr, ptr", "ptr", c, "")
+  t.row("avant_hash_take_uk", "ref, ptr, ptr", "ptr", c, "")
+  t.row("avant_hash_del_uk", "ref, ptr", "void", c, "")
+  t.row("avant_hash_put_uk", "ref, ptr", "ptr", c, "")
+  t.row("avant_hash_upsert_uk", "ref, ptr, ptr", "ptr", c, "")
+  t.row("avant_hash_set_ref_uk", "ref, ptr, ref", "void", c, "")
+  t.row("avant_hash_slot_uk", "ref, ptr", "addr", c, "slot")
   t.row("avant_hash_put_ik", "ref, i64", "ptr", c, "")
   t.row("avant_hash_put_sk", "ref, ref str", "ptr", c, "")
   t.row("avant_hash_upsert_ik", "ref, i64, ptr", "ptr", c, "")
@@ -291,8 +354,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_hash_values", "ref", "ref", c, "")
   t.row("avant_hash_clear", "ref", "void", n, "")
   t.row("avant_hash_size", "ref", "i64", n, "")
-  t.row("avant_hash_del", "ref, ref str", "void", n, "")
-  t.row("avant_hash_del_i32k", "ref, i64", "void", n, "")
+  t.row("avant_hash_del_sk", "ref, ref str", "void", n, "")
+  t.row("avant_hash_del_ik", "ref, i64", "void", n, "")
   t.row("avant_hash_get_str_slice", "ref, ref str, i64, i64, ptr", "ref str", n, "")
   t.row("avant_hash_inc_slice", "ref, ref str, i64, i64", "i64", c, "")
   t.row("avant_buf_clear", "ref", "void", n, "")
@@ -316,6 +379,7 @@ fn mir_rt_fill(t: MRtTable) {
   // avant_gc_requested and calls it only when set.
   t.row("avant_gc_poll", "", "void", c, "")
   t.row("avant_array_push_slot", "ref, u64, u32", "addr", c, "slot")
+  t.row("avant_array_insert_slot", "ref, i64, u64, u32", "addr", c, "slot")
   t.row("avant_array_pop_slot", "ref, u64", "addr", c, "slot")
   t.row("avant_array_push_ptr", "ref, ref, u32", "void", c, "")
   t.row("avant_io_init_argv", "i32, ptr", "void", c, "")
@@ -339,9 +403,18 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_concat", "ref str, ref str", "ref str", c, "")
   // A `fun`'s `String` result (lower_ffi.av).
   t.row("avant_c_str", "ref str", "ref str", c, "")
+  // A string as C or the runtime's own C functions read it (a view's
+  // bytes copied, or for a `fun` the address of a view's bytes when they
+  // end its base's): lower_ffi.av c_string_arg; the emitter inlines the
+  // test of the header.
+  t.row("avant_str_flat", "ref str", "ref str", c, "")
+  // 1 when a string is a view (null is not): the test before a copy that
+  // only a view's path makes (lower_ffi.av str_flat_if_view); inlined.
+  t.row("avant_str_view_test", "ref str", "i32", n, "")
+  t.row("avant_str_c_arg", "ref str", "ref str", c, "")
   t.row("avant_str_slice", "ref str, i64, i64", "ref str", c, "")
   // collects: the string rows the lowering calls.
-  t.row("avant_str_cat_i32", "ref str, i64", "ref str", c, "")
+  t.row("avant_str_cat_int", "ref str, i64", "ref str", c, "")
   t.row("avant_str_from_bool", "i32", "ref str", c, "")
   t.row("avant_str_from_byte", "i64", "ref str", c, "")
   t.row("avant_str_repeat_byte", "i64, i64", "ref str", c, "")
@@ -358,6 +431,9 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_reserve", "ref, i64, u64, u32", "void", c, "")
   t.row("avant_array_reverse", "ref, u64", "void", c, "")
   t.row("avant_array_copy", "ref, u64, u32", "ref", c, "")
+  t.row("avant_array_slice", "ref, i64, i64, u64, u32", "ref", c, "")
+  t.row("avant_array_delete_at", "ref, i64, u64, u32", "void", n, "")
+  t.row("avant_array_concat", "ref, ref, u64, u32", "void", c, "")
   t.row("avant_array_sort_i32", "ref", "void", c, "")
   t.row("avant_array_sort_u32", "ref", "void", c, "")
   t.row("avant_array_sort_i64", "ref", "void", c, "")
@@ -379,11 +455,27 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_sum_f64", "ref", "f64", c, "")
   t.row("avant_hash_last_key", "", "ref str", c, "")
   t.row("avant_str_split", "ref str, ref str", "ref", c, "")
+  t.row("avant_str_split_n", "ref str, ref str, i64", "ref", c, "")
+  t.row("avant_str_replace", "ref str, ref str, ref str", "ref str", c, "")
+  t.row("avant_str_repeat", "ref str, i64", "ref str", c, "")
+  t.row("avant_str_pad", "ref str, i64, i64, i32", "ref str", c, "")
+  t.row("avant_str_join", "ref, ref str", "ref str", c, "")
+  t.row("avant_str_ascii_case", "ref str, i32", "ref str", c, "")
+  t.row("avant_str_delete_affix", "ref str, ref str, i32", "ref str", c, "")
+  t.row("avant_str_lines", "ref str", "ref", c, "")
   t.row("avant_str_fields", "ref str", "ref", c, "")
   t.row("avant_str_chars", "ref str", "ref", c, "")
   t.row("avant_bytes_chars", "ref str", "ref", c, "")
+  // `s.code_points()` (an Array(Int)) and String.from_code_point(n).
+  t.row("avant_str_code_points", "ref str", "ref", c, "")
+  t.row("avant_bytes_code_points", "ref str", "ref", c, "")
+  t.row("avant_str_from_code_point", "i64", "ref str", c, "")
+  // String.from_c(p, n) and Bytes.from_c(p, n): n bytes of C memory.
+  t.row("avant_str_from_c", "ptr, i64", "ref str", c, "")
   t.row("avant_bytes_to_buf", "ref str", "ref", c, "")
-  t.row("avant_str_from_i32_bytes", "ref", "ref str", c, "")
+  t.row("avant_buf_slice", "ref, i64, i64", "ref", c, "")
+  t.row("avant_buf_push_buf", "ref, ref", "void", c, "")
+  t.row("avant_str_from_int_bytes", "ref", "ref str", c, "")
   // collects: the rows the union lowering calls (the old
   // classification: none is in the old never or quiet lists).
   t.row("avant_array_index_i32", "ref, i32", "i64", c, "")
@@ -415,13 +507,20 @@ fn mir_rt_fill(t: MRtTable) {
   // waits block while other threads collect.
   t.row("avant_spawn", "ptr, ref", "ref", c, "")
   t.row("avant_join", "ref", "i64", c, "")
-  t.row("avant_parallel_for", "i64, ptr, ref", "void", c, "")
+  t.row("avant_parallel_for", "i64, ptr, ref", "i32", c, "")
   t.row("avant_gate_new", "", "u64", c, "")
   // A trap ends its task: a spawn with its end on a
   // trap; the trap a join found (static C strings: no collection); a C
   // callback's bracket in a program that spawns; `with`'s lock, which
   // says whether the mutex is poisoned.
   t.row("avant_spawn_f", "ptr, ref, ptr", "ref", c, "")
+  // A spawn whose value is not an Int: the handle the generated code
+  // made, rooted until the task is done; the handle of the task the
+  // thread runs (where its block stores its value); a .parallel whose
+  // bodies trapped, trapping in its caller.
+  t.row("avant_spawn_h", "ptr, ref, ptr, ref", "ref", c, "")
+  t.row("avant_task_handle", "", "ref", n, "")
+  t.row("avant_parallel_trap", "", "void", n, "")
   t.row("avant_join_what", "ref", "ref str", n, "")
   t.row("avant_join_site", "ref", "ref str", n, "")
   t.row("avant_task_cb_enter", "", "void", n, "")
@@ -449,29 +548,28 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_task_hold_end", "", "void", c, "")
 }
 
-// The declarations' attributes, each read from the C body at refactor/llvm
-// 053c726. Only `never` rows: a call that cannot collect may let LLVM keep
-// values across it. The string readers end in avant_str_n
-// (runtime/avant_str.c:118-127), which reads the string's header and bytes
-// (its argument), the GC's block, large and side tables through
-// avant_is_heap (runtime/avant_gc_heap.c, gc_is_heap_payload: reads only
-// when its out-parameters are NULL), and g_avant_str_gen (an acquire load,
-// avant_rt.h:70-72: not nosync); it writes only its per-thread length
-// cache (g_len_slots and g_len_victim, static __thread in
-// avant_str.c:77-89, memory no module code can name: inaccessiblemem), and
-// it keeps the pointer in that cache (so no nocapture). It allocates,
-// frees, and unwinds nothing and always returns.
+// The declarations' attributes, each read from the C body. Only `never`
+// rows: a call that cannot collect may let LLVM keep values across it.
+// The string readers end in avant_str_n (runtime/avant_str.c), which reads
+// the string's header (every string carries its length there), and
+// memcmp or a loop over the bytes: they read memory and write none, keep
+// no pointer, take no lock, allocate, free and unwind nothing, and always
+// return.
 fn mir_rt_attrs(t: MRtTable) {
-  str_reader = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
-  // avant_str.c:524-526: avant_str_n.
+  str_reader = "nounwind willreturn nofree nosync memory(read)"
+  // avant_str_size: avant_str_n.
   t.set_attrs("avant_str_size", str_reader)
-  // avant_str.c:509-522: avant_str_n twice, memcmp.
+  // avant_str_data: the header and a view's two fields.
+  t.set_attrs("avant_str_data", str_reader)
+  // avant_str_view_test: the header.
+  t.set_attrs("avant_str_view_test", str_reader)
+  // avant_str_eq: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_eq", str_reader)
   // avant_str.c avant_str_cmp: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_cmp", str_reader)
-  // avant_str.c:539-550: avant_str_n, a byte loop.
+  // avant_checksum_str: avant_str_n, a byte loop.
   t.set_attrs("avant_checksum_str", str_reader)
-  // avant_buf.c:349-362: avant_str_n, field reads of the Buf, memcmp.
+  // avant_buf_starts: avant_str_n, field reads of the Buf, memcmp.
   t.set_attrs("avant_buf_starts", str_reader)
   // avant_buf.c:192-195: one field read of its argument.
   t.set_attrs("avant_buf_size", "nounwind willreturn nofree nosync memory(argmem: read)")

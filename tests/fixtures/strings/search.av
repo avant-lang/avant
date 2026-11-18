@@ -1,0 +1,125 @@
+// The search methods of String, Bytes and Buf (contains, index_of with
+// and without a start, last_index_of, starts_with, ends_with, count),
+// with a String, Bytes, Buf or one byte as the pattern, and an array's
+// index_of from a start and last_index_of.
+
+fn show(r: Int?): String {
+  if v = r {
+    return "${v}"
+  }
+  "nil"
+}
+
+fn strings {
+  s = "the cat and the hat"
+  puts(s.contains("cat"))
+  puts(s.contains("dog"))
+  puts(s.contains(""))
+  puts(s.contains('h'))
+  puts(show(s.index_of("the")))
+  puts(show(s.index_of("the", 1)))
+  puts(show(s.index_of("the", 13)))
+  puts(show(s.index_of("", 4)))
+  puts(show(s.index_of('a')))
+  puts(show(s.index_of('a', 6)))
+  puts(show(s.index_of("x")))
+  puts(show(s.index_of("hat", s.size)))
+  puts(show(s.last_index_of("the")))
+  puts(show(s.last_index_of('t')))
+  puts(show(s.last_index_of("")))
+  puts(show(s.last_index_of("zzz")))
+  puts(s.starts_with("the c"))
+  puts(s.starts_with("cat"))
+  puts(s.ends_with("hat"))
+  puts(s.ends_with(""))
+  puts(s.ends_with("the cat and the hat!"))
+  puts(s.count("the"))
+  puts(s.count('a'))
+  puts("aaaa".count("aa"))
+  puts("".count("a"))
+  // Many places that start like the pattern before the match: the search
+  // goes on past them.
+  t = "ab".repeat(40) + "ac"
+  puts(show(t.index_of("ac")))
+  puts(show(t.index_of("ac", 81)))
+  puts(t.repeat(3).count("ac"))
+  puts(t.contains("aa"))
+}
+
+// A long slice is a view of its string: the search reads its bytes in
+// place, from the view's own start.
+fn views {
+  base = "0123456789".repeat(20)
+  v = base[95..]
+  puts(v.size)
+  puts(show(v.index_of("56")))
+  puts(show(v.last_index_of("56")))
+  puts(v.starts_with("56789"))
+  puts(v.ends_with("789"))
+  puts(v.count("0"))
+}
+
+// The positions of every match, by index_of from a start.
+fn all_at(s: String, p: String): String {
+  out = ""
+  at = 0
+  while i = s.index_of(p, at) {
+    out = out + "${i} "
+    at = i + p.size
+  }
+  out
+}
+
+fn bytes_and_bufs {
+  raw = "GET /index.html HTTP/1.1".bytes
+  puts(raw.starts_with("GET".bytes))
+  puts(raw.starts_with("GET"))
+  puts(raw.ends_with("1.1"))
+  puts(show(raw.index_of(' ')))
+  puts(show(raw.last_index_of(' ')))
+  puts(show(raw.index_of("HTTP".bytes, 5)))
+  puts(raw.count('/'))
+  b = Buf.new()
+  b.push_str("key=value; other=thing")
+  puts(b.contains("other"))
+  puts(b.starts_with("key"))
+  puts(b.starts_with("key".bytes))
+  puts(b.ends_with("thing"))
+  puts(show(b.index_of('=')))
+  puts(show(b.index_of('=', 4)))
+  puts(show(b.last_index_of("=")))
+  puts(b.count('e'))
+  pat = Buf.new()
+  pat.push_str("value")
+  puts(show(b.index_of(pat)))
+  puts("a key=value here".contains(pat))
+  puts(all_at("abcabcab", "ab"))
+}
+
+struct P {
+  x: Int
+  y: Int
+}
+
+fn arrays {
+  xs = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]
+  puts(show(xs.index_of(5)))
+  puts(show(xs.index_of(5, 5)))
+  puts(show(xs.index_of(5, 11)))
+  puts(show(xs.index_of(7, 2)))
+  puts(show(xs.last_index_of(5)))
+  puts(show(xs.last_index_of(7)))
+  ws = ["a", "b", "a"]
+  puts(show(ws.index_of("a", 1)))
+  puts(show(ws.last_index_of("a")))
+  ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 1, y: 2 }]
+  puts(show(ps.index_of(P { x: 1, y: 2 }, 1)))
+  puts(show(ps.last_index_of(P { x: 3, y: 4 })))
+}
+
+fn main {
+  strings()
+  views()
+  bytes_and_bufs()
+  arrays()
+}

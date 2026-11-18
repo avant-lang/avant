@@ -11,10 +11,13 @@
 #include "picohttpparser.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +74,7 @@ static char *make_bytes(const char *p, size_t n) {
     memcpy(out, p, n);
   }
   out[n] = 0;
+  avant_str_tag(out);
   return out;
 }
 
@@ -104,6 +108,7 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
     memcpy(out + 4 + count * 16, raw, raw_len);
   }
   out[total] = 0;
+  avant_str_tag(out);
   return out;
 }
 
@@ -314,6 +319,22 @@ typedef struct Conn {
   size_t out_cap;
   int close_after_flush;
   int peer_ended;
+  /* The deadlines' clocks (http_now_ms readings, 0 when not running):
+   * head_at since the first byte of a request head that is not complete
+   * yet; body_at since the start of the current rate window of a body
+   * waiting for bytes (body_from: conn->len then); out_at likewise for
+   * an answer's queued tail (out_from: out_off then). A connection with
+   * one running is on its loop's watch list, which the loop's sweep
+   * reads (loop_sweep). A request that arrives whole and an answer the
+   * socket takes whole start none. */
+  int64_t head_at;
+  int64_t body_at;
+  size_t body_from;
+  int64_t out_at;
+  size_t out_from;
+  /* The bytes of the server's body budget this request's body holds
+   * while it waits (its Content-Length), 0 when none. */
+  int64_t budget;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -326,6 +347,9 @@ struct HttpLoop {
   struct us_socket_context_t *ctx;
   struct us_listen_socket_t *listen;
   struct ConnNode *conns_head;
+  struct ConnNode *watch; /* the connections with a deadline running */
+  struct us_timer_t *sweep;
+  int64_t close_at; /* when this loop began to close (the shutdown deadline) */
   pthread_t thread;
   int spawned;
 };
@@ -343,14 +367,61 @@ struct AvantHttpServer {
   int32_t max_message;
   unsigned int idle_timeout;
   size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
+  /* The limits (Server's setters before serve; 0 is off):
+   * head_ms, the time a request head may take from its first byte;
+   * rate, the bytes per second a request body must arrive at and an
+   * answer's queued tail must leave at, on average over each window of
+   * grace_ms from when it began to wait. */
+  uint32_t head_ms;
+  uint32_t rate;
+  uint32_t grace_ms;
+  /* body_budget, the bytes all waiting request bodies may hold together
+   * (their Content-Length), the rest answered 503; mem_ceiling, the
+   * process's resident memory past which new requests are answered 503
+   * (-1 until serve: then the container's limit's 90% or off), over_mem
+   * the sweep's last reading; max_conns, the open connections, past
+   * which the loop's longest idle one is closed (capped at serve by the
+   * file-descriptor limit); shutdown_ms, how long close waits for the
+   * connections it leaves to finish before it closes them. body_held
+   * and conns are server-wide counts, changed atomically. */
+  int64_t body_budget;
+  int64_t mem_ceiling;
+  int64_t max_conns;
+  uint32_t shutdown_ms;
+  int over_mem;
+  int64_t body_held;
+  int64_t conns;
   AvantWsConn *ws_all;
 };
 
+/* conn comes first: a Conn's address is its node's. */
 typedef struct ConnNode {
   Conn conn;
   struct us_socket_t *sock;
   struct ConnNode *next;
+  struct ConnNode *wprev;
+  struct ConnNode *wnext;
+  int watched;
 } ConnNode;
+
+#define HTTP_HEAD_TIMEOUT_MS 10000
+#define HTTP_MIN_RATE 240
+#define HTTP_RATE_GRACE_MS 5000
+#define HTTP_BODY_BUDGET (256LL * 1024 * 1024)
+#define HTTP_MAX_CONNS 10000
+#define HTTP_SHUTDOWN_MS 30000
+/* A connection's buffer past this is given back once it is empty: a
+ * large body left every connection that ever received one holding its
+ * size for good. */
+#define HTTP_BUF_KEEP 65536
+
+/* A coarse monotonic clock in milliseconds (the vDSO's, a few ms of
+ * resolution): read only when a deadline starts and by the sweep. */
+static int64_t http_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 + 1;
+}
 
 /* An HTTP connection is closed when nothing has happened on it for this
  * long: no request bytes received and no queued answer bytes sent
@@ -405,6 +476,58 @@ static HttpLoop *loop_of_socket(struct us_socket_t *s) {
   return *(HttpLoop **)us_socket_context_ext(0, ctx);
 }
 
+/* The watch list: the connections of a loop with a deadline running
+ * (Conn's head_at, body_at, out_at), which the loop's sweep reads. A
+ * request that arrives whole and an answer the socket takes whole never
+ * enter it, so the hot path pays only the test of the two clocks. */
+static void conn_watch(Conn *conn, struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)conn;
+  HttpLoop *hl;
+  if (node->watched) {
+    return;
+  }
+  hl = loop_of_socket(s);
+  node->watched = 1;
+  node->wprev = NULL;
+  node->wnext = hl->watch;
+  if (hl->watch) {
+    hl->watch->wprev = node;
+  }
+  hl->watch = node;
+}
+
+static void conn_unwatch(Conn *conn, struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)conn;
+  if (!node->watched) {
+    return;
+  }
+  node->watched = 0;
+  if (node->wprev) {
+    node->wprev->wnext = node->wnext;
+  } else {
+    loop_of_socket(s)->watch = node->wnext;
+  }
+  if (node->wnext) {
+    node->wnext->wprev = node->wprev;
+  }
+  node->wprev = NULL;
+  node->wnext = NULL;
+}
+
+/* A request's deadlines end: it is complete, answered or refused; the
+ * budget its body held is given back. */
+static void conn_wait_end(Conn *conn, struct us_socket_t *s) {
+  conn->head_at = 0;
+  conn->body_at = 0;
+  if (conn->budget) {
+    __atomic_sub_fetch(&conn->srv->body_held, conn->budget, __ATOMIC_RELAXED);
+    conn->budget = 0;
+  }
+  if (!conn->out_at) {
+    conn_unwatch(conn, s);
+  }
+}
+
 static const char *reason_phrase(int32_t status) {
   switch (status) {
     case 200: return "OK";
@@ -419,10 +542,12 @@ static const char *reason_phrase(int32_t status) {
     case 400: return "Bad Request";
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
+    case 408: return "Request Timeout";
     case 411: return "Length Required";
     case 413: return "Content Too Large";
     case 431: return "Request Header Fields Too Large";
     case 500: return "Internal Server Error";
+    case 503: return "Service Unavailable";
     default: return "Status";
   }
 }
@@ -577,6 +702,12 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
     us_socket_close(0, s, 0, NULL);
     return;
   }
+  if (!conn->out_at) {
+    /* The tail must leave at the minimum rate (loop_sweep). */
+    conn->out_at = http_now_ms();
+    conn->out_from = conn->out_off;
+    conn_watch(conn, s);
+  }
   conn_poll(s, LIBUS_SOCKET_WRITABLE);
 }
 
@@ -595,10 +726,11 @@ static void conn_finish(Conn *conn, struct us_socket_t *s) {
  * The prefix is assembled by hand: a hello-world response costs two
  * snprintf calls per request otherwise, which profiling put at about
  * a seventh of the loop thread's user time. */
+/* BODY is BODY_LEN bytes: the program's Bytes (its header's length) or
+ * a C text of the runtime's own (a reason phrase, its strlen). */
 static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
-                           const char *head, const char *body,
+                           const char *head, const char *body, size_t body_len,
                            const char *conn_header) {
-  size_t body_len = avant_str_n(body);
   size_t head_len = head ? strlen(head) : 0;
   char prefix[4096];
   size_t n = 0;
@@ -652,8 +784,9 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
 
 static void send_error(Conn *conn, struct us_socket_t *s, int32_t status) {
   const char *phrase = reason_phrase(status);
+  conn_wait_end(conn, s);
   write_response(conn, s, status, "Content-Type: text/plain\r\n", phrase,
-                 "close");
+                 strlen(phrase), "close");
   conn_finish(conn, s);
 }
 
@@ -675,6 +808,7 @@ typedef struct AvantHttpReq {
   int minor_version;
   int is_ws;
   int upgraded;
+  int responded;
   char ws_key[128];
   AvantWsConn *ws_conn;
 } AvantHttpReq;
@@ -715,24 +849,30 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
-/* A response's status outside 100-599:
+/* A handler's status outside 200-599:
  * written as it came, 99999 or -1 gave a status line no client can read
- * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
- * program's error, trapped in the runtime's form before any byte of the
- * answer is written. */
+ * (RFC 9110 15: a status code is three digits, its first 1 to 5), and a
+ * 1xx is an interim answer (15.2), which a client reads past to wait for
+ * the final one that never comes. The program's error, a trap of the
+ * language before any byte of the answer is written (in a handler: the
+ * request is answered 500). The WebSocket upgrade's 101 is the server's
+ * own. */
 __attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: a response's status %lld is not 100 to 599 (RFC 9110)\n", (long long)status);
-  exit(1);
+  char msg[160];
+  snprintf(msg, sizeof msg,
+           "a response's status %lld is not 200 to 599: a handler gives the final answer, never an interim 1xx (RFC 9110)",
+           (long long)status);
+  avant_trap_text(msg);
 }
 
 void avant_http_req_respond(void *reqp, avant_int status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
-  if (__builtin_expect(status < 100 || status > 599, 0)) {
+  if (__builtin_expect(status < 200 || status > 599, 0)) {
     http_status_trap(status);
   }
+  req->responded = 1;
   /* The head and body pointers name Avant heap objects held only in
    * C registers here; nothing below is a safepoint (no allocation, no
    * native wait), so no collection runs on any thread while the response
@@ -744,7 +884,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
     conn_header = "keep-alive";
   }
   write_response(req->conn, req->sock, (int32_t)status, head, body,
-                 conn_header);
+                 avant_str_n(body), conn_header);
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -1311,10 +1451,13 @@ static void leave_avant(void) {
   }
 }
 
+static void ws_fail(AvantWsConn *ws, int code);
+
 static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
                               const char *data, size_t len, int32_t code,
                               const char *reason, size_t reason_len) {
   AvantWsEvent ev;
+  int trapped;
   if (!ws->srv->ws_dispatch || !ws->srv->state) { return; }
   memset(&ev, 0, sizeof(ev));
   ev.srv = ws->srv;
@@ -1326,9 +1469,15 @@ static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
   ev.code = code;
   ev.reason = reason;
   ev.reason_len = reason_len;
+  /* A trap in a message handler closes the connection with 1011 (an
+   * unexpected condition, RFC 6455 7.4.1) and the server goes on; one in
+   * a close handler has nothing left to close. */
   enter_avant();
-  ws->srv->ws_dispatch(ws->srv->state, &ev);
+  trapped = avant_task_recover_call(ws->srv->ws_dispatch, ws->srv->state, &ev);
   leave_avant();
+  if (trapped && kind == 1) {
+    ws_fail(ws, 1011);
+  }
 }
 
 avant_int avant_ws_event_kind(void *evp) {
@@ -1881,6 +2030,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     long content_length = 0;
     int has_cl = 0;
     int keep_alive;
+    int trapped;
     size_t total;
     AvantHttpReq req;
 
@@ -1890,6 +2040,12 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     if (pret == -2) {
       if (conn->len > HTTP_MAX_HEADER_BLOCK) {
         send_error(conn, s, 400);
+      } else if (!conn->head_at) {
+        /* A head in parts: it has the head timeout from now (the
+         * idle timeout restarted at every byte, so a client sending a
+         * byte now and then held the connection for good). */
+        conn->head_at = http_now_ms();
+        conn_watch(conn, s);
       }
       return;
     }
@@ -1953,12 +2109,36 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
         return;
       }
     }
+    if (__builtin_expect(__atomic_load_n(&srv->over_mem, __ATOMIC_RELAXED), 0)) {
+      /* The process is past its memory ceiling: new requests are shed
+       * until the sweep reads it under again. */
+      send_error(conn, s, 503);
+      return;
+    }
     if (has_cl && content_length > srv->max_body) {
       send_error(conn, s, 413);
       return;
     }
     total = (size_t)pret + (size_t)(has_cl ? content_length : 0);
     if (conn->len < total) {
+      /* The head is complete; the body waits for bytes, which must
+       * come at the minimum rate once its grace has passed. */
+      conn->head_at = 0;
+      if (!conn->body_at) {
+        /* The body takes its length from the server's budget while it
+         * waits (a body that arrives with its head takes none). */
+        if (srv->body_budget &&
+            __atomic_add_fetch(&srv->body_held, content_length, __ATOMIC_RELAXED) >
+                srv->body_budget) {
+          __atomic_sub_fetch(&srv->body_held, content_length, __ATOMIC_RELAXED);
+          send_error(conn, s, 503);
+          return;
+        }
+        conn->budget = srv->body_budget ? content_length : 0;
+        conn->body_at = http_now_ms();
+        conn->body_from = conn->len;
+        conn_watch(conn, s);
+      }
       if (find_header(headers, num_headers, "Expect", &value, &value_len) &&
           ascii_ieq(value, value_len, "100-continue", 12) &&
           !conn->sent_continue) {
@@ -1967,6 +2147,9 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
         conn->sent_continue = 1;
       }
       return;
+    }
+    if (conn->head_at | conn->body_at) {
+      conn_wait_end(conn, s);
     }
     keep_alive = minor_version == 1;
     if (find_header(headers, num_headers, "Connection", &value, &value_len)) {
@@ -2035,13 +2218,30 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     req.body_len = (size_t)(has_cl ? content_length : 0);
     req.keep_alive = keep_alive;
     req.minor_version = minor_version;
+    /* The dispatch runs in a recovery point: a trap in the handler (or
+     * in std.http's code for this request) returns here, the handler's
+     * frames dropped, and the request is answered 500, with the
+     * connection kept or closed as an answer's would be; the server
+     * goes on. A trap after the upgrade, in a websocket_open handler,
+     * closes the new WebSocket with 1011. */
     enter_avant();
-    srv->dispatch(srv->state, &req);
+    trapped = avant_task_recover_call(srv->dispatch, srv->state, &req);
     leave_avant();
     if (us_socket_is_closed(0, s)) {
       /* The answer could not be queued (conn_send closed the socket);
        * srv_on_close has freed the buffers. */
       return;
+    }
+    if (trapped && req.upgraded) {
+      conn->len = 0;
+      ws_fail(conn->ws, 1011);
+      return;
+    }
+    if (trapped && !req.responded) {
+      write_response(conn, s, 500, "Content-Type: text/plain\r\n",
+                     "Internal Server Error", strlen("Internal Server Error"),
+                     !keep_alive ? "close"
+                                 : minor_version == 0 ? "keep-alive" : NULL);
     }
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
@@ -2068,6 +2268,11 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     conn->len -= total;
     conn->sent_continue = 0;
     if (conn->len == 0) {
+      if (__builtin_expect(conn->cap > HTTP_BUF_KEEP, 0)) {
+        free(conn->buf);
+        conn->buf = NULL;
+        conn->cap = 0;
+      }
       return;
     }
   }
@@ -2098,6 +2303,10 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
   conn->out_len = 0;
   conn->out_off = 0;
   conn->out_cap = 0;
+  conn->out_at = 0;
+  if (!conn->head_at && !conn->body_at) {
+    conn_unwatch(conn, s);
+  }
   conn_poll(s, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   if (conn->close_after_flush) {
     us_socket_shutdown(0, s);
@@ -2118,6 +2327,154 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
   }
 }
 
+/* The process's resident memory in bytes (/proc/self/statm), 0 when it
+ * cannot be read. */
+static int64_t http_rss(void) {
+  char text[128];
+  long long pages = 0;
+  long long size = 0;
+  ssize_t n;
+  int fd = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  n = read(fd, text, sizeof text - 1);
+  close(fd);
+  if (n <= 0) {
+    return 0;
+  }
+  text[n] = 0;
+  if (sscanf(text, "%lld %lld", &size, &pages) != 2) {
+    return 0;
+  }
+  return (int64_t)pages * (int64_t)sysconf(_SC_PAGESIZE);
+}
+
+/* Whether `got` bytes in `ms` milliseconds is under `rate` bytes a second. */
+static int http_too_slow(size_t got, int64_t ms, uint32_t rate) {
+  return (uint64_t)got * 1000u < (uint64_t)rate * (uint64_t)ms;
+}
+
+/* A request past its deadline: 408 and close. The socket is closed at
+ * the next timeout tick (at most 4 s) whatever the peer does: the
+ * answer has its chance to leave, and a peer that neither reads nor
+ * closes holds nothing for long. */
+static void conn_request_timeout(Conn *conn, struct us_socket_t *s) {
+  send_error(conn, s, 408);
+  if (!us_socket_is_closed(0, s)) {
+    us_socket_timeout(0, s, 1);
+  }
+}
+
+/* The loop's sweep, every sweep_ms (at most a second): each watched
+ * connection's deadlines. A head past head_ms is answered 408. A body
+ * waiting for bytes, and an answer's queued tail, are measured over
+ * windows of grace_ms: when one has passed, the bytes that came (or
+ * left) in it must be the minimum rate's, else the request is answered
+ * 408 (a body) or the connection closed (a client that does not read:
+ * nothing more can be said to it); then a new window begins. An average
+ * since the start would not do: the kernel takes megabytes of an answer
+ * at once, and that burst would cover a client that then reads nothing
+ * for hours. */
+static void loop_sweep(struct us_timer_t *t) {
+  HttpLoop *hl = *(HttpLoop **)us_timer_ext(t);
+  AvantHttpServer *srv = hl->srv;
+  int64_t now = http_now_ms();
+  ConnNode *node;
+  if (srv->mem_ceiling > 0 && hl == &srv->loops[0]) {
+    __atomic_store_n(&srv->over_mem, http_rss() >= srv->mem_ceiling, __ATOMIC_RELAXED);
+  }
+  if (hl->close_at && srv->shutdown_ms &&
+      now - hl->close_at >= (int64_t)srv->shutdown_ms) {
+    /* The shutdown deadline: what close left to finish (an answer being
+     * sent, a WebSocket's closing handshake, a peer that does not close)
+     * is closed now, so the loop drains and serve returns. */
+    for (node = hl->conns_head; node; node = node->next) {
+      if (!us_socket_is_closed(0, node->sock)) {
+        us_socket_close(0, node->sock, 0, NULL);
+      }
+    }
+    return;
+  }
+  node = hl->watch;
+  while (node) {
+    ConnNode *next = node->wnext;
+    Conn *conn = &node->conn;
+    struct us_socket_t *s = node->sock;
+    if (conn->answered && !conn->out_at) {
+      conn_wait_end(conn, s);
+    } else if (conn->head_at && srv->head_ms &&
+               now - conn->head_at >= (int64_t)srv->head_ms) {
+      conn_request_timeout(conn, s);
+    } else if (conn->body_at && srv->rate &&
+               now - conn->body_at >= (int64_t)srv->grace_ms) {
+      if (http_too_slow(conn->len - conn->body_from, now - conn->body_at,
+                        srv->rate)) {
+        conn_request_timeout(conn, s);
+      } else {
+        conn->body_at = now;
+        conn->body_from = conn->len;
+      }
+    } else if (conn->out_at && srv->rate &&
+               now - conn->out_at >= (int64_t)srv->grace_ms) {
+      if (http_too_slow(conn->out_off - conn->out_from, now - conn->out_at,
+                        srv->rate)) {
+        us_socket_close(0, s, 0, NULL);
+      } else {
+        conn->out_at = now;
+        conn->out_from = conn->out_off;
+      }
+    }
+    node = next;
+  }
+}
+
+/* The sweep's period: a second, or a quarter of the shortest deadline
+ * it watches when that is shorter, so a deadline is kept to within a
+ * quarter of itself; never under 25 ms. */
+static int sweep_interval(const AvantHttpServer *srv) {
+  uint32_t iv = 1000;
+  if (srv->head_ms && srv->head_ms / 4 < iv) {
+    iv = srv->head_ms / 4;
+  }
+  if (srv->rate && srv->grace_ms / 4 < iv) {
+    iv = srv->grace_ms / 4;
+  }
+  if (srv->shutdown_ms && srv->shutdown_ms / 4 < iv) {
+    iv = srv->shutdown_ms / 4;
+  }
+  return iv < 25 ? 25 : (int)iv;
+}
+
+/* The loop's idle connection (kept alive between requests: nothing in
+ * its buffer, nothing queued, no deadline running, not a WebSocket) that
+ * has been idle longest, but `except`; NULL when there is none. Its idle
+ * timeout was started at its last activity, so the one due soonest
+ * (uSockets' ticks: 4 s each; among equals the oldest connection, the
+ * list being newest first) is the longest idle. Walked only at the
+ * connection limit. */
+static ConnNode *loop_longest_idle(HttpLoop *hl, ConnNode *except) {
+  ConnNode *best = NULL;
+  unsigned best_left = 1000;
+  ConnNode *node;
+  for (node = hl->conns_head; node; node = node->next) {
+    Conn *c = &node->conn;
+    unsigned left;
+    if (node == except || c->ws || c->answered || c->len || node->watched ||
+        conn_out_pending(c) || us_socket_is_closed(0, node->sock)) {
+      continue;
+    }
+    left = node->sock->timeout == 255
+               ? 0
+               : (node->sock->timeout + 240u - node->sock->context->timestamp) % 240u;
+    if (left <= best_left) {
+      best_left = left;
+      best = node;
+    }
+  }
+  return best;
+}
+
 static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
                                        char *ip, int ip_length) {
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
@@ -2125,12 +2482,24 @@ static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
   (void)is_client;
   (void)ip;
   (void)ip_length;
+  AvantHttpServer *srv = hl->srv;
+  int64_t n;
   memset(node, 0, sizeof(ConnNode));
-  node->conn.srv = hl->srv;
+  node->conn.srv = srv;
   node->sock = s;
   node->next = hl->conns_head;
   hl->conns_head = node;
-  us_socket_timeout(0, s, hl->srv->idle_timeout);
+  us_socket_timeout(0, s, srv->idle_timeout);
+  n = __atomic_add_fetch(&srv->conns, 1, __ATOMIC_RELAXED);
+  if (srv->max_conns && n > srv->max_conns) {
+    /* At the connection limit: the loop's longest idle connection makes
+     * room, or, with none idle, the new one is closed. */
+    ConnNode *idle = loop_longest_idle(hl, node);
+    if (!idle) {
+      return us_socket_close(0, s, 0, NULL);
+    }
+    us_socket_close(0, idle->sock, 0, NULL);
+  }
   return s;
 }
 
@@ -2208,6 +2577,12 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
     pthread_mutex_unlock(&g_ws_mu);
     ws_record_release(ws);
   }
+  conn_unwatch(&node->conn, s);
+  if (node->conn.budget) {
+    __atomic_sub_fetch(&node->conn.srv->body_held, node->conn.budget, __ATOMIC_RELAXED);
+    node->conn.budget = 0;
+  }
+  __atomic_sub_fetch(&node->conn.srv->conns, 1, __ATOMIC_RELAXED);
   free(node->conn.buf);
   node->conn.buf = NULL;
   node->conn.len = 0;
@@ -2276,6 +2651,9 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
   if (hl->listen) {
     us_listen_socket_close(0, hl->listen);
     hl->listen = NULL;
+  }
+  if (!hl->close_at) {
+    hl->close_at = http_now_ms();
   }
   {
     /* Answered connections are already shut down with their response
@@ -2390,6 +2768,10 @@ static void listen_reg_remove(AvantHttpServer *srv) {
 }
 
 static void loop_teardown(HttpLoop *hl) {
+  if (hl->sweep) {
+    us_timer_close(hl->sweep);
+    hl->sweep = NULL;
+  }
   if (hl->listen) {
     us_listen_socket_close(0, hl->listen);
     hl->listen = NULL;
@@ -2465,6 +2847,13 @@ static int loop_create(AvantHttpServer *srv, HttpLoop *hl, const char *host,
   if (!hl->listen) {
     return 1;
   }
+  /* The deadlines' sweep (started by serve), a timer that does not keep
+   * the loop running: the loop drains as before. */
+  hl->sweep = us_create_timer(hl->loop, 1, (unsigned int)sizeof(HttpLoop *));
+  if (!hl->sweep) {
+    return 1;
+  }
+  *(HttpLoop **)us_timer_ext(hl->sweep) = hl;
   return 0;
 }
 
@@ -2499,6 +2888,66 @@ static int32_t pick_ephemeral_port(const char *host) {
   return port;
 }
 
+/* The memory limit of the container the process runs in: the smallest
+ * cgroup v2 memory.max from its own cgroup up (or cgroup v1's
+ * memory.limit_in_bytes), 0 when there is none. */
+static int64_t read_limit_file(const char *path) {
+  char text[64];
+  ssize_t n;
+  long long v;
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  n = read(fd, text, sizeof text - 1);
+  close(fd);
+  if (n <= 0) {
+    return 0;
+  }
+  text[n] = 0;
+  if (text[0] < '0' || text[0] > '9' || sscanf(text, "%lld", &v) != 1 || v <= 0 ||
+      v >= (1LL << 60)) {
+    return 0;
+  }
+  return (int64_t)v;
+}
+
+static int64_t http_container_memory(void) {
+  char line[512];
+  char path[700];
+  int64_t best = 0;
+  FILE *f = fopen("/proc/self/cgroup", "re");
+  if (f) {
+    while (fgets(line, sizeof line, f)) {
+      if (strncmp(line, "0::", 3) == 0) {
+        char *rel = line + 3;
+        char *end = rel + strlen(rel);
+        while (end > rel && (end[-1] == '\n' || end[-1] == '/')) {
+          *--end = 0;
+        }
+        for (;;) {
+          int64_t v;
+          snprintf(path, sizeof path, "/sys/fs/cgroup%s/memory.max", rel);
+          v = read_limit_file(path);
+          if (v > 0 && (best == 0 || v < best)) {
+            best = v;
+          }
+          end = strrchr(rel, '/');
+          if (!end) {
+            break;
+          }
+          *end = 0;
+        }
+      }
+    }
+    fclose(f);
+  }
+  if (best == 0) {
+    best = read_limit_file("/sys/fs/cgroup/memory/memory.limit_in_bytes");
+  }
+  return best;
+}
+
 /* `loops` <= 0 means the runtime's chosen thread count. */
 void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
                         avant_int loops, avant_int max_message) {
@@ -2519,7 +2968,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
       return NULL;
     }
   }
-  n = loops > 0 ? (int)loops : (int)avant_chosen_threads();
+  n = loops > 0 ? (int)loops : (int)avant_pool_size_fix();
   if (n < 1) {
     n = 1;
   }
@@ -2532,6 +2981,13 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   srv->idle_timeout = http_idle_timeout();
   srv->ws_write_chunk = http_ws_write_chunk();
+  srv->head_ms = HTTP_HEAD_TIMEOUT_MS;
+  srv->rate = HTTP_MIN_RATE;
+  srv->grace_ms = HTTP_RATE_GRACE_MS;
+  srv->body_budget = HTTP_BODY_BUDGET;
+  srv->mem_ceiling = -1;
+  srv->max_conns = HTTP_MAX_CONNS;
+  srv->shutdown_ms = HTTP_SHUTDOWN_MS;
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);
@@ -2575,6 +3031,7 @@ avant_int avant_http_port(void *srvp) {
 static void *loop_thread_main(void *arg) {
   HttpLoop *hl = (HttpLoop *)arg;
   avant_gc_register_thread();
+  avant_stack_role(AVANT_STACK_LOOP);
   /* The C callback trampoline batches its roots into the current
    * frame without entering (it forwards to the entering dispatch
    * function), so a loop thread needs a base frame for the whole
@@ -2603,6 +3060,34 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   srv->dispatch = (AvantHttpDispatch)cb;
   srv->ws_dispatch = (AvantHttpDispatch)ws_cb;
   srv->running = 1;
+  if (srv->mem_ceiling < 0) {
+    int64_t limit = http_container_memory();
+    srv->mem_ceiling = limit > 0 ? limit / 10 * 9 : 0;
+  }
+  {
+    /* The connection limit is capped by the file-descriptor limit: past
+     * it accept fails and uSockets polls the listening socket again at
+     * once, a busy loop, instead of the limit's eviction. The loops keep
+     * a few descriptors each (epoll, the wakeup, two timers, the listen
+     * socket), and the program keeps 64 for its files and clients. */
+    struct rlimit rl;
+    if (srv->max_conns && getrlimit(RLIMIT_NOFILE, &rl) == 0 &&
+        rl.rlim_cur != RLIM_INFINITY) {
+      int64_t cap = (int64_t)rl.rlim_cur - 64 - 8 * (int64_t)srv->nloops;
+      if (cap < 1) {
+        cap = 1;
+      }
+      if (srv->max_conns > cap) {
+        srv->max_conns = cap;
+      }
+    }
+  }
+  {
+    int iv = sweep_interval(srv);
+    for (i = 0; i < srv->nloops; i++) {
+      us_timer_set(srv->loops[i].sweep, loop_sweep, iv, iv);
+    }
+  }
   for (i = 1; i < srv->nloops; i++) {
     if (pthread_create(&srv->loops[i].thread, NULL, loop_thread_main,
                        &srv->loops[i]) == 0) {
@@ -2628,39 +3113,99 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
-/* A route method of std.http called while its server serves: the loop threads
- * read the route tables with no lock,
- * so the route is refused. The trap's form is the runtime's (trap_head
- * and trap_tail in avant_rt_traps.c, as avant_regex_closed has it): the
- * program's stdout flushed, one line on stderr, status 1. what names
- * the route ("route GET /x", "websocket route /x"). */
+/* A route method of std.http called while its server serves: the loop
+ * threads read the route tables with no lock, so the route is refused.
+ * A trap of the language (from a handler, the usual place, a trap that
+ * fails its request). what names the route ("route GET /x",
+ * "websocket route /x"). */
 __attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *what) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: %s registered while the server is serving: register every route before serve\n", what);
-  exit(1);
+  char msg[400];
+  snprintf(msg, sizeof msg, "%s registered while the server is serving: register every route before serve", what);
+  avant_trap_text(msg);
 }
 
-/* Writes at most 64 bytes of p to stderr, a byte that is not printable
- * ASCII (or is a quote or a backslash) as \r, \n, \t or \xNN. */
-static void put_escaped(const char *p, size_t n) {
+/* A limit set while the server serves: the loops read the limits with
+ * no lock, as they read the routes, so it is refused like a route. A
+ * trap of the language. */
+__attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *name) {
+  char msg[160];
+  snprintf(msg, sizeof msg, "Server.%s called while the server is serving: set every limit before serve", name);
+  avant_trap_text(msg);
+}
+
+/* A limit of Server's setters (std.http), set before serve: which is
+ * 1 head_timeout (a, ms), 2 min_rate (a bytes a second, b the grace in
+ * ms), 3 body_budget (bytes), 4 memory_ceiling (bytes), 5
+ * max_connections, 6 shutdown_timeout (ms). 0 turns a limit off. A
+ * negative value or one past its range (a C int; 2^62 for the byte
+ * limits) is the program's error: a trap of the language (in a handler,
+ * a trap that fails its request). */
+void avant_http_set_limit(void *srvp, const char *name, avant_int which,
+                          avant_int a, avant_int b) {
+  AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  long long top = (which == 3 || which == 4) ? (1LL << 62) : INT32_MAX;
+  if (a < 0 || b < 0 || a > top || b > INT32_MAX) {
+    char msg[200];
+    if (which == 2) {
+      snprintf(msg, sizeof msg, "Server.%s(%lld, %lld): a limit is 0 (off) to %lld", name, (long long)a,
+               (long long)b, top);
+    } else {
+      snprintf(msg, sizeof msg, "Server.%s(%lld): a limit is 0 (off) to %lld", name, (long long)a, top);
+    }
+    avant_trap_text(msg);
+  }
+  if (!srv) {
+    return;
+  }
+  switch (which) {
+    case 1:
+      srv->head_ms = (uint32_t)a;
+      break;
+    case 2:
+      srv->rate = (uint32_t)a;
+      srv->grace_ms = (uint32_t)b;
+      break;
+    case 3:
+      srv->body_budget = (int64_t)a;
+      break;
+    case 4:
+      srv->mem_ceiling = (int64_t)a;
+      break;
+    case 5:
+      srv->max_conns = (int64_t)a;
+      break;
+    case 6:
+      srv->shutdown_ms = (uint32_t)a;
+      break;
+    default:
+      break;
+  }
+}
+
+/* At most 64 bytes of p into out (room for 4 bytes each and "..."), a
+ * byte that is not printable ASCII (or is a quote or a backslash) as
+ * \r, \n, \t or \xNN. */
+static void escape_into(char *out, const char *p, size_t n) {
   size_t i;
+  size_t k = 0;
   for (i = 0; i < n && i < 64; i++) {
     unsigned char ch = (unsigned char)p[i];
     if (ch == '\r') {
-      fputs("\\r", stderr);
+      k += (size_t)sprintf(out + k, "\\r");
     } else if (ch == '\n') {
-      fputs("\\n", stderr);
+      k += (size_t)sprintf(out + k, "\\n");
     } else if (ch == '\t') {
-      fputs("\\t", stderr);
+      k += (size_t)sprintf(out + k, "\\t");
     } else if (ch < 0x20 || ch >= 0x7f || ch == '"' || ch == '\\') {
-      fprintf(stderr, "\\x%02x", ch);
+      k += (size_t)sprintf(out + k, "\\x%02x", ch);
     } else {
-      fputc(ch, stderr);
+      out[k++] = (char)ch;
     }
   }
   if (n > 64) {
-    fputs("...", stderr);
+    k += (size_t)sprintf(out + k, "...");
   }
+  out[k] = 0;
 }
 
 /* RFC 9110 5.6.2: tchar, the bytes of a token (a field name). */
@@ -2701,26 +3246,28 @@ static size_t http_value_end(const char *s, size_t n) {
  * follow: response splitting. A name must be a token (RFC 9110 5.1) and
  * a value may hold no control character but tab (5.5: CR, LF and NUL
  * are refused, and the other controls with them); anything else is the
- * program's error, and it traps in the runtime's form (the program's
- * stdout flushed, one line on stderr, status 1), naming the rule. */
+ * program's error, and it is a trap of the language naming the rule (in
+ * a handler, a trap that fails its request: answered 500). */
 void avant_http_header_check(const char *name, const char *value) {
   size_t nn = avant_str_n(name);
   size_t vn = avant_str_n(value);
   size_t i;
+  char esc[300];
+  char msg[600];
   if (nn == 0 || http_token_end(name, nn) < nn) {
-    fflush(stdout);
-    fputs("avant runtime: Response.header name \"", stderr);
-    put_escaped(name, nn);
-    fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
-    exit(1);
+    escape_into(esc, name, nn);
+    snprintf(msg, sizeof msg,
+             "Response.header name \"%s\" is not a token: a header name is letters, digits and !#$%%&'*+-.^_`|~ (RFC 9110)",
+             esc);
+    avant_trap_text(msg);
   }
   i = http_value_end(value, vn);
   if (i < vn) {
-    fflush(stdout);
-    fputs("avant runtime: Response.header value of ", stderr);
-    put_escaped(name, nn);
-    fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)(unsigned char)value[i], i);
-    exit(1);
+    escape_into(esc, name, nn);
+    snprintf(msg, sizeof msg,
+             "Response.header value of %s holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)",
+             esc, (unsigned)(unsigned char)value[i], i);
+    avant_trap_text(msg);
   }
 }
 

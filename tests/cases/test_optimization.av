@@ -12,7 +12,7 @@ fn expect_trap_opt(c: Checks, compiler: String, stamp: Int, tag: String, body: S
   rcode = run_av_bin(bin, rlog)
   c.expect(rcode != 0, "${tag} exits non-zero")
   if err = file_read(rlog) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -171,11 +171,8 @@ fn test_optimization(c: Checks) {
     ntab.push(nti)
   }
   nacc = 0
-  ni3 = 0
-  while ni3 < nsrc.size {
-    nb = nsrc[ni3]
+  for nb in nsrc {
     nacc += ntab[nb]
-    ni3 += 1
   }
   c.eq_int(nacc, 15, "named byte index sum")
 

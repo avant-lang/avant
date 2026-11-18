@@ -173,3 +173,185 @@ avant_int avant_base64_decode_into(const char *s, void *buf) {
   avant_buf_set_size(buf, at + (int32_t)wrote);
   return 0;
 }
+
+/* The URL-safe alphabet without padding (RFC 4648 section 5, as JWT and
+ * URL tokens write it): '-' and '_' for '+' and '/', and no '='. The
+ * encoder writes the standard form and changes the two characters in
+ * place; the last one or two input bytes, which the standard form pads,
+ * are encoded into a small buffer and copied without the padding. */
+static size_t url_len(size_t n) {
+  return (n / 3) * 4 + (n % 3 == 0 ? 0 : n % 3 + 1);
+}
+
+static void url_encode_write(const unsigned char *p, size_t n, char *dst) {
+  size_t whole = (n / 3) * 3;
+  size_t wrote = 0;
+  size_t i;
+  size_t out_n = url_len(n);
+  if (whole > 0) {
+    base64_encode((const char *)p, whole, dst, &wrote, 0);
+  }
+  if (n > whole) {
+    char tail[8];
+    size_t tw = 0;
+    base64_encode((const char *)p + whole, n - whole, tail, &tw, 0);
+    memcpy(dst + (whole / 3) * 4, tail, n - whole + 1);
+  }
+  for (i = 0; i < out_n; i++) {
+    if (dst[i] == '+') {
+      dst[i] = '-';
+    } else if (dst[i] == '/') {
+      dst[i] = '_';
+    }
+  }
+}
+
+/* The URL-safe text p (with or without its '=' padding) as standard
+ * Base64 in a malloc'd buffer of *len bytes, padded; NULL when it holds
+ * '+' or '/' (the standard alphabet), its length cannot be Base64, or
+ * memory runs out. */
+static char *url_to_standard(const unsigned char *p, size_t n, size_t *len) {
+  size_t m = n;
+  size_t padded;
+  size_t i;
+  char *t;
+  while (m > 0 && p[m - 1] == '=') {
+    m--;
+  }
+  if (n - m > 2 || m % 4 == 1 || (n != m && n % 4 != 0)) {
+    return NULL;
+  }
+  padded = (m + 3) / 4 * 4;
+  t = (char *)malloc(padded + 1);
+  if (!t) {
+    return NULL;
+  }
+  for (i = 0; i < m; i++) {
+    unsigned char c = p[i];
+    if (c == '+' || c == '/') {
+      free(t);
+      return NULL;
+    }
+    t[i] = c == '-' ? '+' : c == '_' ? '/' : (char)c;
+  }
+  for (; i < padded; i++) {
+    t[i] = '=';
+  }
+  *len = padded;
+  return t;
+}
+
+char *avant_base64url_encode(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t out_n = url_len(n);
+  char *out;
+  set_status(0);
+  /* RC1/RC2, as in avant_base64_encode. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  out = avant_str_alloc((uint64_t)out_n);
+  url_encode_write((const unsigned char *)(s ? s : ""), n, out);
+  out[out_n] = 0;
+  avant_str_tag(out);
+  return out;
+}
+
+/* gc-lint: holds nothing (the text is copied into C memory before the
+ * allocation and not read after it). */
+char *avant_base64url_decode(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t tn = 0;
+  size_t out_n;
+  size_t wrote = 0;
+  char *t;
+  char *out;
+  set_status(0);
+  t = url_to_standard((const unsigned char *)(s ? s : ""), n, &tn);
+  if (!t) {
+    set_status(1);
+    return avant_str_empty();
+  }
+  out_n = decoded_len((const unsigned char *)t, tn);
+  out = avant_str_alloc((uint64_t)out_n);
+  if (!decode_write(out, out_n, (const unsigned char *)t, tn, &wrote)) {
+    free(t);
+    set_status(1);
+    return avant_str_empty();
+  }
+  free(t);
+  out[wrote] = 0;
+  avant_str_tag(out);
+  return out;
+}
+
+avant_int avant_base64url_encode_into(const char *s, void *buf) {
+  size_t n = avant_str_n(s);
+  size_t out_n = url_len(n);
+  int32_t at;
+  char *dst;
+  set_status(0);
+  if (!buf) {
+    set_status(2);
+    return 2;
+  }
+  at = (int32_t)avant_buf_size(buf);
+  if (out_n > (size_t)INT32_MAX - (size_t)at) {
+    set_status(2);
+    return 2;
+  }
+  /* RC1/RC2, as in avant_base64_encode_into. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
+  avant_buf_ensure(buf, at + (int32_t)out_n);
+  dst = (char *)avant_buf_bytes(buf);
+  if (!dst && out_n > 0) {
+    set_status(2);
+    return 2;
+  }
+  if (dst) {
+    url_encode_write((const unsigned char *)(s ? s : ""), n, dst + at);
+  }
+  avant_buf_set_size(buf, at + (int32_t)out_n);
+  return 0;
+}
+
+avant_int avant_base64url_decode_into(const char *s, void *buf) {
+  size_t n = avant_str_n(s);
+  size_t tn = 0;
+  size_t out_n;
+  size_t wrote = 0;
+  int32_t at;
+  char *dst;
+  char *t;
+  set_status(0);
+  if (!buf) {
+    set_status(1);
+    return 1;
+  }
+  t = url_to_standard((const unsigned char *)(s ? s : ""), n, &tn);
+  if (!t) {
+    set_status(1);
+    return 1;
+  }
+  out_n = decoded_len((const unsigned char *)t, tn);
+  at = (int32_t)avant_buf_size(buf);
+  if (out_n > (size_t)INT32_MAX - (size_t)at) {
+    free(t);
+    set_status(2);
+    return 2;
+  }
+  /* The growth may collect: the Buf is a handle; t is C memory. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &buf);
+  avant_buf_ensure(buf, at + (int32_t)out_n);
+  dst = (char *)avant_buf_bytes(buf);
+  if (!decode_write(dst ? dst + at : NULL, out_n, (const unsigned char *)t, tn, &wrote)) {
+    free(t);
+    set_status(1);
+    return 1;
+  }
+  free(t);
+  avant_buf_set_size(buf, at + (int32_t)wrote);
+  return 0;
+}

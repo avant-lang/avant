@@ -35,9 +35,14 @@ pub class LlEmit {
   pub used_alloc_globals: Bool = false
   pub used_alloc_slow: Bool = false
   pub used_poll_global: Bool = false
-  pub used_heap_globals: Bool = false
   pub used_frame_global: Bool = false
+  pub used_frame_helpers: Bool = false
+  pub used_str_nil: Bool = false
   pub frame_words: Int = -1
+  pub frame_at: Array(Int)
+  pub frame_align: Int = 8
+  pub frame_desc: String = ""
+  pub frame_maps: Array(String)
   pub cur_file: Int = 0
   pub cur_line: Int = 0
   pub cur_col: Int = 0
@@ -74,6 +79,8 @@ pub class LlEmit {
     self.intr_seen = Hash(String, Int).new()
     self.loop_md = Hash(String, Int).new()
     self.loop_md_n = ll_tbaa_last()
+    self.frame_at = []
+    self.frame_maps = []
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
   }
@@ -222,6 +229,22 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
+  // The address of local n where it is used: its alloca, or, for a slot
+  // local, its place in the frame record (emit_gc.av), a GEP of %gcf
+  // emitted here, in the using block. At --debug FastISel folds such a GEP
+  // into the access's frame address; one GEP made in the entry block
+  // would be a value spilled there and reloaded at every use in another
+  // block (the compiler compiling itself --debug took 2.5% more
+  // instructions so). -O3 merges the repeated GEPs.
+  pub fn local_addr(n: Int): String {
+    if self.frame_words >= 0 && n < self.frame_at.size && self.frame_at[n] >= 0 {
+      t = tmp()
+      line("${t} = getelementptr inbounds i8, ptr %gcf, i64 ${self.frame_at[n]}")
+      return t
+    }
+    local_name(n)
+  }
+
   // Rule E2: no slot access is volatile. A collection reads and rewrites
   // a thread's slots only while that thread is stopped at a safepoint (a
   // collecting call, the poll) or native (inside a call), in a shared
@@ -272,7 +295,7 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = local_name(p.local)
+    ptr = local_addr(p.local)
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an
@@ -321,7 +344,7 @@ pub class LlEmit {
         pend = 0
       } else {
         et = ty
-        if mt.kind == mk_agg() && self.ts.layouts[mt.layout].kind == mlk_elems() {
+        if mt.kind == mk_agg() && (self.ts.layouts[mt.layout].kind == mlk_elems() || self.ts.layouts[mt.layout].kind == mlk_carray()) {
           et = self.ts.layouts[mt.layout].fields[0]
         }
         idx = "0"
@@ -404,7 +427,7 @@ pub class LlEmit {
       return "null"
     }
     if k == mok_str() {
-      return "@str.${o.sid}"
+      return "getelementptr inbounds (i8, ptr @str.${o.sid}, i64 8)"
     }
     ll_sym(o.text)
   }
@@ -478,7 +501,7 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
 // the task ended) and keeps every later fact about other memory from
 // letting LLVM merge or hoist the read. Stores stay plain: generated code
 // writes the word only into a new array, before any task can hold it.
-pub fn ll_tbaa_last: Int { 12 }
+pub fn ll_tbaa_last: Int { 14 }
 
 // An Array's or Buf's size is never negative (at most the runtime's
 // ceiling, 2^31 - 1, avant_size_check), so its loads carry the range
@@ -511,7 +534,7 @@ pub fn ll_tbaa_tag(region: Int): String {
 }
 
 pub fn ll_tbaa_nodes: String {
-  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n"
+  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n!13 = !{}\n!14 = !{i32 1, i32 -2147483647}\n"
 }
 
 pub fn mir_loc0: MLoc {

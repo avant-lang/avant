@@ -19,7 +19,7 @@ void avant_buf_append(void *buf, const void *p, int32_t n);
 void avant_buf_push_byte(void *buf, int64_t c);
 void avant_array_push_i32(void *arr, int32_t v);
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
-void avant_hash_set_i32k_i32(void *hp, int64_t key, int64_t val);
+void *avant_hash_put_ik(void *hp, int64_t key);
 void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int64_t n);
 
 typedef struct {
@@ -37,11 +37,16 @@ typedef struct {
 typedef struct {
   void *keys;
   void *vals;
-  uint8_t *state;
+  uint8_t *meta;
   int32_t size;
   int32_t cap;
-  int32_t key_kind;
-  int32_t val_kind;
+  uint32_t desc;
+  uint32_t seed;
+  int32_t used;
+  uint8_t kw;
+  uint8_t vw;
+  uint8_t vshift;
+  uint8_t compact;
 } CeilHash;
 
 #define CEIL_MAX 2147483647
@@ -81,10 +86,13 @@ int64_t ceil_probe(int64_t mode) {
     CeilHash *h = (CeilHash *)calloc(1, sizeof(CeilHash));
     h->keys = calloc(1, 16);
     h->vals = calloc(1, 16);
-    h->state = (uint8_t *)calloc(1, 16);
+    h->meta = (uint8_t *)calloc(1, 16);
     h->cap = 1073741824;
     h->size = 805306368;
-    avant_hash_set_i32k_i32(h, 1, 2);
+    h->kw = 8;
+    h->vw = 8;
+    h->vshift = 3;
+    (void)avant_hash_put_ik(h, 1);
   } else if (mode == 7) {
     /* One range: copy 16 bytes from 0 to CEIL_MAX - 4 (an end past the
      * ceiling, which 32-bit arithmetic wrapped negative). The offset

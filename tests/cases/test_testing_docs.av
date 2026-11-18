@@ -64,14 +64,11 @@ fn td_sh(body: String, rc_path: String): Int {
   if text = file_read(rc_path) {
     t = text.strip()
     n = 0
-    i = 0
-    while i < t.size {
-      c = t[i]
+    for c in t.bytes {
       if c < 48 || c > 57 {
         return 1
       }
       n = n * 10 + (c - 48)
-      i += 1
     }
     return n
   }
@@ -169,11 +166,12 @@ fn test_testing_docs(c: Checks) {
     _ = file_write("${dir}/lost/test_lost.av", lost_body)
     lost_rc = "${dir}/lost.rc"
     ld = td_quote("${dir}/lost")
-    lost_sh = "cd ${ld} || exit 1\n${td_quote(compiler)} compile test_lost.av lost.bin --debug > c.out 2>&1 || exit 1\nAVANT_JUNIT_FRAGMENT=${ld}/isdir ./lost.bin > j.out 2>&1; j=$?\nAVANT_TEST_NAMES=${ld}/isdir ./lost.bin > n.out 2>&1; n=$?\necho \"$j $n\" > status.txt\necho 0 > ${td_quote(lost_rc)}\n"
+    lost_sh = "cd ${ld} || exit 1\n${td_quote(compiler)} compile test_lost.av lost.bin --debug > c.out 2>&1 || exit 1\nAVANT_JUNIT_FRAGMENT=${ld}/isdir ./lost.bin > j.out 2>&1; j=$?\nAVANT_TEST_NAMES=${ld}/isdir ./lost.bin > n.out 2>&1; n=$?\nAVANT_TEST_FILTER=serial AVANT_TEST_MATCHES=${ld}/isdir ./lost.bin > m.out 2>&1; m=$?\necho \"$j $n $m\" > status.txt\necho 0 > ${td_quote(lost_rc)}\n"
     c.eq_int(td_sh(lost_sh, lost_rc), 0, "a test binary runs with unwritable runner files")
-    c.eq_str(file_read("${dir}/lost/status.txt") ?? "", "1 1\n", "a lost JUnit fragment and a lost names file each fail the run")
+    c.eq_str(file_read("${dir}/lost/status.txt") ?? "", "1 1 1\n", "a lost JUnit fragment, a lost names file and a lost --name matches file each fail the run")
     c.eq_str(file_read("${dir}/lost/j.out") ?? "", "PASS serial\nPASS in one\nFAIL the JUnit fragment was not written: cannot write ${dir}/lost/isdir: Is a directory\n0 failed, 2 passed\n", "a lost JUnit fragment is reported with its path and reason")
     c.eq_str(file_read("${dir}/lost/n.out") ?? "", "PASS serial\nFAIL the parallel names were not written, so the parallel tests cannot run: cannot write ${dir}/lost/isdir: Is a directory\n0 failed, 1 passed\n", "a lost names file is reported with its path and reason")
+    c.eq_str(file_read("${dir}/lost/m.out") ?? "", "PASS serial\nFAIL the --name matches were not written: cannot write ${dir}/lost/isdir: Is a directory\n0 failed, 1 passed\n", "a lost --name matches file is reported with its path and reason")
 
     _ = file_write("${dir}/want.txt", "Hello Avant\n")
     _ = file_write("${dir}/hello.want", "Hello Avant\n")

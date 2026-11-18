@@ -102,6 +102,12 @@ fn rules: Array(PRule) {
   xs.push(rule("bare-field-write", "stmt", "", "class Probe {\n  x: Int = 0\n\n  fn bump {\n@\n  }\n}\n\nfn main {\n  p = Probe.new()\n  p.bump()\n  puts(p.x)\n}\n", "", "x = 1", "self.x = 1", "x is a field of Probe"))
   // README "for": the loop variable cannot be assigned.
   xs.push(rule("for-variable-assign", "stmt", "", "fn main {\n  for i in 0..3 {\n@\n  }\n}\n", "", "i = 5", "puts(i)", "cannot assign to i"))
+  // README "for": over an Array of structs the loop variable is the
+  // element itself; the walked array keeps its size and order through its
+  // own name, and the place is not captured.
+  xs.push(rule("place-walk-change", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  for p in xs {\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "xs.push(p)", "ys.push(p)", "cannot push xs while walking it"))
+  xs.push(rule("place-each-walk-change", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  xs.each { |p|\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "xs.push(p)", "ys.push(p)", "cannot push xs while walking it"))
+  xs.push(rule("place-capture", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  for p in xs {\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "f = { || p.x }\nputs(f())", "w = p\nf = { || w.x }\nputs(f())", "a lambda cannot capture p"))
   // README "Visibility": a field without pub is private to its module.
   xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new()\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
   // README "Numbers": values of different number types do not mix.
@@ -125,6 +131,10 @@ fn rules: Array(PRule) {
   xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Array pxs"))
   xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join() ?? -1)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))
   // A zero-argument mutator written without parentheses is a mutation.
+  xs.push(rule("handler-capture-class", "stmt", "", "import std.http\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n  if server = Http.listen(0) {\n@\n    server.close()\n  }\n  puts(pb.n)\n}\n", "", "server.get(\"/\") { |req| Response.text(\"\${pb.n}\") }", "pn = pb.n\nserver.get(\"/\") { |req| Response.text(\"\${pn}\") }", "an HTTP handler cannot capture pb: its type, PBox, cannot cross"))
+  xs.push(rule("handler-assign-capture", "stmt", "", "import std.http\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n  if server = Http.listen(0) {\n@\n    server.close()\n  }\n  puts(pb.n)\n}\n", "", "pk = 1\nserver.get(\"/\") { |req|\n  pk = 2\n  Response.text(\"\${pk}\")\n}", "pk = 1\nserver.get(\"/\") { |req|\n  pj = 2\n  Response.text(\"\${pj + pk}\")\n}", "an HTTP handler cannot assign to pk"))
+  xs.push(rule("handler-array-mutate", "stmt", "", "import std.http\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n  if server = Http.listen(0) {\n@\n    server.close()\n  }\n  puts(pb.n)\n}\n", "", "pxs = [1, 2]\nserver.get(\"/\") { |req|\n  pxs.push(3)\n  Response.text(\"\${pxs.size}\")\n}", "pxs = [1, 2]\nserver.get(\"/\") { |req|\n  Response.text(\"\${pxs.size}\")\n}", "an HTTP handler cannot mutate captured Array pxs"))
+  xs.push(rule("handler-sender-mutate", "stmt", "", "import std.http\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n  if server = Http.listen(0) {\n@\n    server.close()\n  }\n  puts(pb.n)\n}\n", "", "pxs = [1, 2]\nserver.get(\"/\") { |req| Response.text(\"\${pxs.size}\") }\npxs.push(3)", "pxs = [1, 2]\npxs.push(3)\nserver.get(\"/\") { |req| Response.text(\"\${pxs.size}\") }", "cannot mutate pxs: an HTTP handler registered above reads it"))
   xs.push(rule("spawn-sender-mutate-bare", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.clear()\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join() ?? -1)\npxs.clear()", "cannot mutate pxs while a spawn using it is running"))
   xs.push(rule("spawn-array-mutate-bare", "stmt", "", tsite, "", "pxs = [2, 1]\nph = spawn {\n  pxs.sort()\n  pxs.size\n}\nputs(ph.join() ?? -1)", "pxs = [2, 1]\nph = spawn {\n  pys = pxs.sorted()\n  pys.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Array pxs"))
   // A captured Array is shared with the task, so its elements cross in
@@ -136,9 +146,17 @@ fn rules: Array(PRule) {
   // A `.parallel` block's messages name `.parallel`, not spawn.
   xs.push(rule("parallel-assign-capture", "stmt", "", tsite, "", "pk = 1\npys = [1, 2].parallel { |x|\n  pk = x\n  pk\n}\nputs(pys.size)", "pk = 1\npys = [1, 2].parallel { |x|\n  pj = x\n  pj + pk\n}\nputs(pys.size)", ".parallel cannot assign to pk: each body has its own copy"))
   xs.push(rule("parallel-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\npys = [1, 2].parallel { |x|\n  pxs.push(x)\n  pxs.size\n}\nputs(pys.size)", "pxs = [1, 2]\npys = [1, 2].parallel { |x|\n  pxs.size + x\n}\nputs(pys.size)", ".parallel cannot mutate captured Array pxs; it is read-only while the bodies run"))
+  // A captured Hash is shared and read-only as a captured Array is, and
+  // its values cross in turn.
+  xs.push(rule("spawn-hash-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\nph = spawn {\n  phh[\"b\"] = 2\n  phh.size\n}\nputs(ph.join() ?? -1)", "phh = [\"a\": 1]\nph = spawn {\n  (phh[\"a\"] ?? 0) + phh.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Hash phh"))
+  xs.push(rule("spawn-hash-sender-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\nph = spawn { phh.size }\nphh.delete(\"a\")\nputs(ph.join() ?? -1)", "phh = [\"a\": 1]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)\nphh.delete(\"a\")", "cannot mutate phh while a spawn using it is running"))
+  xs.push(rule("parallel-hash-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\npys = [1, 2].parallel { |x|\n  phh.clear()\n  x\n}\nputs(pys.size)", "phh = [\"a\": 1]\npys = [1, 2].parallel { |x|\n  x + (phh[\"a\"] ?? 0)\n}\nputs(pys.size)", ".parallel cannot mutate captured Hash phh; it is read-only while the bodies run"))
+  xs.push(rule("spawn-capture-hash-class", "stmt", "", tsite, "", "phh = [\"a\": pb]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)", "phh = [\"a\": pb.n]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)", "its keys or values (PBox) cannot cross to another task"))
   // README "Channel and Mutex": the value of `with`, when it is used, is
   // a plain value.
   xs.push(rule("mutex-with-value", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n@\n}\n", "", "pv = m.with { |b| b }\nputs(pv.n)", "pv = m.with { |b| b.n }\nputs(pv)", "Mutex.with's value cannot be PBox"))
+  // README "Clone": a deep copy, refused for a type holding a function value.
+  xs.push(rule("clone-fn-field", "stmt", "", "class PBox {\n  pub n: Int = 0\n  pub xs: Array(Int) = []\n}\n\nclass PFn {\n  pub f: fn(Int): Int\n\n  fn initialize(self.f) {\n  }\n}\n\nfn twice(n: Int): Int {\n  n * 2\n}\n\nfn main {\n  pb = PBox.new()\n  pq = PFn.new(twice)\n@\n}\n", "", "pc = pq.clone()\nputs(pc.f(1))", "pc = pb.clone()\nputs(pc.n)", "cannot clone PFn: a function value (PFn.f)"))
   // README "If": conditions are Bool, there is no truthiness.
   xs.push(rule("if-non-bool", "stmt", "", main_site, "", "if probe_k() {\n  puts(1)\n}", "if probe_k() > 0 {\n  puts(1)\n}", "if condition must be Bool"))
   // README "Line breaks": a line that starts with `-` or `[`
@@ -146,6 +164,9 @@ fn rules: Array(PRule) {
   // that says how to continue the line before.
   xs.push(rule("dangling-minus", "stmt", "", main_site, "", "pt = probe_k()\n- 1\nputs(pt)", "pt = probe_k() -\n  1\nputs(pt)", "this line starts with `-`"))
   xs.push(rule("dangling-bracket", "stmt", "", main_site, "", "pt = probe_k()\n[pt, 1]\nputs(pt)", "pt = [probe_k(),\n  1]\nputs(pt.size)", "this line starts with `[`"))
+  // A C function writes a local through &x, never a field, an element or a value.
+  csite = "lib pc {\n  struct PPair {\n    a: Int32\n  }\n  fun out_i(p: Ptr(Int32))\n  fun mk: Ptr(PPair)\n}\n\nfn main {\n@\n}\n"
+  xs.push(rule("c-out-local", "stmt", "", csite, "", "pp = pc.mk()\npc.out_i(&pp.a)", "pn: Int32 = 0\npc.out_i(&pn)", "&x takes a local"))
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
   // README "Enums" and "Switch".
   esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
@@ -216,7 +237,7 @@ fn rules: Array(PRule) {
   xs.push(rule("int-float-mix", "stmt", "", nsite, "", "puts(nf * ni)", "puts(nf * ni.to_f())", "an integer and a Float64 do not mix"))
   xs.push(rule("int-float-compare", "stmt", "", nsite, "", "puts(ni == nf)", "puts(ni.to_f() == nf)", "cannot compare Int with Float64"))
   xs.push(rule("compound-method-place", "stmt", "", nsite, "", "nvs[probe_k() - probe_k()] += PV { x: 1 }", "nvs[0] += PV { x: 1 }", "needs a place read without side effects"))
-  xs.push(rule("contains-without-eq", "stmt", "", nsite, "", "puts(nhs.contains(nhs[0]))", "puts(nvs.contains(nvs[0]))", "contains compares the elements with =="))
+  xs.push(rule("contains-without-eq", "stmt", "", nsite, "", "puts(nhs.has(nhs[0]))", "puts(nvs.has(nvs[0]))", "has compares the elements with =="))
   xs.push(rule("type-bound", "stmt", "", nsite, "", "puts(PTop.new(ni).best)", "puts(PTop.new(PCard { n: ni }).best.n)", "Int does not implement PRanked"))
   // README "Output": the writers print what interpolation prints, an
   // optional opened first; exit takes an Int, and a guard may end with it.
@@ -230,9 +251,9 @@ fn rules: Array(PRule) {
   vsite = "class POops: Error {\n  pub message: String = \"oops\"\n}\n\nfn pvoid(n: Int): Void | POops {\n  if n > 1 {\n    return POops.new()\n  }\n}\n\nfn main {\n@\n}\n"
   xs.push(rule("void-result-dropped", "stmt", "", vsite, "", "pvoid(probe_k())", "_ = pvoid(probe_k())", "drops a value that can be an error (Void | POops)"))
   xs.push(rule("void-guard-value", "stmt", "", vsite, "", "parse_age(\"1\") else e {\n  exit(1)\n}", "pvoid(probe_k()) else e {\n  exit(1)\n}", "an else guard without a name to assign"))
-  // README "Channel and Mutex": a recover function captures nothing, and
-  // m.recover(v) consumes v as Mutex(T).new(v) does.
-  xs.push(rule("mutex-recover-capture", "stmt", "", "import std.sync\n\nfn main {\n  k = probe_k()\n@\n}\n", "", "pm = Mutex(Int).new(0, recover: { || k })\nputs(pm.poisoned())", "pm = Mutex(Int).new(0, recover: { || 3 })\nputs(pm.poisoned())", "recover function cannot capture k"))
+  // README "Channel and Mutex": a recover function captures only plain
+  // values, and m.recover(v) consumes v as Mutex(T).new(v) does.
+  xs.push(rule("mutex-recover-capture", "stmt", "", "import std.sync\n\nfn main {\n  k = probe_k()\n  ks = [k]\n@\n}\n", "", "pm = Mutex(Int).new(0, recover: { || ks[0] })\nputs(pm.poisoned())", "pm = Mutex(Int).new(0, recover: { || k })\nputs(pm.poisoned())", "recover function cannot capture ks"))
   xs.push(rule("mutex-recover-consumed", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n  b = PBox.new()\n  m.recover(b)\n@\n}\n", "", "b.n += 1", "m.with { |x| x.n += 1 }", "was consumed by Mutex(PBox).recover"))
   // Every method call takes parentheses; a builtin read-only property
   // takes none.
@@ -246,6 +267,18 @@ fn rules: Array(PRule) {
   xs.push(rule("pop-is-optional", "stmt", "", csite, "", "pn: Int = pxs.pop()\nputs(pn)", "pn: Int = pxs.pop() ?? 0\nputs(pn)", "cannot assign Int? to Int"))
   xs.push(rule("negate-unsigned", "stmt", "", csite, "", "pu = 3u64\nputs(-pu)", "pu = 3u64\nputs(0u64 &- pu)", "unary minus of an unsigned value"))
   xs.push(rule("property-no-parens", "expr", "Int", csite, "", "ps.size()", "ps.size", "size is read without parentheses: write .size"))
+  // README "Key and value types": a struct key's derived hash comes from
+  // its fields, so a Float64 field is refused; a value is not optional.
+  hsite = "struct PKf {\n  x: Float64\n}\n\nstruct PKe {\n  x: Int\n\n  fn equals(o: PKe): Bool {\n    true\n  }\n\n  fn hash(h: Hasher) {\n  }\n}\n\nstruct PKi {\n  x: Int\n}\n\nfn main {\n@\n}\n"
+  xs.push(rule("hash-key-float-field", "stmt", "", hsite, "", "ph = Hash(PKf, Int).new()\nputs(ph.size)", "ph = Hash(PKi, Int).new()\nputs(ph.size)", "a Hash key cannot hold a Float64"))
+  xs.push(rule("hash-value-optional", "stmt", "", hsite, "", "ph = Hash(Int, String?).new()\nputs(ph.size)", "ph = Hash(Int, String).new()\nputs(ph.size)", "a Hash value cannot be optional"))
+  // README "Hashes": a missing key's default is `h[k] ?? d` (no get_or);
+  // a hash literal's entries share the first's types, and `[:]` needs a
+  // declared type. README "Sets": a set has no [ ].
+  xs.push(rule("hash-get-or", "stmt", "", hsite, "", "ph = [\"a\": 1]\nputs(ph.get_or(\"a\", 0))", "ph = [\"a\": 1]\nputs(ph[\"a\"] ?? 0)", "Hash has no get_or: write h[k] ?? default"))
+  xs.push(rule("hash-literal-untyped", "stmt", "", hsite, "", "ph = [:]\nputs(ph.size)", "ph: Hash(String, Int) = [:]\nputs(ph.size)", "an empty hash literal needs a type"))
+  xs.push(rule("hash-literal-value", "stmt", "", hsite, "", "ph = [\"a\": 1, \"b\": \"x\"]\nputs(ph.size)", "ph = [\"a\": 1, \"b\": 2]\nputs(ph.size)", "hash literal value is String, expected Int"))
+  xs.push(rule("set-no-index", "stmt", "", hsite, "", "pt = Set(Int).new()\nputs(pt[1])", "pt = Set(Int).new()\nputs(pt.has(1))", "a Set has no [ ]"))
   xs
 }
 

@@ -118,12 +118,16 @@ fn trap_cases: Array(SCase) {
 
 fn lib_cases: Array(SCase) {
   xs: Array(SCase) = []
-  xs.push(accepted("lib-json-error", "import std.json\nimport std.regex\n\nfn main {\n  switch Json.parse(\"{\\\"a\\\": 1,}\") {\n    case e: JsonError {\n      puts(\"\${e}\")\n      puts(e.offset)\n    }\n    case Json { }\n  }\n  switch Json.parse(\"[1, 2\") {\n    case e2: JsonError {\n      puts(e2.message)\n    }\n    case Json { }\n  }\n  switch Regex.compile(\"(unclosed\") {\n    case e3: RegexError {\n      puts(\"\${e3}\")\n      puts(e3.offset)\n    }\n    case Regex { }\n  }\n  puts(JsonError.new(\"mine\").offset)\n}\n", "invalid JSON at byte 7: trailing comma is not allowed\n7\ninvalid JSON at byte 5: unexpected end of data\ninvalid regular expression at offset 9: missing closing parenthesis\n9\n-1\n"))
-  xs.push(trapped("lib-builder-end", "import std.json\nfn main {\n  b = Json.arr()\n  puts(b.end().to_s())\n  b.end()\n}\n", "[]\n", "avant runtime: JsonBuilder.end: nothing open"))
-  xs.push(trapped("lib-builder-key", "import std.json\nfn main {\n  b = Json.arr()\n  b.key(\"x\")\n}\n", "", "avant runtime: JsonBuilder.key: not inside an object"))
+  xs.push(accepted("lib-json-error", "import std.json\nimport std.regex\n\nfn main {\n  switch Json.parse(\"{\\\"a\\\": 1,}\") {\n    case e: JsonError {\n      puts(\"\${e}\")\n      puts(e.offset ?? -1)\n    }\n    case Json { }\n  }\n  switch Json.parse(\"[1, 2\") {\n    case e2: JsonError {\n      puts(e2.message)\n    }\n    case Json { }\n  }\n  switch Regex.compile(\"(unclosed\") {\n    case e3: RegexError {\n      puts(\"\${e3}\")\n      puts(e3.offset ?? -1)\n    }\n    case Regex { }\n  }\n  puts(JsonError.new(\"mine\").offset ?? -1)\n  puts(RegexError.new(\"mine\").offset ?? -1)\n}\n", "invalid JSON at byte 7: trailing comma is not allowed\n7\ninvalid JSON at byte 5: unexpected end of data\ninvalid regular expression at offset 9: missing closing parenthesis\n9\n-1\n-1\n"))
+  xs.push(refused("lib-json-iter-gone", "import std.json\nfn main {\n  if v = Json.parse(\"[1]\") {\n    it = v.iter()\n  }\n}\n", "iter"))
+  xs.push(refused("lib-json-f64s-gone", "import std.json\nfn main {\n  if v = Json.parse(\"[{\\\"x\\\": 1.5}]\") {\n    xs = v.f64s(\"x\")\n  }\n}\n", "f64s"))
+  xs.push(refused("lib-json-offset-optional", "import std.json\nfn main {\n  e = JsonError.new(\"mine\")\n  n: Int = e.offset\n}\n", "Int?"))
+  xs.push(refused("lib-json-arr-is-a-reader", "import std.json\nfn main {\n  b = Json.arr()\n}\n", "Json.arr is an instance method"))
+  xs.push(trapped("lib-builder-end", "import std.json\nfn main {\n  b = Json.array()\n  puts(b.end().to_s())\n  b.end()\n}\n", "[]\n", "avant runtime: JsonBuilder.end: nothing open"))
+  xs.push(trapped("lib-builder-key", "import std.json\nfn main {\n  b = Json.array()\n  b.key(\"x\")\n}\n", "", "avant runtime: JsonBuilder.key: not inside an object"))
   xs.push(trapped("lib-builder-key-top", "import std.json\nfn main {\n  b = JsonBuilder.new()\n  b.key(\"x\")\n}\n", "", "avant runtime: JsonBuilder.key: not inside an object"))
-  xs.push(trapped("lib-builder-open", "import std.json\nfn main {\n  b = Json.obj()\n  b.key(\"a\").arr()\n  puts(b.to_s())\n}\n", "", "avant runtime: JsonBuilder.to_s: 2 containers still open"))
-  xs.push(accepted("lib-builder-ok", "import std.json\nfn main {\n  b = Json.obj()\n  b.set(\"a\", 1)\n  b.key(\"xs\").arr().add(1).add(2).end()\n  puts(b.end().to_s())\n}\n", "{\"a\":1,\"xs\":[1,2]}\n"))
+  xs.push(trapped("lib-builder-open", "import std.json\nfn main {\n  b = Json.object()\n  b.key(\"a\").arr()\n  puts(b.to_s())\n}\n", "", "avant runtime: JsonBuilder.to_s: 2 containers still open"))
+  xs.push(accepted("lib-builder-ok", "import std.json\nfn main {\n  b = Json.object()\n  b.set(\"a\", 1)\n  b.key(\"xs\").arr().add(1).add(2).end()\n  puts(b.end().to_s())\n}\n", "{\"a\":1,\"xs\":[1,2]}\n"))
   xs.push(trapped("lib-regex-closed-find", "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\") {\n    re.close()\n    puts(\"closed\")\n    if m = re.find(\"aa\") {\n      puts(m.start)\n    }\n  }\n}\n", "closed\n", "avant runtime: Regex used after close"))
   xs.push(trapped("lib-regex-closed-count", "import std.regex\nfn main {\n  if re = Regex.compile(\"b\") {\n    re.close()\n    re.close()\n    puts(re.count(\"bb\"))\n  }\n}\n", "", "avant runtime: Regex used after close"))
   xs
@@ -131,7 +135,7 @@ fn lib_cases: Array(SCase) {
 
 fn small_cases: Array(SCase) {
   xs: Array(SCase) = []
-  xs.push(accepted("small-delete", "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 7\n  if v = h.delete(\"a\") {\n    puts(v)\n  }\n  puts(h.delete(\"a\") ?? -1)\n  puts(h.size)\n  s = Hash(String, String).new()\n  s[\"k\"] = \"v\"\n  puts(s.delete(\"k\") ?? \"none\")\n  puts(s.delete(\"k\") ?? \"none\")\n  n = Hash(Int, Int).new()\n  n[3] = 9\n  n.delete(4)\n  puts(n.delete(3) ?? 0)\n  puts(n.has_key(3))\n}\n", "7\n-1\n0\nv\nnone\n9\nfalse\n"))
+  xs.push(accepted("small-delete", "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 7\n  if v = h.delete(\"a\") {\n    puts(v)\n  }\n  puts(h.delete(\"a\") ?? -1)\n  puts(h.size)\n  s = Hash(String, String).new()\n  s[\"k\"] = \"v\"\n  puts(s.delete(\"k\") ?? \"none\")\n  puts(s.delete(\"k\") ?? \"none\")\n  n = Hash(Int, Int).new()\n  n[3] = 9\n  n.delete(4)\n  puts(n.delete(3) ?? 0)\n  puts(n.has(3))\n}\n", "7\n-1\n0\nv\nnone\n9\nfalse\n"))
   xs.push(trapped("small-chars", "fn main {\n  puts(\"x\".chars().size)\n  s = \"a\${chr(255)}b\"\n  puts(s.chars().size)\n}\n", "1\n", "avant runtime: String.chars needs valid UTF-8"))
   xs.push(accepted("small-chars-ok", "fn main {\n  cs = \"héllo\".chars()\n  puts(cs.size)\n  puts(cs[1])\n}\n", "5\né\n"))
   xs
@@ -167,12 +171,12 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
       }
       if f3.err.size > 0 {
         err = log_text("${dir}/sys-${f3.tag}.run.err")
-        c.expect(str_has(err, f3.err), "${f3.tag}: stderr says ${f3.err}")
+        c.expect(err.contains(f3.err), "${f3.tag}: stderr says ${f3.err}")
       }
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/sys-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
     }
   }
 }

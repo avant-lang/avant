@@ -35,7 +35,11 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
   ts = lw.lw_m.types
   if t.is_hash() {
     fields: Array(Int) = []
-    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed"]
+    // runtime/avant_hash.c's AvantHash: the three buffers (its only
+    // references), the size and capacity, the descriptor and the seed,
+    // the compact layout's used entries, four bytes of decoded widths,
+    // and the count of added keys a walk reads (field 9, byte 48).
+    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed", "used", "widths", "adds"]
     fields.push(mt_ref())
     fields.push(mt_ref())
     fields.push(mt_ref())
@@ -43,6 +47,9 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
     fields.push(mt_i32())
     fields.push(mt_i32())
     fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_u32())
     return ts.ref_to(lw.lw_b.note_layout("Hash", mlk_hash(), fields, names))
   }
   if t.is_buf() {
@@ -266,6 +273,9 @@ pub fn (lw: MirLower) array_header_empty(aty: Int): MOperand {
 // avant_gc_verify.c. The verifier no longer accepts that form.)
 pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
   b = lw.lw_b
+  if t = e.ty, t.is_set() {
+    return lw.lower_set_lit(e, t)
+  }
   aty = lw.ety(e)
   if lw.failed() {
     return b.c_i32(0)
@@ -479,10 +489,28 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // AVANT_ARRAY_FROZEN): the runtime's mutators test it (push only on its
 // growth path, which a frozen array always takes), and the mutations
 // generated code makes itself test it here: an element store
-// (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, and a sort with
-// a block. The ops are avant_rt.h's AVANT_FROZEN_*.
+// (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, a sort with a
+// block, `delete_if`, `delete_at`, and a `fill` of elements other than
+// numbers, a `shuffle` and a `try_delete_at` (generic functions' loops,
+// checked at their call). The ops are avant_rt.h's AVANT_FROZEN_*.
 pub fn mir_frozen_clear: Int {
   2
+}
+
+pub fn mir_frozen_fill: Int {
+  3
+}
+
+pub fn mir_frozen_delete_if: Int {
+  8
+}
+
+pub fn mir_frozen_delete_at: Int {
+  10
+}
+
+pub fn mir_frozen_shuffle: Int {
+  12
 }
 
 pub fn mir_frozen_sort: Int {
@@ -498,15 +526,63 @@ pub fn mir_frozen_store: Int {
 // spawns or uses .parallel (its module is shared: the pre-walk of every
 // function sets it before any is lowered, lower_task.av) can freeze an
 // array, so any other program's code is the same as without the freeze.
+//
+// A program with a call that freezes the Array holding its receiver
+// (Expr.elem_hold, lower_agg.av held_method_call) tests `clear` and a
+// sort with a block too, whether it spawns or not; there the cold block
+// asks the runtime (`avant_array_frozen`), which names the method call
+// when this thread's call froze the Array, and lets an element store
+// through when only such calls did (they freeze the size and the order,
+// not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
-  if !lw.lw_m.shared {
+  holds = lw.lw_m.elem_holds
+  if !lw.lw_m.shared && (!holds || op == mir_frozen_store()) {
     return
   }
   b = lw.lw_b
   w = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 2))))
   frozen = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), w, b.c_i32(0)))
   ok = lw.trap_open(frozen, true)
+  if holds {
+    b.call(-1, "avant_array_frozen", lw.two(b.copy_local(h), b.c_i32(op)))
+    b.goto(ok)
+    b.at(ok)
+    lw.at(loc)
+    return
+  }
   lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
+}
+
+// An array verb written as a generic function of the program
+// (checker/verbs.av) changes its array (the first argument) by element
+// stores, which a running element method's freeze lets through: the
+// change is tested against the array's freeze here, at the call, under
+// the verb's own name (frozen_check, above).
+pub fn mir_verb_frozen_op(callee: String): Int {
+  if callee == "__avant_fill" {
+    return mir_frozen_fill()
+  }
+  if callee == "__avant_shuffle" {
+    return mir_frozen_shuffle()
+  }
+  if callee == "__avant_try_delete_at" {
+    return mir_frozen_delete_at()
+  }
+  -1
+}
+
+pub fn (lw: MirLower) verb_frozen_check(e: Expr, args: Array(MOperand)) {
+  op = mir_verb_frozen_op(e.callee)
+  if op < 0 || args.size == 0 || e.args.size == 0 {
+    return
+  }
+  aty = lw.ety(e.args[0])
+  if lw.failed() {
+    return
+  }
+  h = lw.hold(args[0], aty)
+  lw.frozen_check(h, op, e.loc)
+  args[0] = lw.lw_b.copy_local(h)
 }
 
 // The levels of an Array type (Array(Array(T)) has 2) and its innermost
@@ -538,16 +614,87 @@ pub fn mir_array_innermost(t: Ty): Ty {
   x
 }
 
-// `avant_array_freeze(a, depth)` of the Array value v of type t.
+// A captured Hash is frozen as an Array is, and an Array or Hash of
+// either at every level (a Hash(String, Array(Int)), an
+// Array(Hash(String, Int))): the levels of such a type, outermost first,
+// each an Array or a Hash (the value type of a Hash, the element type of
+// an Array, until neither), and which of them are hashes, bit i for
+// level i.
+pub fn mir_freeze_levels(t: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  x = t
+  while x.is_array() || x.is_hash() {
+    out.push(x)
+    nx: Ty? = nil
+    if x.is_array() {
+      nx = x.inner
+    } else {
+      nx = x.val
+    }
+    if n = nx {
+      x = n
+    } else {
+      break
+    }
+  }
+  out
+}
+
+pub fn mir_freeze_hashes(t: Ty): Int {
+  bits = 0
+  bit = 1
+  for lv in mir_freeze_levels(t) {
+    if lv.is_hash() {
+      bits = bits | bit
+    }
+    bit = bit << 1
+  }
+  bits
+}
+
+// Whether a captured value of type t is frozen while its task runs.
+pub fn mir_freezes(t: Ty): Bool {
+  t.is_array() || t.is_hash()
+}
+
+// `avant_array_freeze(a, depth)` of the Array value v of type t, or
+// `avant_value_freeze(v, depth, hashes)` when a level of t is a Hash.
 pub fn (lw: MirLower) freeze_array(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
   lw.at(loc)
+  hashes = mir_freeze_hashes(t)
+  if hashes != 0 {
+    depth = mir_freeze_levels(t).size
+    b.call(-1, "avant_value_freeze", lw.three(v, b.c_i32(depth), b.c_u32(hashes)))
+    return
+  }
   b.call(-1, "avant_array_freeze", lw.two(v, b.c_i32(mir_array_depth(t))))
 }
 
-// `avant_array_thaw(a, depth, elem_size)` of the Array value v of type t.
+// `avant_array_thaw(a, depth, elem_size)` of the Array value v of type t,
+// or `avant_value_thaw(v, depth, hashes, elem_size)` when a level of t is
+// a Hash (elem_size the innermost level's elements', 0 when that level is
+// a Hash).
 pub fn (lw: MirLower) thaw_array(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
+  hashes = mir_freeze_hashes(t)
+  if hashes != 0 {
+    levels = mir_freeze_levels(t)
+    last = levels[levels.size - 1]
+    es = b.c_u64(0)
+    if last.is_array() {
+      aty = lw.ty_at(last, loc, "a captured Array")
+      if lw.failed() {
+        return
+      }
+      es = lw.elem_size(aty)
+    }
+    lw.at(loc)
+    ops = lw.three(v, b.c_i32(levels.size), b.c_u32(hashes))
+    ops.push(es)
+    b.call(-1, "avant_value_thaw", ops)
+    return
+  }
   inner = lw.ty_at(mir_array_innermost(t), loc, "a captured Array")
   if lw.failed() {
     return
@@ -564,6 +711,8 @@ pub fn (lw: MirLower) index_place(e: Expr): MPlace {
   b = lw.lw_b
   store = lw.lw_task.store_check
   lw.lw_task.store_check = false
+  want_hold = lw.lw_task.hold_req
+  lw.lw_task.hold_req = false
   if arr = e.left, ix = e.right {
     aty = lw.ety(arr)
     i = lw.snap(lw.lower_expr(ix), arr)
@@ -573,6 +722,11 @@ pub fn (lw: MirLower) index_place(e: Expr): MPlace {
     }
     lw.at(e.loc)
     h = lw.hold(a, aty)
+    if want_hold {
+      if at0 = arr.ty, at0.is_array() {
+        lw.lw_task.hold_arr = h
+      }
+    }
     if store && lw.lw_m.shared {
       if at = arr.ty, at.is_array() {
         lw.seq_bounds(h, i, e.proven)
@@ -759,6 +913,16 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if name == "get" {
     return lw.lower_get(e, recv, rt, args)
   }
+  if name == "join" && args.size == 1 {
+    // An Array(String)'s elements with the separator between them: the
+    // separator, then the array; the result allocated once.
+    ops = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    return lw.str_call("avant_str_join", ops)
+  }
   if name == "index_of" || name == "min" || name == "max" {
     return lw.lower_arr_opt(e, recv, rt, name, args)
   }
@@ -776,8 +940,8 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(recv)
-  // The value first, then the receiver: push, contains, fill.
-  if (name == "push" || name == "contains" || name == "fill") && args.size == 1 {
+  // The value first, then the receiver: push, has, fill.
+  if (name == "push" || name == "has" || name == "contains" || name == "fill") && args.size == 1 {
     v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
     a = lw.lower_expr(recv)
     if lw.failed() {
@@ -812,11 +976,89 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     cf = lw.kind_fn("avant_array_contains", cet, true)
     if cf.size == 0 {
-      lw.refuse(e.loc, "Array.contains on ${want.show()}")
+      lw.refuse(e.loc, "Array.${name} on ${want.show()}")
       return zero
     }
     r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  if name == "insert" && args.size == 2 {
+    // The value, the position, then the receiver; the runtime opens the
+    // slot at the position (moving the rest up) and the value is stored
+    // through it, as a push's.
+    v = lw.snap(lw.snap(lw.lower_coerced(args[1], et, want), args[0]), recv)
+    ip = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hi = lw.hold(a, aty)
+    four = lw.two(b.copy_local(hi), ip)
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    s = b.temp(b.types.addr_of(et))
+    b.call(s, "avant_array_insert_slot", four)
+    b.assign(b.deref(b.pl(s)), b.rv_use(v))
+    return zero
+  }
+  if name == "delete_at" && args.size == 1 {
+    // The position, then the receiver; the element read as xs[i] (its
+    // bounds checked), then removed.
+    ip = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hd = lw.hold(a, aty)
+    k = lw.hold(ip, mt_int())
+    lw.frozen_check(hd, mir_frozen_delete_at(), e.loc)
+    pl = lw.seq_place(hd, aty, b.copy_local(k), false)
+    got = lw.tmp(et, b.rv_use(b.copy(pl)))
+    four = lw.two(b.copy_local(hd), b.copy_local(k))
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    b.call(-1, "avant_array_delete_at", four)
+    return got
+  }
+  if name == "concat" && args.size == 1 {
+    // The other array, then the receiver.
+    o = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hc = lw.hold(a, aty)
+    four = lw.two(b.copy_local(hc), o)
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    b.call(-1, "avant_array_concat", four)
+    return zero
+  }
+  if name == "slice" && (args.size == 1 || args.size == 2) {
+    // A new array of the elements start up to stop (the size when there
+    // is no stop): the bounds, then the receiver.
+    ops = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hs = lw.hold(ops[0], aty)
+    sargs: Array(MOperand) = []
+    sargs.push(b.copy_local(hs))
+    sargs.push(ops[1])
+    if args.size == 1 {
+      sargs.push(lw.seq_size(hs))
+    } else {
+      sargs.push(ops[2])
+    }
+    sargs.push(lw.elem_size(aty))
+    sargs.push(lw.buf_tid(aty))
+    r = b.temp(aty)
+    b.call(r, "avant_array_slice", sargs)
+    return b.copy_local(r)
   }
   if args.size > 0 && name != "reserve" {
     lw.refuse(e.loc, "Array.${name} with arguments")
@@ -865,6 +1107,18 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if name == "reverse" {
     b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
+  }
+  if name == "clone" || name == "dup" || name == "reversed" {
+    // A new array of the same elements (in the reverse order): dup and
+    // reversed, and the clone of an array whose elements are their own
+    // copy (the checker made any other clone a call); a new buffer of the
+    // same bytes, the routine sorted copies with.
+    c = b.temp(aty)
+    b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
+    if name == "reversed" {
+      b.call(-1, "avant_array_reverse", lw.two(b.copy_local(c), lw.elem_size(aty)))
+    }
+    return b.copy_local(c)
   }
   if name == "sort" || name == "sorted" {
     sf = lw.kind_fn("avant_array_sort", et, false)

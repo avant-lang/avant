@@ -1,0 +1,41 @@
+// to_ascii_lower, to_ascii_upper and eq_ignore_ascii_case: only the
+// ASCII letters change or compare without their case; every other byte,
+// UTF-8 included, stays as it is, so the size never changes.
+
+fn converting {
+  puts("Content-Length: 42".to_ascii_lower())
+  puts("Content-Length: 42".to_ascii_upper())
+  puts("ÀÉ straße".to_ascii_upper())
+  puts("ÀÉ STRASSE".to_ascii_lower())
+  puts("ÀÉ".to_ascii_lower().size)
+  puts("@[`{".to_ascii_lower() + "@[`{".to_ascii_upper())
+  puts("".to_ascii_upper().size)
+  long = "a header name that is already lower case, long enough to be a view"
+  puts(long.slice(2, 8).to_ascii_upper())
+  puts(long.to_ascii_lower() == long)
+}
+
+fn comparing {
+  puts("Content-Type".eq_ignore_ascii_case("content-type"))
+  puts("HOST".eq_ignore_ascii_case("host"))
+  puts("host".eq_ignore_ascii_case("hosts"))
+  puts("".eq_ignore_ascii_case(""))
+  puts("@".eq_ignore_ascii_case("`"))
+  puts("[".eq_ignore_ascii_case("{"))
+  puts("É".eq_ignore_ascii_case("é"))
+  puts("Straße".eq_ignore_ascii_case("STRAßE"))
+  b = "KEEP-Alive".bytes
+  puts(b.eq_ignore_ascii_case("keep-alive"))
+  buf = Buf.new()
+  buf.push_str("Upgrade")
+  puts(buf.eq_ignore_ascii_case(b))
+  puts(buf.eq_ignore_ascii_case("upgrade".bytes))
+  other = Buf.new()
+  other.push_str("UPGRADE")
+  puts(buf.eq_ignore_ascii_case(other))
+}
+
+fn main {
+  converting()
+  comparing()
+}

@@ -81,13 +81,24 @@ build_core() {
     # shellcheck disable=SC2086
     "$cc" -c $cflags -o "$out/$name.o" "$root/$name.c"
   done
+  # The stack overflow's unit (avant_stack.c) joins the last object every
+  # program links, so its code and its main-thread signal stack (.bss)
+  # come after everything else: placed first, or among the core units, it
+  # moved the runtime's code and data after it, which measured slows a
+  # LangArena task by a few percent (the link table names no new object,
+  # so the seed links it too).
+  # shellcheck disable=SC2086
+  "$cc" -c $cflags -o "$out/avant_stack.unit.o" "$root/avant_stack.c"
+  mv "$out/avant_cov.o" "$out/avant_cov.unit.o"
+  ld -r -o "$out/avant_cov.o" "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
+  rm -f "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
 }
 
 build_core "$root/build"
 # The seed-ABI copy an older build made (a 32-bit avant_int for the
 # v0.40.0 seed's B) is gone; a checkout built before keeps none.
 rm -rf "$root/build/seed-abi"
-for name in avant_json.c avant_http.c avant_base64.c avant_sys.c; do
+for name in avant_json.c avant_http.c avant_base64.c avant_sys.c avant_os.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
 
@@ -116,6 +127,10 @@ rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
 # object the compiler's std.regex row names, so a program needs no libpcre2.
 # Its symbols are made local after the merge: nothing outside avant_re.c
 # calls PCRE2, and a program that binds a system PCRE2 itself cannot clash.
+# HEAP_LIMIT (KiB) is the runtime's own default, 256 MiB, in place of
+# PCRE2's 20 GB; with PCRE2's match and depth limits (ten million) it is
+# what std.regex's Regex.compile defaults to, so a Regex with the default
+# limits matches with no match context (avant_re.c, cache entries).
 pcre="$root/third_party/pcre2"
 pcre_out="$root/build/pcre2"
 rm -rf "$pcre_out"
@@ -125,7 +140,7 @@ for f in auto_possess chkdint chartables compile compile_cgroup compile_class co
   pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
 do
   "$cc" -c -O2 -pthread -fno-omit-frame-pointer -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
-    -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
+    -DHEAP_LIMIT=262144 -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
 done
 "$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
 ld -r -o "$root/build/avant_re.o" "$root/build/avant_re_own.o" "$pcre_out"/*.o
@@ -167,6 +182,14 @@ compile "$us/loop.c" "$root/build/us_loop.o"
 compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
+
+# Every avant_* symbol an object calls is defined globally by one of them:
+# a hidden function of a core unit that another object calls is made local
+# by the merge above unless avant_rt.exports lists it, and the surface
+# check cannot see that (the exports file is its reference); the link of
+# the first program needing that object would fail instead, far from the
+# cause. link-check.sh names the symbol, the object and the reason.
+sh "$root/link-check.sh" "$root/build" "$root/avant_rt.exports"
 
 # The bind helper: tools/bind.c against libclang, into
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;

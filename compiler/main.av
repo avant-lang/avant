@@ -2,7 +2,9 @@ import ast
 import bindgen
 import checker
 import checker.builtins
+import checker.clone
 import checker.equality
+import checker.verbs
 import checker.printing
 import checker.entry
 import checker.facts
@@ -10,6 +12,7 @@ import checker.guard
 import checker.hints
 import checker.lambda
 import checker.match
+import checker.places
 import checker.register
 import checker.receiver
 import checker.spawn
@@ -27,6 +30,7 @@ import llvm.glue
 import mir.selftest
 import mir.ir
 import mir.print
+import migrate
 import loader
 import location
 import parser
@@ -69,7 +73,7 @@ pub fn show_usage {
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
-  puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
+  puts("With no flag, run and test use --debug (fast) and compile uses --release (full optimization).")
   puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
   puts("--cpu=baseline|v2|v3|v4|native: the x86-64 level of the code. compile defaults to v2; run and test use this machine's highest level.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
@@ -113,7 +117,8 @@ fn spawns_children(command: String): Bool {
 
 // The .av files under dir (format's directory argument), walked like
 // `avant test` walks tests/: a name that starts with `.` and a directory
-// named `deps` are skipped.
+// named `deps` are skipped, and a symbolic link to a directory is not
+// followed (a link to a file is formatted as the file).
 fn format_walk(dir: String, into: Array(String)) {
   names = dir_list(dir) ?? []
   i = 0
@@ -129,7 +134,7 @@ fn format_walk(dir: String, into: Array(String)) {
     }
     if str_ends(name, ".av") {
       into.push(path)
-    } else if file_exists("${path}/.") {
+    } else if file_exists("${path}/.") && !path_is_link(path) {
       format_walk(path, into)
     }
   }
@@ -161,8 +166,47 @@ fn format_usage_error(message: String) {
 // read or formatted is reported and the status is 1; the other files are
 // still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
-  if args.size > 0 && args[0] == "--calls" {
-    driver_format_calls(argv_drop_first(args))
+  // --calls rewrites the files in place, so --write beside it (before or
+  // after, in any order) asks for what it does anyway; --check is refused,
+  // and so is any other flag, before a file is read
+  calls = false
+  for a in args {
+    if a == "--calls" {
+      calls = true
+    }
+  }
+  lambdas = false
+  for a in args {
+    if a == "--lambdas" {
+      lambdas = true
+    }
+  }
+  if lambdas {
+    lfiles: Array(String) = []
+    for a in args {
+      if a == "--check" || a == "--calls" {
+        format_usage_error("format --lambdas writes the files it changes; it takes no ${a}")
+      } else if a != "--lambdas" && a != "--write" && str_starts(a, "-") {
+        format_usage_error("unknown format argument ${a}")
+      } else if a != "--lambdas" && a != "--write" {
+        lfiles.push(a)
+      }
+    }
+    driver_format_lambdas(lfiles)
+    return
+  }
+  if calls {
+    files: Array(String) = []
+    for a in args {
+      if a == "--check" {
+        format_usage_error("format --calls writes the files it changes; it takes no --check")
+      } else if a != "--calls" && a != "--write" && str_starts(a, "-") {
+        format_usage_error("unknown format argument ${a}")
+      } else if a != "--calls" && a != "--write" {
+        files.push(a)
+      }
+    }
+    driver_format_calls(files)
     return
   }
   check = false
@@ -519,7 +563,9 @@ pub fn driver_run(args: Array(String)) {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    attach_std_link(box, job)
+    if !attach_std_link(box, job) {
+      diag_exit(1)
+    }
     // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
@@ -567,7 +613,9 @@ pub fn driver_compile(args: Array(String)) {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    attach_std_link(box, job)
+    if !attach_std_link(box, job) {
+      diag_exit(1)
+    }
     if m = box.mir {
       // The driver leaves this line to its caller.
       err = llvm_build(m, llvm_job_of(job), out_path)
@@ -675,9 +723,9 @@ pub fn driver_fetch(args: Array(String)) {
 // Internal, not in the usage text: compiles a textual LLVM IR file to an
 // object with the in-process LLVM (compiler/llvm/glue.av).
 //   avant __llvm-obj IN.ll OUT.o [--debug|--release]
-// No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
+// No flag is --release, compile's default. Exit 0, or 1 with the message on stderr.
 fn driver_llvm_obj(args: Array(String)) {
-  codegen = "default"
+  codegen = "release"
   files: Array(String) = []
   for a in args {
     if a == "--debug" {
@@ -709,12 +757,12 @@ fn driver_llvm_obj(args: Array(String)) {
 //   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
 //                    [--object] [--call-forms] [--time]
 //   avant __mir-build --list
-// No flag is compile's bare mode. --object stops at the object (OUT); a
+// No flag is --release, compile's default. --object stops at the object (OUT); a
 // module without `main` needs it. --call-forms emits allocation and the
 // barrier as calls. --time prints the phases' microseconds on stderr.
 // Exit 0, or 1 with the message on stderr.
 fn driver_mir_build(args: Array(String)) {
-  job = LlvmJob.new("default")
+  job = LlvmJob.new("release")
   files: Array(String) = []
   object = false
   timed = false
@@ -734,6 +782,8 @@ fn driver_mir_build(args: Array(String)) {
     } else if a == "--emit-ll" && i + 1 < args.size {
       job.keep_ll = args[i + 1]
       i += 1
+    } else if str_starts(a, "--emit-ll=") {
+      job.keep_ll = str_slice(a, 10, a.size)
     } else if a == "--object" {
       object = true
     } else if a == "--call-forms" {

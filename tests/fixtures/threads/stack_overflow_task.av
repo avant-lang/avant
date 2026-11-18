@@ -1,0 +1,16 @@
+// A recursion too deep for a pool worker's stack, in a spawned task: the
+// stack cannot be given back at any instruction, so the stack overflow
+// ends the program as on the main thread (status 1), naming the task.
+fn depth(n: Int): Int {
+  if n == 0 {
+    return 0
+  }
+  d = depth(n - 1)
+  d + 1 + ((d + n) & 1)
+}
+
+fn main {
+  puts("start")
+  h = spawn { depth(100000000) }
+  puts(h.join() ?? -1)
+}

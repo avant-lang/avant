@@ -20,6 +20,7 @@ const str.4 = "-x"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %byval.Keep stride 0 bits [0x10]
 
 extern __avant_type_maps() -> void never
@@ -27,7 +28,8 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_f64(f64) -> void never
 extern avant_puts_i64(i64) -> void never
-extern avant_str_cat_i32(ref str, i64) -> ref str collects
+extern avant_str_c_arg(ref str) -> ref str collects
+extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_trap_convert(i64, i32) -> void never noreturn
 extern ffi_big_make(i64) -> %byval.Big collects
@@ -91,53 +93,65 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @byval.av:84:1 {
   let _43: i64
   let _44: i64
   let _45: ref str
-  let _46: %byval.Named slot
-  let _47: i32
-  let _48: i64
-  let _49: %byval.Flags
+  let _46: %byval.Named
+  let _47: %byval.Named slot
+  let _48: ref str slot
+  let _49: ref str
   let _50: i32
   let _51: i64
   let _52: %byval.Flags
   let _53: i32
   let _54: i64
-  let _55: %byval.Q2
-  let _56: i64
-  let _57: %byval.Big
-  let _58: %byval.Named slot
-  let _59: ref %byval.Keep
-  let _60 (k): ref %byval.Keep slot
-  let _61: %byval.Big
-  let _62: i64
-  let _63: %byval.Named slot
-  let _64: i32
+  let _55: %byval.Flags
+  let _56: i32
+  let _57: i64
+  let _58: %byval.Q2
+  let _59: i64
+  let _60: %byval.Big
+  let _61: %byval.Named slot
+  let _62: ref %byval.Keep
+  let _63 (k): ref %byval.Keep slot
+  let _64: %byval.Big
   let _65: i64
-  let _66 (i): i64
-  let _67 (acc): i64
-  let _68: bool
-  let _69: i64
-  let _70: i64
-  let _71: bool
-  let _72: bool
-  let _73: bool
+  let _66: %byval.Named
+  let _67: %byval.Named slot
+  let _68: ref str slot
+  let _69: ref str
+  let _70: i32
+  let _71: i64
+  let _72 (i): i64
+  let _73 (acc): i64
   let _74: bool
-  let _75: i32
-  let _76: ref str slot
-  let _77: ref str
-  let _78: %byval.Named slot
-  let _79: i32
-  let _80: i64
-  let _81: i64
-  let _82: i64
+  let _75: i64
+  let _76: i64
+  let _77: bool
+  let _78: bool
+  let _79: bool
+  let _80: bool
+  let _81: i32
+  let _82: ref str slot
+  let _83: ref str
+  let _84: %byval.Named
+  let _85: %byval.Named slot
+  let _86: ref str slot
+  let _87: ref str
+  let _88: i32
+  let _89: i64
+  let _90: i64
+  let _91: i64
 
 bb0:
-  _46 = zero   @84:1
-  _58 = zero   @84:1
-  _60 = zero   @84:1
+  _47 = zero   @84:1
+  _48 = zero   @84:1
+  _61 = zero   @84:1
   _63 = zero   @84:1
-  _76 = zero   @84:1
-  _78 = zero   @84:1
+  _67 = zero   @84:1
+  _68 = zero   @84:1
+  _82 = zero   @84:1
+  _85 = zero   @84:1
+  _86 = zero   @84:1
   gc.enter   @84:1
-  gc.roots _2, _46, _58, _60, _63, _76, _78   @84:1
+  gc.roots _2, _47, _48, _61, _63, _67, _68, _82, _85, _86   @84:1
   call __avant_type_maps() nocollect   @84:1
   call avant_io_init_argv(copy _1, copy _2) collects   @84:1
   _3 = struct %byval.P2 (const i32 4, const i32 2)   @85:22
@@ -199,70 +213,82 @@ bb0:
   call avant_puts_i64(copy _44) nocollect   @104:3
   _45 = call avant_str_concat(const str.0, const str.1) collects   @105:45
   _46 = struct %byval.Named (const i32 3, copy _45)   @105:21
-  _47 = call ffi_named(copy _46) collects   @105:10
-  _48 = cast copy _47 to i64   @105:3
-  call avant_puts_i64(copy _48) nocollect   @105:3
-  _49 = struct %byval.Flags (const bool true, const bool false, const i32 5)   @106:21
-  _50 = call ffi_flags(copy _49) collects   @106:10
-  _51 = cast copy _50 to i64   @106:3
-  call avant_puts_i64(copy _51) nocollect   @106:3
-  _52 = struct %byval.Flags (const bool false, const bool true, const i32 1)   @107:21
-  _53 = call ffi_flags(copy _52) collects   @107:10
-  _54 = cast copy _53 to i64   @107:3
-  call avant_puts_i64(copy _54) nocollect   @107:3
-  _55 = struct %byval.Q2 (const i64 6, const i64 7)   @108:36
-  _56 = call ffi_spill(const i32 1, const i32 2, const i32 3, const i32 4, const i32 5, copy _55, const i32 8) collects   @108:10
-  call avant_puts_i64(copy _56) nocollect   @108:3
-  _57 = call ffi_big_make(const i64 2) collects   @109:18
-  _58 = struct %byval.Named (const i32 1, const str.2)   @109:36
-  _59 = call avant_alloc(const u64 40, const u32 1) collects fresh   @109:11
-  call av.byval/Keep.initialize(copy _59, copy _57, copy _58) nocollect   @109:11
-  _60 = copy _59   @109:5
-  _61 = copy (*_60).0   @110:24
-  _62 = call ffi_big_sum(copy _61) collects   @110:10
-  call avant_puts_i64(copy _62) nocollect   @110:3
-  _63 = copy (*_60).1   @111:22
-  _64 = call ffi_named(copy _63) collects   @111:10
-  _65 = cast copy _64 to i64   @111:3
-  call avant_puts_i64(copy _65) nocollect   @111:3
-  _66 = const i64 0   @112:5
-  _67 = const i64 0   @113:7
+  _47 = copy _46   @105:21
+  _48 = copy _47.1   @105:21
+  _49 = call avant_str_c_arg(copy _48) collects   @105:21
+  _47.1 = copy _49   @105:21
+  _50 = call ffi_named(copy _47) collects   @105:10
+  _51 = cast copy _50 to i64   @105:3
+  call avant_puts_i64(copy _51) nocollect   @105:3
+  _52 = struct %byval.Flags (const bool true, const bool false, const i32 5)   @106:21
+  _53 = call ffi_flags(copy _52) collects   @106:10
+  _54 = cast copy _53 to i64   @106:3
+  call avant_puts_i64(copy _54) nocollect   @106:3
+  _55 = struct %byval.Flags (const bool false, const bool true, const i32 1)   @107:21
+  _56 = call ffi_flags(copy _55) collects   @107:10
+  _57 = cast copy _56 to i64   @107:3
+  call avant_puts_i64(copy _57) nocollect   @107:3
+  _58 = struct %byval.Q2 (const i64 6, const i64 7)   @108:36
+  _59 = call ffi_spill(const i32 1, const i32 2, const i32 3, const i32 4, const i32 5, copy _58, const i32 8) collects   @108:10
+  call avant_puts_i64(copy _59) nocollect   @108:3
+  _60 = call ffi_big_make(const i64 2) collects   @109:18
+  _61 = struct %byval.Named (const i32 1, const str.2)   @109:36
+  _62 = call avant_alloc(const u64 40, const u32 1) collects fresh   @109:11
+  call av.byval/Keep.initialize(copy _62, copy _60, copy _61) nocollect   @109:11
+  _63 = copy _62   @109:5
+  _64 = copy (*_63).0   @110:24
+  _65 = call ffi_big_sum(copy _64) collects   @110:10
+  call avant_puts_i64(copy _65) nocollect   @110:3
+  _66 = copy (*_63).1   @111:22
+  _67 = copy _66   @111:22
+  _68 = copy _67.1   @111:22
+  _69 = call avant_str_c_arg(copy _68) collects   @111:22
+  _67.1 = copy _69   @111:22
+  _70 = call ffi_named(copy _67) collects   @111:10
+  _71 = cast copy _70 to i64   @111:3
+  call avant_puts_i64(copy _71) nocollect   @111:3
+  _72 = const i64 0   @112:5
+  _73 = const i64 0   @113:7
   goto bb1   @114:3
 
 bb1:
-  _68 = lt copy _66, const i64 2000   @114:11
-  branch copy _68, bb2, bb3   @114:3
+  _74 = lt copy _72, const i64 2000   @114:11
+  branch copy _74, bb2, bb3   @114:3
 
 bb2:
-  _69 = rem copy _66, const i64 7   @115:44
-  _70 = copy _69   @115:48
-  _71 = ge copy _70, const i64 0   @115:48
-  _72 = ge copy _70, const i64 -2147483648   @115:48
-  _73 = le copy _70, const i64 2147483647   @115:48
-  _74 = and copy _72, copy _73   @115:48
-  branch copy _74, bb5, bb4   @115:48
+  _75 = rem copy _72, const i64 7   @115:44
+  _76 = copy _75   @115:48
+  _77 = ge copy _76, const i64 0   @115:48
+  _78 = ge copy _76, const i64 -2147483648   @115:48
+  _79 = le copy _76, const i64 2147483647   @115:48
+  _80 = and copy _78, copy _79   @115:48
+  branch copy _80, bb5, bb4   @115:48
 
 bb3:
-  call avant_puts_i64(copy _67) nocollect   @118:3
+  call avant_puts_i64(copy _73) nocollect   @118:3
   _0 = const i32 0   @84:1
   gc.leave   @84:1
   return   @84:1
 
 bb4:
-  call avant_trap_convert(copy _70, const i32 17) nocollect   @115:48
+  call avant_trap_convert(copy _76, const i32 17) nocollect   @115:48
   unreachable   @115:48
 
 bb5:
-  _75 = cast copy _70 to i32   @115:48
-  _76 = call avant_str_cat_i32(const str.3, copy _66) collects   @115:62
-  _77 = call avant_str_concat(copy _76, const str.4) collects   @115:70
-  _78 = struct %byval.Named (copy _75, copy _77)   @115:30
-  _79 = call ffi_named(copy _78) collects   @115:19
-  _80 = cast copy _79 to i64   @115:79
-  _81 = add.chk copy _67, copy _80   @115:15
-  _67 = copy _81   @115:9
-  _82 = add copy _66, const i64 1   @116:11
-  _66 = copy _82   @116:7
+  _81 = cast copy _76 to i32   @115:48
+  _82 = call avant_str_cat_int(const str.3, copy _72) collects   @115:62
+  _83 = call avant_str_concat(copy _82, const str.4) collects   @115:70
+  _84 = struct %byval.Named (copy _81, copy _83)   @115:30
+  _85 = copy _84   @115:30
+  _86 = copy _85.1   @115:30
+  _87 = call avant_str_c_arg(copy _86) collects   @115:30
+  _85.1 = copy _87   @115:30
+  _88 = call ffi_named(copy _85) collects   @115:19
+  _89 = cast copy _88 to i64   @115:79
+  _90 = add.chk copy _73, copy _89   @115:15
+  _73 = copy _90   @115:9
+  _91 = add copy _72, const i64 1   @116:11
+  _72 = copy _91   @116:7
   goto bb1   @114:3
 }
 

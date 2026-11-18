@@ -1,0 +1,539 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker.names
+import checker
+import checker.equality
+
+// The verbs the sequences share (String, Bytes, Buf, Array) and the
+// collections' is_empty: a slice of a range, `try_slice`, and the
+// array verbs that are generic functions written in Avant (the
+// templates below, instantiated per element type as == and min are:
+// equality.av eq_template), compiled as the loop a program would write.
+
+// The slices: `s.slice(start, stop)`, `s.slice(start)` (to the end;
+// `s[a..b]`, `s[a..]` and `s[..b]` are written so), and `s.try_slice(...)`,
+// nil where the slice would trap; `x.is_empty()` of every collection.
+// nil for any other call (the receiver's own checker takes it).
+pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
+  c = expr.callee
+  seq = object.is_string() || object.is_bytes() || object.is_buf() || object.is_array()
+  if c == "is_empty" && (seq || object.is_hash() || object.is_set()) {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "is_empty does not take a block")
+      return checker_self.t_bool()
+    }
+    if expr.args.size != 0 {
+      checker_self.fail(expr.loc, "is_empty takes no arguments")
+      return checker_self.t_bool()
+    }
+    checker_self.call_verb_template(expr, "__avant_is_empty", object)
+    return checker_self.t_bool()
+  }
+  if (c == "try_shl" || c == "try_shr") && object.is_integer() {
+    res = ty_nilable(object)
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${c} does not take a block")
+      return res
+    }
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "${c} takes one Int, the shift amount")
+      return res
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if !got.is_int() {
+      checker_self.fail(expr.args[0].loc, "the shift amount is an Int, got ${got.show()}")
+      return res
+    }
+    // The width, an argument of the template: 64 or 32.
+    w = Expr.new(ex_int(), expr.loc)
+    w.int_bits = object.int_width().to_u64()
+    w.ty = checker_self.t_int()
+    expr.args.push(w)
+    checker_self.call_verb_template(expr, "__avant_${c}", object)
+    return res
+  }
+  if (object.is_string() || object.is_bytes() || object.is_buf()) && is_search_verb(c) {
+    return checker_self.check_search_verb(expr, object)
+  }
+  if (c == "slice" || c == "try_slice") && seq {
+    res = object
+    if c == "try_slice" {
+      res = ty_nilable(object)
+    }
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${c} does not take a block")
+      return res
+    }
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "${c} takes start and stop, or start alone (to the end)")
+      return res
+    }
+    for a in expr.args {
+      got = checker_self.check_expr_as(a, checker_self.t_int())
+      if !got.is_int() {
+        checker_self.fail(a.loc, "the bounds of a slice are Int, got ${got.show()}")
+        return res
+      }
+    }
+    if c == "try_slice" {
+      name = "__avant_try_slice"
+      if expr.args.size == 1 {
+        name = "__avant_try_slice_from"
+      }
+      checker_self.call_verb_template(expr, name, object)
+    }
+    return res
+  }
+  nil
+}
+
+// The search methods String, Bytes and Buf share.
+pub fn is_search_verb(c: String): Bool {
+  c == "contains" || c == "index_of" || c == "last_index_of" || c == "starts_with" || c == "ends_with" || c == "count" || c == "eq_ignore_ascii_case"
+}
+
+// `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`,
+// `starts_with(p)`, `ends_with(p)`, `count(p)` and
+// `eq_ignore_ascii_case(p)` on a String, Bytes or Buf: the pattern p is
+// a String, Bytes, Buf or one byte (an Int, as `s[i]` gives; not for the
+// equality); `from` is an Int, the start of the search.
+pub fn (checker_self: Checker) check_search_verb(expr: Expr, object: Ty): Ty {
+  c = expr.callee
+  res = checker_self.t_bool()
+  if c == "index_of" || c == "last_index_of" {
+    res = ty_nilable(checker_self.t_int())
+  } else if c == "count" {
+    res = checker_self.t_int()
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${c} does not take a block")
+    return res
+  }
+  most = 1
+  if c == "index_of" {
+    most = 2
+  }
+  if expr.args.size < 1 || expr.args.size > most {
+    shape = "one pattern: a String, Bytes, Buf or a byte"
+    if c == "index_of" {
+      shape = "a pattern (a String, Bytes, Buf or a byte) and an optional start, index_of(p, from)"
+    }
+    checker_self.fail(expr.loc, "${c} takes ${shape}")
+    return res
+  }
+  got = checker_self.check_expr(expr.args[0])
+  if c == "eq_ignore_ascii_case" && !(got.is_string() || got.is_bytes() || got.is_buf()) {
+    checker_self.fail(expr.args[0].loc, "eq_ignore_ascii_case compares with a String, Bytes or Buf, got ${got.show()}")
+    return res
+  }
+  if !(got.is_string() || got.is_bytes() || got.is_buf() || got.is_int()) {
+    checker_self.fail(expr.args[0].loc, "the pattern of ${c} is a String, Bytes, Buf or a byte (Int), got ${got.show()}")
+    return res
+  }
+  if expr.args.size == 2 {
+    ft = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if !ft.is_int() {
+      checker_self.fail(expr.args[1].loc, "the start of index_of is an Int, got ${ft.show()}")
+    }
+  }
+  res
+}
+
+// `xs.index_of(v, from)` and `xs.last_index_of(v)` (expr, its arguments
+// checked) with elements of type e: the loop of the template, comparing
+// by the element's == as `index_of(v)` does; `from` outside 0..size traps
+// as the slice xs[from..] does.
+pub fn (checker_self: Checker) search_array_from(expr: Expr, e: Ty) {
+  if !(e.is_integer() || e.is_float() || e.is_bool() || e.is_string() || (e.is_class() && !checker_self.user_op(e, "=="))) {
+    seen: Array(String) = []
+    missing = checker_self.eq_missing(e, seen)
+    if missing.size > 0 || (e.is_union() && !e.is_nilable()) {
+      checker_self.fail(expr.loc, "${expr.callee} compares the elements with ==: ${checker_self.eq_refusal(e, missing)}")
+      return
+    }
+    if e.is_struct() {
+      checker_self.derive_eq_method(e, expr.loc)
+    }
+  }
+  name = "__avant_index_of_from"
+  if expr.callee == "last_index_of" {
+    name = "__avant_last_index_of"
+  }
+  checker_self.call_verb_template(expr, name, e)
+}
+
+// The array verbs without a function argument: `dup`, `reversed`,
+// `first`, `last`, `unique`, and `fill` of any element type. nil for
+// another name.
+pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): Ty? {
+  c = expr.callee
+  if c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "concat" || c == "shuffle" || c == "shuffled" {
+    return checker_self.check_array_change(expr, array, e)
+  }
+  if c == "retain" || c == "remove" || c == "remove_at" || c == "remove_duplicates" || c == "extend" || c == "append" {
+    hint = " (write `xs.delete_if (x) { ... }` with the test turned around)"
+    if c == "remove" || c == "remove_at" {
+      hint = " (write `xs.delete_at(i)`, or `xs.delete_if (x) { x == v }` for a value)"
+    } else if c == "remove_duplicates" {
+      hint = " (write `xs = xs.unique()`)"
+    } else if c == "extend" || c == "append" {
+      hint = " (write `xs.concat(ys)`)"
+    }
+    checker_self.fail_hint(expr.loc, "no method ${c} on ${array.show()}", hint)
+    return checker_self.t_void()
+  }
+  if c == "join" {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "join does not take a block")
+      return checker_self.t_string()
+    }
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "join takes one String, the separator")
+      return checker_self.t_string()
+    }
+    if !e.is_string() {
+      checker_self.fail(expr.loc, "join takes an Array(String), got ${array.show()}: push each element's text (\"\${x}\") into an Array(String) first")
+      return checker_self.t_string()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if !ty_assignable(got, checker_self.t_string()) {
+      checker_self.fail(expr.args[0].loc, "join expects a String separator, got ${got.show()}")
+    }
+    return checker_self.t_string()
+  }
+  if !(c == "dup" || c == "reversed" || c == "first" || c == "last" || c == "unique") {
+    return nil
+  }
+  res = ty_array(e)
+  if c == "first" || c == "last" {
+    res = ty_nilable(e)
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${c} does not take a block")
+    return res
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "${c} takes no arguments")
+    return res
+  }
+  if c == "first" || c == "last" {
+    checker_self.call_verb_template(expr, "__avant_${c}", e)
+  } else if c == "unique" {
+    if e.is_integer() || e.is_string() || e.is_bytes() || e.is_bool() || e.is_enum() {
+      // A key type: one pass with a Set of the values seen.
+      checker_self.call_verb_template(expr, "__avant_unique", e)
+    } else {
+      seen: Array(String) = []
+      missing = checker_self.eq_missing(e, seen)
+      if missing.size > 0 || (e.is_union() && !e.is_nilable()) {
+        checker_self.fail(expr.loc, "unique compares the elements with ==: ${checker_self.eq_refusal(e, missing)}")
+        return res
+      }
+      if e.is_struct() {
+        checker_self.derive_eq_method(e, expr.loc)
+      }
+      checker_self.call_verb_template(expr, "__avant_unique_eq", e)
+    }
+  }
+  res
+}
+
+// The array's changes at a position and of its order: `insert(i, v)`,
+// `delete_at(i)` (the element; traps as xs[i] does), `try_delete_at(i)`
+// (nil outside), `concat(ys)` (ys appended in place), `shuffle(rng)` and
+// `shuffled(rng)` (std.random's Random, passed in).
+pub fn (checker_self: Checker) check_array_change(expr: Expr, array: Ty, e: Ty): Ty {
+  c = expr.callee
+  res = checker_self.t_void()
+  if c == "delete_at" {
+    res = e
+  } else if c == "try_delete_at" {
+    res = ty_nilable(e)
+  } else if c == "shuffled" {
+    res = ty_array(e)
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${c} does not take a block")
+    return res
+  }
+  want = 1
+  if c == "insert" {
+    want = 2
+  }
+  if expr.args.size != want {
+    shape = "one argument"
+    if c == "insert" {
+      shape = "a position and a value, insert(i, v)"
+    } else if c == "concat" {
+      shape = "one array, concat(ys)"
+    } else if c == "shuffle" || c == "shuffled" {
+      shape = "a Random (import std.random)"
+    } else {
+      shape = "one Int, the position"
+    }
+    checker_self.fail(expr.loc, "${c} takes ${shape}")
+    return res
+  }
+  if c == "insert" || c == "delete_at" || c == "try_delete_at" {
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if !got.is_int() {
+      checker_self.fail(expr.args[0].loc, "the position is an Int, got ${got.show()}")
+      return res
+    }
+  }
+  if c == "insert" {
+    v = checker_self.check_expr_as(expr.args[1], e)
+    if !ty_assignable(v, e) {
+      checker_self.fail(expr.args[1].loc, "insert expects ${e.show()}, got ${v.show()}")
+    }
+    return res
+  }
+  if c == "try_delete_at" {
+    checker_self.call_verb_template(expr, "__avant_try_delete_at", e)
+    return res
+  }
+  if c == "concat" {
+    got = checker_self.check_expr_as(expr.args[0], array)
+    if !got.same_as(array) {
+      checker_self.fail(expr.args[0].loc, "concat expects ${array.show()}, got ${got.show()}")
+    }
+    return res
+  }
+  if c == "shuffle" || c == "shuffled" {
+    r = checker_self.check_expr(expr.args[0])
+    if !(r.is_class() && r.name == "Random") {
+      checker_self.fail(expr.args[0].loc, "${c} takes a Random (import std.random; Random.new(seed)), got ${r.show()}")
+      return res
+    }
+    tys: Array(Ty) = []
+    tys.push(e)
+    tys.push(r)
+    checker_self.call_verb_template_of(expr, "__avant_${c}", tys)
+  }
+  res
+}
+
+// `a + b` of two arrays of one type: a new array, a's elements then b's.
+pub fn (checker_self: Checker) array_join(expr: Expr, l: Expr, r: Expr, t: Ty): Ty {
+  if e = t.inner {
+    args: Array(Expr) = []
+    args.push(r)
+    expr.kind = ex_call()
+    expr.receiver = l
+    expr.args = args
+    expr.left = nil
+    expr.right = nil
+    expr.op = 0
+    checker_self.call_verb_template(expr, "__avant_join", e)
+  }
+  t
+}
+
+// `xs.fill(v)` of an element type the runtime does not fill (a float, a
+// String, a struct, an optional): every element set to v, by the rule of
+// `Array(T).new(n, value)` (a value that is or holds a mutable object
+// would be one object in every element).
+pub fn (checker_self: Checker) check_fill_any(expr: Expr, e: Ty) {
+  got = checker_self.check_expr_as(expr.args[0], e)
+  if !ty_assignable(got, e) {
+    checker_self.fail(expr.args[0].loc, "fill expects ${e.show()}, got ${got.show()}")
+    return
+  }
+  if expr.args[0].kind != ex_nil() && type.ty_holds_mutable_ref(e) {
+    checker_self.fail(expr.args[0].loc, "fill(v) would put the same object in every element (${e.show()} is, or holds, a reference: a change through one element would show in all); set each element in a loop")
+    return
+  }
+  checker_self.call_verb_template(expr, "__avant_fill", e)
+}
+
+// The call expr of a builtin receiver's method made the call of the
+// template name's instance for the type t, the receiver its first
+// argument and the call's own arguments after it. false when the
+// template is not found or not instantiated (an error is reported).
+pub fn (checker_self: Checker) call_verb_template(expr: Expr, name: String, t: Ty): Bool {
+  subst: Array(Ty) = []
+  subst.push(t)
+  checker_self.call_verb_template_of(expr, name, subst)
+}
+
+// The same with the template's type arguments in order.
+pub fn (checker_self: Checker) call_verb_template_of(expr: Expr, name: String, subst: Array(Ty)): Bool {
+  if recv = expr.receiver, sig = checker_self.verb_template(name) {
+    if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+      args: Array(Expr) = []
+      args.push(recv)
+      for a in expr.args {
+        args.push(a)
+      }
+      expr.args = args
+      expr.receiver = nil
+      expr.callee = name
+      expr.resolved = inst.node.emit_name
+      expr.method_call = false
+      return true
+    }
+  }
+  false
+}
+
+// The template name's generic function, registered in the program's
+// root module the first time it is needed (as equality.av eq_template).
+pub fn (checker_self: Checker) verb_template(name: String): FuncSig? {
+  for sig in checker_self.functions {
+    if sig.name == name && sig.node.generic {
+      return sig
+    }
+  }
+  src = Source.new("<avant>", verb_template_source(name))
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  ps = Parser.new(src, tokens)
+  p = ps.parse()
+  if p.functions.size != 1 {
+    return nil
+  }
+  fnn = p.functions[0]
+  fnn.mod_name = checker_self.root_module
+  checker_self.program.functions.push(fnn)
+  saved = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  checker_self.register_function(fnn)
+  checker_self.current_module = saved
+  for sig2 in checker_self.functions {
+    if sig2.name == name && sig2.node.generic {
+      return sig2
+    }
+  }
+  nil
+}
+
+// The templates of the verbs above, as Avant, parsed once per program
+// when first needed (equality.av eq_template). Each is the loop a
+// program would write for it.
+pub fn verb_template_source(name: String): String {
+  if name == "__avant_is_empty" {
+    return "fn __avant_is_empty(xs: T): Bool {\n  xs.size == 0\n}\n"
+  }
+  if name == "__avant_try_slice" {
+    return "fn __avant_try_slice(xs: T, start: Int, stop: Int): T? {\n  if start < 0 || stop < start || stop > xs.size {\n    return nil\n  }\n  xs.slice(start, stop)\n}\n"
+  }
+  if name == "__avant_try_slice_from" {
+    return "fn __avant_try_slice_from(xs: T, start: Int): T? {\n  if start < 0 || start > xs.size {\n    return nil\n  }\n  xs.slice(start)\n}\n"
+  }
+  if name == "__avant_first" {
+    return "fn __avant_first(xs: Array(T)): T? {\n  if xs.size == 0 {\n    return nil\n  }\n  xs[0]\n}\n"
+  }
+  if name == "__avant_last" {
+    return "fn __avant_last(xs: Array(T)): T? {\n  if xs.size == 0 {\n    return nil\n  }\n  xs[xs.size - 1]\n}\n"
+  }
+  if name == "__avant_unique" {
+    return "fn __avant_unique(xs: Array(T)): Array(T) {\n  seen = Set(T).new()\n  out: Array(T) = []\n  for x in xs {\n    if seen.add(x) {\n      out.push(x)\n    }\n  }\n  out\n}\n"
+  }
+  if name == "__avant_unique_eq" {
+    return "fn __avant_unique_eq(xs: Array(T)): Array(T) {\n  out: Array(T) = []\n  for x in xs {\n    if !out.has(x) {\n      out.push(x)\n    }\n  }\n  out\n}\n"
+  }
+  if name == "__avant_fill" {
+    return "fn __avant_fill(xs: Array(T), v: T) {\n  i = 0\n  while i < xs.size {\n    xs[i] = v\n    i += 1\n  }\n}\n"
+  }
+  if name == "__avant_index_of_from" {
+    return "fn __avant_index_of_from(xs: Array(T), v: T, from: Int): Int? {\n  if from < 0 || from > xs.size {\n    _ = xs.slice(from)\n  }\n  i = from\n  while i < xs.size {\n    if xs[i] == v {\n      return i\n    }\n    i += 1\n  }\n  nil\n}\n"
+  }
+  if name == "__avant_last_index_of" {
+    return "fn __avant_last_index_of(xs: Array(T), v: T): Int? {\n  i = xs.size - 1\n  while i >= 0 {\n    if xs[i] == v {\n      return i\n    }\n    i -= 1\n  }\n  nil\n}\n"
+  }
+  if name == "__avant_try_delete_at" {
+    return "fn __avant_try_delete_at(xs: Array(T), i: Int): T? {\n  if i < 0 || i >= xs.size {\n    return nil\n  }\n  xs.delete_at(i)\n}\n"
+  }
+  if name == "__avant_join" {
+    return "fn __avant_join(a: Array(T), b: Array(T)): Array(T) {\n  c = a.dup()\n  c.concat(b)\n  c\n}\n"
+  }
+  if name == "__avant_shuffle" {
+    return "fn __avant_shuffle(xs: Array(T), rng: R) {\n  i = xs.size - 1\n  while i > 0 {\n    j = rng.int(i + 1)\n    t = xs[i]\n    xs[i] = xs[j]\n    xs[j] = t\n    i -= 1\n  }\n}\n"
+  }
+  if name == "__avant_shuffled" {
+    return "fn __avant_shuffled(xs: Array(T), rng: R): Array(T) {\n  ys = xs.dup()\n  ys.shuffle(rng)\n  ys\n}\n"
+  }
+  if name == "__avant_try_shl" || name == "__avant_try_shr" {
+    op = "<<"
+    if name == "__avant_try_shr" {
+      op = ">>"
+    }
+    return "fn ${name}(x: T, n: Int, width: Int): T? {\n  if n < 0 || n >= width {\n    return nil\n  }\n  x ${op} n\n}\n"
+  }
+  ""
+}
+
+// The array verbs that take a function, inlined as loops as `any` is:
+// `find` (the first element the predicate holds for, `T?`), `index_of`
+// with a predicate (its position, `Int?`), `min_by` and `max_by` (the
+// first element of the smallest or largest key, `T?`), `delete_if` (the
+// elements the predicate holds for removed, in place, the others kept in
+// order). nil for another call.
+pub fn (checker_self: Checker) check_array_fn_verb(expr: Expr, array: Ty, e: Ty): Ty? {
+  c = expr.callee
+  if !(c == "find" || c == "min_by" || c == "max_by" || c == "delete_if" || (c == "index_of" && expr.args.size == 0)) {
+    return nil
+  }
+  res = ty_nilable(e)
+  if c == "index_of" {
+    res = ty_nilable(checker_self.t_int())
+  } else if c == "delete_if" {
+    res = checker_self.t_void()
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "${c} takes one function, (x) { ... }")
+    return res
+  }
+  b = Block.new(expr.loc)
+  if bl = expr.block {
+    b = bl
+  } else {
+    checker_self.fail(expr.loc, "${c} takes one function, (x) { ... }")
+    return res
+  }
+  if !b.paren {
+    checker_self.fail(b.loc, "${c} takes a lambda: write ${c}((x) { ... }) or ${c} (x) { ... }")
+    return res
+  }
+  if b.params.size != 1 {
+    checker_self.fail(b.loc, "${c} takes a function of one parameter, (x) { ... }")
+    return res
+  }
+  saved_for = checker_self.for_names.size
+  saved_places = checker_self.place_names.size
+  saved_walks = checker_self.walk_texts.size
+  checker_self.push_scope()
+  checker_self.bind_walk_param(expr, b, array, e)
+  checker_self.loop_depth += 1
+  want = checker_self.t_bool()
+  if c == "min_by" || c == "max_by" {
+    want = checker_self.inline_result(b)
+  }
+  bt = checker_self.check_walk_value(b, c, want)
+  checker_self.loop_depth -= 1
+  checker_self.pop_scope()
+  checker_self.end_places(saved_places)
+  checker_self.end_plain_walks(saved_walks)
+  checker_self.end_for_vars(saved_for)
+  if checker_self.has_err() {
+    return res
+  }
+  if c == "min_by" || c == "max_by" {
+    if !(bt.is_integer() || bt.is_float() || bt.is_string() || bt.is_bytes()) {
+      checker_self.fail(b.loc, "the key of ${c} must be a number, a String or Bytes, got ${bt.show()}")
+    }
+    b.key_ty = bt
+  } else if !bt.is_bool() {
+    checker_self.fail(b.loc, "the predicate of ${c} must give a Bool, got ${bt.show()}")
+  }
+  res
+}

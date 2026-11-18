@@ -211,8 +211,8 @@ pub fn (checker_self: Checker) assign_emit_names {
         j += 1
       }
       if g == 0 {
-        for j in 1..checker_self.functions.size {
-          other = checker_self.functions[j]
+        for jx in 1..checker_self.functions.size {
+          other = checker_self.functions[jx]
           if !other.node.generic && other.name == name {
             g += 1
           }
@@ -249,6 +249,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       if flag = checker_self.resolver.collide.get(owner) {
         shown = "${mod_emit_prefix(owner_mod)}__${owner}"
       }
+      shown = checker_self.container_emit_owner(sig, shown)
       sanitized = emit_op_name(name)
       mbase = checker_self.method_emit_base(sig, "${shown}__${sanitized}")
       if n <= 1 {
@@ -278,6 +279,8 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.clear_poison()
   checker_self.check_aliases()
   checker_self.clear_poison()
+  checker_self.spell_protocols()
+  checker_self.clear_poison()
   checker_self.prepare_entry()
   for lb in checker_self.program.libs {
     checker_self.clear_poison()
@@ -300,6 +303,10 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.clear_poison()
   checker_self.adopt_new_types()
   checker_self.clear_poison()
+  checker_self.check_hash_pairs()
+  checker_self.clear_poison()
+  checker_self.derive_orders()
+  checker_self.clear_poison()
   checker_self.apply_late_opt_ins()
   checker_self.clear_poison()
   checker_self.check_param_bound_decls()
@@ -315,8 +322,8 @@ pub fn (checker_self: Checker) check: Program {
     return checker_self.program
   }
   has_entry = false
-  for i in 1..checker_self.functions.size {
-    sig = checker_self.functions[i]
+  for ix in 1..checker_self.functions.size {
+    sig = checker_self.functions[ix]
     if sig.name == "main" {
       if sig.node.mod_name == checker_self.root_module {
         has_entry = true
@@ -352,7 +359,7 @@ pub fn (checker_self: Checker) check: Program {
     checker_self.check_function(checker_self.pending[i])
     i += 1
   }
-  // C14: generic class instances made while checking the bodies get their
+  // Generic class instances made while checking the bodies get their
   // cloned field defaults typed by their fields too (the first pass ran
   // before they existed), so no back end sees an untyped default.
   checker_self.clear_poison()
@@ -368,6 +375,10 @@ pub fn (checker_self: Checker) check: Program {
   // Array a running task reads (checker/spawn.av).
   checker_self.clear_poison()
   checker_self.check_element_writes()
+  // A method that changes its receiver, called on a block parameter that
+  // is a copy (checker/places.av).
+  checker_self.clear_poison()
+  checker_self.check_copy_calls()
   checker_self.program
 }
 
@@ -452,12 +463,8 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       checker_self.fail(cfun.loc, "C function ${cfun.name} collides with an Avant function")
       return
     }
-    if bound = checker_self.c_symbols.get(cfun.name) {
-      checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}")
-      return
-    }
     if rid = checker_self.reserved.get(cfun.name) {
-      checker_self.fail(cfun.loc, "C function ${cfun.name} is reserved")
+      checker_self.fail(cfun.loc, "C function ${cfun.name} is reserved: the runtime defines it and the compiler calls it with its own signature; choose another name")
       return
     }
     params: Array(Ty) = []
@@ -470,13 +477,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       if pty.is_fn() {
         mi = 0
         bad = false
-        narrow = ""
         while mi < pty.members.size {
           if pty.members[mi].is_fn() {
             bad = true
-          }
-          if pty.members[mi].c_scalar > 0 {
-            narrow = pty.members[mi].show()
           }
           mi += 1
         }
@@ -484,16 +487,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
           if r.is_fn() {
             bad = true
           }
-          if r.c_scalar > 0 {
-            narrow = r.show()
-          }
         }
         if bad {
           checker_self.fail(cfun.params[k].loc, "C callback signature cannot contain a function type")
-          return
-        }
-        if narrow.size > 0 {
-          checker_self.fail(cfun.params[k].loc, "a C callback cannot take or return ${narrow} yet; use its Avant type (${ty_c_view(ty_c_scalar(c_scalar_of(narrow))).show()})")
           return
         }
       }
@@ -526,10 +522,32 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       }
       ret = ty
     }
+    // A second binding of one C name (a program's own beside a library
+    // module's) is the same function only with the same signature; each
+    // call goes through its own binding, the first declares the symbol.
+    if bound = checker_self.c_symbols.get(cfun.name) {
+      if id = checker_self.cfun_index.get(bound) {
+        first = checker_self.cfuns[id]
+        if !c_sigs_same(first.params, first.ret, params, ret) {
+          where = ""
+          if fm = checker_self.lib_mod.get(first.lib_name) {
+            if fm.size > 0 && fm != lib_def.mod_name {
+              where = " in ${fm}"
+            }
+          }
+          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${c_sig_text(first.params, first.ret)}${where}; a second binding of it must declare the same signature, not ${c_sig_text(params, ret)}")
+          return
+        }
+      }
+    }
     sig = CFunSig.new(cfun.name, lib_def.name, params, ret)
+    m = lib_def.mod_name
+    sig.runtime = m == "prelude" || m == "task" || (m.size > 4 && str_slice(m, 0, 4) == "std.")
     checker_self.cfuns.push(sig)
     checker_self.cfun_index[key] = checker_self.cfuns.size - 1
-    checker_self.c_symbols[cfun.name] = key
+    if !checker_self.c_symbols.has_key(cfun.name) {
+      checker_self.c_symbols[cfun.name] = key
+    }
   }
   checker_self.lib_mod[lib_def.name] = lib_def.mod_name
   if lib_def.vis {
@@ -537,6 +555,39 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
   } else {
     checker_self.lib_vis[lib_def.name] = 0
   }
+}
+
+// Whether two bindings of one C name declare one signature.
+pub fn c_sigs_same(ap: Array(Ty), ar: Ty, bp: Array(Ty), br: Ty): Bool {
+  if ap.size != bp.size || !ar.same_as(br) {
+    return false
+  }
+  i = 0
+  while i < ap.size {
+    if !ap[i].same_as(bp[i]) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+// A binding's signature as written: `(Int32, String): Int`.
+pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
+  out = "("
+  i = 0
+  while i < params.size {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + params[i].show()
+    i += 1
+  }
+  out = out + ")"
+  if !ret.is_void() {
+    out = out + ": " + ret.show()
+  }
+  out
 }
 
 pub fn (checker_self: Checker) register_function(fnn: Function) {
@@ -617,6 +668,12 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       checker_self.current_module = saved_mod
       return
     }
+    if ty.is_hasher() {
+      checker_self.fail(t.loc, hasher_held_text("a function's result"))
+      checker_self.resolver.clear_tparams()
+      checker_self.current_module = saved_mod
+      return
+    }
     ret = ty
   }
   checker_self.resolver.clear_tparams()
@@ -646,8 +703,8 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  for i in 1..checker_self.functions.size {
-    existing = checker_self.functions[i]
+  for ix in 1..checker_self.functions.size {
+    existing = checker_self.functions[ix]
     if existing.name == fnn.name && params_same(existing.params, params) {
       same_mod = false
       if existing.node.mod_name == fnn.mod_name {
@@ -702,6 +759,21 @@ pub fn (checker_self: Checker) method_owner_name(ty: Ty): String {
   ty.name
 }
 
+// The receiver's declared type of a method, its type parameters open.
+pub fn (checker_self: Checker) recv_ty_of(fnn: Function): Ty {
+  if r = fnn.receiver {
+    saved = checker_self.current_module
+    checker_self.current_module = fnn.mod_name
+    checker_self.resolver.set_tparams(fnn.type_params)
+    t = checker_self.resolve_in_module(r.type)
+    checker_self.pull_resolve()
+    checker_self.resolver.clear_tparams()
+    checker_self.current_module = saved
+    return t
+  }
+  checker_self.t_void()
+}
+
 pub fn (checker_self: Checker) register_method(fnn: Function) {
   saved_mod = checker_self.current_module
   checker_self.current_module = fnn.mod_name
@@ -743,6 +815,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         owner_ty = ty
         owner_key = ty.show()
         has_owner = true
+      } else if container_owner(ty).size > 0 {
+        fnn.owner = container_owner(ty)
+        fnn.owner_mod = ""
+        owner_ty = ty
+        owner_key = fnn.owner
+        has_owner = true
       } else if checker_self.ptr_method_ok(ty) {
         if tparams.size > 0 {
           checker_self.fail(recv.loc, "Ptr methods are not generic")
@@ -760,7 +838,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         checker_self.current_module = saved_mod
         return
       } else {
-        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not ${ty.show()}")
+        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64, Bool, an Array, a Hash or a Set, not ${ty.show()}")
         checker_self.resolver.clear_tparams()
         checker_self.current_module = saved_mod
         return
@@ -798,6 +876,14 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.current_module = saved_mod
     return
   }
+  if fnn.name == "clone" && !fnn.lazy && !fnn.type_method {
+    // A clone is always the derived deep copy (checker/clone.av), so a
+    // copy never shares a mutable part with its original.
+    checker_self.fail(fnn.loc, "clone is derived for every type, a deep copy that shares nothing mutable with the original: a method cannot replace it; give the method another name")
+    checker_self.resolver.clear_tparams()
+    checker_self.current_module = saved_mod
+    return
+  }
   if fnn.name == "new" {
     checker_self.fail(fnn.loc, "new is reserved; write initialize")
     checker_self.resolver.clear_tparams()
@@ -818,7 +904,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   // A builtin type's own methods and fields keep their names: a method
   // of that name would either replace the builtin or never be called.
-  if builtin_receiver_ok(owner_ty) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
+  if (builtin_receiver_ok(owner_ty) || container_owner(owner_ty).size > 0) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
     checker_self.fail(fnn.loc, "${fnn.name} is a builtin of ${owner_key}: a method cannot replace it; give the method another name")
     checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
@@ -861,6 +947,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       checker_self.current_module = saved_mod
       return
     }
+    if ty.is_hasher() {
+      checker_self.fail(t.loc, hasher_held_text("a function's result"))
+      checker_self.resolver.clear_tparams()
+      checker_self.current_module = saved_mod
+      return
+    }
     ret = ty
   }
   checker_self.resolver.clear_tparams()
@@ -898,14 +990,17 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       if !checker_self.methods_meet(existing.node, fnn) {
         continue
       }
+      // A container's methods of one name on two receiver types
+      // (Array(Int), Array(String)) are two methods.
+      if container_owner(owner_ty).size > 0 && !existing.node.generic && !fnn.generic && !checker_self.recv_ty_of(existing.node).same_as(owner_ty) {
+        continue
+      }
       where = ""
       if existing.node.mod_name != fnn.mod_name {
         where = " in module ${existing.node.mod_name}"
       }
-      if existing.node.type_method != fnn.type_method {
-        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
-        return
-      }
+      // A type-level function and a method overload one name by their
+      // parameters, as two methods do: `Box.make()` and `b.make(2)`.
       if params_same(existing.params, params) {
         checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
         return
@@ -1043,6 +1138,18 @@ pub fn (checker_self: Checker) adopt_new_types {
 // module's prefix when another module declares a method of the same
 // owner, name and parameter types (two modules may each add one, seen
 // each in its own module).
+// A method on a container is named by its receiver's whole type
+// (`Array_Int`), so methods of one name on Array(Int) and Array(String)
+// are two functions; any other owner keeps its name.
+pub fn (checker_self: Checker) container_emit_owner(sig: FuncSig, shown: String): String {
+  if sig.owner == "Array" || sig.owner == "Hash" || sig.owner == "Set" {
+    if r = sig.node.receiver {
+      return mangle_ty(checker_self.recv_ty_of(sig.node))
+    }
+  }
+  shown
+}
+
 pub fn (checker_self: Checker) method_emit_base(sig: FuncSig, base: String): String {
   for other in checker_self.method_indices_named(sig.name) {
     o = checker_self.methods[other]
@@ -1075,7 +1182,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   }
   for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
-      obase = checker_self.method_emit_base(other, "${shown}__${sanitized}")
+      obase = checker_self.method_emit_base(other, "${checker_self.container_emit_owner(other, shown)}__${sanitized}")
       if n <= 1 {
         other.node.emit_name = obase
       } else {
@@ -1126,7 +1233,7 @@ pub fn (checker_self: Checker) check_field_defaults {
         field = defn.fields[j]
         if default = field.default {
           if t = default.ty {
-            // Typed by an earlier pass (C14: this runs again after the
+            // Typed by an earlier pass (this runs again after the
             // bodies, for the instances of generic classes made there).
             j += 1
             continue
@@ -1224,13 +1331,11 @@ pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
 // A union in a `fun` signature: C receives and returns one word there, so
 // only a union that is one word is what it says: an optional reference, a
 // pointer with `nil` as NULL (`String?`, `Bytes?`, `Array(T)?`,
-// `Hash(K, V)?`, `Buf?`, a class `C?`, a `JoinHandle(T)?`; each checked
-// both ways with a C function). Any other union is a tag and a payload in
-// Avant: declared in a `fun` it compiled, and C read or wrote one of the
-// two words as if it were the value (`Int?` gave 72340172838076673 for
-// twice 21, `Ptr(Pair)?` as malloc's result a segmentation fault). It is
-// refused until the nullable pointer is decided: the refusal holds
-// whichever way that goes.
+// `Hash(K, V)?`, `Buf?`, a class `C?`, a `JoinHandle(T)?`, and `Ptr(T)?`,
+// the nullable C pointer; each checked both ways with a C function). Any
+// other union is a tag and a payload in Avant: C would read or write one
+// of the two words as if it were the value (`Int?` gave
+// 72340172838076673 for twice 21), so it is refused.
 pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   if !ty.is_union() {
     return true
@@ -1238,11 +1343,7 @@ pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   if m = ty_opt_ref(ty) {
     return true
   }
-  if ty.members.size == 2 && ty.includes_nil() && ty_without_nil(ty).is_ptr() {
-    checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare ${ty_without_nil(ty).show()}")
-    return false
-  }
-  checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
+  checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, Ptr(T)?, an array, a hash, a Buf or a class with ?)")
   false
 }
 

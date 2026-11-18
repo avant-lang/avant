@@ -1,5 +1,38 @@
 # Avant Language changelog
 
+## 0.47.0 - 2026-11-18
+
+### Added
+
+* Lambdas are written `(x) { ... }`, as any argument; builtins taking one also take a function by name (`xs.each(show)`). The braces with pipes still work in this release; `avant format --lambdas` rewrites them.
+* `for` everywhere: `for i, x in xs`, `for i in a..b by k`, bytes (`for b in s.bytes`), channels, and any type with a `next` returning `T?`.
+* Strings: `contains`, `index_of`, `last_index_of`, `starts_with`, `ends_with`, `count`, `replace`, `repeat`, padding, `split` with a limit, `lines`, ASCII case, `delete_prefix`/`delete_suffix`, `s += t`, nested interpolation, code points; the searches on `Bytes` and `Buf` too.
+* Slices `xs[a..b]`, `xs[a..]`, `xs[..b]`, `xs[a..=b]` on `String`, `Bytes`, `Buf` and `Array`, and the array verbs (`find`, `first`, `last`, `min_by`, `max_by`, `delete_if`, `unique`, `insert`, `delete_at`, `concat`, `a + b`, `shuffle`, `join` and more).
+* Hash literals `["tea": 12]`, `Set(T)`, struct keys, any value type, and a type's own `hash`.
+* Tasks: `spawn` returns any type, `?` in a task, `.join` and `.parallel` inside tasks, a derived deep `clone()`, `--avant-threads=N`.
+* `Float64` math methods (`pow`, `sin`, `ln`, `round`, ...), `Int.max`/`Int.min`, bit counts, float bits; `std.time`; `std.random` (xoshiro256**, seeded or from the system's entropy); URL-safe Base64.
+* C: `Ptr(T)?`, `p[i]`, `&x` out-parameters, fixed arrays in layouts, `String?` fields, `Bytes.from_c`/`String.from_c`.
+* Packages carry C sources (`[c]`, with the root's `[link]` opt-in); `--lib PATH`.
+* `std.http` server limits (timeouts, minimum rates, budgets, connection cap), each on by default; `std.regex` limits with `try_` forms.
+
+### Changed
+
+* `avant compile` builds `--release` by default; the middle build mode is gone.
+* Equality and order are `fn equals` and `fn compare`; `h.has(k)` replaces `has_key`.
+* A `for` variable or a lambda parameter cannot reuse an existing name; over an array of structs it is the element itself, so writes change the array.
+* A `while v = f()` whose value can be an error needs `else e { ... }`.
+* A project's dependencies are exactly `avant.lock`'s, checked on every compile; `avant fetch` finds `git` on `PATH`, updates in place and prunes.
+* A trap in an HTTP handler fails that request (500), not the server.
+* Strings know their length (string-heavy programs up to a third fewer instructions); the compiler compiling itself takes 11% fewer instructions.
+* The compiler is built from v0.46.0.
+
+### Fixed
+
+* Index checks the compiler skipped after an array shrank through another name, or after `i -= k`.
+* A method changing a struct element lost its write when the call resized or reordered the array; it now traps.
+* A stack overflow prints its function and thread and exits with status 1 instead of a bare segmentation fault.
+* `std.json`'s `at(i)` on an object, keys holding a zero byte; two modules' types of one name; a rare collector race with C threads; HTTP connections held by slow peers.
+
 ## 0.46.0 - 2026-11-17
 
 ### Changed
@@ -290,12 +323,12 @@
 ### Fixed
 
 * Wrong-result fixes in the collector:
-  - a hash table could lose keys (C34);
+  - a hash table could lose keys;
   - Array.reserve could lose elements;
-  - split, fields and chars could return bad parts without the nursery (C35);
-  - stale marks after a full collection (C36);
-  - the C-stack rewrite could change a value that only looked like a pointer (C37);
-  - collections could run inside protected regions near the heap limit (C32).
+  - split, fields and chars could return bad parts without the nursery;
+  - stale marks after a full collection;
+  - the C-stack rewrite could change a value that only looked like a pointer;
+  - collections could run inside protected regions near the heap limit.
 
 ### Added
 

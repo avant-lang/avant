@@ -1,0 +1,206 @@
+// Struct keys of Hash(K, V): a struct is a key when every field is an
+// integer, a Bool, an enum, a String or such a struct; its hash and its
+// == come from its fields. Small all-integer keys (two Int32, an enum
+// beside an Int32 with padding, an enum and a Bool), wider ones (two Ints, a
+// nested struct, a String field, a generic pair), each through set, get,
+// `h[k] ?? d`, has, delete (as a statement and as a value), inc, each,
+// keys, values, clear and growth past several resizes. A String field is
+// compared by its bytes: a key built from pieces finds the literal one.
+// The walks' results are sums, so they do not depend on the walk's order.
+
+enum Dir { north, east, south, west }
+
+struct Cell {
+  x: Int32
+  y: Int32
+}
+
+struct Tagged {
+  id: Int32
+  tag: Dir
+}
+
+struct Flag {
+  dir: Dir
+  on: Bool
+}
+
+struct Step {
+  at: Cell
+  dir: Dir
+}
+
+struct Pt {
+  x: Int
+  y: Int
+}
+
+struct Edge {
+  from: Pt
+  to: Pt
+}
+
+struct Named {
+  name: String
+  n: Int
+}
+
+struct Pair(A, B) {
+  a: A
+  b: B
+}
+
+fn check(what: String, ok: Bool) {
+  if !ok {
+    puts("FAIL ${what}")
+  }
+}
+
+fn cells {
+  h = Hash(Cell, Int).new()
+  y = 0
+  while y < 60 {
+    x = 0
+    while x < 60 {
+      h[Cell { x: (x - 30).to_i32(), y: (y - 30).to_i32() }] = x * 100 + y
+      x += 1
+    }
+    y += 1
+  }
+  check("cell size", h.size == 3600)
+  check("cell get", (h[Cell { x: -30.to_i32(), y: 29.to_i32() }] ?? -1) == 59)
+  check("cell absent", !h.has(Cell { x: 30.to_i32(), y: 0.to_i32() }))
+  check("cell or default", (h[Cell { x: 99.to_i32(), y: 99.to_i32() }] ?? -7) == -7)
+  gone = 0
+  y = 0
+  while y < 60 {
+    k = Cell { x: 0.to_i32(), y: (y - 30).to_i32() }
+    if y % 2 == 0 {
+      h.delete(k)
+    } else if v = h.delete(k) {
+      gone += v
+    }
+    y += 1
+  }
+  check("cell deleted", h.size == 3540 && gone == 30 * 3000 + 900)
+  sum = 0
+  h.each (k, v) {
+    sum += v - ((k.x.to_i() + 30) * 100 + (k.y.to_i() + 30))
+  }
+  check("cell each", sum == 0)
+  ks = h.keys()
+  kx = 0
+  for k in ks {
+    kx += k.x.to_i() + 30
+  }
+  check("cell keys", ks.size == 3540 && kx == 1770 * 60 - 30 * 60)
+  h[Cell { x: 0.to_i32(), y: 5.to_i32() }] = 1
+  check("cell back", (h[Cell { x: 0.to_i32(), y: 5.to_i32() }] ?? 0) == 1)
+  puts("cells ${h.size} ${gone}")
+}
+
+fn padded {
+  h = Hash(Tagged, String).new()
+  i = 0
+  while i < 1000 {
+    h[Tagged { id: (i / 4).to_i32(), tag: Dir.from_i(i % 4) ?? Dir.north }] = "v${i}"
+    i += 1
+  }
+  check("tagged size", h.size == 1000)
+  check("tagged get", (h[Tagged { id: 249.to_i32(), tag: Dir.west }] ?? "") == "v999")
+  check("tagged absent", !h.has(Tagged { id: 250.to_i32(), tag: Dir.north }))
+  f = Hash(Flag, Int).new()
+  f.inc(Flag { dir: Dir.east, on: true })
+  f.inc(Flag { dir: Dir.east, on: true })
+  f.inc(Flag { dir: Dir.east, on: false })
+  check("flag inc", (f[Flag { dir: Dir.east, on: true }] ?? 0) == 2 && f.size == 2)
+  s = Hash(Step, Int).new()
+  for d in Dir.members() {
+    s[Step { at: Cell { x: 1.to_i32(), y: 2.to_i32() }, dir: d }] = d.to_i()
+  }
+  check("step size", s.size == 4)
+  check("step get", (s[Step { at: Cell { x: 1.to_i32(), y: 2.to_i32() }, dir: Dir.south }] ?? -1) == 2)
+  puts("padded ${h.size} ${f.size} ${s.size}")
+}
+
+fn wide {
+  h = Hash(Pt, Int).new()
+  i = 0
+  while i < 3000 {
+    h[Pt { x: i * 7919, y: 0 - i }] = i
+    i += 1
+  }
+  check("pt size", h.size == 3000)
+  check("pt get", (h[Pt { x: 2999 * 7919, y: -2999 }] ?? -1) == 2999)
+  check("pt absent", !h.has(Pt { x: 7919, y: 1 }))
+  i = 0
+  while i < 3000 {
+    if i % 3 == 0 {
+      h.delete(Pt { x: i * 7919, y: 0 - i })
+    }
+    i += 1
+  }
+  check("pt deleted", h.size == 2000)
+  vs = 0
+  for v in h.values() {
+    vs += v
+  }
+  check("pt values", vs == 4498500 - 1498500)
+  e = Hash(Edge, Int).new()
+  e[Edge { from: Pt { x: 1, y: 2 }, to: Pt { x: 3, y: 4 } }] = 10
+  e[Edge { from: Pt { x: 3, y: 4 }, to: Pt { x: 1, y: 2 } }] = 20
+  e.inc(Edge { from: Pt { x: 1, y: 2 }, to: Pt { x: 3, y: 4 } }, 5)
+  check("edge", (e[Edge { from: Pt { x: 1, y: 2 }, to: Pt { x: 3, y: 4 } }] ?? 0) == 15 && e.size == 2)
+  p = Hash(Pair(Int, Dir), Bool).new()
+  p[Pair { a: 1, b: Dir.east }] = true
+  p[Pair { a: 1, b: Dir.west }] = false
+  check("pair", (p[Pair { a: 1, b: Dir.east }] ?? false) && p.size == 2)
+  h.clear()
+  check("pt clear", h.size == 0 && !h.has(Pt { x: 7919, y: -1 }))
+  h[Pt { x: 1, y: 1 }] = 1
+  check("pt reuse", h.size == 1)
+  puts("wide ${e.size} ${p.size}")
+}
+
+fn named {
+  h = Hash(Named, Int).new()
+  i = 0
+  while i < 2000 {
+    h[Named { name: "k${i % 500}", n: i / 500 }] = i
+    i += 1
+  }
+  check("named size", h.size == 2000)
+  a = "k4"
+  b = "99"
+  check("named bytes", (h[Named { name: a + b, n: 3 }] ?? -1) == 1999)
+  check("named absent", !h.has(Named { name: "k499", n: 4 }))
+  if v = h.delete(Named { name: "k0", n: 0 }) {
+    check("named take", v == 0)
+  }
+  h.delete(Named { name: "k1", n: 0 })
+  check("named deleted", h.size == 1998)
+  total = 0
+  h.each (k, v) {
+    total += v - (k.n * 500)
+  }
+  check("named each", total == 4 * (124750) - 1 - 0)
+  r = Hash(Named, String).new()
+  r[Named { name: "x", n: 1 }] = "one"
+  r[Named { name: "x", n: 2 }] = "two"
+  r[Named { name: "x", n: 1 }] = "uno"
+  check("named ref values", (r[Named { name: "x", n: 1 }] ?? "") == "uno" && r.size == 2)
+  ks = h.keys()
+  kn = 0
+  for k in ks {
+    kn += k.name.size
+  }
+  check("named keys", ks.size == 1998)
+  puts("named ${h.size} ${r.size} ${kn}")
+}
+
+fn main {
+  cells()
+  padded()
+  wide()
+  named()
+}

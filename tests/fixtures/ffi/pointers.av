@@ -1,0 +1,230 @@
+// C arrays through a pointer: `p[i]` reads element i of the C array a
+// `Ptr` points to and `p[i] = v` writes it, for every C scalar (the narrow
+// ones read as their Avant view and are range-checked on the way back) and
+// for pointers (`T **`: `Ptr(Ptr(T)?)`, each element tested for NULL).
+// C gives no length, so the counts below are the arrays' own. `L.size` is
+// a layout's C size, a constant that takes its place's type. `&x` passes a
+// local's address to C, which writes it (an out-parameter: `int *`,
+// `T **`); the local holds C's value after the call, a narrow one
+// range-checked on the way in. `String.from_c(p, n)` and
+// `Bytes.from_c(p, n)` copy n bytes of C memory, NULs kept. A layout's
+// `T[N]` field is C's `T name[N]`: indexed (checked against N), sized
+// (`.size`), and read as text (`.to_s()`) when it holds chars; the fields
+// after it sit where C puts them. `v.as(T)` reads a Ptr(Void) as a Ptr(T),
+// and any Ptr passes as a Ptr(Void), so one malloc serves every layout.
+
+const msg_len = 504
+
+lib pt {
+  struct Pair {
+    a: Int32
+    b: Int32
+  }
+  fun pt_ints_at: Ptr(Int32)
+  fun pt_ints_sum(p: Ptr(Int32), n: Int32): Int
+  fun pt_longs_at: Ptr(Int)
+  fun pt_bytes_at: Ptr(UInt8)
+  fun pt_bytes_sum(p: Ptr(UInt8), n: Int32): Int32
+  fun pt_sbytes_at: Ptr(Int8)
+  fun pt_shorts_at: Ptr(UInt16)
+  fun pt_floats_at: Ptr(Float32)
+  fun pt_doubles_at: Ptr(Float64)
+  fun pt_wide_at: Ptr(UInt64)
+  fun pt_flags_at: Ptr(Bool)
+  fun pt_pairs_at: Ptr(Ptr(Pair)?)
+  fun pt_pair_null(i: Int32): Int32
+  struct Mixed {
+    a: Int8
+    b: Float64
+    c: Int16
+  }
+  struct Nest {
+    p: Pair
+    x: UInt8
+  }
+  struct Refs {
+    s: String?
+    f: Bool
+    v: Ptr(Void)
+    g: Float32
+  }
+  fun pt_sizeof(which: Int32): Int
+  fun calloc(n: Int, size: Int): Ptr(Pair)
+  fun pt_out_int(out: Ptr(Int32)): Int32
+  fun pt_out_pair(out: Ptr(Ptr(Pair)?), which: Int32): Int32
+  fun pt_out_u8(b: Ptr(UInt8))
+  fun pt_out_f32(f: Ptr(Float32))
+  fun pt_out_two(a: Ptr(Int), d: Ptr(Float64)): Int
+  fun pt_blob: Ptr(UInt8)
+  struct Reply {
+    kind: Int32
+    integer: Int
+    dval: Float64
+    len: UInt64
+    str: String?
+    vtype: Int8[4]
+    elements: UInt64
+    element: Ptr(Ptr(Reply)?)?
+  }
+  struct Err {
+    domain: UInt32
+    code: UInt32
+    message: Int8[msg_len]
+  }
+  struct Grid {
+    cells: Int32[3]
+    pairs: Pair[2]
+    tail: UInt8
+  }
+  fun pt_reply_at: Ptr(Reply)
+  fun pt_err_at: Ptr(Err)
+  fun pt_grid_at: Ptr(Grid)
+  fun pt_grid_sum(g: Ptr(Grid)): Int
+  fun pt_sizeof_arrays(which: Int32): Int
+  fun malloc(size: Int): Ptr(Void)?
+  fun memset(p: Ptr(Void), c: Int32, n: Int): Ptr(Void)
+  fun pt_free(p: Ptr(Void))
+  fun pt_is_null(p: Ptr(Void)?): Int32
+  fun pt_none: Ptr(Int8)?
+  fun free(p: Ptr(Pair))
+}
+
+fn show_pairs(pairs: Ptr(Ptr(Pair)?)) {
+  for i in 0..3 {
+    if q = pairs[i] {
+      puts("pair ${q.a} ${q.b}")
+    } else {
+      puts("nil")
+    }
+  }
+}
+
+fn main {
+  ints = pt.pt_ints_at()
+  puts("${ints[0]} ${ints[1]} ${ints[2]} ${ints[3]}")
+  ints[1] = 21
+  ints[3] += 1
+  k = 2
+  ints[k] = ints[k] * 2
+  puts(pt.pt_ints_sum(ints, 4))
+  longs = pt.pt_longs_at()
+  longs[1] -= 1
+  puts("${longs[0]} ${longs[1]}")
+  bytes = pt.pt_bytes_at()
+  total = 0
+  for i in 0..5 {
+    total += bytes[i]
+  }
+  puts(total)
+  bytes[0] = 200
+  bytes[4] -= 5
+  puts(pt.pt_bytes_sum(bytes, 5))
+  sb = pt.pt_sbytes_at()
+  puts("${sb[0]} ${sb[1]} ${sb[2]}")
+  sb[1] = -1
+  puts(sb[1] + sb[2])
+  sh = pt.pt_shorts_at()
+  puts(sh[0] + sh[1])
+  fl = pt.pt_floats_at()
+  fl[1] = fl[0] * 3.0
+  puts("${fl[0]} ${fl[1]}")
+  db = pt.pt_doubles_at()
+  puts(db[0] + db[1])
+  wide = pt.pt_wide_at()
+  puts(wide[0])
+  flags = pt.pt_flags_at()
+  puts("${flags[0]} ${flags[1]}")
+  flags[1] = true
+  puts(flags[1])
+  pairs = pt.pt_pairs_at()
+  show_pairs(pairs)
+  pairs[1] = pairs[2]
+  pairs[0] = nil
+  show_pairs(pairs)
+  puts(pt.pt_pair_null(0))
+  if q = pairs[1] {
+    q.a = 30
+  }
+  show_pairs(pairs)
+  sizes = [Pair.size, Mixed.size, Nest.size, Refs.size]
+  for i in 0..4 {
+    puts("size ${sizes[i]} C ${pt.pt_sizeof(i.to_i32())}")
+  }
+  wide_size: UInt64 = Nest.size
+  puts(wide_size)
+  two = pt.calloc(2, Pair.size)
+  two.b = 5
+  pt.free(two)
+  n: Int32 = 1
+  _ = pt.pt_out_int(&n)
+  puts(n)
+  found: Ptr(Pair)? = nil
+  if pt.pt_out_pair(&found, 1) == 1, q = found {
+    puts("out ${q.a} ${q.b}")
+  }
+  _ = pt.pt_out_pair(&found, 0)
+  if q2 = found {
+    puts("out ${q2.a}")
+  } else {
+    puts("out nil")
+  }
+  b = 100
+  pt.pt_out_u8(&b)
+  puts(b)
+  f = 3.0
+  pt.pt_out_f32(&f)
+  puts(f)
+  a = 0
+  d = 0.0
+  puts(pt.pt_out_two(&a, &d))
+  puts("${a} ${d}")
+  boxed: Int32 = 5
+  see: fn(): Int32 = () { boxed }
+  _ = pt.pt_out_int(&boxed)
+  puts("${boxed} ${see()}")
+  blob = pt.pt_blob()
+  whole = String.from_c(blob, 5)
+  puts("${whole.size} ${String.from_c(blob, 2)}")
+  raw = Bytes.from_c(blob, 5)
+  puts("${raw.size} ${raw[1]} ${raw[2]} ${raw[3]}")
+  puts(String.from_c(pt.pt_none(), 0).size)
+  four = Bytes.from_c(pt.pt_ints_at(), 4)
+  puts("${four.size} ${four[0]}")
+  r = pt.pt_reply_at()
+  puts("${r.vtype.to_s()} ${r.vtype.size} ${r.vtype[0]} ${r.elements}")
+  r.vtype[3] = 33
+  puts(r.vtype.to_s())
+  e = pt.pt_err_at()
+  puts("${e.domain} ${e.code} ${e.message.to_s()} ${e.message.size}")
+  e.message[0] = 66
+  e.message[1] += 1
+  puts(e.message.to_s())
+  g = pt.pt_grid_at()
+  sum: Int32 = 0
+  for i in 0..g.cells.size {
+    sum += g.cells[i]
+  }
+  puts("${sum} ${g.pairs[1].a} ${g.tail}")
+  g.cells[2] = 30
+  g.pairs[1].b = 80
+  puts(pt.pt_grid_sum(g))
+  puts("${Reply.size} ${pt.pt_sizeof_arrays(0)} ${pt.pt_sizeof_arrays(2)} ${Err.size} ${pt.pt_sizeof_arrays(1)} ${Grid.size} ${pt.pt_sizeof_arrays(3)}")
+  if v = pt.malloc(Grid.size) {
+    gg = v.as(Grid)
+    _ = pt.memset(gg, 0, Grid.size)
+    gg.tail = 3
+    puts(gg.tail + gg.cells[1].to_i())
+    bs = v.as(UInt8)
+    puts(bs[Grid.size - 4])
+    pt.pt_free(gg)
+  }
+  if vp = pt.malloc(16) {
+    cells = vp.as(Ptr(Pair)?)
+    cells[0] = nil
+    cells[1] = pt.pt_pairs_at()[2]
+    puts("${pt.pt_is_null(cells[0])} ${pt.pt_is_null(cells[1])}")
+    pt.pt_free(cells)
+  }
+  maybe: Ptr(Pair)? = pt.calloc(1, Pair.size)
+  puts("${pt.pt_is_null(maybe)} ${pt.pt_is_null(pt.pt_ints_at())} ${pt.pt_is_null(nil)}")
+}

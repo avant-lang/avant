@@ -48,11 +48,7 @@ fn build_job(compiler: String, name: String, out: String, mode: String, extra: A
   if mode.size > 0 {
     a.push(mode)
   }
-  i = 0
-  while i < extra.size {
-    a.push(extra[i])
-    i += 1
-  }
+  a.concat(extra)
   HJob.new(compiler, a, log)
 }
 
@@ -68,20 +64,12 @@ fn run_job(envs: String, bin: String, args: String, log: String): HJob {
   a: Array(String) = []
   if envs.size > 0 {
     ws = envs.split(" ")
-    i = 0
-    while i < ws.size {
-      a.push(ws[i])
-      i += 1
-    }
+    a.concat(ws)
   }
   a.push(bin)
   if args.size > 0 {
     ws2 = args.split(" ")
-    i = 0
-    while i < ws2.size {
-      a.push(ws2[i])
-      i += 1
-    }
+    a.concat(ws2)
   }
   HJob.new("/usr/bin/env", a, log)
 }
@@ -131,32 +119,32 @@ fn example_gc_env(gcv: String): String {
 }
 
 fn gc_stats_10_3(c: Checks, text: String, what: String, calls: Bool) {
-  c.expect(!str_has(text, "avant gc verify"), "${what}: the GC verifier is silent")
+  c.expect(!text.contains("avant gc verify"), "${what}: the GC verifier is silent")
   outer = gc_numbers_outer()
   if outer.size > 0 {
     c.skip("${what}: collections, copied, roots and enters", "outer ${outer}")
     return
   }
-  c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
+  c.expect(text.contains("collections=6 young=6 "), "${what}: collections=6 young=6")
   // 272 bytes survive (the collections run at other
   // points, since avant_str_from_int collects at its own allocation
   // (RC1) and the loop's allocations stay inline; 96 before). Now
   // no C-stack scan keeps their blocks in place: 192 bytes are copied
   // out of the six evacuated young blocks and 80 promoted in place (272
   // in place before).
-  c.expect(str_has(text, " copied=192 "), "${what}: copied=192")
-  c.expect(str_has(text, " prom_inplace=80 "), "${what}: prom_inplace=80")
+  c.expect(text.contains(" copied=192 "), "${what}: copied=192")
+  c.expect(text.contains(" prom_inplace=80 "), "${what}: prom_inplace=80")
   // roots and enters count the frames that enter through a call
   // (avant_gc_frame_enter): every frame in the call forms;
   // in the inline forms only the thread's outermost one (main's frame,
   // its 3 root words), since every other frame links its stack record
   // itself.
   if calls {
-    c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
-    c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
+    c.expect(text.contains(" roots=1000013 "), "${what}: roots=1000013")
+    c.expect(text.contains(" enters=400005 "), "${what}: enters=400005")
   } else {
-    c.expect(str_has(text, " roots=3 "), "${what}: roots=3")
-    c.expect(str_has(text, " enters=1 "), "${what}: enters=1")
+    c.expect(text.contains(" roots=3 "), "${what}: roots=3")
+    c.expect(text.contains(" enters=1 "), "${what}: enters=1")
   }
 }
 
@@ -209,7 +197,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < fs.size {
     c.expect(file_exists("${dir}/${fs[i]}.o"), "${fs[i]}: an object")
-    c.expect(str_has(log_text("${dir}/${fs[i]}.ll"), "define internal void @\"av.t/churn\"()"), "${fs[i]}: its .ll defines the module's functions")
+    c.expect(log_text("${dir}/${fs[i]}.ll").contains("define internal void @\"av.t/churn\"()"), "${fs[i]}: its .ll defines the module's functions")
     i += 1
   }
 
@@ -217,8 +205,8 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   nb = builds[builds.size - 1]
   c.eq_int(nb.code, 1, "example_no_barrier: exit 1")
   e = log_text(nb.log)
-  c.expect(str_has(e, "error[V13]: av.main/tag: bb1[1]: reference store through (*_2).0 without its barrier"), "example_no_barrier: the V13 diagnostic")
-  c.expect(str_has(e, "--> ex.av:12:5"), "example_no_barrier: at the MIR's source location")
+  c.expect(e.contains("error[V13]: av.main/tag: bb1[1]: reference store through (*_2).0 without its barrier"), "example_no_barrier: the V13 diagnostic")
+  c.expect(e.contains("--> ex.av:12:5"), "example_no_barrier: at the MIR's source location")
   c.expect(!file_exists("${dir}/nb.ll"), "example_no_barrier: no .ll written")
   c.expect(!file_exists("${dir}/nb"), "example_no_barrier: no program linked")
 
@@ -251,13 +239,13 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     // (c)
     gl = log_text(runs[k + 1].log)
     c.eq_int(runs[k + 1].code, 0, "example ${t} under the GC verifier: exit 0")
-    c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
+    c.expect(gl.contains("199999\nsmall\n"), "example ${t} under the GC verifier: output")
     gc_stats_10_3(c, gl, "example ${t}", false)
     if gc_numbers_outer().size == 0 {
       // avant_str_from_int no longer opens a defer region,
       // whose entry cleared the inline path's state (gc_fast_clear) at
       // every call, so the loop's allocations stay inline (10 before).
-      c.expect(str_has(gl, " inline_allocs=199994 "), "example ${t}: inline_allocs=199994")
+      c.expect(gl.contains(" inline_allocs=199994 "), "example ${t}: inline_allocs=199994")
     } else {
       c.skip("example ${t}: inline_allocs=199994", "outer ${gc_numbers_outer()}")
     }
@@ -279,10 +267,10 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   last = runs[runs.size - 1]
   cl = log_text(last.log)
   c.eq_int(last.code, 0, "example with the call forms: exit 0")
-  c.expect(str_has(cl, "199999\nsmall\n"), "example with the call forms: output")
+  c.expect(cl.contains("199999\nsmall\n"), "example with the call forms: output")
   gc_stats_10_3(c, cl, "example with the call forms", true)
   if gc_numbers_outer().size == 0 {
-    c.expect(str_has(cl, " inline_allocs=0 "), "example with the call forms: no inline allocation")
+    c.expect(cl.contains(" inline_allocs=0 "), "example with the call forms: no inline allocation")
   } else {
     c.skip("example with the call forms: no inline allocation", "outer ${gc_numbers_outer()}")
   }

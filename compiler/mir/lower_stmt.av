@@ -127,6 +127,12 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 }
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
+  if st.for_kind == 5 {
+    // A `for` over an Array of structs: its variable is the element
+    // itself, each use already an index of the walk (the checker), so
+    // the loop's copy is not made.
+    return
+  }
   if t0 = st.target, t0.kind == ex_name() && t0.ident == "_" {
     // `_ = expr`: computed and dropped.
     if v0 = st.value {
@@ -136,6 +142,11 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
   }
   if t = st.target {
     if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
+      lw.lower_field_assign(st, t)
+      return
+    }
+    if t.kind == ex_index() && mir_ptr_index(t) {
+      // An element through a Ptr is stored as a C layout's field is.
       lw.lower_field_assign(st, t)
       return
     }
@@ -245,6 +256,10 @@ pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
 }
 
 pub fn (lw: MirLower) lower_return(st: Stmt) {
+  if lw.lw_lam_ends.size > 0 {
+    lw.lam_return(st)
+    return
+  }
   if e = st.expr {
     v = lw.lower_ret_value(e)
     if lw.failed() {
@@ -313,7 +328,36 @@ pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
 }
 
 pub fn (lw: MirLower) lower_while(st: Stmt) {
-  lw.lower_stmts(st.pre)
+  set_h = -1
+  adds0 = -1
+  if sw = lw.set_walk_operand(st) {
+    // `for v in s` over a Set walks the array of its elements made
+    // before the loop (the checker's s.values()): the set is held, its
+    // count of added elements read once here and again before each later
+    // step, so an element added during the walk (which the array would
+    // miss) traps, as in s.each.
+    b0 = lw.lw_b
+    if recv = sw.receiver, pt = st.pre[0].target, at0 = sw.ty {
+      sv = lw.lower_expr(recv)
+      if lw.failed() {
+        return
+      }
+      lw.at(st.loc)
+      set_h = b0.temp(lw.ety(recv))
+      b0.assign(b0.pl(set_h), b0.rv_use(sv))
+      adds0 = lw.hash_adds(set_h)
+      aty0 = lw.ety(sw)
+      arr0 = lw.call_to(aty0, "avant_hash_keys", lw.one(b0.copy_local(set_h)))
+      lw.bind_name(pt.ident, at0, aty0, arr0, st.loc, true)
+      rest: Array(Stmt) = []
+      for pi in 1..st.pre.size {
+        rest.push(st.pre[pi])
+      }
+      lw.lower_stmts(rest)
+    }
+  } else {
+    lw.lower_stmts(st.pre)
+  }
   if lw.failed() || !lw.open_now() {
     return
   }
@@ -323,6 +367,9 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_b.at(head)
   body = lw.lw_b.block()
   exit = lw.lw_b.block()
+  if set_h >= 0 {
+    lw.walk_added_trap(set_h, adds0, 1, st.loc)
+  }
   if c = st.cond {
     cv = lw.lower_expr(c)
     if lw.failed() {
@@ -342,6 +389,20 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_heads.pop()
   lw.lw_exits.pop()
   lw.lw_b.at(exit)
+}
+
+// The `s.values()` a `for` over a Set walks (the checker's rewrite of
+// the loop's array, checker.av set_for_operand), or nil.
+pub fn (lw: MirLower) set_walk_operand(st: Stmt): Expr? {
+  if st.for_kind != 2 || st.pre.size == 0 {
+    return nil
+  }
+  if v = st.pre[0].value, v.callee == "values" && v.args.size == 0 {
+    if recv = v.receiver, rt = recv.ty, rt.is_set() {
+      return v
+    }
+  }
+  nil
 }
 
 // `switch`: the value, one MIR switch (a Bool's: one branch), each arm a
@@ -791,8 +852,10 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
         b.goto(target)
         open = false
       } else {
+        // The scrutinee's bytes (a view's are its base's), used at once.
+        sd = lw.str_data(b.copy_local(s))
         margs: Array(MOperand) = []
-        margs.push(b.copy_local(s))
+        margs.push(b.copy_local(sd))
         margs.push(b.str_const(lab_text[q]))
         margs.push(b.c_i64(sizes[k]))
         qv = lw.call_to(mt_i32(), "memcmp", margs)

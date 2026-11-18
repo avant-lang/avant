@@ -15,6 +15,8 @@ lib httpc {
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
+  fun avant_http_limit_while_serving(name: String)
+  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int)
   fun avant_http_header_check(name: String, value: String)
   fun avant_http_token_bad(s: String): Int
   fun avant_http_value_bad(s: String): Int
@@ -147,8 +149,8 @@ pub struct Request {
 // which is private: a response is built by `text` or `bytes` and
 // `header`, so every line went through `header`'s check, and a
 // `Response { ... }` literal outside this module does not
-// compile. A status outside 100-599 traps when the answer is
-// written.
+// compile. A handler's status outside 200-599 traps when the answer
+// is written: a 1xx is an interim answer, never a handler's.
 pub struct Response {
   pub status: Int
   pub headers: Headers
@@ -181,24 +183,7 @@ pub struct Response {
 }
 
 fn is_managed_header(name: String): Bool {
-  name_is(name, "content-length") || name_is(name, "connection")
-}
-
-fn name_is(name: String, lit: String): Bool {
-  if name.size != lit.size {
-    return false
-  }
-  for i in 0..name.size {
-    a = name[i]
-    b = lit[i]
-    if a >= 65 && a <= 90 {
-      a += 32
-    }
-    if a != b {
-      return false
-    }
-  }
-  true
+  name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("connection")
 }
 
 // One WebSocket message. `body` is the one collector copy of the
@@ -416,24 +401,18 @@ class HttpState {
   }
 
   fn ws_open_dispatch(path: String, conn: WsConn) {
-    i = 0
-    while i < self.ws_open_routes.size {
-      r = self.ws_open_routes[i]
+    for r in self.ws_open_routes {
       if r.path == path {
         (r.handler)(conn)
       }
-      i += 1
     }
   }
 
   fn dispatch(req: Request): Response {
-    i = 0
-    while i < self.routes.size {
-      r = self.routes[i]
+    for r in self.routes {
       if r.method == req.method && r.path == req.path {
         return (r.handler)(req)
       }
-      i += 1
     }
     Response.text("not found", 404)
   }
@@ -606,6 +585,71 @@ pub struct Server {
     self
   }
 
+  // The server's limits: each is on by default, set like a route
+  // before `serve` (one set while serving traps), and 0 turns it off.
+  // A negative value traps.
+  //
+  // A request head must be complete within `ms` milliseconds of its
+  // first byte (10000 by default); a later one is answered 408 and the
+  // connection closed. Without it a client sending a byte now and then
+  // held a connection for good: the idle timeout starts again at every
+  // byte.
+  pub fn head_timeout(ms: Int): Server {
+    self.set_limit("head_timeout", 1, ms, 0)
+  }
+
+  // A request body waiting for its bytes must receive them at
+  // `bytes_per_second` on average over each `grace_ms` from when it
+  // began to wait, else the request is answered 408 and the connection
+  // closed; an answer the client is slow to read must leave at the same
+  // rate, else its connection is closed (240 bytes a second over 5000
+  // ms by default). 0 bytes a second turns it off.
+  pub fn min_rate(bytes_per_second: Int, grace_ms: Int = 5000): Server {
+    self.set_limit("min_rate", 2, bytes_per_second, grace_ms)
+  }
+
+  // The bytes the bodies of all requests waiting for theirs may hold
+  // together, each its Content-Length (268435456, 256 MiB, by default);
+  // a body that would pass it is answered 503 and its connection
+  // closed. A body that arrives with its head takes none.
+  pub fn body_budget(bytes: Int): Server {
+    self.set_limit("body_budget", 3, bytes, 0)
+  }
+
+  // The process's resident memory past which new requests are answered
+  // 503 and their connections closed, read about once a second. By
+  // default 90% of the container's memory limit (cgroup), or off when
+  // the process runs under none.
+  pub fn memory_ceiling(bytes: Int): Server {
+    self.set_limit("memory_ceiling", 4, bytes, 0)
+  }
+
+  // The open connections (10000 by default, at most the file-descriptor
+  // limit less a reserve): a connection past it closes the loop's
+  // longest idle one, or, with none idle, is closed itself.
+  pub fn max_connections(n: Int): Server {
+    self.set_limit("max_connections", 5, n, 0)
+  }
+
+  // How long `close` waits for the connections it leaves to finish (an
+  // answer being sent, a WebSocket's closing handshake) before it closes
+  // them, so `serve` returns by then (30000 ms by default).
+  pub fn shutdown_timeout(ms: Int): Server {
+    self.set_limit("shutdown_timeout", 6, ms, 0)
+  }
+
+  fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
+    if self.state.serving {
+      httpc.avant_http_limit_while_serving(name)
+    }
+    // A closed server's C record is gone (close released it, or serve
+    // did when it returned): nothing is left to limit.
+    if !self.state.closed {
+      httpc.avant_http_set_limit(self.handle, name, which, a, b)
+    }
+    self
+  }
+
   // Runs the event loop until `close` is called from another task.
   // Register every route before serving: the route tables are read by
   // the loop threads while `serve` blocks, and a route method called
@@ -643,13 +687,6 @@ struct UrlParts {
   port: Int
   authority: String
   target: String
-}
-
-fn starts_with(s: String, prefix: String): Bool {
-  if s.size < prefix.size {
-    return false
-  }
-  str_slice(s, 0, prefix.size) == prefix
 }
 
 fn parse_port(text: String): Int {
@@ -796,22 +833,22 @@ fn remove_dot_segments(path: String): String {
 
 // Resolves a redirect Location against the URL that produced it.
 fn resolve_url(base: String, loc: String): String? {
-  if starts_with(loc, "http://") {
+  if loc.starts_with("http://") {
     return loc
   }
-  if starts_with(loc, "https://") {
+  if loc.starts_with("https://") {
     return nil
   }
-  if starts_with(loc, "//") {
+  if loc.starts_with("//") {
     return "http:${loc}"
   }
   parts = http_parse_url(base)
   if p = parts {
     origin = "http://${p.authority}"
-    if starts_with(loc, "/") {
+    if loc.starts_with("/") {
       return "${origin}${loc}"
     }
-    if starts_with(loc, "?") {
+    if loc.starts_with("?") {
       return "${origin}${p.target}${loc}"
     }
     if loc.size == 0 {
@@ -864,9 +901,7 @@ fn request_refusal(method: String, url: String, headers: Array(Header)): HttpErr
   if refused = url_refusal(url) {
     return refused
   }
-  i = 0
-  while i < headers.size {
-    h = headers[i]
+  for i, h in headers {
     n = httpc.avant_http_token_bad(h.name)
     if n >= 0 {
       return HttpError.new("invalid request header name (header ${i}, ${bad_byte(h.name, n)}): a header name is ${token_rule}")
@@ -875,7 +910,6 @@ fn request_refusal(method: String, url: String, headers: Array(Header)): HttpErr
     if v >= 0 {
       return HttpError.new("invalid request header value of ${h.name} (${bad_byte(h.value, v)}): a header value holds no CR, LF or other control character but tab (RFC 9110)")
     }
-    i += 1
   }
   nil
 }
@@ -894,10 +928,10 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
   if refused = request_refusal(method, url, headers) {
     return refused
   }
-  if starts_with(url, "https://") {
+  if url.starts_with("https://") {
     return HttpError.new("https is not supported yet: std.http speaks plain http:// only")
   }
-  if !starts_with(url, "http://") {
+  if !url.starts_with("http://") {
     return HttpError.new("only http:// URLs are supported")
   }
   parsed = http_parse_url(url)
@@ -907,7 +941,16 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     buf.push_str(" ")
     buf.push_str(p.target)
     buf.push_str(" HTTP/1.1\r\nHost: ")
-    buf.push_str(p.authority)
+    // A caller's Host replaces the URL's (it reaches a virtual host by
+    // address); its value was checked as any header's. Sent beside the
+    // URL's, it made two Host lines, which a server refuses.
+    host_value = p.authority
+    for h in headers {
+      if h.name.eq_ignore_ascii_case("host") {
+        host_value = h.value
+      }
+    }
+    buf.push_str(host_value)
     buf.push_str("\r\n")
     i = 0
     // Content-Length and Connection are the client's (the request's
@@ -915,7 +958,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     // Content-Length line from the caller was a second reading of where
     // the body ends, as Response.header skips them.
     while i < headers.size {
-      if !is_managed_header(headers[i].name) {
+      if !is_managed_header(headers[i].name) && !headers[i].name.eq_ignore_ascii_case("host") {
         buf.push_str(headers[i].name)
         buf.push_str(": ")
         buf.push_str(headers[i].value)
@@ -984,8 +1027,8 @@ pub class Http {
   // it ready for routes. The body limit is in bytes; a larger request
   // body is answered 413. `loops` is the number of event loops (one
   // thread each, all bound to the same port); when it is 0 the
-  // program's chosen thread count is used (the `--threads` value, or
-  // the machine's thread count). Loops plus `spawn` workers can
+  // thread pool's size is used (`--avant-threads=N` or std.sync's
+  // set_pool_size, else the CPUs; it is fixed from then on). Loops plus `spawn` workers can
   // oversubscribe the machine; that is the documented consequence of
   // one chosen count.
   pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0, max_message: Int = 1048576): Server | HttpError {
@@ -1095,10 +1138,10 @@ pub class Ws {
   }
 
   pub fn self.connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
-    if starts_with(url, "wss://") {
+    if url.starts_with("wss://") {
       return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
     }
-    if !starts_with(url, "ws://") {
+    if !url.starts_with("ws://") {
       return HttpError.new("only ws:// URLs are supported")
     }
     // The handshake's request line and Host are the URL's.

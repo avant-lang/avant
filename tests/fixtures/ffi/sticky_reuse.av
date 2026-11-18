@@ -1,0 +1,297 @@
+// The sticky full collection beside the memory it gives back and the
+// blocks it reuses. Two parts, each about one thing the sticky
+// collection reads that the last full collection left:
+//
+//   leak   an old holder takes a fresh chain, young collections promote
+//          it, the holder lets it go, and a forced collection frees it:
+//          eight times, each forced collection a sticky one. The line
+//          marks the last full collection saved are put back before each
+//          sticky mark, so the lines of a chain that became old and died
+//          are free again and the next chain takes them: the heap's
+//          high-water mark grows by less than one chain from the third
+//          round to the eighth. (Left as the young collections marked
+//          them, every dead chain's lines would stay live, round after
+//          round, until a trace: a leak, the output still right.)
+//   reuse  4,096 one-line objects made old beside a dense old chain,
+//          every eighth kept: a trace evacuates every sparse block (the
+//          dense chain's lines let it move them all) and frees them. A
+//          chain of three times as many of the same objects then takes
+//          the freed blocks (by default and with a 1 MB young
+//          generation; under the verifier with the default young
+//          generation the allocator passes over them, and the verifier
+//          asks for the marks itself), young
+//          collections promote it where it lies, and a forced collection
+//          is the sticky one. A freed block's side marks are cleared with it,
+//          so no object of the chain carries the mark of an object that
+//          lay at its address before the evacuation; the sticky mark
+//          stops at a marked object as at an old one, so with such a
+//          mark the rest of the chain would be left unmarked and its
+//          lines freed under it. After the sticky collection fresh
+//          objects are made over every free line, and the chain must
+//          read back whole.
+//
+// STICKY_PART=leak or reuse runs one part alone (both by default, leak
+// first: the high-water mark is the heap's whole history). With
+// STICKY_SHOW=1 the program says what each part measured. Built with
+// `--cc tests/fixtures/ffi/ffi.c` (the collector's counters).
+class Node {
+  next: Node?
+  v: Int
+}
+
+class Holder {
+  sink: Node?
+}
+
+// One line (256 bytes with its header): the evacuation's candidates are
+// blocks of lines, and a chain of them lies at the addresses the kept
+// ones had.
+class Line {
+  next: Line?
+  v: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  f17: Int
+  f18: Int
+  f19: Int
+  f20: Int
+  f21: Int
+  f22: Int
+  f23: Int
+  f24: Int
+  f25: Int
+  f26: Int
+  f27: Int
+  f28: Int
+  f29: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+    self.f29 = v
+  }
+}
+
+lib cc {
+  fun ffi_gc_count(which: Int): Int
+  fun avant_gc_collect
+  fun avant_gc_collect_young
+}
+
+fn live: Int {
+  cc.ffi_gc_count(2)
+}
+
+fn fulls: Int {
+  cc.ffi_gc_count(0)
+}
+
+fn peak: Int {
+  cc.ffi_gc_count(3)
+}
+
+fn collect {
+  cc.avant_gc_collect()
+}
+
+// Everything alive is old after it (the third collection is a full one).
+fn settle {
+  collect()
+  collect()
+  collect()
+}
+
+// Young collections enough that what is young now becomes old.
+fn promote {
+  cc.avant_gc_collect_young()
+  cc.avant_gc_collect_young()
+  cc.avant_gc_collect_young()
+}
+
+fn chain(n: Int): Node {
+  head = Node.new()
+  i = 1
+  while i < n {
+    x = Node.new()
+    x.v = i
+    x.next = head
+    head = x
+    i += 1
+  }
+  head
+}
+
+// Young objects that die, more than a sixty-fourth of the old ones: a
+// forced collection then promotes what it marks (a smaller young
+// generation it would leave young, and trace).
+fn length(n: Node): Int {
+  k = 0
+  p: Node? = n
+  while x = p {
+    k += 1
+    p = x.next
+  }
+  k
+}
+
+fn young_garbage {
+  k = 0
+  while k < 4 {
+    chain(10000)
+    k += 1
+  }
+}
+
+// A chain of 20,000 nodes (about 640 KB), made in a function of its own,
+// so that no frame of the caller names it.
+fn make_victim(h: Holder) {
+  h.sink = chain(20000)
+}
+
+fn part_leak(show: Bool): Int {
+  h = Holder.new()
+  settle()
+  f = fulls()
+  p2 = 0
+  round = 0
+  while round < 8 {
+    make_victim(h)
+    promote()
+    h.sink = nil
+    young_garbage()
+    collect()
+    if round == 2 {
+      p2 = peak()
+    }
+    round += 1
+  }
+  grew = peak() - p2
+  if show {
+    puts("leak: ${fulls() - f} full, the high-water mark grew ${grew} from the third round")
+  }
+  if grew < 640000 {
+    return 1
+  }
+  0
+}
+
+// The pruning runs in its own frame, gone before the trace, so no stale
+// root slot keeps the dropped array alive.
+fn build_sparse: Array(Line) {
+  flat: Array(Line) = []
+  i = 0
+  while i < 4096 {
+    flat.push(Line.new(i + 1))
+    i += 1
+  }
+  settle()
+  keep: Array(Line) = []
+  j = 0
+  while j < flat.size {
+    if j % 8 == 0 {
+      keep.push(flat[j])
+    }
+    j += 1
+  }
+  keep
+}
+
+fn line_chain(n: Int): Line {
+  head = Line.new(n)
+  i = n - 1
+  while i > 0 {
+    x = Line.new(i)
+    x.next = head
+    head = x
+    i -= 1
+  }
+  head
+}
+
+// Fresh objects over the free lines: what a wrongly freed line held is
+// overwritten (their fields read -1).
+fn overwrite(n: Int): Array(Line) {
+  a: Array(Line) = []
+  i = 0
+  while i < n {
+    a.push(Line.new(-1))
+    i += 1
+  }
+  a
+}
+
+// The chain's nodes, or -1 when one reads wrong.
+fn line_length(head: Line): Int {
+  k = 0
+  p: Line? = head
+  while x = p {
+    k += 1
+    if x.v != k || x.f29 != k {
+      return -1
+    }
+    p = x.next
+  }
+  k
+}
+
+fn part_reuse(show: Bool): Int {
+  // About 2,000 dense lines: an evacuation moves at most a quarter of the
+  // live lines, and the sparse blocks hold 512.
+  dense = chain(16000)
+  keep = build_sparse()
+  young_garbage()
+  f = fulls()
+  collect()
+  // Under the verifier the freed blocks are held until the next
+  // collection starts: a young one gives them back.
+  cc.avant_gc_collect_young()
+  head = line_chain(12288)
+  promote()
+  young_garbage()
+  collect()
+  junk = overwrite(12288)
+  n = line_length(head)
+  kept = 0
+  for x in keep {
+    if x.v == x.f29 && x.v % 8 == 1 {
+      kept += 1
+    }
+  }
+  if show {
+    puts("reuse: ${fulls() - f} full, ${junk.size} fresh objects after, live ${live()}")
+  }
+  if n == 12288 && kept == 512 && length(dense) == 16000 {
+    return 1
+  }
+  if show {
+    puts("reuse: the chain read ${n}, the kept objects ${kept}")
+  }
+  0
+}
+
+fn main {
+  show = false
+  if v = env_get("STICKY_SHOW"), v == "1" {
+    show = true
+  }
+  part = env_get("STICKY_PART") ?? "all"
+  if part == "all" || part == "leak" {
+    puts("leak: returned ${part_leak(show)}")
+  }
+  if part == "all" || part == "reuse" {
+    puts("reuse: whole ${part_reuse(show)}")
+  }
+}

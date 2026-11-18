@@ -44,11 +44,7 @@ pub fn env_job(envs: String, compiler: String, args: Array(String), log: String)
     }
   }
   a.push(compiler)
-  i = 0
-  while i < args.size {
-    a.push(args[i])
-    i += 1
-  }
+  a.concat(args)
   HJob.new("/usr/bin/env", a, log)
 }
 
@@ -69,11 +65,7 @@ pub fn compile_job_flags(envs: String, compiler: String, src: String, out: Strin
   a.push(src)
   a.push(out)
   a.push("--debug")
-  i = 0
-  while i < flags.size {
-    a.push(flags[i])
-    i += 1
-  }
+  a.concat(flags)
   env_job(envs, compiler, a, log)
 }
 
@@ -95,7 +87,7 @@ pub fn run_job(dir: String, bin: String, key: String): HJob {
 // 34 s without); the run without words is the stress run.
 pub fn run_job_env(dir: String, bin: String, key: String, envs: String): HJob {
   e = envs
-  if gc_stress_outer() && str_has(envs, "AVANT_GC_VERIFY") {
+  if gc_stress_outer() && envs.contains("AVANT_GC_VERIFY") {
     e = "-u AVANT_GC_STRESS ${envs}"
   }
   a: Array(String) = []
@@ -180,7 +172,7 @@ fn is_version(s: String): Bool {
       }
       dots += 1
       digits = 0
-    } else if str_has("0123456789", ch) {
+    } else if "0123456789".contains(ch) {
       digits += 1
     } else {
       return false
@@ -218,18 +210,3 @@ pub fn golden_status(root: String, rel: String): Int {
   -1
 }
 
-// Every occurrence of from in s replaced by to (from not empty).
-pub fn str_replace_all(s: String, from: String, to: String): String {
-  buf = buf_new()
-  i = 0
-  while i < s.size {
-    if i + from.size <= s.size && str_slice(s, i, i + from.size) == from {
-      buf.push_str(to)
-      i += from.size
-    } else {
-      buf.push_byte(s[i])
-      i += 1
-    }
-  }
-  buf.to_s()
-}

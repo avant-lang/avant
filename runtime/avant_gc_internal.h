@@ -406,13 +406,15 @@ typedef struct LargeIter {
 typedef AvantGcFrame Frame;
 
 /* The one frame-slot iterator. Every root walker reads frame records through
- * the three macros below and nothing else, so the record's layout is
- * known in one place: how a record names the one before it (prev), how
- * many root slots it has (n) and where the i-th is (slots[i], the
- * address of the slot: a local of generated code, a C local a scope or a
- * user frame registered). A record with its root words in place would
- * change EACH_SLOT_OF (and the scope bits a walker may ask through
- * gc_frame_generated), and no walker.
+ * the three macros below and nothing else, so the record's layouts are
+ * known in one place: how a record names the one before it (prev), and
+ * which words are its root slots, as the slot's address (a local of
+ * generated code, a C local a scope or a user frame registered). Two
+ * layouts (avant_gc.h): a record generated code links holds its slot
+ * locals in place after { prev, desc }, and desc maps their root words
+ * (inline, or through an AvantGcFrameMap); every other record (user C's,
+ * a scope's, a frame of a compiler built before the in-place layout) has
+ * a slot array, slots[0..n).
  *
  *   EACH_FRAME(HEAD, F, BODY)        the records of a chain from its
  *                                    innermost one HEAD, innermost first,
@@ -431,10 +433,11 @@ typedef AvantGcFrame Frame;
  * defragmenter's fix-up (avant_gc_defrag.c), the verifier's root walks
  * (avant_gc_verify.c: verify_each_root, the stale-root checks of the
  * whole and the incremental sticky check, the defragmentation check),
- * the stalled-handshake report (avant_gc_safepoint.c, records only) and
- * the "is it rooted" test of a growth's freed buffer (avant_gc_los.c).
- * avant_gc_root and avant_gc_root_begin (avant_gc_roots.c) fill a user
- * frame's slot array; they register slots, they do not walk roots. */
+ * the proof's root walk (avant_gc_proof.c), the stalled-handshake report
+ * (avant_gc_safepoint.c, records only) and the "is it rooted" test of a
+ * growth's freed buffer (avant_gc_los.c). avant_gc_root and
+ * avant_gc_root_begin (avant_gc_roots.c) fill a user frame's slot array;
+ * they register slots, they do not walk roots. */
 #define EACH_FRAME(HEAD, F, BODY)                                                   \
   do {                                                                              \
     Frame *F;                                                                       \
@@ -443,25 +446,79 @@ typedef AvantGcFrame Frame;
     }                                                                               \
   } while (0)
 
+/* Whether a record holds its root words in place (generated code's), and
+ * its desc. */
+static inline uintptr_t gc_frame_desc(const Frame *f) {
+  return (uintptr_t)f->slots;
+}
+
+static inline int gc_frame_inplace(const Frame *f) {
+  return (gc_frame_desc(f) & (AVANT_GC_FRAME_INPLACE | AVANT_GC_FRAME_MAPPED)) != 0;
+}
+
+/* The words after an in-place record's two header words. */
+static inline void **gc_frame_words(const Frame *f) {
+  return (void **)((uintptr_t)f + 2 * sizeof(void *));
+}
+
+/* EACH_SLOT_OF: an in-place record with an inline map walks its map's
+ * bits (the common record, a loop the compiler keeps in registers);
+ * any other record walks n entries, a map's word indices or a slot
+ * array's slot addresses (an entry of the array is passed on as it is,
+ * null included). BODY appears twice in the expansion; `break` and
+ * `continue` act on the slot loop in both. */
 #define EACH_SLOT_OF(F, SLOT, BODY)                                                 \
   do {                                                                              \
     const Frame *eso_f_ = (F);                                                      \
-    uint32_t eso_i_;                                                                \
-    for (eso_i_ = 0; eso_i_ < eso_f_->n; eso_i_++) {                                \
-      void **SLOT = eso_f_->slots[eso_i_];                                          \
-      BODY                                                                          \
+    uintptr_t eso_d_ = gc_frame_desc(eso_f_);                                       \
+    if (eso_d_ & AVANT_GC_FRAME_INPLACE) {                                          \
+      void **eso_w_ = gc_frame_words(eso_f_);                                       \
+      uint64_t eso_b_;                                                              \
+      for (eso_b_ = (uint64_t)eso_d_ >> 1; eso_b_; eso_b_ &= eso_b_ - 1) {          \
+        void **SLOT = eso_w_ + __builtin_ctzll(eso_b_);                             \
+        BODY                                                                        \
+      }                                                                             \
+    } else {                                                                        \
+      const uint32_t *eso_x_ = NULL;                                                \
+      void ***eso_s_ = eso_f_->slots;                                               \
+      uint32_t eso_n_ = 0, eso_i_;                                                  \
+      if (eso_d_ & AVANT_GC_FRAME_MAPPED) {                                         \
+        const AvantGcFrameMap *eso_m_ = (const AvantGcFrameMap *)(eso_d_ - AVANT_GC_FRAME_MAPPED); \
+        eso_x_ = eso_m_->word;                                                      \
+        eso_n_ = (uint32_t)eso_m_->n;                                               \
+      } else {                                                                      \
+        eso_n_ = eso_f_->n;                                                         \
+      }                                                                             \
+      for (eso_i_ = 0; eso_i_ < eso_n_; eso_i_++) {                                 \
+        void **SLOT = eso_x_ ? gc_frame_words(eso_f_) + eso_x_[eso_i_] : eso_s_[eso_i_]; \
+        BODY                                                                        \
+      }                                                                             \
     }                                                                               \
   } while (0)
 
 #define EACH_FRAME_SLOT(HEAD, SLOT, BODY) EACH_FRAME(HEAD, efs_f_, { EACH_SLOT_OF(efs_f_, SLOT, BODY); })
 
+/* A record's scope bits (AVANT_GC_SCOPE_OPEN, AVANT_GC_FRAME_C): none
+ * for an in-place record, whose words after prev and desc are its
+ * function's locals. */
+static inline uint32_t gc_frame_scope(const Frame *f) {
+  return gc_frame_inplace(f) ? 0u : f->scope;
+}
+
 /* A record generated code linked (not a runtime scope, not a user C
  * frame), and its slot count. */
 static inline int gc_frame_generated(const Frame *f) {
-  return (f->scope & (AVANT_GC_SCOPE_OPEN | AVANT_GC_FRAME_C)) == 0;
+  return (gc_frame_scope(f) & (AVANT_GC_SCOPE_OPEN | AVANT_GC_FRAME_C)) == 0;
 }
 
 static inline uint32_t gc_frame_slot_count(const Frame *f) {
+  uintptr_t d = gc_frame_desc(f);
+  if (d & AVANT_GC_FRAME_INPLACE) {
+    return (uint32_t)__builtin_popcountll((uint64_t)d >> 1);
+  }
+  if (d & AVANT_GC_FRAME_MAPPED) {
+    return (uint32_t)((const AvantGcFrameMap *)(d - AVANT_GC_FRAME_MAPPED))->n;
+  }
   return f->n;
 }
 
@@ -1667,6 +1724,11 @@ typedef struct GcThread {
   int collector;
   int foreign;
   int base_native;
+  /* The record avant_gc_frame_enter linked as the thread's outermost
+   * frame (avant_gc_top was null), while it is linked: the checked
+   * mode's gc_verify_frames asks that an in-place record at the bottom
+   * of a chain be this one. */
+  Frame *base_frame;
   /* The thread's allocation cursors (per thread since the handshake stops the
    * world for a collection; they were gc_heap's, one per process, so only one
    * thread could allocate young). cur and limit: the C cursor's block and its
@@ -2088,6 +2150,8 @@ void gc_proof_lines_save(void);
 void gc_proof_lines_restore(void);
 void gc_mark_sticky_holders(void);
 void gc_verify_sticky_mark(void);
+void gc_verify_marks_old(void);
+void gc_verify_frames(void);
 void gc_proof_full_begin(void);
 void gc_proof_full_end(void);
 GcProofWhy gc_proof_check(void);

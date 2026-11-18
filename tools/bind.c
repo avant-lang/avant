@@ -145,19 +145,33 @@ static void emit_type(Emit *e, CXType t);
 static const char *bind_enum_name(Bind *b, CXType t);
 static const char *bind_enum_scalar(Bind *b, CXType t);
 
+/* A pointer that is not a C string: Ptr(Void), Ptr(T), and a pointer to
+ * a pointer as Ptr(Ptr(T)?), since C may leave the inner one NULL (an
+ * out-parameter C writes, an array of pointers); char ** is
+ * Ptr(Ptr(Int8)?). */
+static void emit_ptr_plain(Emit *e, CXType pointee) {
+  pointee = unwrap(pointee);
+  if (pointee.kind == CXType_Void) {
+    fputs("Ptr(Void)", e->out);
+    return;
+  }
+  fputs("Ptr(", e->out);
+  if (pointee.kind == CXType_Pointer) {
+    emit_ptr_plain(e, clang_getPointeeType(pointee));
+    fputs("?", e->out);
+  } else {
+    emit_type(e, pointee);
+  }
+  fputs(")", e->out);
+}
+
 static void emit_ptr(Emit *e, CXType pointee) {
   pointee = unwrap(pointee);
   if (is_char_type(pointee)) {
     fputs("String", e->out);
     return;
   }
-  if (pointee.kind == CXType_Void) {
-    fputs("Ptr(Void)", e->out);
-    return;
-  }
-  fputs("Ptr(", e->out);
-  emit_type(e, pointee);
-  fputs(")", e->out);
+  emit_ptr_plain(e, pointee);
 }
 
 static void emit_type(Emit *e, CXType t) {
@@ -344,6 +358,7 @@ typedef struct {
   int complete;
   int accepted;
   int wide; /* a constant outside Int32 */
+  int anon; /* no tag and no typedef: its constants are C constants */
   char reason[400];
 } EnumInfo;
 
@@ -564,7 +579,7 @@ static void enum_camel(const char *src, char *out, size_t n) {
 }
 
 static int avant_word(const char *s) {
-  static const char *words[] = {"fn", "if", "else", "return", "struct", "class", "lib", "fun", "self", "while", "true", "false", "nil", "spawn", "break", "continue", "switch", "case", "import", "pub", "quote", "comptime", "interface", "for", "in", "pin", "release", "enum",
+  static const char *words[] = {"fn", "if", "else", "return", "struct", "class", "lib", "fun", "self", "while", "true", "false", "nil", "spawn", "break", "continue", "switch", "case", "import", "pub", "quote", "comptime", "interface", "for", "in", "pin", "release", "enum", "const",
                                 /* what every enum has as a type-level name */
                                 "members", "from_i", "from_name", NULL};
   int i;
@@ -711,7 +726,14 @@ static void decide_enum(Bind *b, EnumInfo *en) {
     s = en->tag;
   }
   if (!s) {
-    skip_enum(en, "enum", en->typedefs > 1 ? "two typedefs; skipped" : "anonymous enum (its constants are C constants; Avant has no const yet); skipped");
+    if (en->typedefs == 0) {
+      /* `enum { FLAG_A = 1 };` is how C spells constants: emitted as
+       * module constants after the lib block (emit_consts). */
+      en->anon = 1;
+      en->accepted = 0;
+      return;
+    }
+    skip_enum(en, "enum", "two typedefs; skipped");
     return;
   }
   enum_camel(s, en->avant, sizeof(en->avant));
@@ -769,6 +791,9 @@ static void emit_enums(Bind *b) {
     if (!en->complete) {
       continue;
     }
+    if (en->anon) {
+      continue;
+    }
     if (!en->accepted) {
       fprintf(b->e->out, "  // %s\n", en->reason);
       continue;
@@ -787,6 +812,89 @@ static void emit_enums(Bind *b) {
     fprintf(b->e->out, "  }\n");
     free(w);
   }
+}
+
+/* The constants of the anonymous enums, after the lib block: each a
+ * module constant (`pub const flag_a = 1`), its name the C name
+ * lower-cased, its value C's (a constant takes its place's type, as a
+ * literal does). A name that is no Avant name, a keyword, or one an
+ * earlier constant took after lower-casing is left out with a comment. */
+typedef struct {
+  FILE *out;
+  int unsigned_values;
+  char (*names)[MAX_NAME];
+  int *count;
+} ConstWalk;
+
+#define MAX_CONSTS 1024
+
+static enum CXChildVisitResult walk_const(CXCursor cursor, CXCursor parent, CXClientData data) {
+  ConstWalk *w = (ConstWalk *)data;
+  CXString spelling;
+  const char *raw;
+  char low[MAX_NAME];
+  int i;
+  (void)parent;
+  if (clang_getCursorKind(cursor) != CXCursor_EnumConstantDecl) {
+    return CXChildVisit_Continue;
+  }
+  spelling = clang_getCursorSpelling(cursor);
+  raw = clang_getCString(spelling);
+  lower_name(raw ? raw : "", low, sizeof(low));
+  if (!valid_ident(low) || avant_word(low) || !(low[0] >= 'a' && low[0] <= 'z')) {
+    fprintf(w->out, "// %s is no Avant constant name (%s); skipped\n", raw ? raw : "?", low);
+    clang_disposeString(spelling);
+    return CXChildVisit_Continue;
+  }
+  for (i = 0; i < *w->count; i++) {
+    if (strcmp(w->names[i], low) == 0) {
+      fprintf(w->out, "// %s is the constant %s again after lower-casing; skipped\n", raw ? raw : "?", low);
+      clang_disposeString(spelling);
+      return CXChildVisit_Continue;
+    }
+  }
+  if (*w->count >= MAX_CONSTS) {
+    fprintf(w->out, "// %s: more than %d constants; skipped\n", raw ? raw : "?", MAX_CONSTS);
+    clang_disposeString(spelling);
+    return CXChildVisit_Continue;
+  }
+  copy_name(w->names[*w->count], MAX_NAME, low);
+  *w->count += 1;
+  if (w->unsigned_values) {
+    fprintf(w->out, "pub const %s = %llu\n", low, clang_getEnumConstantDeclUnsignedValue(cursor));
+  } else {
+    fprintf(w->out, "pub const %s = %lld\n", low, clang_getEnumConstantDeclValue(cursor));
+  }
+  clang_disposeString(spelling);
+  return CXChildVisit_Continue;
+}
+
+static void emit_consts(Bind *b) {
+  int i;
+  int count = 0;
+  int first = 1;
+  ConstWalk w;
+  char (*names)[MAX_NAME] = calloc(MAX_CONSTS, MAX_NAME);
+  if (!names) {
+    fail(b->e, "out of memory");
+    return;
+  }
+  w.out = b->e->out;
+  w.names = names;
+  w.count = &count;
+  for (i = 0; i < b->nenums; i++) {
+    EnumInfo *en = &b->enums[i];
+    if (!en->complete || !en->anon) {
+      continue;
+    }
+    if (first) {
+      fprintf(b->e->out, "\n// the constants of the header's anonymous enums\n");
+      first = 0;
+    }
+    w.unsigned_values = enum_unsigned(en);
+    clang_visitChildren(en->decl, walk_const, &w);
+  }
+  free(names);
 }
 
 /* The Avant type of a C enum emitted as none: Int32 (C's int) when it is
@@ -909,6 +1017,37 @@ static int cursor_has(CXCursor cursor, enum CXCursorKind kind) {
   return seek.found;
 }
 
+/* A layout field's pointer that is no C string, no Ptr(Void) and no
+ * pointer to a record: a pointer to a C scalar (Ptr(Int32), Ptr(UInt8)),
+ * or to a pointer (Ptr(Ptr(T)?), T a scalar, Void or a layout); 0 when
+ * the pointee has no Avant name. */
+static int field_ptr_text(Bind *b, CXType pointee, char *out, size_t n) {
+  char inner[MAX_NAME];
+  const char *name;
+  pointee = unwrap(pointee);
+  if (pointee.kind == CXType_Void) {
+    return snprintf(out, n, "Ptr(Void)") < (int)n;
+  }
+  if (pointee.kind == CXType_Pointer) {
+    if (!field_ptr_text(b, clang_getPointeeType(pointee), inner, sizeof(inner))) {
+      return 0;
+    }
+    return snprintf(out, n, "Ptr(%s?)", inner) < (int)n;
+  }
+  if (pointee.kind == CXType_Record && is_struct_record(pointee)) {
+    RecInfo *rec = find_rec(b, clang_getCanonicalType(pointee));
+    if (!rec || !rec->avant[0]) {
+      return 0;
+    }
+    return snprintf(out, n, "Ptr(%s)", rec->avant) < (int)n;
+  }
+  name = pointee.kind == CXType_Bool ? "Bool" : scalar_name(pointee);
+  if (!name) {
+    return 0;
+  }
+  return snprintf(out, n, "Ptr(%s)", name) < (int)n;
+}
+
 static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *size, int *align, char *reason, size_t reason_n) {
   CXString spelling;
   const char *raw;
@@ -961,10 +1100,6 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
       *align = 8;
       return 1;
     }
-    if (pointee.kind == CXType_UChar) {
-      snprintf(reason, reason_n, "unsigned char* is not String; skipped");
-      return 0;
-    }
     if (pointee.kind == CXType_Void) {
       copy_name(avant, avant_n, "Ptr(Void)");
       *size = 8;
@@ -982,6 +1117,11 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
         return 0;
       }
       snprintf(avant, avant_n, "Ptr(%s)", inner->avant);
+      *size = 8;
+      *align = 8;
+      return 1;
+    }
+    if (field_ptr_text(b, pointee, avant, avant_n)) {
       *size = 8;
       *align = 8;
       return 1;
@@ -1020,8 +1160,39 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
     *align = (int)al;
     return 1;
   }
-  if (t.kind == CXType_ConstantArray || t.kind == CXType_IncompleteArray || t.kind == CXType_VariableArray) {
-    snprintf(reason, reason_n, "array field; skipped");
+  if (t.kind == CXType_ConstantArray) {
+    /* C's `T name[N]` is the field `name: T[N]`, T a C scalar, a pointer
+     * or a layout: N times the element's room, at its alignment. */
+    char elem[MAX_NAME];
+    int esize = 0;
+    int ealign = 1;
+    long long n = clang_getArraySize(t);
+    CXType et = unwrap(clang_getArrayElementType(t));
+    if (et.kind == CXType_ConstantArray) {
+      snprintf(reason, reason_n, "array of arrays field; skipped");
+      return 0;
+    }
+    if (is_char_type(et)) {
+      copy_name(elem, sizeof(elem), "Int8");
+      esize = 1;
+      ealign = 1;
+    } else if (!map_field_type(b, et, elem, sizeof(elem), &esize, &ealign, reason, reason_n)) {
+      return 0;
+    }
+    if (n < 1 || n > 16777216 || strcmp(elem, "String") == 0) {
+      snprintf(reason, reason_n, "array field of no Avant type; skipped");
+      return 0;
+    }
+    if (snprintf(avant, avant_n, "%s[%lld]", elem, n) >= (int)avant_n) {
+      snprintf(reason, reason_n, "array field type is too long; skipped");
+      return 0;
+    }
+    *size = (int)(esize * n);
+    *align = ealign;
+    return 1;
+  }
+  if (t.kind == CXType_IncompleteArray || t.kind == CXType_VariableArray) {
+    snprintf(reason, reason_n, "array field without a length; skipped");
     return 0;
   }
   spelling = clang_getTypeSpelling(t);
@@ -1362,6 +1533,7 @@ int main(int argc, char **argv) {
   emit_layouts(bind);
   clang_visitChildren(clang_getTranslationUnitCursor(tu), visit, &e);
   printf("}\n");
+  emit_consts(bind);
   free(bind->recs);
   free(bind->enums);
   free(bind);

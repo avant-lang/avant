@@ -13,7 +13,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body:
   rcode = run_av_bin(bin, rlog)
   c.expect(rcode != 0, "${tag} exits non-zero")
   if err = file_read(rlog) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -30,15 +30,16 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   c.expect(code != 0, "${tag} is a compile error")
   c.expect(!file_exists(bin), "${tag} writes no binary")
   if err = file_read(clog) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
 }
 
 // .join and .parallel reached through a call from a pool
-// worker: a trap, status 1, after the output printed before
-// it (they aborted, status 134).
+// worker: they work (a joined task no worker took runs on the joining
+// worker; a .parallel's queued bodies too), status 0 and the value
+// (they trapped, status 1, and aborted before that, status 134).
 fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
   bin = "${scratch()}/safety-pool-worker-${stamp}.bin"
   clog = "${scratch()}/safety-pool-worker-${stamp}.clog"
@@ -49,8 +50,12 @@ fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push(kind)
     status = process_run_out(bin, args, log) ?? -1
-    c.eq_int(status, 1, ".${kind} reached through a call from a pool worker: status 1")
-    c.eq_str(file_read(log) ?? "", "before\navant runtime: .${kind} called from a pool worker: .join and .parallel cannot be called inside a spawn block or a .parallel body, directly or through a call\n", ".${kind} reached through a call from a pool worker: the trap's line after the program's output")
+    c.eq_int(status, 0, ".${kind} reached through a call from a pool worker: status 0")
+    want = "before\n2\n"
+    if kind == "join" {
+      want = "before\n1\n"
+    }
+    c.eq_str(file_read(log) ?? "", want, ".${kind} reached through a call from a pool worker: the value")
   }
 }
 
@@ -68,19 +73,53 @@ fn frozen_cases(c: Checks, compiler: String, stamp: Int) {
   clog = "${scratch()}/safety-frozen-${stamp}.clog"
   code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/frozen_trap.av", bin, clog)
   c.eq_int(code, 0, "the frozen-array fixture compiles")
-  kinds = ["sender-alias", "sender-call", "sender-field", "task-alias", "task-call", "task-field", "push", "pop", "clear", "fill", "sort", "sort-block", "reverse", "reserve", "store", "store-op", "element-field", "nested", "parallel", "method", "method-held", "method-bare", "method-field", "task-method"]
-  ops = ["push", "push", "push", "push", "push", "clear", "push", "pop", "clear", "fill", "sort", "sort", "reverse", "reserve", "an element store", "an element store", "an element store", "push", "push", "an element store", "an element store", "an element store", "an element store", "an element store"]
-  i = 0
-  while i < kinds.size {
-    kind = kinds[i]
+  kinds = ["sender-alias", "sender-call", "sender-field", "task-alias", "task-call", "task-field", "push", "pop", "clear", "fill", "sort", "sort-block", "reverse", "reserve", "delete_if", "fill-strings", "insert", "delete_at", "try_delete_at", "concat", "concat-empty", "shuffle", "store", "store-op", "element-field", "nested", "parallel", "method", "method-held", "method-bare", "method-field", "task-method"]
+  ops = ["push", "push", "push", "push", "push", "clear", "push", "pop", "clear", "fill", "sort", "sort", "reverse", "reserve", "delete_if", "fill", "insert", "delete_at", "delete_at", "concat", "concat", "shuffle", "an element store", "an element store", "an element store", "push", "push", "an element store", "an element store", "an element store", "an element store", "an element store"]
+  for i, kind in kinds {
     log = "${scratch()}/safety-frozen-${stamp}-${kind}.log"
     args: Array(String) = []
     args.push(kind)
     status = process_run_out(bin, args, log) ?? -1
     c.eq_int(status, 1, "frozen ${kind}: status 1")
-    want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first"
-    c.expect(str_has(file_read(log) ?? "", want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
-    i += 1
+    want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array"
+    c.expect((file_read(log) ?? "").contains(want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
+  }
+}
+
+// A Hash a running task reads is frozen as an Array is
+// (tests/fixtures/threads/frozen_hash.av): read by spawn and .parallel
+// at every level and changed again after the join; changed through a
+// path the checker cannot see, a trap naming the operation: in the
+// sender (status 1), in a .parallel body (status 1), in a task (the
+// task ends, its join gives the trap, the hash is usable after).
+fn frozen_hash_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/safety-frozen-hash-${stamp}.bin"
+  clog = "${scratch()}/safety-frozen-hash-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/frozen_hash.av", bin, clog)
+  c.eq_int(code, 0, "the frozen-hash fixture compiles")
+  tail = " on a hash a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the hash"
+  kinds = ["read", "task-call", "store", "store-old", "delete", "delete-absent", "clear", "inc", "set-add", "value-push", "inner-store", "parallel"]
+  statuses = [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+  wants = [
+    "before\n5\n2 4 -1\n1\n3\n11 1\n2 4 2\n3\n",
+    "trapped: a store${tail}\nafter: 3\n",
+    "before\navant runtime: a store${tail}",
+    "before\navant runtime: a store${tail}",
+    "before\navant runtime: delete${tail}",
+    "before\navant runtime: delete${tail}",
+    "before\navant runtime: clear${tail}",
+    "before\navant runtime: a store${tail}",
+    "before\navant runtime: a store${tail}",
+    "before\navant runtime: push on an array a running task reads",
+    "before\navant runtime: a store${tail}",
+    "before\navant runtime: a store${tail}"]
+  for i, kind in kinds {
+    log = "${scratch()}/safety-frozen-hash-${stamp}-${kind}.log"
+    args: Array(String) = []
+    args.push(kind)
+    status = process_run_out(bin, args, log) ?? -1
+    c.eq_int(status, statuses[i], "frozen hash ${kind}: status")
+    c.expect((file_read(log) ?? "").contains(wants[i]), "frozen hash ${kind}: the output")
   }
 }
 
@@ -177,12 +216,12 @@ fn test_safety(c: Checks) {
 
   seed_arr: Array(Int) = [1, 2]
   mu = Mutex.new(seed_arr)
-  n = mu.with { |x|
+  n = mu.with (x) {
     x.push(3)
     x.size
   }
   c.eq_int(n, 3, "mutex array push")
-  m = mu.with { |x| x[2] }
+  m = mu.with (x) { x[2] }
   c.eq_int(m, 3, "mutex array read")
 
   ch: Channel(Array(Int)) = Channel.new(1)
@@ -197,6 +236,7 @@ fn test_safety(c: Checks) {
     stamp = now_ms()
     pool_worker_cases(c, compiler, stamp)
     frozen_cases(c, compiler, stamp)
+    frozen_hash_cases(c, compiler, stamp)
 
     expect_trap_waveb(c, compiler, stamp, "oob-read", "fn main {\n  xs = [1, 2, 3]\n  puts(xs[10])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "oob-neg", "fn main {\n  xs = [1, 2, 3]\n  i = 0 - 1\n  puts(xs[i])\n}\n", "out of bounds")
@@ -222,7 +262,6 @@ fn test_safety(c: Checks) {
     expect_compile_error(c, compiler, stamp, "c-scalar-local", "fn main {\n  x: UInt8 = 1\n  puts(x)\n}\n", "UInt8 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Int)")
     expect_compile_error(c, compiler, stamp, "c-scalar-param", "fn f(x: Float32): Int {\n  1\n}\nfn main {\n  puts(f(1.0))\n}\n", "Float32 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Float64)")
     expect_compile_error(c, compiler, stamp, "c-scalar-field", "struct S {\n  a: UInt16\n}\nfn main {\n  s = S { a: 1 }\n  puts(s.a)\n}\n", "UInt16 is a C type")
-    expect_compile_error(c, compiler, stamp, "c-scalar-callback", "lib c {\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(UInt8): Int)\n}\nfn main {\n  puts(1)\n}\n", "a C callback cannot take or return UInt8 yet; use its Avant type (Int)")
     expect_trap_waveb(c, compiler, stamp, "div-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x / y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "rem-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x % y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "overflow-add", "fn main {\n  x = 9223372036854775807\n  y = 1\n  puts(x + y)\n}\n", "integer overflow")
@@ -255,7 +294,7 @@ fn test_safety(c: Checks) {
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
     c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
     if err = file_read(bad_log) {
-      c.expect(str_has(err, "unknown function"), "unknown-fn diagnostic")
+      c.expect(err.contains("unknown function"), "unknown-fn diagnostic")
     } else {
       c.expect(false, "unknown-fn diagnostic")
     }
@@ -275,7 +314,7 @@ fn test_safety(c: Checks) {
     code_dr = run_av_bin(dbg_bin, out_d)
     c.expect(code_dr == 0, "--debug binary runs")
     if text = file_read(out_d) {
-      c.expect(str_has(text, "hi"), "--debug binary output")
+      c.expect(text.contains("hi"), "--debug binary output")
     } else {
       c.expect(false, "--debug binary output")
     }

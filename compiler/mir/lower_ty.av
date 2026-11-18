@@ -5,6 +5,7 @@
 
 import source
 import type
+import ast
 import mir.types
 
 // The MIR type of t in the supported subset, or -1: Int i64, Int32
@@ -37,6 +38,10 @@ pub fn mir_scalar_ty(t: Ty): Int {
   }
   if t.is_string() || t.is_bytes() {
     return mt_str()
+  }
+  if t.is_hasher() {
+    // The runtime's hasher on the C stack: a raw pointer, not traced.
+    return mt_ptr()
   }
   -1
 }
@@ -157,8 +162,18 @@ pub fn mir_str_builtin_arity(c: String): Int {
 // parentheses; any other type is refused before a symbol or a layout
 // needs it, so its shown name is enough here.
 pub fn mir_mty(t: Ty): String {
+  if t.c_scalar > 0 {
+    // A narrow C scalar (a Ptr's pointee): its C name, so Ptr(UInt8)
+    // and Ptr(Int) stay two types.
+    return c_scalar_name(t.c_scalar)
+  }
   if t.is_enum() {
     return "${mir_module_part(t.mod_name)}.${t.name}"
+  }
+  if t.is_carray() {
+    if ce = t.inner {
+      return "${mir_mty(ce)}[${t.count}]"
+    }
   }
   if t.is_struct() || t.is_class() {
     // A generic instance: its template's name and the type arguments,
@@ -370,4 +385,14 @@ pub fn mir_c_view_mty(k: Int): Int {
     return mt_f64()
   }
   mt_i64()
+}
+
+// Whether e is `p[i]` through a Ptr, or an element of a C array field.
+pub fn mir_ptr_index(e: Expr): Bool {
+  if e.kind == ex_index() {
+    if l = e.left, lt = l.ty {
+      return lt.is_ptr() || lt.is_carray()
+    }
+  }
+  false
 }

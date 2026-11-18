@@ -1,0 +1,178 @@
+import harness
+import backends
+
+// The forms of `for`. Each program is compiled in parallel; an accepted
+// one must print what it should, a refused one must leave no binary, say
+// the expected words and point at the expected line and column.
+//   - `for i, x in xs`: the position, then the element, over an Array,
+//     Bytes, a Buf or `s.bytes`; `continue` moves both; the position
+//     cannot be assigned; a range has one variable; both names are new.
+//   - `for b in bytes`, `for b in buf`, `for b in s.bytes`: each byte as
+//     an Int (`s.bytes` walks the string's own bytes, without a copy); a
+//     bare String is refused with the two walks it may mean.
+//   - `for v in e` where e's type has a method `next` returning T?: the
+//     loop `while v = it.next() { }` with e held once; std.json's and
+//     std.regex's cursors, a generic class, a struct cursor; a channel
+//     by its `recv`; `continue` and `break`; a lambda made in the loop
+//     keeps that step's value; the variable cannot be assigned (nor a
+//     field of a struct value); a type without `next`, or a `next` that
+//     does not return T?, is refused.
+//   - `for i in a..b by k` and `a..=b by k`: every k-th value inside the
+//     range (an inclusive range up to the largest Int without overflow);
+//     a step that is not a positive integer literal is refused.
+//   - `for w in s.fields()`: the fields without an array, as fields()
+//     gives them.
+//   - `...` is refused with the two ranges Avant has.
+
+class PCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 1 accepted, 2 refused, 3 compiles and traps.
+  pub kind: Int = 0
+}
+
+fn accepted(tag: String, src: String, out: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.kind = 2
+  f
+}
+
+fn traps(tag: String, src: String, needle: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 3
+  f
+}
+
+fn cases: Array(PCase) {
+  xs: Array(PCase) = []
+  xs.push(accepted("pos-array", "fn main {\n  for i, x in [5, 6, 7] {\n    puts(\"\${i} \${x}\")\n  }\n}\n", "0 5\n1 6\n2 7\n"))
+  xs.push(accepted("pos-continue", "fn main {\n  t = 0\n  for i, x in [10, 20, 30, 40] {\n    if i == 1 {\n      continue\n    }\n    if x == 40 {\n      break\n    }\n    t += i * 100 + x\n  }\n  puts(t)\n}\n", "240\n"))
+  xs.push(accepted("pos-structs-place", "struct P {\n  pub x: Int = 0\n}\n\nfn main {\n  ps = [P { x: 1 }, P { x: 2 }]\n  for i, p in ps {\n    p.x += i * 10\n  }\n  puts(\"\${ps[0].x} \${ps[1].x}\")\n}\n", "1 12\n"))
+  xs.push(accepted("pos-bytes", "fn main {\n  for i, b in \"hé\".bytes {\n    puts(\"\${i}:\${b}\")\n  }\n}\n", "0:104\n1:195\n2:169\n"))
+  xs.push(accepted("pos-capture", "fn main {\n  fs: Array(fn(): Int) = []\n  for i, x in [7, 8] {\n    fs.push(() { i * 10 + x })\n  }\n  for f in fs {\n    puts(f())\n  }\n}\n", "7\n18\n"))
+  xs.push(accepted("pos-empty", "fn main {\n  xs: Array(String) = []\n  for i, s in xs {\n    puts(s)\n  }\n  puts(\"done\")\n}\n", "done\n"))
+  xs.push(refused("pos-assign", "fn main {\n  for i, x in [1, 2] {\n    i = 5\n  }\n}\n", "cannot assign to i: i is the loop's position, set again at each step", "3:7"))
+  xs.push(refused("pos-outer-name", "fn main {\n  i = 0\n  for i, x in [1, 2] {\n    puts(x)\n  }\n}\n", "for i in ...: i already names a variable here; a loop's variable is the loop's own", "3:3"))
+  xs.push(refused("pos-same-name", "fn main {\n  for i, i in [1, 2] {\n    puts(i)\n  }\n}\n", "the position and the element need two names", "2:10"))
+  xs.push(refused("pos-range", "fn main {\n  for i, j in 0..3 {\n    puts(j)\n  }\n}\n", "for i, j in a range: a range's loop has one variable", "2:3"))
+  xs.push(refused("pos-next", "class C {\n  pub fn next: Int? {\n    nil\n  }\n}\n\nfn main {\n  for i, v in C.new() {\n    puts(v)\n  }\n}\n", "for i, ... in: a position is counted over an Array, Bytes, a Buf or s.bytes, got C", "8:3"))
+  xs.push(accepted("bytes-string", "fn main {\n  s = \"Az\"\n  for b in s.bytes {\n    puts(b)\n  }\n  for b in \"é\".bytes {\n    puts(b + 1)\n  }\n}\n", "65\n122\n196\n170\n"))
+  xs.push(accepted("bytes-value", "fn main {\n  raw = \"héllo\".bytes\n  n = 0\n  for b in raw.slice(1, 3) {\n    n += b\n  }\n  puts(n)\n}\n", "364\n"))
+  xs.push(accepted("bytes-buf", "fn main {\n  out = Buf.new()\n  out.push_str(\"ok\")\n  for b in out {\n    puts(b)\n  }\n}\n", "111\n107\n"))
+  xs.push(accepted("bytes-break", "fn main {\n  n = 0\n  for b in \"abc def\".bytes {\n    if b == ' ' {\n      break\n    }\n    n += 1\n  }\n  puts(n)\n}\n", "3\n"))
+  xs.push(refused("bytes-assign", "fn main {\n  for b in \"ab\".bytes {\n    b = 0\n  }\n}\n", "cannot assign to b: a for variable is a copy of the element", "3:7"))
+  xs.push(refused("string-bare", "fn main {\n  for c in \"abc\" {\n    puts(c)\n  }\n}\n", "got String: a String is walked by its bytes (for b in s.bytes) or by its characters (for c in s.chars())", "2:3"))
+  xs.push(refused("int-operand", "fn main {\n  for c in 42 {\n    puts(c)\n  }\n}\n", "for needs a range (a..b), an Array or a type with a method next: T?, got Int", "2:3"))
+  xs.push(accepted("next-class", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  for v in Count.new(3) {\n    puts(v)\n  }\n}\n", "1\n2\n3\n"))
+  xs.push(accepted("next-continue-break", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  t = 0\n  for v in Count.new(10) {\n    if v % 2 == 0 {\n      continue\n    }\n    if v > 7 {\n      break\n    }\n    t += v\n  }\n  puts(t)\n}\n", "16\n"))
+  xs.push(accepted("next-held-once", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn make(log: Array(Int)): Count {\n  log.push(1)\n  Count.new(2)\n}\n\nfn main {\n  log: Array(Int) = []\n  for v in make(log) {\n    puts(v)\n  }\n  puts(log.size)\n}\n", "1\n2\n1\n"))
+  xs.push(accepted("next-capture", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  fs: Array(fn(): Int) = []\n  for v in Count.new(2) {\n    fs.push(() { v * 10 })\n  }\n  for f in fs {\n    puts(f())\n  }\n}\n", "10\n20\n"))
+  xs.push(accepted("next-generic", "class Gen(T) {\n  xs: Array(T)\n  i: Int = 0\n\n  fn initialize(xs: Array(T)) {\n    self.xs = xs\n  }\n\n  pub fn next: T? {\n    if self.i >= self.xs.size {\n      return nil\n    }\n    self.i += 1\n    self.xs[self.i - 1]\n  }\n}\n\nfn main {\n  for s in Gen(String).new([\"a\", \"b\"]) {\n    puts(s)\n  }\n}\n", "a\nb\n"))
+  xs.push(accepted("next-struct-cursor", "struct Down {\n  pub n: Int = 0\n\n  pub fn next: Int? {\n    if self.n == 0 {\n      return nil\n    }\n    self.n -= 1\n    self.n\n  }\n}\n\nfn main {\n  d = Down { n: 3 }\n  for v in d {\n    puts(v)\n  }\n  puts(d.n)\n}\n", "2\n1\n0\n3\n"))
+  xs.push(accepted("next-nested", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  t = 0\n  for a in Count.new(3) {\n    for b in Count.new(a) {\n      t += b\n    }\n  }\n  puts(t)\n}\n", "10\n"))
+  xs.push(accepted("next-return", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn first_over(k: Int): Int {\n  for v in Count.new(9) {\n    if v > k {\n      return v\n    }\n  }\n  0\n}\n\nfn main {\n  puts(first_over(4))\n}\n", "5\n"))
+  xs.push(accepted("next-reassigned", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  c = Count.new(3)\n  for v in c {\n    puts(v)\n    c = Count.new(1)\n  }\n}\n", "1\n2\n3\n"))
+  xs.push(accepted("next-class-by-name", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  c = Count.new(4)\n  for v in c {\n    if v == 2 {\n      break\n    }\n  }\n  puts(c.next() ?? 0)\n}\n", "3\n"))
+  xs.push(accepted("next-json", "import std.json\n\nfn main {\n  if doc = Json.parse(\"[1, 2, 3]\") {\n    if it = doc.arr() {\n      t = 0\n      for e in it {\n        t += e.int() ?? 0\n      }\n      puts(t)\n    }\n  }\n}\n", "6\n"))
+  xs.push(accepted("next-regex", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"[0-9]+\") {\n    for m in re.matches(\"a1 b22 c333\") {\n      puts(m.end - m.start)\n    }\n  }\n}\n", "1\n2\n3\n"))
+  xs.push(accepted("next-channel", "import std.sync\n\nfn main {\n  ch = Channel(Int).new(4)\n  _ = ch.send(7)\n  _ = ch.send(8)\n  ch.close()\n  for v in ch {\n    puts(v)\n  }\n}\n", "7\n8\n"))
+  xs.push(refused("next-assign", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  for v in Count.new(2) {\n    v = 0\n  }\n}\n", "cannot assign to v: v is this step's value, a copy", "20:7"))
+  xs.push(refused("next-struct-field", "struct Q {\n  pub x: Int = 0\n}\n\nclass Qs {\n  pub fn next: Q? {\n    nil\n  }\n}\n\nfn main {\n  for q in Qs.new() {\n    q.x = 4\n  }\n}\n", "cannot assign to q.x: q is this step's value, a copy", "13:9"))
+  xs.push(refused("next-outer-name", "class Count {\n  i: Int = 0\n  n: Int\n\n  fn initialize(n: Int) {\n    self.n = n\n  }\n\n  pub fn next: Int? {\n    if self.i >= self.n {\n      return nil\n    }\n    self.i += 1\n    self.i\n  }\n}\n\nfn main {\n  v = 1\n  for v in Count.new(2) {\n    puts(v)\n  }\n}\n", "for v in ...: v already names a variable here; a loop's variable is the loop's own", "20:3"))
+  xs.push(refused("next-missing", "class None {\n}\n\nfn main {\n  for y in None.new() {\n    puts(y)\n  }\n}\n", "for needs a range (a..b), an Array or a type with a method next: T?, got None, which has no method next", "5:3"))
+  xs.push(refused("next-not-optional", "class Bad {\n  pub fn next: Int {\n    1\n  }\n}\n\nfn main {\n  for x in Bad.new() {\n    puts(x)\n  }\n}\n", "for calls next at each step: it must return T?, nil ending the loop, got Int", "8:3"))
+  xs.push(refused("next-error", "class Bad: Error {\n  pub message: String = \"bad\"\n}\n\nclass Cur {\n  pub fn next: Int | Bad | Nil {\n    nil\n  }\n}\n\nfn main {\n  for x in Cur.new() {\n    puts(x)\n  }\n}\n", "got Nil | Bad | Int: a walk whose step can fail (Bad) is written while v = it.next() { ... } else e { ... }", "12:3"))
+  xs.push(refused("next-error-no-nil", "class Bad: Error {\n  pub message: String = \"bad\"\n}\n\nclass Cur {\n  pub fn next: Int | Bad {\n    Bad.new()\n  }\n}\n\nfn main {\n  for x in Cur.new() {\n    puts(x)\n  }\n}\n", "got Bad | Int: a walk whose step can fail (Bad) is written while v = it.next() { ... } else e { ... }", "12:3"))
+  xs.push(refused("next-optional-operand", "import std.json\n\nfn main {\n  if doc = Json.parse(\"[1]\") {\n    for e in doc.arr() {\n      puts(1)\n    }\n  }\n}\n", "got JsonIter?", "5:5"))
+  xs.push(accepted("by-exclusive", "fn main {\n  for i in 0..10 by 3 {\n    puts(i)\n  }\n}\n", "0\n3\n6\n9\n"))
+  xs.push(accepted("by-inclusive", "fn main {\n  for i in 1..=10 by 3 {\n    puts(i)\n  }\n  for j in 0..=9 by 3 {\n    puts(j)\n  }\n}\n", "1\n4\n7\n10\n0\n3\n6\n9\n"))
+  xs.push(accepted("by-continue", "fn main {\n  t = 0\n  for i in 0..20 by 5 {\n    if i == 5 {\n      continue\n    }\n    t += i\n  }\n  puts(t)\n}\n", "25\n"))
+  xs.push(accepted("by-int-max", "fn main {\n  n = 0\n  for i in 9223372036854775800..=9223372036854775807 by 4 {\n    n += 1\n    puts(i)\n  }\n  puts(n)\n}\n", "9223372036854775800\n9223372036854775804\n2\n"))
+  xs.push(accepted("by-empty", "fn main {\n  for i in 5..5 by 2 {\n    puts(i)\n  }\n  puts(\"none\")\n}\n", "none\n"))
+  xs.push(refused("by-negative", "fn main {\n  for i in 0..10 by -1 {\n    puts(i)\n  }\n}\n", "for ... by -k: a step down is not supported", "2:18"))
+  xs.push(refused("by-zero", "fn main {\n  for i in 0..10 by 0 {\n    puts(i)\n  }\n}\n", "for ... by 0 would never move", "2:21"))
+  xs.push(refused("by-name", "fn main {\n  k = 2\n  for i in 0..10 by k {\n    puts(i)\n  }\n}\n", "for ... by takes a positive integer literal", "3:21"))
+  xs.push(refused("by-array", "fn main {\n  for x in [1, 2, 3] by 2 {\n    puts(x)\n  }\n}\n", "for ... by takes a range", "2:22"))
+  xs.push(accepted("fields-walk", "fn main {\n  for w in \"  one two\\tthree\\r\\nfour  \".fields() {\n    puts(\"[\${w}]\")\n  }\n  for w in \"\".fields() {\n    puts(\"never\")\n  }\n  for w in \" \\n \".fields() {\n    puts(\"never\")\n  }\n  n = 0\n  for w in \"a bb ccc\".fields() {\n    if w.size == 2 {\n      continue\n    }\n    n += w.size\n  }\n  puts(n)\n}\n", "[one]\n[two]\n[three]\n[four]\n4\n"))
+  xs.push(accepted("fields-held", "fn text(log: Array(Int)): String {\n  log.push(1)\n  \"x y\"\n}\n\nfn main {\n  log: Array(Int) = []\n  for w in text(log).fields() {\n    puts(w)\n  }\n  puts(log.size)\n}\n", "x\ny\n1\n"))
+  xs.push(accepted("fields-capture", "fn main {\n  fs: Array(fn(): String) = []\n  for w in \"p q\".fields() {\n    fs.push(() { w })\n  }\n  for f in fs {\n    puts(f())\n  }\n}\n", "p\nq\n"))
+  xs.push(accepted("fields-pos", "fn main {\n  for i, w in \"p q\".fields() {\n    puts(\"\${i}\${w}\")\n  }\n}\n", "0p\n1q\n"))
+  xs.push(refused("fields-assign", "fn main {\n  for w in \"p q\".fields() {\n    w = \"z\"\n  }\n}\n", "cannot assign to w: a for variable is a copy of the element", "3:7"))
+  xs.push(refused("dots", "fn main {\n  for i in 1...3 {\n    puts(i)\n  }\n}\n", "`...` is not a range in Avant: write `..` (end excluded) or `..=` (end included)", "2:13"))
+  xs.push(refused("dots-slice", "fn main {\n  s = \"abcdef\"\n  puts(s[1...3])\n}\n", "`...` is not a range in Avant", "3:11"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/ff-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/ff-${f.tag}.bin", "${dir}/ff-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind != 2 {
+      runs.push(run_job(dir, "ff-${f2.tag}.bin", "ff-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/ff-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/ff-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 3 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.expect(runs[k].code != 0, "${f3.tag}: fails")
+      c.expect(log_text("${dir}/ff-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ff-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("ff-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_for_forms.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

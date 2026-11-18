@@ -263,6 +263,8 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
   owner = ty.show()
   if ty.is_array() {
     owner = "Array"
+  } else if ty.is_set() {
+    owner = "Set"
   } else if ty.is_hash() {
     owner = "Hash"
   }
@@ -280,25 +282,28 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
 // and fails if one is not a method or field there.
 pub fn builtin_member_names(ty: Ty): String {
   if ty.is_float() {
-    return "abs exp floor sqrt to_i to_s"
+    return "abs atan2 ceil cos exp floor ln log10 log2 pow round sin sqrt tan to_bits to_i to_s trunc"
   }
   if ty.is_integer() {
-    return "abs to_f to_i to_i32 to_s to_u32 to_u64 wrap_i wrap_i32 wrap_u32 wrap_u64"
+    return "abs count_ones leading_zeros to_f to_i to_i32 to_s to_u32 to_u64 trailing_zeros try_shl try_shr wrap_i wrap_i32 wrap_u32 wrap_u64"
   }
   if ty.is_string() {
-    return "size bytes chars fields get split strip strip_left strip_right to_f to_i to_s to_u64"
+    return "size bytes chars contains count delete_prefix delete_suffix ends_with eq_ignore_ascii_case fields get index_of is_empty last_index_of lines pad_left pad_right repeat replace slice split starts_with strip strip_left strip_right to_ascii_lower to_ascii_upper to_f to_i to_s to_u64 try_slice"
   }
   if ty.is_bytes() {
-    return "size chars get slice to_buf"
+    return "size chars contains count ends_with eq_ignore_ascii_case get index_of is_empty last_index_of slice starts_with to_buf try_slice"
   }
   if ty.is_array() {
-    return "size all any clear contains each fill get index_of max min parallel pop push reserve reverse sort sorted sum"
+    return "size all any clear concat delete_at delete_if dup each fill find first get has index_of insert is_empty join last last_index_of max max_by min min_by parallel pop push reserve reverse reversed shuffle shuffled slice sort sorted sum try_delete_at try_slice unique"
+  }
+  if ty.is_set() {
+    return "size add clear delete each has is_empty values"
   }
   if ty.is_hash() {
-    return "size clear delete each get has_key inc keys values"
+    return "size clear delete each get has inc is_empty keys values"
   }
   if ty.is_buf() {
-    return "size clear get push_byte push_bytes push_slice push_str starts_with to_bytes to_s"
+    return "size clear contains count ends_with eq_ignore_ascii_case get index_of is_empty last_index_of push_byte push_bytes push_slice push_str slice starts_with to_bytes to_s try_slice"
   }
   if ty.is_join() {
     return "join"
@@ -383,6 +388,15 @@ pub fn (checker_self: Checker) open_text(e: Expr): String {
 // The hint for a use of a value of type ty as its value: "; open it ..."
 // when ty is an optional, else "".
 pub fn (checker_self: Checker) open_hint(e: Expr, ty: Ty): String {
+  if ty.is_nilable() && e.kind == ex_index() {
+    if h = e.left, ht = h.ty, ht.is_hash() {
+      if v = ht.val, v.is_struct() {
+        // `h[k].x = 1`, `h[k].move(2)`: the read is nil when the key is
+        // absent, and its value a copy of the stored struct.
+        return "; h[k] is nil when the key is absent, else a copy of the stored ${v.show()}: open it with `if v = h[k]`, and to change the stored value change v and store it back (h[k] = v)"
+      }
+    }
+  }
   if ty.is_nilable() {
     return "; ${checker_self.open_text(e)}"
   }

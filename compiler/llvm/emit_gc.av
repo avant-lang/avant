@@ -9,130 +9,147 @@ import mir.ir
 import llvm.emit_core
 
 // Frames. A frame function keeps its frame record in its own stack
-// frame: %gcf, an AvantGcFrame (runtime/avant_rt.h: prev, slots, n, cap,
-// scope; 32 bytes) followed by the slot array, one pointer per root word
-// of the gc.roots that follows gc.enter (slots in the listed order,
-// words in offset order). gc.enter fills the record (slots, n = cap =
-// the root words, scope 0, each word's address) and links it with the
-// module's @__avant_frame_push: inline (prev = avant_gc_top,
-// avant_gc_top = %gcf) when the thread already has an innermost frame,
-// else through avant_gc_frame_enter, which also registers the thread and
-// initializes the heap. gc.leave calls @__avant_frame_pop, which unlinks
-// it inline when %gcf is innermost and not the thread's outermost frame,
-// else through avant_gc_frame_leave. Both helpers are internal and
-// small, so the inliner at -O3 folds them into every frame
-// (ll_gc_frame_helpers). The call forms (inline_fast false) call the
-// runtime entries directly. gc.roots itself emits nothing: gc.enter has
-// registered its slots, and nothing comes between them (V16). Before,
-// this was a call to avant_gc_enter, a call to avant_gc_root_begin and
-// one store per word, and a call to avant_gc_leave.
+// frame: %gcf, two words { prev, desc } (runtime/avant_rt.h) followed in
+// place by the function's slot locals themselves, the locals of the
+// gc.roots that follows gc.enter, in the listed order, each at its
+// alignment. A slot local has no alloca of its own: its address is a
+// GEP of %gcf, emitted where it is used (LlEmit.local_addr). desc says which words
+// after the header are root words: an odd constant, bit i + 1 for word i,
+// when the record has at most 62 words after the header; else a private
+// constant map ({ n, the n root word indices }) whose address plus 2 is
+// desc. gc.enter stores desc and links the record with the module's
+// @__avant_frame_push: inline (prev = avant_gc_top, avant_gc_top = %gcf)
+// when the thread already has an innermost frame, else through
+// avant_gc_frame_enter, which also registers the thread and initializes
+// the heap. gc.leave calls @__avant_frame_pop, which unlinks it inline
+// when %gcf is innermost and not the thread's outermost frame, else
+// through avant_gc_frame_leave. Both helpers are internal and small, so
+// the inliner at -O3 folds them into every frame (ll_gc_frame_helpers).
+// The call forms (inline_fast false) call the runtime entries directly.
+// gc.roots itself emits nothing: the record's layout is its slots, and
+// nothing comes between gc.enter and it (V16). Before, the record was
+// { prev, slots, n, cap, scope } with an array of the slots' addresses
+// after it: four header stores and one address store per slot at every
+// entry, where desc is one store.
 
-// The root words of bb0's gc.roots, or -1 when the function has no
-// gc.enter (a leaf).
-pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
+// The record of bb0's gc.enter and gc.roots, into e: frame_words (the
+// words after the header, or -1 when the function has no gc.enter: a
+// leaf), frame_at (each local's byte offset in the record, or -1),
+// frame_align, and frame_desc (desc's store operand, typed).
+pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
+  e.frame_words = -1
+  e.frame_align = 8
+  e.frame_desc = ""
+  e.frame_at = []
   if f.blocks.size == 0 {
-    return -1
+    return
   }
-  stmts = f.blocks[0].stmts
   found = false
-  n = 0
-  for st in stmts {
+  slots: Array(Int) = []
+  for st in f.blocks[0].stmts {
     if st.kind == msk_gc_enter() {
       found = true
     } else if st.kind == msk_gc_roots() {
-      j = 0
-      while j < st.locals.size {
-        n += e.ts.root_count(f.locals[st.locals[j]].ty)
-        j += 1
+      for l in st.locals {
+        slots.push(l)
       }
     }
   }
   if !found {
-    return -1
+    return
   }
-  n
-}
-
-pub fn ll_gc_frame_type(n: Int): String {
-  if n == 0 {
-    return "{ ptr, ptr, i32, i32, i32 }"
+  for i in 0..f.locals.size {
+    e.frame_at.push(-1)
   }
-  "{ ptr, ptr, i32, i32, i32, [${n} x ptr] }"
-}
-
-// The locals of the gc.roots right after the current gc.enter (V16).
-fn ll_gc_roots_after(e: LlEmit): Array(MStmt) {
-  out: Array(MStmt) = []
-  stmts = e.f.blocks[e.bk].stmts
-  if e.si + 1 < stmts.size {
-    st = stmts[e.si + 1]
-    if st.kind == msk_gc_roots() {
-      out.push(st)
+  w = 0
+  roots: Array(Int) = []
+  for l in slots {
+    ty = f.locals[l].ty
+    a = e.align(ty)
+    if a > e.frame_align {
+      e.frame_align = a
     }
-  }
-  out
-}
-
-pub fn ll_gc_frame_enter(e: LlEmit) {
-  roots = ll_gc_roots_after(e)
-  n = 0
-  i = 0
-  if roots.size > 0 {
-    locals = roots[0].locals
-    while i < locals.size {
-      n += e.ts.root_count(e.f.locals[locals[i]].ty)
-      i += 1
+    off = 16 + w * 8
+    while off % a != 0 {
+      off += 8
     }
+    e.frame_at[l] = off
+    w0 = (off - 16) / 8
+    refs: Array(Int) = []
+    words: Array(Int) = []
+    e.ts.words(ty, 0, refs, words)
+    for wd in words {
+      roots.push(w0 + wd)
+    }
+    w = w0 + (e.ts.size_of(ty) + 7) / 8
   }
-  slots = "null"
-  if n > 0 {
-    slots = e.tmp()
-    e.line("${slots} = getelementptr inbounds i8, ptr %gcf, i64 32")
-  }
-  fs = e.tmp()
-  e.line("${fs} = getelementptr inbounds i8, ptr %gcf, i64 8")
-  e.line("store ptr ${slots}, ptr ${fs}, align 8")
-  fn_ = e.tmp()
-  e.line("${fn_} = getelementptr inbounds i8, ptr %gcf, i64 16")
-  e.line("store i32 ${n}, ptr ${fn_}, align 8")
-  fc = e.tmp()
-  e.line("${fc} = getelementptr inbounds i8, ptr %gcf, i64 20")
-  e.line("store i32 ${n}, ptr ${fc}, align 4")
-  fsc = e.tmp()
-  e.line("${fsc} = getelementptr inbounds i8, ptr %gcf, i64 24")
-  e.line("store i32 0, ptr ${fsc}, align 8")
-  if n > 0 {
-    locals = roots[0].locals
-    w = 0
-    for l in locals {
-      refs: Array(Int) = []
-      words: Array(Int) = []
-      e.ts.words(e.f.locals[l].ty, 0, refs, words)
-      j = 0
-      while j < words.size {
-        at = e.local_name(l)
-        if words[j] > 0 {
-          at = e.tmp()
-          e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${words[j] * 8}")
-        }
-        sl = slots
-        if w > 0 {
-          sl = e.tmp()
-          e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
-        }
-        e.line("store ptr ${at}, ptr ${sl}, align 8")
-        w += 1
-        j += 1
+  e.frame_words = w
+  if w <= 62 {
+    d = 1
+    for r in roots {
+      bit = 2
+      k = 0
+      while k < r {
+        bit *= 2
+        k += 1
       }
+      d += bit
     }
+    e.frame_desc = "i64 ${d}"
+    return
   }
+  name = "@__avant_frame_map.${e.frame_maps.size}"
+  text = "${name} = private unnamed_addr constant { i64, [${roots.size} x i32] } { i64 ${roots.size}, [${roots.size} x i32] ["
+  j = 0
+  while j < roots.size {
+    if j > 0 {
+      text = text + ", "
+    }
+    text = text + "i32 ${roots[j]}"
+    j += 1
+  }
+  e.frame_maps.push(text + "] }, align 8")
+  e.frame_desc = "ptr getelementptr (i8, ptr ${name}, i64 2)"
+}
+
+pub fn ll_gc_frame_type(e: LlEmit): String {
+  if e.frame_words == 0 {
+    return "{ ptr, i64 }"
+  }
+  "{ ptr, i64, [${e.frame_words} x i64] }"
+}
+
+// A thread's first Avant frame can be only a first-frame function's
+// (MFunc.first_frame: main, a C callback's thunk, a task's thunk; the
+// frame pass gives each a record, gc.av rule 2), so every other record is
+// linked below another record of its thread: avant_gc_top is not null at
+// its gc.enter, and at its gc.leave it is the record itself (every
+// return unlinks, V17; a recovery's jump restores avant_gc_top to the
+// record its recovery point was entered under) and prev is not null. Such
+// a record links and unlinks inline with no test: three instructions and
+// two. A first-frame function's record goes through the helpers, which
+// take the runtime entry for the thread's outermost frame. The runtime's
+// checked mode asks, at every collection, that a thread's outermost
+// record entered through the runtime (gc_verify_frames).
+pub fn ll_gc_frame_enter(e: LlEmit) {
+  fd = e.tmp()
+  e.line("${fd} = getelementptr inbounds i8, ptr %gcf, i64 8")
+  e.line("store ${e.frame_desc}, ptr ${fd}, align 8")
   e.need("avant_gc_frame_enter")
   if !e.inline_fast {
     e.line("call void @avant_gc_frame_enter(ptr %gcf)")
     return
   }
   e.used_frame_global = true
-  e.line("call void @__avant_frame_push(ptr %gcf)")
+  if e.f.first_frame() {
+    e.used_frame_helpers = true
+    e.line("call void @__avant_frame_push(ptr %gcf)")
+    return
+  }
+  t = e.tmp()
+  e.line("${t} = load ptr, ptr @avant_gc_top, align 8")
+  e.line("store ptr ${t}, ptr %gcf, align 8")
+  e.line("store volatile ptr %gcf, ptr @avant_gc_top, align 8")
 }
 
 pub fn ll_gc_frame_leave(e: LlEmit) {
@@ -142,16 +159,24 @@ pub fn ll_gc_frame_leave(e: LlEmit) {
     return
   }
   e.used_frame_global = true
-  e.line("call void @__avant_frame_pop(ptr %gcf)")
+  if e.f.first_frame() {
+    e.used_frame_helpers = true
+    e.line("call void @__avant_frame_pop(ptr %gcf)")
+    return
+  }
+  p = e.tmp()
+  e.line("${p} = load ptr, ptr %gcf, align 8")
+  e.line("store volatile ptr ${p}, ptr @avant_gc_top, align 8")
 }
 
-// The module's two frame helpers, when a frame links inline: internal
-// functions the inliner at -O3 folds into every caller (in --debug they stay
-// calls, so the .ll and the debug object stay small). The link and the
-// unlink of a record; the stores into avant_gc_top are volatile so that
-// LLVM cannot merge an inlined callee's unlink into the next frame's link
-// (dead-store elimination), which would leave the callee's
-// llvm.lifetime.end before any store that unlinks it.
+// The module's two frame helpers, when a first-frame function's record
+// links inline: internal functions the inliner at -O3 folds into every
+// caller (in --debug they stay calls). The link and the unlink of a
+// record; the stores into avant_gc_top are volatile, here and in the
+// other records' inline link and unlink, so that LLVM cannot merge an
+// inlined callee's unlink into the next frame's link (dead-store
+// elimination), which would leave the callee's llvm.lifetime.end before
+// any store that unlinks it.
 pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
   // The helpers call both: a frame whose every path ends in a call that
@@ -526,44 +551,155 @@ fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
   r
 }
 
-// _d = call avant_c_str(_s): a C function's `String` result (the Valk
-// stage; mir/lower_ffi.av c_string_owned). Only an address inside the
-// collected heap can need the runtime (it may name the inside of an
-// object, which a field may not hold), so the range test is here: the
-// address less the heap's first byte, compared with the heap's reserved
-// size (two globals the runtime sets once, when it reserves the heap;
-// both zero before, and then no address passes). C's own memory, a
-// literal and null pay the subtraction and the compare, and never the
-// call. The call form when inline fast paths are off.
-pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
-  e.used_heap_globals = true
-  e.need("avant_c_str")
+// A static string's header word (runtime/avant_rt.h, AvantHeader): the
+// size, N bytes and the terminator, in the low 32 bits; the type id of
+// bytes (0); and the string tag (AVANT_FLAG_STRMETA, 0x4000) in the top
+// 16 bits, without the heap flag.
+pub fn ll_str_header(n: Int): Int {
+  (0x4000 << 48) + n + 1
+}
+
+// _d = call avant_str_size(_s): a string's size, read from its object
+// (runtime/avant_rt.h, AvantStrView): a flat string's header size less
+// its terminator, or a view's length field (a view's header type id is
+// 1020; a rare branch). A null string, which the runtime reads as empty,
+// reads the header of the static empty string @str.nil instead (a
+// select). A live string object never changes, so its loads are
+// invariant: LLVM may hoist them out of a loop and merge two of the same
+// string. The call form when inline fast paths are off.
+pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
   s = e.value(args[0])
-  lo = e.tmp()
-  e.line("${lo} = load i64, ptr @avant_gc_heap_lo, align 8")
-  si = e.tmp()
-  e.line("${si} = ptrtoint ptr ${s} to i64")
-  off = e.tmp()
-  e.line("${off} = sub i64 ${si}, ${lo}")
-  len = e.tmp()
-  e.line("${len} = load i64, ptr @avant_gc_heap_len, align 8")
-  inh = e.tmp()
-  e.line("${inh} = icmp ult i64 ${off}, ${len}")
-  x = e.tmp()
-  e.line("${x} = call i1 @llvm.expect.i1(i1 ${inh}, i1 false)")
-  head = e.label
-  own = e.part("cstr")
-  cont = e.part("cstrd")
-  e.line("br i1 ${x}, label %${own}, label %${cont}")
-  e.block(own)
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  flat = e.part("strflat")
+  view = e.part("strview")
+  done = e.part("strsize")
+  e.line("br i1 ${isv}, label %${view}, label %${flat}")
+  e.block(flat)
+  h = e.tmp()
+  e.line("${h} = getelementptr inbounds i8, ptr ${q}, i64 -8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${h}, align 8, !invariant.load !13, !range !14")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  n = e.tmp()
+  e.line("${n} = sub nuw nsw i64 ${w}, 1")
+  e.line("br label %${done}")
+  e.block(view)
+  lp = e.tmp()
+  e.line("${lp} = getelementptr inbounds i8, ptr ${q}, i64 12")
+  lv = e.tmp()
+  e.line("${lv} = load i32, ptr ${lp}, align 4, !invariant.load !13, !range !12")
+  lw = e.tmp()
+  e.line("${lw} = zext i32 ${lv} to i64")
+  e.line("br label %${done}")
+  e.block(done)
   r = e.tmp()
-  e.line("${r} = call ptr @avant_c_str(ptr ${s})")
-  e.line("br label %${cont}")
-  e.block(cont)
+  e.line("${r} = phi i64 [ ${n}, %${flat} ], [ ${lw}, %${view} ]")
+  r
+}
+
+// Whether the string object at Q (not null) is a view: its header's type
+// id (the 16 bits at Q - 4) is 1020; expected false.
+fn ll_str_is_view(e: LlEmit, q: String): String {
+  tp = e.tmp()
+  e.line("${tp} = getelementptr inbounds i8, ptr ${q}, i64 -4")
+  ty = e.tmp()
+  e.line("${ty} = load i16, ptr ${tp}, align 4, !invariant.load !13")
+  c = e.tmp()
+  e.line("${c} = icmp eq i16 ${ty}, 1020")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
+  x
+}
+
+// _d = call avant_str_flat(_s) or avant_str_c_arg(_s): a string that is
+// not a view is passed on as it is (null too), with no call; a view goes
+// to the runtime (lower_ffi.av c_string_arg). The call form when inline
+// fast paths are off.
+pub fn ll_str_unview(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  head = e.label
+  view = e.part("strview")
+  done = e.part("strflat")
+  e.line("br i1 ${isv}, label %${view}, label %${done}")
+  e.block(view)
+  r = e.tmp()
+  e.line("${r} = call ptr @${name}(ptr ${s})")
+  e.line("br label %${done}")
+  e.block(done)
   p = e.tmp()
-  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${own} ]")
+  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${view} ]")
   p
+}
+
+// _d = call avant_str_view_test(_s): 1 when the string is a view, else 0
+// (null reads the static empty string's header). The call form when
+// inline fast paths are off.
+pub fn ll_str_view_test(e: LlEmit, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  r = e.tmp()
+  e.line("${r} = zext i1 ${isv} to i32")
+  r
+}
+
+// _d = call avant_str_data(_s, _v): the address of a string's bytes, used
+// at once (as a `ref` to `ptr u8` cast was): a flat string's own address,
+// or, when _v (the view test, avant_str_view_test) is set, a view's base
+// plus its offset. The string is not null (its size was read, or the
+// index proven inside it). The call form when inline fast paths are off.
+pub fn ll_str_data(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  v = e.value(args[1])
+  c = e.tmp()
+  e.line("${c} = icmp ne i32 ${v}, 0")
+  isv = e.tmp()
+  e.line("${isv} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
+  head = e.label
+  view = e.part("strview")
+  done = e.part("strdata")
+  e.line("br i1 ${isv}, label %${view}, label %${done}")
+  e.block(view)
+  bp = e.tmp()
+  e.line("${bp} = load ptr, ptr ${s}, align 8, !invariant.load !13")
+  op = e.tmp()
+  e.line("${op} = getelementptr inbounds i8, ptr ${s}, i64 8")
+  ov = e.tmp()
+  e.line("${ov} = load i32, ptr ${op}, align 8, !invariant.load !13")
+  oz = e.tmp()
+  e.line("${oz} = zext i32 ${ov} to i64")
+  d = e.tmp()
+  e.line("${d} = getelementptr inbounds i8, ptr ${bp}, i64 ${oz}")
+  e.line("br label %${done}")
+  e.block(done)
+  r = e.tmp()
+  e.line("${r} = phi ptr [ ${s}, %${head} ], [ ${d}, %${view} ]")
+  r
 }
 
 // The safepoint poll at a loop head of a shared module: a volatile load

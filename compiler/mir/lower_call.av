@@ -104,10 +104,48 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   if recv = e.receiver {
+    if recv.kind == ex_name() && recv.ident == "Float64" && e.callee == "from_bits" && e.args.size == 1 && e.resolved.size == 0 {
+      // Float64.from_bits(u): a bitcast of the 64 bits.
+      u = lw.lower_expr(e.args[0])
+      if lw.failed() {
+        return zero
+      }
+      lw.at(e.loc)
+      args0: Array(MOperand) = []
+      args0.push(u)
+      return lw.call_to(mt_f64(), "avant_bits_u64_to_f64", args0)
+    }
     if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_utf8" && e.args.size == 1 {
       // String.from_utf8(bytes) (builtins.av emit_from_utf8): the
       // runtime's string with an ok flag, as String?.
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
+    }
+    if e.resolved == "ptr.as" {
+      // `v.as(T)`: the same address, as a Ptr(T).
+      if t = e.ty {
+        o = lw.lower_expr(recv)
+        if lw.failed() {
+          return zero
+        }
+        lw.at(e.loc)
+        return lw.coerce(o, recv.ty ?? t, t, e.loc)
+      }
+    }
+    if e.resolved == "carray.to_s" {
+      return lw.lower_carray_to_s(e, recv)
+    }
+    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && e.callee == "from_c" && e.args.size == 2 {
+      return lw.lower_from_c(e, recv.ident)
+    }
+    if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_code_point" && e.args.size == 1 {
+      // String.from_code_point(n): the runtime's UTF-8 of one code point
+      // (it traps outside them).
+      ops = lw.lower_args(e.args)
+      if lw.failed() {
+        return zero
+      }
+      lw.at(e.loc)
+      return lw.call_to(mt_str(), "avant_str_from_code_point", ops)
     }
     if rt = recv.ty {
       if e.callee == "or" && rt.is_union() && e.args.size == 1 {
@@ -119,6 +157,12 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
         if t = e.ty {
           return lw.lower_expect(recv, e.args[0], t, e.loc)
         }
+      }
+      // `h.add(v)` on a type's hasher: an integer, a Bool, an enum or a
+      // String the runtime mixes in (a struct's add is its hash method,
+      // the call the checker made of it).
+      if rt.is_hasher() && e.callee == "add" && e.args.size == 1 && e.resolved.size == 0 {
+        return lw.lower_hasher_add(e, recv)
       }
       // A user method on any type (Expr.resolved names a program method;
       // the builtin members have none).
@@ -142,11 +186,32 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if (rt.is_integer() || rt.is_float() || (rt.is_bool() && mir_bool_conversion(e.callee))) && e.args.size == 0 {
         return lw.member(recv, rt, e.callee, e)
       }
+      if rt.is_float() && e.args.size == 1 && e.resolved.size == 0 && float_math_binary(e.callee).size > 0 {
+        // `x.pow(y)`, `y.atan2(x)`: the C library's two-argument call.
+        x = lw.lower_expr(recv)
+        y = lw.lower_expr(e.args[0])
+        if lw.failed() {
+          return zero
+        }
+        lw.at(e.loc)
+        args2: Array(MOperand) = []
+        args2.push(x)
+        args2.push(y)
+        return lw.call_to(mt_f64(), float_math_binary(e.callee), args2)
+      }
+      if (mir_is_str_ty(rt) || rt.is_buf()) && e.resolved.size == 0 {
+        if found = lw.seq_search(e, recv, rt, e.callee, e.args) {
+          return found
+        }
+      }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
       }
       if rt.is_array() {
         return lw.arr_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_set() {
+        return lw.set_member(e, recv, rt, e.callee, e.args)
       }
       if rt.is_hash() {
         return lw.hash_member(e, recv, rt, e.callee, e.args)
@@ -237,6 +302,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return zero
     }
     lw.at(e.loc)
+    lw.verb_frozen_check(e, args)
     return lw.call_to(ret, sym, args)
   }
   lw.refuse(e.loc, "the call ${c}")
@@ -386,6 +452,9 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
     if ot.is_array() {
       return lw.arr_member(e, obj, ot, e.ident, none3)
     }
+    if ot.is_set() {
+      return lw.set_member(e, obj, ot, e.ident, none3)
+    }
     if ot.is_hash() {
       return lw.hash_member(e, obj, ot, e.ident, none3)
     }
@@ -424,9 +493,28 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       raw2 = lw.tmp(mt_i32(), lw.lw_b.rv_use(lw.lw_b.copy(p2)))
       return lw.enum_from_c(raw2, et, e.loc)
     }
-    return lw.lower_place_read(e)
+    // A field declared a plain `String` traps on a NULL first
+    // (c_field_string_read); `String?` reads NULL as nil.
+    got: MOperand = lw.lw_b.c_i32(0)
+    if fname = lw.c_field_string(e) {
+      got = lw.c_field_string_read(e, fname)
+    } else {
+      got = lw.lower_place_read(e)
+    }
+    if ft = e.ty, lw.c_ret_string(ft) {
+      // A `String` field of C memory: through avant_c_str, so the
+      // program keeps a string with its length (lower_ffi.av
+      // c_string_owned).
+      if lw.failed() {
+        return got
+      }
+      v = lw.lw_b.temp(lw.ety(e))
+      lw.lw_b.assign(lw.lw_b.pl(v), lw.lw_b.rv_use(got))
+      return lw.c_string_owned(v)
+    }
+    return got
   }
-  lw.refuse(e.loc, "the field .${e.ident}")
+  lw.internal(e.loc, "the field .${e.ident}")
   lw.lw_b.c_i32(0)
 }
 
@@ -454,17 +542,15 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
     if name == "to_i" {
       return lw.f64_to_i32(v, e.loc)
     }
-    if name == "abs" {
-      return lw.call_f64("fabs", v)
+    fname = float_math_unary(name)
+    if fname.size > 0 {
+      return lw.call_f64(fname, v)
     }
-    if name == "floor" {
-      return lw.call_f64("floor", v)
-    }
-    if name == "sqrt" {
-      return lw.call_f64("sqrt", v)
-    }
-    if name == "exp" {
-      return lw.call_f64("exp", v)
+    if name == "to_bits" {
+      // The same 64 bits, as a UInt64: a bitcast.
+      args: Array(MOperand) = []
+      args.push(v)
+      return lw.call_to(mt_u64(), "avant_bits_f64_to_u64", args)
     }
   } else {
     if name == "to_i" || name == "to_u64" || name == "to_i32" || name == "to_u32" {
@@ -478,6 +564,30 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
     }
     if name == "abs" {
       return lw.int_abs(from, v, e.loc)
+    }
+    op = int_bit_count(name)
+    if op.size > 0 {
+      // One LLVM operation on the value's bits (64 or 32 of them); the
+      // count as an Int.
+      w = mt_i64()
+      if from == mt_i32() || from == mt_u32() {
+        w = mt_i32()
+      }
+      x = v
+      if from != w {
+        x = lw.tmp(w, b.rv_cast(v, w))
+      }
+      args: Array(MOperand) = []
+      args.push(x)
+      wn = "i64"
+      if w == mt_i32() {
+        wn = "i32"
+      }
+      r = lw.call_to(w, "avant_bits_${op}_${wn}", args)
+      if w == mt_i64() {
+        return r
+      }
+      return lw.tmp(mt_i64(), b.rv_cast(r, mt_i64()))
     }
   }
   lw.refuse(e.loc, "the member .${name} of ${ot.show()}")
@@ -601,4 +711,26 @@ pub fn (lw: MirLower) enum_const(t: Ty, member: String): MOperand {
     v = t.enum_vals()[idx]
   }
   lw.lw_b.c_int(mir_enum_ty(t), v)
+}
+
+// `h.add(v)`: avant_hasher_add_str for a String, else avant_hasher_add
+// with the value widened to 64 bits (an integer by its signedness, a Bool
+// as 0 or 1, an enum as its integer).
+pub fn (lw: MirLower) lower_hasher_add(e: Expr, recv: Expr): MOperand {
+  b = lw.lw_b
+  h = lw.lower_expr(recv)
+  arg = e.args[0]
+  v = lw.lower_expr(arg)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  ops: Array(MOperand) = []
+  ops.push(h)
+  if at = arg.ty, at.is_string() {
+    ops.push(v)
+    return lw.call_to(mt_void(), "avant_hasher_add_str", ops)
+  }
+  ops.push(lw.tmp(mt_u64(), b.rv_cast(v, mt_u64())))
+  lw.call_to(mt_void(), "avant_hasher_add", ops)
 }

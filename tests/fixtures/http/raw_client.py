@@ -3,6 +3,7 @@
 # requests in one write, a close with answers unread, a reader that
 # stalls, repeated headers). Usage: raw_client.py PORT MODE [ARG]
 # Prints one line, MODE=RESULT; the test compares it.
+import select
 import socket
 import sys
 import time
@@ -358,8 +359,8 @@ def hosts():
 def header_split(port_file):
     # tests/fixtures/http/header_split.av writes its port to
     # port_file and answers GET /h with a header its handler sets. What
-    # reaches the wire: "nothing" when the server sent no byte (it
-    # trapped), else the answers' count and their header lines.
+    # reaches the wire: "nothing" when the server sent no byte, else the
+    # answers' count, the first one's status and its header lines.
     global port
     deadline = time.time() + 20
     while time.time() < deadline:
@@ -389,7 +390,9 @@ def header_split(port_file):
     if not data:
         return "nothing"
     answers = data.count(b"HTTP/1.1 ")
-    head = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+    lines = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")
+    status = lines[0].split(b" ")[1].decode("latin1") if b" " in lines[0] else "?"
+    head = lines[1:]
     try:
         s = connect()
         s.sendall(get("/__stop"))
@@ -398,7 +401,7 @@ def header_split(port_file):
     except OSError:
         pass
     # Each header line with a byte that is not printable ASCII escaped.
-    return "%d answer(s) %s" % (answers, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
+    return "%d answer(s) %s %s" % (answers, status, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
 
 
 def ws_frame(s, op, payload):
@@ -439,6 +442,197 @@ def ws_read_frame(s, buf):
     return op, buf[off:off + n], buf[off + n:]
 
 
+def budget():
+    # The test's server has a body budget of 1000 bytes. A body of 600
+    # waiting for its bytes holds 600 of it; a second one of 600 is
+    # answered 503 and closed; once the first is complete (200) a third
+    # of 600 fits again.
+    post = b"POST /len HTTP/1.1\r\nHost: x\r\nContent-Length: 600\r\n\r\n"
+    first = connect()
+    first.sendall(post + b"a" * 100)
+    time.sleep(0.2)
+    status, data, closed = exchange(post + b"b" * 100)
+    second = "%d %s" % (status, "closed" if closed else "open")
+    first.sendall(b"a" * 500)
+    got = read_answers(first, 1)
+    first.close()
+    third = connect()
+    third.sendall(post)
+    time.sleep(0.2)
+    third.sendall(b"c" * 600)
+    got3 = read_answers(third, 1)
+    third.close()
+    return "second:%s,first:%s,third:%s" % (
+        second, got[0][0] if got else 0, got3[0][0] if got3 else 0)
+
+
+def ceiling(port_file):
+    # tests/fixtures/http/handler_trap.av with a memory ceiling of 1
+    # byte: once its sweep has read the memory (within a second), every
+    # new request is answered 503 and closed.
+    if not wait_port(port_file):
+        return "no port"
+    time.sleep(1.5)
+    status, data, closed = exchange(get("/ping"))
+    return "%d %s" % (status, "closed" if closed else "open")
+
+
+def conn_limit():
+    # The test's server keeps 3 connections. a, b and c each have an
+    # answer and wait idle; a fourth, d, closes the longest idle (a,
+    # the oldest of equals) and is answered, as b and c still are.
+    # Then b, c and d each hold half a head (busy, not idle): a fifth is
+    # closed at once.
+    def one(sock):
+        sock.sendall(get("/ping"))
+        got = read_answers(sock, 1)
+        return got == [(200, b"pong")]
+    conns = []
+    for _ in range(3):
+        c = connect()
+        if not one(c):
+            return "no answer"
+        conns.append(c)
+        time.sleep(0.05)
+    d = connect()
+    d_ok = one(d)
+    a_closed = wait_closed(conns[0], 2)
+    b_ok, c_ok = one(conns[1]), one(conns[2])
+    for c in (conns[1], conns[2], d):
+        c.sendall(b"GET /ping HTTP/1.1\r\n")
+    time.sleep(0.1)
+    e = connect()
+    e_closed = wait_closed(e, 2)
+    return "d:%s,a closed:%s,b:%s,c:%s,e closed:%s" % (d_ok, a_closed, b_ok, c_ok, e_closed)
+
+
+def ws_silent():
+    # A WebSocket client that never answers the server's close frame and
+    # never closes its end: the server's close waits for it until its
+    # shutdown deadline. It reads until the server's end, then holds the
+    # socket 3 s more.
+    s, buf = ws_open("/ws")
+    s.settimeout(10)
+    start = time.time()
+    ended = False
+    try:
+        while not ended and time.time() - start < 10:
+            ended = not s.recv(4096)
+    except OSError:
+        ended = True
+    if not ended:
+        return "still open"
+    time.sleep(3)
+    s.close()
+    return "the server ended its side"
+
+
+def ws_silent_probe(port_file):
+    # ws_silent against a fixture that wrote its port to port_file, with
+    # the wall clock of the server's end printed (a probe's mode).
+    if not wait_port(port_file):
+        return "no port"
+    r = ws_silent()
+    return "%s at %d" % (r, int(time.time() * 1000))
+
+
+def wait_port(port_file):
+    """Reads the port a fixture server wrote to port_file (20 s at most)."""
+    global port
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            text = open(port_file).read()
+            if text.endswith("\n"):
+                port = int(text)
+                return True
+        except OSError:
+            pass
+        time.sleep(0.02)
+    return False
+
+
+def ws_open(path):
+    """A WebSocket connection to path: (socket, bytes after the 101)."""
+    s = connect()
+    s.sendall(b"GET %s HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n" % path.encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise EOFError("no handshake")
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        raise EOFError("handshake %r" % head.split(b"\r\n")[0])
+    return s, buf
+
+
+def handler_trap(port_file):
+    # tests/fixtures/http/handler_trap.av: each route traps its own way.
+    # Each trap is answered 500 on a kept-alive connection, and the next
+    # request on it is answered; a trap in a request that closes (or an
+    # HTTP/1.0 one) is answered 500 and closed; a trap in a WebSocket
+    # message handler closes that connection with 1011, and a new one
+    # echoes. Then the server is stopped.
+    if not wait_port(port_file):
+        return "no port"
+    out = []
+    s = connect()
+    s.settimeout(5)
+
+    def ask(path):
+        s.sendall(get(path))
+        got = read_answers(s, 1)
+        return (got[0][0], got[0][1].decode("latin1")) if got else (0, "")
+
+    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route"]:
+        st, _ = ask("/" + name)
+        st2, body = ask("/ok")
+        out.append("%s:%d,ok:%d %s" % (name, st, st2, body))
+    out.append("late:%d" % ask("/late")[0])
+    out.append("mutex:%d" % ask("/mutex")[0])
+    out.append("mutex-again:%d" % ask("/mutex-again")[0])
+    out.append("mutex-state:%d %s" % ask("/mutex-state"))
+    out.append("pin:%d" % ask("/pin")[0])
+    out.append("pins:%d %s" % ask("/pins"))
+    s.close()
+    for name, raw in [("close", get("/bounds", "Connection: close\r\n")),
+                      ("1.0", b"GET /bounds HTTP/1.0\r\n\r\n")]:
+        status, data, closed = exchange(raw)
+        if data.startswith(b"HTTP/1.0 "):
+            status = int(data.split(b" ", 2)[1])
+        out.append("%s:%d %s" % (name, status, "closed" if closed else "open"))
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
+    ws_frame(w, 1, b"hi")
+    op, payload, buf = ws_read_frame(w, buf)
+    out.append("ws:%d %s" % (op, payload.decode("latin1")))
+    ws_frame(w, 1, b"trap")
+    op, payload, buf = ws_read_frame(w, buf)
+    code = (payload[0] << 8 | payload[1]) if op == 8 and len(payload) >= 2 else -1
+    out.append("ws-trap:%d %d" % (op, code))
+    w.close()
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
+    ws_frame(w, 1, b"again")
+    op, payload, buf = ws_read_frame(w, buf)
+    out.append("ws-after:%d %s" % (op, payload.decode("latin1")))
+    w.close()
+    status, data, closed = exchange(get("/__stop"))
+    out.append("stop:%d" % status)
+    return ",".join(out)
+
+
+def callback_trap(port_file):
+    # A trap in a C callback the handler made ends the program: the
+    # request is never answered.
+    if not wait_port(port_file):
+        return "no port"
+    status, data, closed = exchange(get("/callback"))
+    return "%d %s" % (status, "closed" if closed else "open")
+
+
 def ws_big(size):
     # A WebSocket message larger than the socket takes at once, sent
     # from the handler to a client that reads late: the frame must
@@ -475,6 +669,110 @@ def ws_big(size):
     return "whole,then %s" % payload.decode("latin1")
 
 
+def until_closed(s, limit):
+    """Reads until the server ends the connection; returns what came and
+    the seconds that took (None when it was still open after `limit`)."""
+    s.settimeout(0.05)
+    start = time.time()
+    data = b""
+    while time.time() - start < limit:
+        try:
+            chunk = s.recv(65536)
+        except socket.timeout:
+            continue
+        except OSError:
+            return data, time.time() - start
+        if not chunk:
+            return data, time.time() - start
+        data += chunk
+    return data, None
+
+
+def trickle_head():
+    # A request head sent a byte every 0.1 s, never finished. The idle
+    # timeout started again at every byte, so such a client held the
+    # connection for good; the test's server gives a head 1 s: it is
+    # answered 408 and closed then.
+    s = connect()
+    head = b"GET /ping HTTP/1.1\r\nHost: x\r\nX-Pad: " + b"a" * 200
+    s.settimeout(0.1)
+    start = time.time()
+    data = b""
+    for i in range(len(head)):
+        try:
+            s.send(head[i:i + 1])
+            chunk = s.recv(4096)
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+        break
+    rest, _ = until_closed(s, 5)
+    took = time.time() - start
+    data += rest
+    s.close()
+    if not data.startswith(b"HTTP/1.1 408 "):
+        return "no 408 after %.1f s: %r" % (took, data[:40])
+    return "408 in time" if 0.9 <= took < 3.0 else "408 after %.1f s" % took
+
+
+def body_at(rate_per_tenth, total):
+    """POSTs a body of `total` bytes at `rate_per_tenth` bytes every
+    0.1 s; returns (status, seconds) of the answer, status 0 if none."""
+    s = connect()
+    s.sendall(b"POST /len HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % total)
+    start = time.time()
+    sent = 0
+    try:
+        while sent < total:
+            n = min(rate_per_tenth, total - sent)
+            s.sendall(b"a" * n)
+            sent += n
+            # An answer before the body is complete ends the sending.
+            if select.select([s], [], [], 0.1)[0]:
+                break
+    except OSError:
+        pass
+    got = read_answers(s, 1)
+    took = time.time() - start
+    s.close()
+    return (got[0][0] if got else 0), took, (got[0][1] if got else b"")
+
+
+def slow_body():
+    # A body sent at 200 bytes a second: the test's server wants 1000
+    # a second once 0.5 s has passed, so it is answered 408 soon after.
+    status, took, _ = body_at(20, 100000)
+    if status != 408:
+        return "answered %d after %.1f s" % (status, took)
+    return "408 in time" if took < 3.0 else "408 after %.1f s" % took
+
+
+def fast_body():
+    # A body at 40000 bytes a second takes a second, past the grace,
+    # and is answered whole.
+    status, took, body = body_at(4000, 40000)
+    return "answered %d: %s" % (status, body.decode("latin1"))
+
+
+def slow_read():
+    # A 32 MiB answer (more than the kernel's buffers hold, so the
+    # server queues a tail) the client does not read for 2 s: the tail
+    # leaves under the test's rate (1000 bytes a second after 0.5 s), so
+    # the server closes the connection; what reaches the client is cut.
+    s = small_rcvbuf()
+    s.sendall(get("/huge"))
+    time.sleep(2)
+    data, took = until_closed(s, 10)
+    s.close()
+    if took is None:
+        return "still open"
+    return "cut" if len(data) < 4 * BIG else "whole"
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -496,6 +794,28 @@ try:
         result = hosts()
     elif mode == "header_split":
         result = header_split(arg)
+    elif mode == "trickle_head":
+        result = trickle_head()
+    elif mode == "slow_body":
+        result = slow_body()
+    elif mode == "fast_body":
+        result = fast_body()
+    elif mode == "slow_read":
+        result = slow_read()
+    elif mode == "budget":
+        result = budget()
+    elif mode == "ceiling":
+        result = ceiling(arg)
+    elif mode == "conn_limit":
+        result = conn_limit()
+    elif mode == "ws_silent":
+        result = ws_silent()
+    elif mode == "ws_silent_probe":
+        result = ws_silent_probe(arg)
+    elif mode == "handler_trap":
+        result = handler_trap(arg)
+    elif mode == "callback_trap":
+        result = callback_trap(arg)
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:

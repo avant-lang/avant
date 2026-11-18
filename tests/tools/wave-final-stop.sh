@@ -14,7 +14,11 @@
 # stopped by its outer `timeout` firing. A stopped run must leave no
 # process: neither a recorded PID nor any process whose working directory
 # is the fake checkout, at the moment the outer `timeout` returns (when
-# `ledger run` would release the machine lock). Prints one line per check,
+# `ledger run` would release the machine lock). A fourth run goes through
+# WAVE_RUNNER, a stub runner that runs its command in its place (as a
+# runner that does not stop its own tree): stopped by a TERM to its outer
+# `timeout`, it must leave nothing either; a fifth the same with
+# WAVE_GROUP=1 (the shared steps one runner call). Prints one line per check,
 # `ok: NAME` or `FAIL: NAME: why`; test_tools.av expects each NAME.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-stop.sh WORK" >&2; exit 2; }
@@ -66,6 +70,9 @@ reap() { # STUBDIR
   done
   for p in $(in_fake); do [ "$p" != $$ ] && kill -KILL "$p" 2>/dev/null; done
 }
+# The run snapshots the real /tmp (WAVE_PRIVATE_TMP=0): the stub step's
+# PID files, under WORK, may be under /tmp (inside the gate's private
+# /tmp), which a private /tmp of the run's own would hide from this script.
 # Start wave-final.sh under an outer timeout of LIMIT seconds; $tp is that
 # timeout's PID. In an emptied environment: run inside a real final
 # evidence (the gate's suite under wave-final.sh), the caller's WAVE_LA,
@@ -74,7 +81,7 @@ reap() { # STUBDIR
 start() { # NAME LIMIT [VAR=VALUE...]
   n=$1; l=$2; shift 2
   mkdir -p "$w/$n.stub"
-  env -i PATH="$PATH" HOME="$HOME" "$@" WF_STUB="$w/$n.stub" timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$HOME" "$@" WF_STUB="$w/$n.stub" WAVE_PRIVATE_TMP=0 timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
   tp=$!
 }
 started() { # NAME: wait up to 60 s for the stub step to start
@@ -120,4 +127,41 @@ l=$(left "$w/expire.stub" | tr '\n' ' ')
 grep -q '^stopped: SIGTERM during goldens debug' "$w/expire.out/SUMMARY.txt"
 say expire-summary $? "$(tail -1 "$w/expire.out/SUMMARY.txt" 2>/dev/null)"
 reap "$w/expire.stub"
+
+# 4. Through a runner, a TERM to the outer timeout during the goldens step.
+printf '#!/bin/sh\nwhile [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' > "$w/runner"
+start runner 300 WAVE_RUNNER="sh $w/runner"
+if started runner; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/runner.stub" | tr '\n' ' ')
+  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say runner-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/runner.out/SUMMARY.txt"
+  say runner-term-summary $? "$(tail -1 "$w/runner.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say runner-term-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/runner.stub"
+
+# 5. The same with WAVE_GROUP=1: the shared steps are one runner call
+# whose command is the script itself; a TERM leaves nothing either, and the
+# step stopped is named.
+start group 300 WAVE_RUNNER="sh $w/runner" WAVE_GROUP=1
+if started group; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/group.stub" | tr '\n' ' ')
+  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say group-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during shared steps; every process of the step stopped$' "$w/group.out/SUMMARY.txt"
+  say group-term-summary $? "$(tr '\n' ';' < "$w/group.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say group-term-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/group.stub"
 echo done

@@ -114,7 +114,7 @@ fn discard_cases: Array(FCase) {
   xs.push(accepted("discard-ok", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn count(xs: Array(Int)): Int {\n  xs.push(1)\n  xs.size\n}\nfn main {\n  _ = parse(\"\")\n  _ = parse(\"ab\")\n  _ = ParseError.new(\"x\")\n  xs: Array(Int) = []\n  _ = count(xs)\n  count(xs)\n  e: ParseError? = nil\n  _ = e\n  for i in 0..2 {\n    _ = i\n  }\n  puts(xs.size)\n}\n", "2\n"))
   xs.push(refused("discard-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  parse(\"ab\")\n  puts(1)\n}\n", "this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ..."))
   xs.push(refused("discard-error-alone", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  e = ParseError.new(\"x\")\n  e\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError)"))
-  xs.push(refused("discard-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(n: Int): ParseError? {\n  nil\n}\nfn main {\n  check(1)\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError?)"))
+  xs.push(refused("discard-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(n: Int): ParseError? {\n  nil\n}\nfn main {\n  check(1)\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError?); read the error with `if e = ... { }`, or discard it on purpose with _ = ..."))
   xs.push(refused("discard-std-error", "import std.zlib\nfn main {\n  raw = \"hello\".bytes\n  dst = buf_new()\n  raw.compress_into(dst)\n  puts(dst.size)\n}\n", "this statement drops a value that can be an error (ZlibError?)"))
   xs.push(refused("discard-read", "fn main {\n  _ = 3\n  puts(_)\n}\n", "unknown name _"))
   xs.push(refused("discard-compound", "fn main {\n  _ += 3\n}\n", "_ discards a value with _ = ...; it holds nothing to read or update"))
@@ -214,7 +214,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/errv-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
     }
   }
 }

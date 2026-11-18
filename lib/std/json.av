@@ -4,11 +4,10 @@ lib jsonc {
   fun avant_json_take_pool: Bytes
   fun avant_json_root(doc: Ptr(Void)): Ptr(Void)
   fun avant_json_kind(node: Ptr(Void)): Int
-  fun avant_json_get(node: Ptr(Void), key: String): Ptr(Void)
-  fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)
-  fun avant_json_first(node: Ptr(Void)): Ptr(Void)
-  fun avant_json_next(node: Ptr(Void)): Ptr(Void)
-  fun avant_json_f64s(node: Ptr(Void), key: String): Array(Float64)
+  fun avant_json_get(node: Ptr(Void), key: String): Ptr(Void)?
+  fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)?
+  fun avant_json_first(node: Ptr(Void)): Ptr(Void)?
+  fun avant_json_next(node: Ptr(Void)): Ptr(Void)?
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
@@ -38,18 +37,14 @@ pub enum JsonKind {
   obj
 }
 
-// avant_json_kind of a node that is not there (a missing key, an index
-// past the end, the end of an iteration).
-const no_value = 0
-
 // A document that does not parse: the message says what yyjson found
 // and where ("invalid JSON at byte 7: unexpected character"); offset is
-// that byte offset, -1 when the error has none.
+// that byte offset, nil when the error has none.
 pub class JsonError: Error {
   pub message: String
-  pub offset: Int = -1
+  pub offset: Int? = nil
 
-  fn initialize(message: String, offset: Int = -1) {
+  fn initialize(message: String, offset: Int? = nil) {
     self.message = message
     self.offset = offset
   }
@@ -63,6 +58,10 @@ fn json_error(code: Int): JsonError {
   JsonError.new("JSON parse ran out of memory")
 }
 
+// A JSON value copied out of its document (Json.to_value). An object's
+// members are in members, by name, and their names in keys in the
+// document's order; a name that repeats keeps its first value, as get on
+// the document does.
 pub class JsonValue {
   pub kind: JsonKind = JsonKind.null
   pub int_val: Int = 0
@@ -71,17 +70,10 @@ pub class JsonValue {
   pub bool_val: Bool = false
   pub arr: Array(JsonValue) = []
   pub keys: Array(String) = []
-  pub vals: Array(JsonValue) = []
+  pub members: Hash(String, JsonValue) = Hash(String, JsonValue).new()
 
   pub fn get(key: String): JsonValue? {
-    i = 0
-    while i < self.keys.size {
-      if self.keys[i] == key {
-        return self.vals[i]
-      }
-      i += 1
-    }
-    nil
+    self.members[key]
   }
 }
 
@@ -99,21 +91,25 @@ pub struct Json {
     Json { node: jsonc.avant_json_root(doc), pool: pool }
   }
 
-  pub fn self.obj: JsonBuilder {
+  // A JsonBuilder with an object open (Json.object) or an array open
+  // (Json.array). The starts are not named obj and arr: arr is a parsed
+  // value's elements, and a type-level function cannot share a method's
+  // name and parameters.
+  pub fn self.object: JsonBuilder {
     b = JsonBuilder.new()
     b.obj()
     b
   }
 
-  pub fn self.arr: JsonBuilder {
+  pub fn self.array: JsonBuilder {
     b = JsonBuilder.new()
     b.arr()
     b
   }
 
   pub fn kind: JsonKind {
-    // A Json's node is a value (get, at and the iterator give nil for
-    // no_value), so the fallback is never taken.
+    // A Json's node is a value (get, at and the iterator give nil when
+    // the runtime finds no node), so the fallback is never taken.
     JsonKind.from_i(jsonc.avant_json_kind(self.node)) ?? JsonKind.null
   }
 
@@ -152,40 +148,41 @@ pub struct Json {
     jsonc.avant_json_len(self.node)
   }
 
+  // The runtime gives a null node for a member, an element or a value
+  // that is not there: Ptr(Void)?, nil.
   pub fn get(key: String): Json? {
-    child_node = jsonc.avant_json_get(self.node, key)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_get(self.node, key) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
   pub fn at(index: Int): Json? {
-    child_node = jsonc.avant_json_at(self.node, index)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_at(self.node, index) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
   pub fn first: Json? {
-    child_node = jsonc.avant_json_first(self.node)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_first(self.node) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
-  pub fn iter: JsonIter {
+  // The elements of this value, when it is an array; nil for any other
+  // value (an object, a string, a number, a Bool or null), so a walk
+  // over what is not a list is never an empty walk.
+  pub fn arr: JsonIter? {
+    if jsonc.avant_json_kind(self.node) != JsonKind.arr.to_i() {
+      return nil
+    }
     JsonIter.new(self.node, self.pool, self.len())
   }
 
-  pub fn f64s(key: String): Array(Float64)? {
-    values = jsonc.avant_json_f64s(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
+  // The elements of the member `key`, when it is there and is an array;
+  // nil otherwise.
+  pub fn arr(key: String): JsonIter? {
+    child_node = jsonc.avant_json_get(self.node, key) ?? return nil
+    if jsonc.avant_json_kind(child_node) != JsonKind.arr.to_i() {
       return nil
     }
-    values
+    JsonIter.new(child_node, self.pool, jsonc.avant_json_len(child_node))
   }
 
   pub fn key_at(index: Int): String? {
@@ -212,9 +209,12 @@ pub struct Json {
     v
   }
 
+  // The runtime gives NaN for a value that is not a number: a JSON
+  // number is never NaN (the reader refuses NaN and the infinities), so
+  // one call answers, with no status to take.
   pub fn f64: Float64? {
     v = jsonc.avant_json_as_f64(self.node)
-    if jsonc.avant_json_take_status() != 0 {
+    if v != v {
       return nil
     }
     v
@@ -222,7 +222,7 @@ pub struct Json {
 
   pub fn f64(key: String): Float64? {
     v = jsonc.avant_json_obj_f64(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
+    if v != v {
       return nil
     }
     v
@@ -292,9 +292,9 @@ pub struct Json {
     } else if self.is_obj() {
       i = 0
       while i < self.len() {
-        if key = key_at(i), child = get(key) {
+        if key = key_at(i), child = get(key), !v.members.has(key) {
           v.keys.push(key)
-          v.vals.push(child.to_value())
+          v.members[key] = child.to_value()
         }
         i += 1
       }
@@ -321,25 +321,23 @@ pub class JsonIter {
     if self.idx >= self.max {
       return nil
     }
+    step: Ptr(Void)? = nil
     if self.idx == 0 {
-      self.cur = jsonc.avant_json_first(self.arr)
+      step = jsonc.avant_json_first(self.arr)
     } else {
-      self.cur = jsonc.avant_json_next(self.cur)
+      step = jsonc.avant_json_next(self.cur)
     }
     self.idx += 1
-    if jsonc.avant_json_kind(self.cur) == no_value {
-      return nil
-    }
-    Json { node: self.cur, pool: self.pool }
+    node = step ?? return nil
+    self.cur = node
+    Json { node: node, pool: self.pool }
   }
 }
 
 fn builder_escape(buf: Buf, s: String) {
   hex = "0123456789abcdef"
   buf.push_str("\"")
-  i = 0
-  while i < s.size {
-    c = s[i]
+  for c in s.bytes {
     if c == 34 {
       buf.push_str("\\\"")
     } else if c == 92 {
@@ -357,7 +355,6 @@ fn builder_escape(buf: Buf, s: String) {
     } else {
       buf.push_byte(c)
     }
-    i += 1
   }
   buf.push_str("\"")
 }
@@ -489,6 +486,39 @@ pub class JsonBuilder {
     self
   }
 
+  // A JsonValue tree (Json.to_value's, or one built by hand) written
+  // back: an object's members in the order of its keys, each name's
+  // value from members (a name in keys without a member is written as
+  // null).
+  pub fn value(v: JsonValue): JsonBuilder {
+    switch v.kind {
+      case null { self.null() }
+      case bool { value(v.bool_val) }
+      case int { value(v.int_val) }
+      case float { value(v.f64_val) }
+      case str { value(v.str_val) }
+      case arr {
+        self.arr()
+        for e in v.arr {
+          value(e)
+        }
+        self.end()
+      }
+      case obj {
+        self.obj()
+        for k in v.keys {
+          key(k)
+          if m = v.members[k] {
+            value(m)
+          } else {
+            self.null()
+          }
+        }
+        self.end()
+      }
+    }
+  }
+
   pub fn add(v: Int): JsonBuilder {
     value(v)
   }
@@ -510,6 +540,10 @@ pub class JsonBuilder {
   }
 
   pub fn add(v: JsonBuilder): JsonBuilder {
+    value(v)
+  }
+
+  pub fn add(v: JsonValue): JsonBuilder {
     value(v)
   }
 
@@ -539,6 +573,11 @@ pub class JsonBuilder {
   }
 
   pub fn set(name: String, v: JsonBuilder): JsonBuilder {
+    key(name)
+    value(v)
+  }
+
+  pub fn set(name: String, v: JsonValue): JsonBuilder {
     key(name)
     value(v)
   }

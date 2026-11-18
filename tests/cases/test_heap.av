@@ -39,6 +39,16 @@ fn other_progs: Array(String) {
   xs.push("tests/fixtures/heap/trap_pop.av")
   xs.push("tests/fixtures/heap/each_delete.av")
   xs.push("tests/fixtures/heap/hash_types.av")
+  xs.push("tests/fixtures/heap/hash_keys.av")
+  xs.push("tests/fixtures/heap/hash_values.av")
+  xs.push("tests/fixtures/heap/hash_literal.av")
+  xs.push("tests/fixtures/heap/sets.av")
+  xs.push("tests/fixtures/heap/slices.av")
+  xs.push("tests/fixtures/heap/verbs.av")
+  xs.push("tests/fixtures/heap/trap_slice.av")
+  xs.push("tests/fixtures/heap/trap_index_from.av")
+  xs.push("tests/fixtures/heap/trap_insert.av")
+  xs.push("tests/fixtures/heap/own_hash.av")
   xs.push("tests/fixtures/heap/build.av")
   xs.push("tests/fixtures/heap/empty_payload.av")
   xs.push("examples/sieve.av")
@@ -66,18 +76,9 @@ fn gc_envs: Array(String) {
 
 fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
   gp = golden_progs(c)
-  progs: Array(String) = []
-  i = 0
-  while i < gp.size {
-    progs.push(gp[i])
-    i += 1
-  }
+  progs = gp.dup()
   op = other_progs()
-  i = 0
-  while i < op.size {
-    progs.push(op[i])
-    i += 1
-  }
+  progs.concat(op)
 
   // The first wave: the compiles and the dumps.
   jobs: Array(HJob) = []
@@ -147,9 +148,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
     want_out = golden_out(root, p)
     want_err = golden_err(root, p)
     want_code = golden_status(root, p)
-    f = 0
-    while f < forms.size {
-      fm = forms[f]
+    for f, fm in forms {
       at = per * i + f * (1 + envs.size)
       c.eq_int(runs[at].code, want_code, "${p} (${fm}): the golden exit status")
       c.eq_str(log_text("${dir}/${k}.${fm}.b.out"), want_out, "${p} (${fm}): the golden stdout")
@@ -161,7 +160,6 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
         c.eq_str(log_text("${dir}/${k}.${fm}.g${e}.err"), want_err, "${p} (${fm}) under ${envs[e]}: the golden stderr (no verifier report)")
         e += 1
       }
-      f += 1
     }
     i += 1
   }

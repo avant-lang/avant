@@ -43,11 +43,11 @@ fn hold_clean(set: String): String {
 }
 
 fn young_one(stats: String): Bool {
-  str_has(stats, " young=1 ")
+  stats.contains(" young=1 ")
 }
 
 fn young_many(stats: String): Bool {
-  str_has(stats, " young=") && !str_has(stats, " young=0 ") && !str_has(stats, " young=1 ")
+  stats.contains(" young=") && !stats.contains(" young=0 ") && !stats.contains(" young=1 ")
 }
 
 fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
@@ -100,16 +100,16 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
     if cases[e] == "collect" {
       // `gc.collect()` is a complete collection, a young one or a full
       // one as the collector finds: what is counted is how many ran.
-      c.expect(str_has(stats, "avant gc: collections=1 "), "gc_hold.av collect: ten gc.collect() in a hold make one collection, at its end")
+      c.expect(stats.contains("avant gc: collections=1 "), "gc_hold.av collect: ten gc.collect() in a hold make one collection, at its end")
     } else if cases[e] == "collects" {
-      c.expect(str_has(stats, "avant gc: collections=10 "), "gc_hold.av collects: ten gc.collect() with no hold make ten collections")
+      c.expect(stats.contains("avant gc: collections=10 "), "gc_hold.av collects: ten gc.collect() with no hold make ten collections")
     } else {
       if ones[e] {
         c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
       } else {
         c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
       }
-      c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
+      c.expect(stats.contains(" full=0 "), "gc_hold.av ${cases[e]}: no full collection")
     }
     e += 1
   }
@@ -118,7 +118,7 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/gc_hold.stress.out"), "garbage 99000000\n", "gc_hold.av garbage under AVANT_GC_STRESS=1: the known stdout")
   c.expect(young_many(log_text("${dir}/gc_hold.stress.err")), "gc_hold.av garbage under AVANT_GC_STRESS=1: the hold is inactive (more than one young collection)")
   c.expect(runs[at + 1].code != 0, "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: fails")
-  c.expect(str_has(log_text("${dir}/gc_hold.limit.err"), "avant runtime: heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB (in gc_hold/case_garbage)\n"), "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: heap limit in a gc.hold block, named by its function")
+  c.expect(log_text("${dir}/gc_hold.limit.err").contains("avant runtime: heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB (in gc_hold/case_garbage)\n"), "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: heap limit in a gc.hold block, named by its function")
   c.eq_int(runs[at + 2].code, 0, "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: exit 0")
   c.eq_str(log_text("${dir}/gc_hold.nolimit.out"), "plain 99000000\n", "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: the known stdout")
   e = 0

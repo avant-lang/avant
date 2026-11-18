@@ -55,6 +55,28 @@ pub class FlowFacts {
   pub gpos_live: Array(Int) = []
   pub gne_var: Array(String) = []
   pub gne_live: Array(Int) = []
+  // Where each bound was read (checker/facts.av, "Anchors"): a stamp per
+  // fact and per size relation, the proofs made from them, and the
+  // containers whose size a statement may have changed.
+  pub stamp: Int = 0
+  pub fact_anchor: Array(Int) = []
+  pub fact_cty: Array(Ty) = []
+  pub sv_stamp: Array(Int) = []
+  pub bv_stamp: Array(Int) = []
+  pub cs_stamp: Array(Int) = []
+  pub use_cont: Array(String) = []
+  pub use_cty: Array(Ty) = []
+  pub use_anchor: Array(Int) = []
+  pub use_expr: Array(Expr) = []
+  pub kill_cont: Array(String) = []
+  // The names a lambda of this function assigns (checker/facts.av lw_has).
+  pub lam_written: Array(String) = []
+  // Set by a walker that calls fact_after_stmt after the statement it
+  // hands to check_block_stmt (checker/spawn.av), which reads and clears it.
+  pub after_follows: Bool = false
+  // ty_reaches's answers by the two types' mangled names, kept from one
+  // function's facts to the next.
+  pub reach_memo: Hash(String, Bool) = Hash(String, Bool).new()
 }
 
 pub class Checker {
@@ -100,6 +122,9 @@ pub class Checker {
   pub bounds_ready: Bool = false
   pub bound_done: Int = 0
   pub in_bounds: Bool = false
+  // The resolver's Hash types with a struct key (checker/equality.av
+  // check_hash_key_uses), read up to hash_key_done once bounds_ready.
+  pub hash_key_done: Int = 0
   // The type parameters of the function being inferred that are bounded
   // by Error (`E: Error`): in a union they take the members marked Error.
   pub infer_err_params: Array(String) = []
@@ -110,6 +135,12 @@ pub class Checker {
   // noted (its file, the offset where `()` goes, its name) and accepted,
   // so the formatter can write the parentheses in.
   pub calls_migrate: Bool = false
+  // `avant format --lambdas` (compiler/migrate.av): the blocks in pipes a
+  // builtin inlines as a loop, by "path|offset" of their `{`, with the
+  // builtin's kind ("array each", "hash each", "set each", "array any",
+  // "mutex with", "array build", ...).
+  pub inline_kinds: Hash(String, String)
+  pub lambdas_migrate: Bool = false
   pub bare_locs: Array(Location) = []
   // The target of the assignment being checked: `x.name = v` with name a
   // method is refused as an assignment, not taken for a call.
@@ -122,6 +153,10 @@ pub class Checker {
   // name: an unknown name there that names a type leaves the type's name
   // in recv_type for the caller's message.
   pub recv_name: Bool = false
+  // The C array field the next field read names (`r.vtype`, a `T[N]`) is
+  // allowed: its reader is `r.vtype[i]`, `r.vtype.size` or
+  // `r.vtype.to_s()`, which sets this for its own object only.
+  pub carray_ok: Bool = false
   pub recv_type: String = ""
   pub self_name: String = ""
   pub pending: Array(Function)
@@ -164,6 +199,18 @@ pub class Checker {
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
   pub inferred_ret: Ty
+  // In a lambda whose result is inferred: whether a `return` or its end
+  // gave the result yet, where, and whether that was a bare `return` or
+  // an end without a value (every one must agree: note_inferred).
+  pub inferred_seen: Bool = false
+  pub inferred_at: String = ""
+  pub inferred_tail: Bool = false
+  // A lambda a builtin inlines as a loop (`xs.each((x) { ... })`,
+  // Block.paren): the builtin's name for the messages, and the block
+  // whose `return` ends one run of the body (checker/lambda.av
+  // inline_enter). Empty and nil in a function or a lambda of its own.
+  pub inline_what: String = ""
+  pub inline_target: Block? = nil
   pub spawn_skip: Array(String)
   pub pending_handles: Array(String)
   pub pending_arrays: Array(String)
@@ -176,6 +223,9 @@ pub class Checker {
   // Where a postfix `?` stands when it cannot return from the body around it
   // ("a spawn block"); empty in a function or lambda body.
   pub try_in: String = ""
+  // The failures a spawn block's `?` passes up (check_spawn): the
+  // block's value is a union with them.
+  pub spawn_fails: Array(Ty) = []
   // Checking a field default (evaluated before initialize, with no
   // receiver).
   pub in_default: Bool = false
@@ -211,6 +261,10 @@ pub class Checker {
   // the argument in more than one way (checker/match.av infer_subst):
   // added to "cannot infer type argument".
   pub infer_note: String = ""
+  // The receiver of the method call being matched when it is an Array,
+  // a Hash or a Set (dispatch_method): a program's method on one of them
+  // fits by its receiver's declared type, a pattern when it is generic.
+  pub match_recv: Ty? = nil
   // True while a call's bare integer literal argument is checked before
   // its parameter is known: a value above Int's range is then a UInt64,
   // and the parameter's type decides (fit_call_arg).
@@ -232,6 +286,35 @@ pub class Checker {
   pub for_names: Array(String) = []
   pub for_scopes: Array(Int) = []
   pub for_kinds: Array(Int) = []
+  // The places being checked (checker/receiver.av): a `for` variable or
+  // an inlined block's parameter over an Array of structs is the element
+  // itself. Each one's name and scope, the hidden names of the walked
+  // array and of the counter, the walked array's path as written ("" when
+  // it is not a name or a field path), and the lambda and task depths
+  // where it is bound.
+  pub place_names: Array(String) = []
+  pub place_scopes: Array(Int) = []
+  pub place_arrs: Array(String) = []
+  pub place_idxs: Array(String) = []
+  pub place_walked: Array(String) = []
+  pub place_lams: Array(Int) = []
+  pub place_tasks: Array(Int) = []
+  pub place_count: Int = 0
+  // The arrays walked here whose element is not a place (a `for` or an
+  // `each`, `any` or `all` over plain values), as written: a sort or a
+  // reverse of one through its own name inside its walk is refused.
+  pub walk_texts: Array(String) = []
+  // A walk's hidden array by name, and the name of the array it holds
+  // (its root): the task rules read a write through the place as one
+  // through that name.
+  pub place_roots: Hash(String, String) = Hash(String, String).new()
+  // Calls of a struct method on a copy that would be lost (a comparator's
+  // parameter, a Hash walk's value, a .parallel body's element), and what
+  // each parameter is: refused once every method is checked when the
+  // method changes its receiver.
+  pub copy_calls: Array(Expr) = []
+  pub copy_call_names: Array(String) = []
+  pub copy_call_kinds: Array(Int) = []
   pub witness_note: String = ""
   pub impls: Array(ImplFact)
   pub sig_params: Array(Ty)
@@ -301,6 +384,7 @@ pub class Checker {
     self.known_mods = km
     self.const_list = []
     self.const_vals = Hash(String, Int).new()
+    self.inline_kinds = Hash(String, String).new()
     self.lam_exprs = []
     self.lam_scopes = []
     self.lambda_infer = false
@@ -454,7 +538,7 @@ pub class Checker {
       self.resolver_pushes = self.resolver.errors.pushes
     }
     self.resolver_kept = self.resolver_pulled
-    if self.bounds_ready && !self.in_bounds && self.bound_done < self.resolver.bound_uses.size {
+    if self.bounds_ready && !self.in_bounds && (self.bound_done < self.resolver.bound_uses.size || self.hash_key_done < self.resolver.hash_key_uses.size) {
       check_bound_uses()
     }
     if self.ready_adopt && !self.in_adopt {
@@ -481,6 +565,9 @@ pub class Checker {
   }
 
   pub fn bind(name: String, ty: Ty) {
+    // A new variable, maybe hiding another of its name: the facts are
+    // keyed by name, and none of the hidden one's holds for it.
+    forget_facts(name)
     id = intern(ty)
     last = self.scopes[self.scopes.size - 1]
     last.names[name] = id
@@ -505,6 +592,23 @@ pub class Checker {
       if fs = self.scopes[i].failed {
         fs.delete(name)
       }
+    }
+  }
+
+  // Marks a bound name failed, as bind does after a failed statement:
+  // its readers add no message (a for loop's operand that cannot be
+  // walked, whose element reads would each say so again).
+  pub fn mark_failed(name: String) {
+    i = lookup_index(name)
+    if i < 0 {
+      return
+    }
+    if fs = self.scopes[i].failed {
+      fs[name] = 1
+    } else {
+      fs2 = Hash(String, Int).new()
+      fs2[name] = 1
+      self.scopes[i].failed = fs2
     }
   }
 
@@ -618,7 +722,9 @@ pub class Checker {
     self.return_type = ret
     self.pending_handles = []
     self.pending_arrays = []
+    memo = self.facts.reach_memo
     self.facts = FlowFacts.new()
+    self.facts.reach_memo = memo
     // `fn main: Void | E` ends returning 0 (checker/entry.av).
     self.entry_void = fnn.entry_void
     if fnn.entry_void && fallthrough(fnn.body) {
@@ -639,6 +745,8 @@ pub class Checker {
     self.for_names = []
     self.for_scopes = []
     self.for_kinds = []
+    self.clear_places()
+    self.walk_texts = []
     self.push_scope()
     if fn_is_method(fnn) && !fnn.type_method {
       got_owner = false
@@ -669,7 +777,7 @@ pub class Checker {
         if recv = fnn.receiver {
           ty = resolve_in_module(recv.type)
           self.pull_resolve()
-          if ptr_method_ok(ty) || builtin_receiver_ok(ty) {
+          if ptr_method_ok(ty) || builtin_receiver_ok(ty) || container_owner(ty).size > 0 {
             self.self_name = recv.name
             if existing = lookup(self.self_name) {
               fail(fnn.loc, "duplicate parameter ${self.self_name}")
@@ -693,6 +801,19 @@ pub class Checker {
       }
       bind(param.name, params[i])
       if default = param.default {
+        earlier: Array(String) = []
+        j = 0
+        while j < i {
+          earlier.push(fnn.params[j].name)
+          j += 1
+        }
+        hit = default_assigns(default, earlier)
+        if hit.size > 0 {
+          fail(default.loc, "the default of ${param.name} assigns to the earlier parameter ${hit}: a default only reads the parameters before it (the assignment would change a copy no one else sees); compute the new value in the function's body")
+          self.pop_scope()
+          self.current_module = saved_mod
+          return
+        }
         saved = self.self_ty
         self.self_ty = nil
         got = check_expr_as(default, params[i])
@@ -721,6 +842,66 @@ pub class Checker {
     self.current_module = saved_mod
   }
 
+  // A result of a lambda whose result type is inferred: the first one
+  // met is the result; every later `return` and the end must give the
+  // same type (before, the last one met won, and a bare `return` beside
+  // a value, or a `return "one"` beside an `Int` end, reached the MIR
+  // verifier). A difference names both and asks for the result type.
+  pub fn note_inferred(got: Ty, loc: Location, by_return: Bool) {
+    if !self.inferred_seen {
+      self.inferred_seen = true
+      self.inferred_ret = got
+      self.inferred_at = "${inferred_how(got, by_return)} at ${loc.line()}:${loc.column()}"
+      return
+    }
+    if got.same_as(self.inferred_ret) {
+      return
+    }
+    if self.inferred_ret.is_void() {
+      // The value, so the uses of the lambda are not reported again.
+      self.inferred_ret = got
+    }
+    fail(loc, "this lambda ${inferred_how(got, by_return)} here and ${self.inferred_at}: every return and its end give one result; write the result type, as (x: Int): Int? { ... }, or make them agree")
+  }
+
+  pub fn inferred_how(t: Ty, by_return: Bool): String {
+    if by_return {
+      if t.is_void() {
+        return "returns nothing"
+      }
+      return "returns ${t.show()}"
+    }
+    if t.is_void() {
+      return "ends without a value"
+    }
+    "ends with ${t.show()}"
+  }
+
+  // The refusal of a `break`, a `continue` or a `?` in a lambda a
+  // builtin inlines (checker/lambda.av inline_enter).
+  pub fn inline_exit_message(what: String, builtin: String): String {
+    way = "handle it with if-assign or ??"
+    if inline_walks(builtin) {
+      way = "to leave the walk or the function early, write it as a for loop (for x in xs { ... })"
+    }
+    if what == "?" {
+      if inline_walks(builtin) {
+        way = "write the walk as a for loop, where ? returns from the function (for x in xs { ... }), or handle it with if-assign or ??"
+      }
+      return "postfix ? inside a lambda given to ${builtin} has nowhere to return its failure (return there ends only the lambda's run); ${way}"
+    }
+    if what == "continue" {
+      return "continue inside a lambda given to ${builtin}: the lambda has no loop of its own; return ends this run of it"
+    }
+    "break inside a lambda given to ${builtin}: the lambda has no loop of its own to leave; ${way}"
+  }
+
+  pub fn note_inline(b: Block, kind: String) {
+    if self.lambdas_migrate && !b.paren {
+      self.inline_kinds["${b.loc.path}|${b.loc.offset()}"] = kind
+    }
+  }
+
   pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
     while i < body.size {
@@ -732,6 +913,7 @@ pub class Checker {
         annotate_vstep(body[i - 1], body[i])
       }
       self.clear_poison()
+      self.facts.after_follows = true
       check_block_stmt(body[i], expected, last)
       if !self.has_err() {
         fact_after_stmt(body[i])
@@ -797,11 +979,18 @@ pub class Checker {
         fail(stmt.loc, "return inside ${self.try_in}: ${self.try_in} cannot return; its value is its last expression")
         return
       }
+      if t = self.inline_target {
+        t.returns = true
+        if self.return_type.is_var() {
+          fail(stmt.loc, "return inside a lambda given to ${self.inline_what}, whose value is its last expression: to return early, write the lambda's result type, as (x): Int { ... }")
+          return
+        }
+      }
       if self.lambda_infer {
         if expr = stmt.expr {
-          self.inferred_ret = check_expr(expr)
+          note_inferred(check_expr(expr), stmt.loc, true)
         } else {
-          self.inferred_ret = t_void()
+          note_inferred(t_void(), stmt.loc, true)
         }
         return
       }
@@ -840,7 +1029,8 @@ pub class Checker {
         got = check_if_value(stmt, false, t_void())
         if t2 = got, !t2.is_void() {
           stmt.tail_value = true
-          self.inferred_ret = t2
+          note_inferred(t2, stmt.loc, false)
+          self.inferred_tail = true
         }
         return
       }
@@ -945,14 +1135,20 @@ pub class Checker {
     if k == st_while() {
       has_pre = stmt.pre.size > 0
       saved_for = self.for_names.size
+      walk_problem = ""
       if has_pre {
+        refuse_for_outer_name(stmt)
         self.push_scope()
         pi = 0
         while pi < stmt.pre.size {
           annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison()
           check_stmt(stmt.pre[pi], t_void(), false)
-          if !self.has_err() {
+          if stmt.for_kind == 2 && pi == 0 {
+            set_for_operand(stmt.pre[0])
+            walk_problem = for_walk_operand(stmt)
+          }
+          if !self.has_err() && pi < stmt.pre.size {
             fact_after_stmt(stmt.pre[pi])
           }
           pi += 1
@@ -970,11 +1166,25 @@ pub class Checker {
         if stmt.for_kind == 2 {
           // The array's own error, if it failed, is the loop's (the
           // cascade rule): the hidden name holds the failed value.
-          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_array(), !name_failed(pt.ident) {
-            fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show()}")
+          if walk_problem.size > 0 {
+            fail(stmt.loc, walk_problem)
+            if pt = stmt.pre[0].target {
+              mark_failed(pt.ident)
+            }
           }
+          note_for_position(stmt)
         }
       }
+      saved_places = self.place_names.size
+      saved_walks = self.walk_texts.size
+      if stmt.for_kind == 2 && !self.has_err() {
+        begin_for_place(stmt)
+        begin_plain_walk(stmt)
+      }
+      // The loop's own reads start here, after a for loop's set-up.
+      region_stamp = self.facts.stamp
+      region_uses = self.facts.use_cont.size
+      region_kills = self.facts.kill_cont.size
       saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         push_loop_facts(cond, stmt.body)
@@ -996,6 +1206,9 @@ pub class Checker {
       self.loop_depth += 1
       check_block(stmt.body, expected, false)
       self.loop_depth -= 1
+      if !self.has_err() {
+        loop_region_end(region_stamp, region_uses, region_kills)
+      }
       cap_kill_assigned_in(stmt.body)
       pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       pop_loop_facts(saved_facts)
@@ -1007,6 +1220,8 @@ pub class Checker {
         self.for_scopes.pop()
         self.for_kinds.pop()
       }
+      end_places(saved_places)
+      end_plain_walks(saved_walks)
       if has_pre {
         self.pop_scope()
       }
@@ -1014,7 +1229,9 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        if self.in_build > 0 {
+        if self.inline_what.size > 0 {
+          fail(stmt.loc, inline_exit_message("break", self.inline_what))
+        } else if self.in_build > 0 {
           fail(stmt.loc, "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "break is only valid inside a loop")
@@ -1027,7 +1244,9 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        if self.in_build > 0 {
+        if self.inline_what.size > 0 {
+          fail(stmt.loc, inline_exit_message("continue", self.inline_what))
+        } else if self.in_build > 0 {
           fail(stmt.loc, "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "continue is only valid inside a loop")
@@ -1053,7 +1272,8 @@ pub class Checker {
             return
           }
           if self.lambda_infer {
-            self.inferred_ret = check_expr(expr)
+            note_inferred(check_expr(expr), stmt.loc, false)
+            self.inferred_tail = true
             return
           }
         }
@@ -1097,7 +1317,7 @@ pub class Checker {
             // middle. A line starting with `-` or `[` there is a
             // dangling line (such a line always begins a new
             // statement), as in the middle.
-            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
+            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array() || expr.kind == ex_hash_lit()) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else if got.is_void() && tail_switch && block_leaves([stmt]) {
@@ -1123,9 +1343,27 @@ pub class Checker {
   pub fn check_if_assign(stmt: Stmt, expected: Ty, at_tail: Bool) {
     if cond = stmt.cond {
       got = check_expr(cond)
+      if stmt.for_kind == 7 && !(got.is_nilable() && ty_failures(got).size == 1) && !self.has_err() {
+        // A for loop's step over a type with next (checker/places.av).
+        // A step that can fail is the while form's, which reads it.
+        hint = ""
+        for m in ty_failures(got) {
+          if !m.is_nil() {
+            hint = ": a walk whose step can fail (${m.show()}) is written while v = it.${cond.callee}() { ... } else e { ... }, whose else reads the failure"
+            break
+          }
+        }
+        fail(stmt.loc, "for calls ${cond.callee} at each step: it must return T?, nil ending the loop, got ${got.show()}${hint}")
+      }
       success = if_assign_success(got, cond.loc)
+      if stmt.loop_head && stmt.else_bind.size == 0 && !self.has_err() {
+        loop_drops_error(got, cond.loc)
+      }
       self.push_scope()
       bind(stmt.bind, success)
+      if stmt.for_kind == 7 {
+        note_for_var(stmt.bind, 11)
+      }
       check_body(stmt.then_body, expected, false)
       self.pop_scope()
       if stmt.else_bind.size > 0 {
@@ -1150,6 +1388,18 @@ pub class Checker {
     }
   }
 
+  // A `while v = f()` whose value can be an error would end on it as it
+  // ends at nil, the error dropped: the loop must read it with
+  // `else e { }`, which runs once when the head fails.
+  pub fn loop_drops_error(got: Ty, loc: Location) {
+    for m in ty_failures(got) {
+      if !m.is_nil() {
+        fail(loc, "this while would end silently when the value is an error (${m.show()}): read it with `while v = f() { ... } else e { ... }`, whose else runs once when the loop ends, with the failure in e")
+        return
+      }
+    }
+  }
+
   // `if v = f() { } else e { }`: the failure the else block reads, of
   // the if-assign's one binding (checked first), or nil after an error:
   // a condition list has several failures, and an if without a binding
@@ -1165,6 +1415,13 @@ pub class Checker {
       return nil
     }
     if c = stmt.cond, ct = c.ty {
+      if stmt.loop_head && ct.is_union() {
+        fails = ty_failures(ct)
+        if fails.size == 1 && fails[0].is_nil() {
+          fail(c.loc, "else ${n} on ${ct.show()}: its only failure is nil, which carries nothing to read, and the loop ends at it by itself: leave the else out")
+          return nil
+        }
+      }
       return else_failure(ct, c.loc, "else ${n}")
     }
     nil
@@ -1271,7 +1528,7 @@ pub class Checker {
       }
       return false
     }
-    if k == ex_array() {
+    if k == ex_array() || k == ex_hash_lit() {
       for el in e.elems {
         if !no_effect(el) {
           return false
@@ -1375,6 +1632,12 @@ pub class Checker {
       fail(loc, "this statement drops a value that can be an error (${got.show()}); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...")
       return
     }
+    if can && (!got.is_union() || !ty_has_success(got)) {
+      // An optional error (`E?`), or a bare error: no success to pass
+      // on, so `?` does not apply.
+      fail(loc, "this statement drops a value that can be an error (${got.show()}); read the error with `if e = ... { }`, or discard it on purpose with _ = ...")
+      return
+    }
     if can {
       fail(loc, "this statement drops a value that can be an error (${got.show()}); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...")
     }
@@ -1387,6 +1650,9 @@ pub class Checker {
       got = check_expr(cond)
       if el.bind.size > 0 {
         success = if_assign_success(got, cond.loc)
+        if el.loop_head && el.else_bind.size == 0 && !self.has_err() {
+          loop_drops_error(got, cond.loc)
+        }
         bind(el.bind, success)
       } else if !got.is_bool() {
         fail(cond.loc, "if condition must be Bool, got ${got.show()}")
@@ -1460,6 +1726,11 @@ pub class Checker {
       check_discard(stmt)
       return
     }
+    if stmt.for_kind == 5 {
+      // The element's store of a `for` whose variable is a place: the
+      // loop bound the name (begin_for_place) and the store is not made.
+      return
+    }
     if stmt.for_kind >= 3 {
       // A `for` loop's own store: once checked, its target is a for
       // variable until the loop ends.
@@ -1468,6 +1739,15 @@ pub class Checker {
         note_for_var(t1.ident, stmt.for_kind)
       }
       return
+    }
+    if t2 = stmt.target, t2.kind == ex_name() && self.place_names.size > 0 && place_at(t2.ident) >= 0 {
+      // `p = other` on the element itself: a whole-element store, the
+      // index of the walk taking the value (checker/places.av).
+      mark = self.err_count()
+      pt = place_use(t2, false, t_int())
+      if new_err_since(mark) {
+        return
+      }
     }
     if refuse_for_assign(stmt) {
       return
@@ -1525,7 +1805,7 @@ pub class Checker {
           return
         }
         if existing = lookup(target.ident) {
-          note_capture(target.ident, existing)
+          note_capture(target.ident, existing, target.loc)
           got = check_expr_as(value, existing)
           if !ty_assignable(got, existing) {
             fail(value.loc, "cannot assign ${got.show()} to ${existing.show()}")
@@ -1559,7 +1839,9 @@ pub class Checker {
       }
       if target.kind == ex_index() {
         if arr = target.left, ix = target.right {
+          self.carray_ok = true
           container = check_expr(arr)
+          self.carray_ok = false
           if container.is_agg() {
             if user_op(container, "[]=") {
               // `c[i] = v` is the call `c.[]=(i, v)`.
@@ -1580,6 +1862,10 @@ pub class Checker {
           }
           if target.elems.size > 0 {
             fail(target.elems[0].loc, "${container.show()} takes one index; several (g[x, y]) are for a type that defines fn []= with as many parameters and the value")
+            return
+          }
+          if container.is_set() {
+            fail(stmt.loc, "a Set has no [ ]=: s.add(v) puts v in it, s.delete(v) takes it out")
             return
           }
           if container.is_hash() {
@@ -1731,6 +2017,11 @@ pub class Checker {
         fail(stmt.loc, "compound assignment ${compound_text(stmt.op)} needs ${place.show()} to define fn ${fn_op_name(binop)}")
         return
       }
+      if place.is_string() && binop == tk_plus() {
+        // `s += t` is `s = s + t`: a new string.
+        compound_through_method(stmt, target, value, binop, place)
+        return
+      }
       got = place
       if shift_op(binop) {
         // A shift's amount is an Int whatever the shifted type, as in the
@@ -1814,6 +2105,12 @@ pub class Checker {
 
   pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
+    // Only the expression a C array's reader names directly may be one.
+    carray_flag = self.carray_ok
+    self.carray_ok = false
+    if k == ex_field() && layout_size_form(expr) {
+      return check_integer(expr, has_want, want)
+    }
     if k == ex_int() {
       return check_integer(expr, has_want, want)
     }
@@ -1863,6 +2160,7 @@ pub class Checker {
       }
       at = expr.bare_name
       written = expr.ident
+      self.carray_ok = carray_flag
       got_field = check_field(expr)
       if b0 = at, member_is_call(expr) {
         bare_call(expr, b0, written)
@@ -1880,6 +2178,9 @@ pub class Checker {
     }
     if k == ex_array() {
       return check_array_literal(expr, has_want, want)
+    }
+    if k == ex_hash_lit() {
+      return check_hash_literal(expr, has_want, want)
     }
     if k == ex_hash_new() {
       if b0 = expr.bare_name {
@@ -2082,6 +2383,31 @@ pub class Checker {
   // function, and the failure was whichever member the result type
   // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.try_in == "a spawn block" || self.try_in == "a parallel block" || self.try_in == "a lambda given to parallel" {
+      // A spawn block's `?` ends the task with the failure, which the
+      // join gives: the block's value becomes a union with it (a
+      // .parallel body's, that element of the result, whether the body
+      // is a block or a lambda in parentheses).
+      if got.is_union() && ty_failures(got).size > 0 && !ty_has_success(got) {
+        fail(loc, "postfix ? on ${got.show()}: it has no success value (every member but nil is marked Error), so ? would pass up nil and continue with the error; open it with if-assign or ??")
+        return t_int()
+      }
+      if success = failure_split(got, loc, "postfix ?") {
+        for f in ty_failures(got) {
+          self.spawn_fails.push(f)
+        }
+        return success
+      }
+      return t_int()
+    }
+    if self.inline_what.size > 0 {
+      fail(loc, inline_exit_message("?", self.inline_what))
+      return t_int()
+    }
+    if self.try_in == "a lambda whose result type is inferred" {
+      fail(loc, "postfix ? inside a lambda whose result type is inferred cannot return the failure: write the result type with the failure in it, as (): Int | ParseError { ... }, or handle it with if-assign or ??")
+      return t_int()
+    }
     if self.try_in.size > 0 {
       fail(loc, "postfix ? inside ${self.try_in} cannot return the failure; handle it with if-assign or ??")
       return t_int()
@@ -2246,21 +2572,13 @@ pub class Checker {
   }
 
   pub fn check_float_field(expr: Expr): Ty {
-    if expr.ident == "sqrt" {
+    if float_math_unary(expr.ident).size > 0 {
       expr.method_call = true
       return t_float()
     }
-    if expr.ident == "abs" {
+    if expr.ident == "to_bits" {
       expr.method_call = true
-      return t_float()
-    }
-    if expr.ident == "floor" {
-      expr.method_call = true
-      return t_float()
-    }
-    if expr.ident == "exp" {
-      expr.method_call = true
-      return t_float()
+      return t_uint64()
     }
     if expr.ident == "to_i" {
       expr.method_call = true
@@ -2284,6 +2602,10 @@ pub class Checker {
     if rt = int_conversion_ty(expr.ident) {
       expr.method_call = true
       return rt
+    }
+    if int_bit_count(expr.ident).size > 0 {
+      expr.method_call = true
+      return t_int()
     }
     now = removed_int_conversion(expr.ident)
     if now.size > 0 {
@@ -2322,6 +2644,21 @@ pub class Checker {
 
   // The method checkers of the builtin receiver types.
   pub fn builtin_method(expr: Expr, object: Ty): Ty {
+    if object.is_array() || object.is_hash() || object.is_set() {
+      absorb_lambda_arg(expr, object)
+      if b = expr.block {
+        kind = "array"
+        if object.is_hash() {
+          kind = "hash"
+        } else if object.is_set() {
+          kind = "set"
+        }
+        note_inline(b, "${kind} ${expr.callee}")
+      }
+    }
+    if got = check_shared_verb(expr, object) {
+      return got
+    }
     // One text for every scalar.
     if expr.callee == "to_s" && (object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
       return scalar_to_s(expr, object)
@@ -2341,6 +2678,9 @@ pub class Checker {
     if object.is_array() {
       return check_array_method(expr, object)
     }
+    if object.is_set() {
+      return check_set_method(expr, object)
+    }
     if object.is_hash() {
       return check_hash_method(expr, object)
     }
@@ -2355,6 +2695,11 @@ pub class Checker {
   // call becomes: `n.to_s` is the interpolation "${n}"), or marked it
   // one; a builtin read-only property (`size`, `bytes`) is not one.
   pub fn member_is_call(expr: Expr): Bool {
+    if expr.kind == ex_int() || expr.kind == ex_float() || expr.kind == ex_unary() {
+      // A C array's `.size`, or a type's constant (`Int.min`,
+      // `Float64.pi`), written in place as its literal.
+      return false
+    }
     if expr.kind != ex_field() {
       return true
     }
@@ -2390,7 +2735,74 @@ pub class Checker {
     fail(at, "a method call takes parentheses: write ${name}()")
   }
 
+  // `Int.max`, `Int32.min`, `UInt64.max`, `Float64.pi`, `Float64.e`: the
+  // bounds of the four integer types and the two float constants. The
+  // expression becomes its literal (a negative one is the negation of
+  // its magnitude, as `-9223372036854775808` is written); nil for any
+  // other name.
+  pub fn builtin_type_constant(obj: Expr, expr: Expr): Ty? {
+    if obj.kind != ex_name() || obj.type_args.size > 0 {
+      return nil
+    }
+    if v = lookup(obj.ident) {
+      return nil
+    }
+    n = obj.ident
+    f = expr.ident
+    if n == "Float64" && (f == "pi" || f == "e") {
+      expr.kind = ex_float()
+      expr.object = nil
+      if f == "pi" {
+        expr.float_val = 3.141592653589793
+        expr.value_str = "3.141592653589793"
+      } else {
+        expr.float_val = 2.718281828459045
+        expr.value_str = "2.718281828459045"
+      }
+      return t_float()
+    }
+    if f != "max" && f != "min" {
+      return nil
+    }
+    ty = t_int()
+    max = 9223372036854775807u64
+    min = 9223372036854775808u64
+    if n == "Int32" {
+      ty = Ty.new(tyk_int32())
+      max = 2147483647u64
+      min = 2147483648u64
+    } else if n == "UInt32" {
+      ty = Ty.new(tyk_uint32())
+      max = 4294967295u64
+      min = 0u64
+    } else if n == "UInt64" {
+      ty = t_uint64()
+      max = 18446744073709551615u64
+      min = 0u64
+    } else if n != "Int" {
+      return nil
+    }
+    expr.object = nil
+    if f == "max" || min == 0u64 {
+      expr.kind = ex_int()
+      expr.int_bits = max
+      if f == "min" {
+        expr.int_bits = 0u64
+      }
+      return ty
+    }
+    mag = Expr.new(ex_int(), expr.loc)
+    mag.int_bits = min
+    mag.ty = ty
+    expr.kind = ex_unary()
+    expr.op = tk_minus()
+    expr.inner = mag
+    ty
+  }
+
   pub fn check_field(expr: Expr): Ty {
+    carray_here = self.carray_ok
+    self.carray_ok = false
     if obj = expr.object {
       // An enum's member (`Tok.eof`): a value of the enum, marked
       // type_call for the lowering.
@@ -2424,6 +2836,9 @@ pub class Checker {
           obj = call
         }
       }
+      if ct = builtin_type_constant(obj, expr) {
+        return ct
+      }
       // `T.name` on a type without that type-level function.
       tn = receiver_type_name(obj)
       if tn.size > 0 {
@@ -2433,8 +2848,21 @@ pub class Checker {
       mark = err_count()
       self.recv_name = obj.kind == ex_name()
       self.recv_type = ""
+      self.carray_ok = expr.ident == "size"
       object = check_expr(obj)
+      self.carray_ok = false
       self.recv_name = false
+      if object.is_carray() {
+        if expr.ident == "size" {
+          // `r.vtype.size`: N, a constant.
+          expr.kind = ex_int()
+          expr.int_bits = object.count.to_u64()
+          expr.object = nil
+          return t_int()
+        }
+        fail(expr.loc, "${object.show()} is a C array: read it with [i] and .size (.to_s() reads an Int8 or UInt8 array as text)")
+        return t_int()
+      }
       if self.recv_type.size > 0 {
         fail_no_type_fn(expr.loc, obj, self.recv_type, expr.ident)
         return t_int()
@@ -2580,7 +3008,7 @@ pub class Checker {
         if expr.ident == "size" {
           return t_int()
         }
-        if expr.ident == "keys" {
+        if expr.ident == "keys" && !object.is_set() {
           expr.method_call = true
           if k = object.key {
             return ty_array(k)
@@ -2624,9 +3052,6 @@ pub class Checker {
       if object.is_join() {
         if expr.ident == "join" {
           expr.method_call = true
-          if self.in_task > 0 {
-            fail(expr.loc, "join inside a pool worker")
-          }
           if inner = object.inner {
             return join_result(inner)
           }
@@ -2642,7 +3067,7 @@ pub class Checker {
       }
       if object.is_agg() {
         if field_ty = object.field_named(expr.ident) {
-          if sig = find_method(object.name, expr.ident) {
+          if user_op(object, expr.ident) {
             fail(expr.loc, "${object.name}.${expr.ident} is both a field and a method")
             return field_ty
           }
@@ -2652,7 +3077,7 @@ pub class Checker {
         has_zero = false
         for ms in self.methods {
           owner_hit = false
-          if ms.owner == object.name {
+          if ms.is_method_of(object) {
             owner_hit = true
           } else {
             if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
@@ -2679,7 +3104,7 @@ pub class Checker {
         has_method = false
         for ms in self.methods {
           owner_hit = false
-          if ms.owner == object.name {
+          if ms.is_method_of(object) {
             owner_hit = true
           } else {
             if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
@@ -2698,10 +3123,10 @@ pub class Checker {
         return t_int()
       }
       if object.is_ptr() {
-        return check_ptr_member(expr, object)
+        return carray_member(expr, check_ptr_member(expr, object), carray_here)
       }
       if object.is_clayout() {
-        return check_clayout_member(expr, object)
+        return carray_member(expr, check_clayout_member(expr, object), carray_here)
       }
       if object.is_module() {
         // A qualified name that is no function, constant or type of the
@@ -2785,6 +3210,9 @@ pub class Checker {
       if et.is_string() {
         return
       }
+      if r = ty_opt_ref(et), r.is_string() {
+        return
+      }
       if et.is_clayout() {
         if !clayout_holds_ref(et) {
           fail(e.loc, "nothing to release: ${name} is ${et.show()}, which has no String field")
@@ -2834,6 +3262,78 @@ pub class Checker {
     t_int()
   }
 
+  // `p.as(T)`: a Ptr(Void) as a Ptr(T) (C's cast of a `void *`), T any
+  // type a Ptr points to, written as a type (`v.as(Pair)`, `v.as(UInt8)`,
+  // `v.as(Ptr(Node)?)`). A Ptr(T) passes as a Ptr(Void) without it.
+  pub fn check_ptr_as(expr: Expr, object: Ty): Ty {
+    if inner = object.inner, !inner.is_void() {
+      fail(expr.loc, "as converts a Ptr(Void); ${object.show()} is already typed (it passes as a Ptr(Void) as it is)")
+      return object
+    }
+    if expr.args.size != 1 {
+      fail(expr.loc, "as takes one type: p.as(Pair)")
+      return object
+    }
+    if tn = expr_type_name(expr.args[0]) {
+      wrap = TypeName.new(expr.args[0].loc, "Ptr")
+      wrap.args.push(tn)
+      t = resolve_in_module(wrap)
+      self.pull_resolve()
+      expr.resolved = "ptr.as"
+      expr.args[0].ty = t
+      return t
+    }
+    fail(expr.args[0].loc, "as takes a type: p.as(Pair), p.as(UInt8), p.as(Ptr(Node))")
+    object
+  }
+
+  // The type name an argument written as a type spells (`Pair`, `UInt8`,
+  // `Ptr(Node)`, `Ptr(Node)?`, `mod.Pair`), or nil.
+  pub fn expr_type_name(e: Expr): TypeName? {
+    if e.kind == ex_try() {
+      // `Ptr(Node)?` reads as a `?` after the type: an optional pointer.
+      if i = e.inner, tn0 = expr_type_name(i) {
+        tn0.nilable = true
+        return tn0
+      }
+      return nil
+    }
+    if e.kind == ex_name() && e.type_args.size == 0 {
+      tn = TypeName.new(e.loc, e.ident)
+      tn.mod_name = e.mod_name
+      return tn
+    }
+    if e.kind == ex_name() && e.type_args.size > 0 {
+      tn2 = TypeName.new(e.loc, e.ident)
+      tn2.mod_name = e.mod_name
+      for ta in e.type_args {
+        tn2.args.push(ta)
+      }
+      return tn2
+    }
+    if e.kind == ex_call() && e.args.size == 1 {
+      if r = e.receiver {
+        return nil
+      }
+      if inner = expr_type_name(e.args[0]) {
+        tn3 = TypeName.new(e.loc, e.callee)
+        tn3.args.push(inner)
+        return tn3
+      }
+    }
+    nil
+  }
+
+  // A field of C memory that is a C array (`T[N]`) is read only by its
+  // readers (carray_ok); anywhere else it is refused, since it is no value.
+  pub fn carray_member(expr: Expr, got: Ty, ok: Bool): Ty {
+    if got.is_carray() && !ok {
+      fail(expr.loc, "${expr.ident} is a C array (${got.show()}), not a value: read its elements with .${expr.ident}[i], its length with .${expr.ident}.size, an Int8 or UInt8 array's text with .${expr.ident}.to_s()")
+      return t_int()
+    }
+    got
+  }
+
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
     owner = method_owner_name(object)
     pointee = object
@@ -2880,29 +3380,56 @@ pub class Checker {
     t_int()
   }
 
+  // `p[i]` through a Ptr to a C scalar or a pointer: element i of the C
+  // array at p, of the element's Avant type (a narrow C scalar reads as
+  // its view). C gives no length, so i is not checked; a NULL p traps.
+  pub fn check_ptr_index(expr: Expr, container: Ty, ix: Expr): Ty {
+    got = check_expr_as(ix, t_int())
+    if !got.is_int() {
+      fail(ix.loc, "a Ptr's index must be Int, got ${got.show()}")
+    }
+    if inner = container.inner {
+      if ptr_elem_ok(inner) {
+        return ty_c_view(inner)
+      }
+      if inner.is_clayout() {
+        fail(expr.loc, "cannot index ${container.show()}: p[i] reads C scalars and pointers; a layout's fields are read through the pointer (p.x)")
+        return t_int()
+      }
+      fail(expr.loc, "cannot index ${container.show()}: it points to no elements Avant knows; give it a type first (p.as(UInt8))")
+      return t_int()
+    }
+    fail(expr.loc, "cannot index ${container.show()}")
+    t_int()
+  }
+
   pub fn check_index(expr: Expr): Ty {
     if arr = expr.left, ix = expr.right {
       if arr.kind == ex_name() && !arr.implicit_field {
         cont = arr.ident
         if ix.kind == ex_name() {
-          if fact_slack_of(ix.ident, cont) >= 0 {
+          fi = fact_best(ix.ident, cont)
+          if fi >= 0 {
             expr.proven = true
+            log_use(fi, expr)
           }
         } else if ix.kind == ex_binary() {
           if ix.op == tk_plus() {
             if il = ix.left, ir = ix.right {
               if il.kind == ex_name() && lit_small(ir) {
-                sl = fact_slack_of(il.ident, cont)
-                if sl >= 0 && ir.int_bits <= sl.to_u64() {
+                fi = fact_best(il.ident, cont)
+                if fi >= 0 && ir.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
                   ix.proven = true
+                  log_use(fi, expr)
                 }
               }
               if ir.kind == ex_name() && lit_small(il) {
-                sl = fact_slack_of(ir.ident, cont)
-                if sl >= 0 && il.int_bits <= sl.to_u64() {
+                fi = fact_best(ir.ident, cont)
+                if fi >= 0 && il.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
                   ix.proven = true
+                  log_use(fi, expr)
                 }
               }
             }
@@ -2914,7 +3441,19 @@ pub class Checker {
           ix.proven = true
         }
       }
+      self.carray_ok = true
       container = check_expr(arr)
+      self.carray_ok = false
+      if container.is_carray() {
+        got = check_expr_as(ix, t_int())
+        if !got.is_int() {
+          fail(ix.loc, "a C array's index must be Int, got ${got.show()}")
+        }
+        if ce = container.inner {
+          return ty_c_view(ce)
+        }
+        return t_int()
+      }
       if container.is_agg() && user_op(container, "[]") {
         // `c[i]` is the call `c.[](i)`.
         rewrite_op_call(expr, arr, "[]", index_args(expr))
@@ -2930,6 +3469,10 @@ pub class Checker {
           fail(ix.loc, "index must be Int, got ${got.show()}")
         }
         return t_int()
+      }
+      if container.is_set() {
+        fail(expr.loc, "a Set has no [ ]: s.has(v) says whether v is in it")
+        return t_bool()
       }
       if container.is_hash() {
         if k = container.key {
@@ -2956,6 +3499,9 @@ pub class Checker {
       if container.is_agg() {
         fail(expr.loc, "cannot index ${container.show()}: define fn [](index) on it")
         return t_int()
+      }
+      if container.is_ptr() {
+        return check_ptr_index(expr, container, ix)
       }
       fail(expr.loc, "cannot index ${container.show()}")
       return t_int()
@@ -3025,17 +3571,26 @@ pub class Checker {
       }
     }
     if b = expr.block {
+      note_inline(b, "array build")
       if b.params.size != 1 {
         fail(b.loc, "Array(T).new(n) { |i| ... } takes one block parameter, the index")
         return ty_array(elem)
       }
+      refuse_block_param_outer(b, "Array.new")
       self.push_scope()
       bind(b.params[0], t_int())
       saved_loops = self.loop_depth
       self.loop_depth = 0
       saved_build = self.in_build
       self.in_build += 1
-      bt = check_block_value_as(b, true, elem)
+      bt = t_int()
+      if b.paren {
+        s = inline_enter(b, "Array(T).new", elem)
+        bt = check_block_value_as(b, true, elem)
+        inline_leave(s)
+      } else {
+        bt = check_block_value_as(b, true, elem)
+      }
       self.in_build = saved_build
       self.loop_depth = saved_loops
       self.pop_scope()
@@ -3047,6 +3602,9 @@ pub class Checker {
   }
 
   pub fn check_array_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if has_want && want.is_set() && !type.ty_has_var(want) {
+      return check_set_literal(expr, want)
+    }
     if expr.elems.size == 0 {
       if has_want && want.is_array() {
         return want
@@ -3074,7 +3632,100 @@ pub class Checker {
     ty_array(elem_ty)
   }
 
+  // `["tea": 12, "milk": 3]`: a new Hash(K, V) holding the entries, set
+  // in the written order (a later equal key replaces an earlier one, as
+  // `h[k] = v` does). K and V are a declared type's, else the first
+  // entry's key and value; `[:]` needs a declared type.
+  pub fn check_hash_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.elems.size == 0 {
+      if has_want && want.is_hash() {
+        if wk0 = want.key {
+          key_fns(wk0, expr.loc)
+        }
+        return want
+      }
+      fail(expr.loc, "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
+      return t_int()
+    }
+    key = t_int()
+    val = t_int()
+    forced = false
+    if has_want && want.is_hash() {
+      if wk = want.key, wv = want.val, !type.ty_has_var(wk) && !type.ty_has_var(wv) {
+        key = wk
+        val = wv
+        forced = true
+      }
+    }
+    if !forced {
+      key = check_expr(expr.elems[0])
+      val = check_expr(expr.elems[1])
+      if self.has_err() {
+        return t_int()
+      }
+      why = hash_type_problem(key, val)
+      if why.size == 0 && key.is_struct() {
+        seen: Array(String) = []
+        why = hash_key_problem(key, seen, "")
+      }
+      if why.size > 0 {
+        fail(expr.loc, why)
+        return t_int()
+      }
+    }
+    i = 0
+    while i + 1 < expr.elems.size {
+      gk = check_expr_as(expr.elems[i], key)
+      if !ty_assignable(gk, key) {
+        fail(expr.elems[i].loc, "hash literal key is ${gk.show()}, expected ${key.show()}")
+      }
+      gv = check_expr_as(expr.elems[i + 1], val)
+      if !ty_assignable(gv, val) {
+        fail(expr.elems[i + 1].loc, "hash literal value is ${gv.show()}, expected ${val.show()}")
+      }
+      i += 2
+    }
+    key_fns(key, expr.loc)
+    ty_hash(key, val)
+  }
+
+  // `for v in s` over a Set walks `s.values()`, an array of its elements
+  // made once before the loop (as `s.each` walks its keys): once the
+  // for's hidden array is checked and found a Set, its value becomes that
+  // call and the hidden name the array (the operand is checked once more
+  // only then, so a failed operand reports once).
+  pub fn set_for_operand(pre: Stmt) {
+    if v = pre.value, t = pre.target, st = lookup(t.ident), st.is_set() {
+      call = Expr.new(ex_call(), v.loc)
+      call.callee = "values"
+      call.receiver = v
+      pre.value = call
+      arr = check_expr(call)
+      t.ty = arr
+      bind(t.ident, arr)
+    }
+  }
+
+  // An array literal where a Set(T) is wanted (`s: Set(Int) = [1, 2]`,
+  // `[]` with a declared type): each element is a T, and the literal makes
+  // the set (lowered as Set(T).new() and an add of each element).
+  pub fn check_set_literal(expr: Expr, want: Ty): Ty {
+    if elem = want.key {
+      key_fns(elem, expr.loc)
+      for el in expr.elems {
+        got = check_expr_as(el, elem)
+        if !ty_assignable(got, elem) {
+          fail(el.loc, "set element is ${got.show()}, expected ${elem.show()}")
+        }
+      }
+    }
+    want
+  }
+
   pub fn check_hash_new(expr: Expr): Ty {
+    if expr.ident == "Set" {
+      return check_set_new(expr)
+    }
     key = t_int()
     val = t_int()
     if kn = expr.key_type {
@@ -3086,15 +3737,44 @@ pub class Checker {
       self.pull_resolve()
     }
     why = hash_type_problem(key, val)
+    if why.size == 0 && key.is_struct() {
+      seen: Array(String) = []
+      why = hash_key_problem(key, seen, "")
+    }
     if why.size > 0 {
       fail(expr.loc, why)
       return t_int()
     }
+    key_fns(key, expr.loc)
     ty_hash(key, val)
+  }
+
+  // `Set(T).new()`: an empty Set(T), T one of a Hash key's types.
+  pub fn check_set_new(expr: Expr): Ty {
+    elem = t_int()
+    if kn = expr.key_type {
+      elem = resolve_value_in_module(kn)
+      self.pull_resolve()
+    }
+    why = set_type_problem(elem)
+    if why.size == 0 && elem.is_struct() {
+      seen: Array(String) = []
+      why = key_problem(elem, seen, "", "a Set element")
+    }
+    if why.size > 0 {
+      fail(expr.loc, why)
+      return t_int()
+    }
+    key_fns(elem, expr.loc)
+    ty_set(elem, t_bool())
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
     drop_struct_defaults(expr)
+    if expr.type_name == "Hasher" && expr.mod_name.size == 0 {
+      fail(expr.loc, hasher_made_text())
+      return t_int()
+    }
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
@@ -3123,7 +3803,7 @@ pub class Checker {
       fail(expr.loc, "${ty.name} needs type arguments")
       return t_int()
     }
-    if ty.is_class() {
+    if ty.is_class() && !expr.derived {
       shown = ty.show()
       fail(expr.loc, "classes are constructed with ${shown}.new, not ${shown} { }")
       return ty
@@ -3431,11 +4111,11 @@ pub class Checker {
       if self.has_err() {
         return t_int()
       }
-      for i in 0..got_names.size {
-        if field_ty = ty.field_named(got_names[i]) {
-          check_field_visible(ty, got_names[i], expr.loc)
-          if !ty_assignable(gots[i], field_ty) {
-            fail(expr.loc, "field ${got_names[i]} is ${gots[i].show()}, expected ${field_ty.show()}")
+      for i2 in 0..got_names.size {
+        if field_ty = ty.field_named(got_names[i2]) {
+          check_field_visible(ty, got_names[i2], expr.loc)
+          if !ty_assignable(gots[i2], field_ty) {
+            fail(expr.loc, "field ${got_names[i2]} is ${gots[i2].show()}, expected ${field_ty.show()}")
           }
         }
       }
@@ -3463,6 +4143,11 @@ pub class Checker {
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
     as_recv = self.recv_name
     self.recv_name = false
+    if self.place_names.size > 0 {
+      if pt = place_use(expr, has_want, want) {
+        return pt
+      }
+    }
     if expr.ident == "self" {
       if cf = self.current_fn, cf.type_method {
         fail(expr.loc, "self is not available in a type-level function")
@@ -3494,7 +4179,7 @@ pub class Checker {
       if name_failed(expr.ident) {
         read_failed_name()
       }
-      note_capture(expr.ident, existing)
+      note_capture(expr.ident, existing, expr.loc)
       return existing
     }
     if field_ty = implicit_field(expr.ident) {
@@ -3709,9 +4394,21 @@ pub class Checker {
     false
   }
 
-  // `[]` written with no element.
+  // `[]` written with no element, or `[:]`.
   pub fn is_empty_array(e: Expr): Bool {
-    e.kind == ex_array() && e.elems.size == 0
+    (e.kind == ex_array() || e.kind == ex_hash_lit()) && e.elems.size == 0
+  }
+
+  // The stand-in of `[:]` as `empty_array_ty` is of `[]`: a hash of Void
+  // keys and values.
+  pub fn empty_hash_ty: Ty {
+    ty_hash(t_void(), t_void())
+  }
+
+  // Whether a `[]` or `[:]` argument (its stand-in t) fits a parameter of
+  // type p: an array or a Set parameter takes `[]`, a hash parameter `[:]`.
+  pub fn empty_fits(t: Ty, p: Ty): Bool {
+    (t.is_array() && (p.is_array() || p.is_set())) || (t.is_hash() && p.is_hash() && !p.is_set())
   }
 
   // The stand-in type of a `[]` argument before its parameter is known
@@ -3726,6 +4423,11 @@ pub class Checker {
         return e.is_void()
       }
     }
+    if t.is_hash() {
+      if k = t.key {
+        return k.is_void()
+      }
+    }
     false
   }
 
@@ -3734,8 +4436,25 @@ pub class Checker {
   pub fn check_call_arg(e: Expr): Ty {
     if is_empty_array(e) {
       // `[]` takes its parameter's type (fit_call_arg); until the call
-      // picks its function it stands for an array of any element.
+      // picks its function it stands for an array of any element (`[:]`
+      // for a hash of any key and value).
+      if e.kind == ex_hash_lit() {
+        return empty_hash_ty()
+      }
       return empty_array_ty()
+    }
+    if e.kind == ex_array() && e.elems.size > 0 {
+      // `[1, 2]` may still become the Set its parameter asks for: its
+      // type is marked as a literal's until the call picks its function.
+      got = check_expr(e)
+      if got.is_array() {
+        if elem = got.inner {
+          t = ty_array(elem)
+          t.lit_arr = true
+          return t
+        }
+      }
+      return got
     }
     if e.kind != ex_int() {
       return check_expr(e)
@@ -3784,6 +4503,15 @@ pub class Checker {
   }
 
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.op == tk_amp() {
+      // `&x` was checked with the C call it is an argument of
+      // (check_out_args); anywhere else it is refused.
+      if t = expr.ty, expr.proven {
+        return t
+      }
+      fail(expr.loc, "&x is only an argument of a C function (a fun of a lib block), which writes the local x through the pointer")
+      return t_int()
+    }
     if inner = expr.inner {
       if inner.kind == ex_name() || inner.kind == ex_field() {
         _ = inline_const(inner)
@@ -4238,6 +4966,13 @@ pub class Checker {
         return t_bool()
       }
     }
+    if op == tk_plus() && left.is_array() && right.is_array() {
+      if left.same_as(right) {
+        return array_join(expr, l, r, left)
+      }
+      fail(expr.loc, "cannot join ${left.show()} and ${right.show()}: + joins two arrays of one element type")
+      return left
+    }
     hint = open_hint(l, left)
     if hint.size == 0 {
       hint = open_hint(r, right)
@@ -4372,7 +5107,7 @@ pub class Checker {
       return t_int()
     }
     if existing = lookup(expr.callee), existing.is_fn() {
-      note_capture(expr.callee, existing)
+      note_capture(expr.callee, existing, expr.loc)
       expr.indirect = true
       return check_indirect_call(expr, existing)
     }
@@ -4522,11 +5257,62 @@ pub class Checker {
     return dispatch_call(expr, expected)
   }
 
+  // Whether an array literal's argument type t (check_call_arg) fits the
+  // Set parameter p: its elements fit p's element type.
+  pub fn lit_set_fits(t: Ty, p: Ty): Bool {
+    if !t.lit_arr || !p.is_set() || type.ty_has_var(p) {
+      return false
+    }
+    if e = t.inner, k = p.key {
+      return ty_assignable(e, k) || (e.is_integer() && k.is_integer())
+    }
+    false
+  }
+
+  // A non-empty array literal given to a Set parameter becomes that Set,
+  // as `s: Set(Int) = [1, 2]` does: its elements were checked as the
+  // call's argument; an integer literal among them takes the element type.
+  pub fn adopt_set_literal(expr: Expr, want: Ty): Ty {
+    if elem = want.key {
+      key_fns(elem, expr.loc)
+      for el in expr.elems {
+        got = t_int()
+        if t = el.ty {
+          got = t
+        }
+        if !ty_assignable(got, elem) && is_lit_expr(el) {
+          got = check_expr_as(el, elem)
+        }
+        if !ty_assignable(got, elem) {
+          fail(el.loc, "set element is ${got.show()}, expected ${elem.show()}")
+        }
+      }
+    }
+    expr.ty = want
+    want
+  }
+
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
+    if got.lit_arr && expr.kind == ex_array() {
+      if lit_set_fits(got, want) {
+        return adopt_set_literal(expr, want)
+      }
+      if t = expr.ty {
+        return t
+      }
+    }
     if is_empty_array(expr) && is_empty_array_ty(got) {
-      // `[]` takes the parameter's array type.
-      if want.is_array() && !type.ty_has_var(want) && !is_empty_array_ty(want) {
+      // `[]` takes the parameter's array type, `[:]` its hash type.
+      if empty_fits(got, want) && !type.ty_has_var(want) && !is_empty_array_ty(want) {
         return check_expr_as(expr, want)
+      }
+      if expr.kind == ex_hash_lit() {
+        if !want.is_hash() && !type.ty_has_var(want) {
+          fail(expr.loc, "[:] is a hash, expected ${want.show()}")
+          return want
+        }
+        fail(expr.loc, "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
+        return want
       }
       if !want.is_array() && !type.ty_has_var(want) {
         fail(expr.loc, "[] is an array, expected ${want.show()}")
@@ -4595,6 +5381,10 @@ pub class Checker {
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_type_chain(recv)
+    if recv.kind == ex_name() && recv.ident == "Hasher" && recv.mod_name.size == 0 {
+      fail(expr.loc, hasher_made_text())
+      return t_int()
+    }
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
       // (before, "unknown type Buf").
@@ -4710,7 +5500,7 @@ pub class Checker {
       shown = ty.show()
       has_init = false
       for ms in self.methods {
-        if ms.owner == ty.name {
+        if ms.is_method_of(ty) {
           if ms.name == "initialize" {
             has_init = true
           }
@@ -4781,11 +5571,101 @@ pub class Checker {
     ty
   }
 
+  // The `&x` arguments of a C call: x a local whose type is the
+  // parameter's pointee (a C scalar as its Avant type, or a pointer), so
+  // C's write through the pointer lands in x when the call returns. Only
+  // a local: a field, an element or a heap value would give C an address
+  // the collector may move. Each is marked checked with the parameter's
+  // type; false after an error.
+  pub fn check_out_args(expr: Expr, params: Array(Ty), what: String): Bool {
+    for i in 0..expr.args.size {
+      arg = expr.args[i]
+      if arg.kind == ex_unary() && arg.op == tk_amp() {
+        if i >= params.size {
+          return true
+        }
+        p = params[i]
+        pointee = t_int()
+        ok = false
+        if p.is_ptr() {
+          if inner = p.inner, ptr_elem_ok(inner) {
+            pointee = inner
+            ok = true
+          }
+        }
+        if !ok {
+          fail(arg.loc, "&x passes the address of a local to a parameter Ptr(T), T a C scalar or a pointer; ${what}'s parameter ${i + 1} is ${p.show()}")
+          return false
+        }
+        if x = arg.inner {
+          if x.kind != ex_name() || x.implicit_field || x.ident == "self" {
+            fail(x.loc, "&x takes a local, not a field, an element or a value: copy it into a local, pass &local, then store it back")
+            return false
+          }
+          if refuse_const_write(x) {
+            return false
+          }
+          if lt = lookup(x.ident) {
+            view = ty_c_view(pointee)
+            if !lt.same_as(view) {
+              fail(x.loc, "&${x.ident} passes ${x.ident} to ${p.show()}: ${x.ident} must be ${view.show()}, not ${lt.show()}")
+              return false
+            }
+            note_capture(x.ident, lt, x.loc)
+            x.ty = lt
+            arg.ty = p
+            arg.proven = true
+          } else {
+            fail(x.loc, "&${x.ident} needs a local ${x.ident} declared before the call (${x.ident}: ${ty_c_view(pointee).show()} = ...)")
+            return false
+          }
+        }
+      }
+    }
+    true
+  }
+
+  // `String.from_c(p, n)` and `Bytes.from_c(p, n)`: n bytes of C memory
+  // at p (any Ptr, or a Ptr that may be NULL) copied into a new String or
+  // Bytes, NULs kept; a negative n, or a NULL p with n above 0, traps.
+  pub fn check_from_c(expr: Expr, what: String): Ty {
+    res = t_string()
+    if what == "Bytes" {
+      res = t_bytes()
+    }
+    if expr.args.size != 2 {
+      fail(expr.loc, "${what}.from_c takes a Ptr and a length: ${what}.from_c(p, n)")
+      return res
+    }
+    pt = check_expr(expr.args[0])
+    ok = pt.is_ptr()
+    if r = ty_opt_ref(pt), r.is_ptr() {
+      ok = true
+    }
+    if !ok {
+      fail(expr.args[0].loc, "${what}.from_c reads C memory through a Ptr, got ${pt.show()}")
+    }
+    nt = check_expr_as(expr.args[1], t_int())
+    if !nt.is_int() {
+      fail(expr.args[1].loc, "${what}.from_c's length must be Int, got ${nt.show()}")
+    }
+    res
+  }
+
   pub fn check_lib_call(expr: Expr, lib_name: String): Ty {
     key = "${lib_name}.${expr.callee}"
     if id = self.cfun_index.get(key) {
       sig = self.cfuns[id]
-      check_args(expr, sig.params, "${lib_name}.${expr.callee}")
+      // A callback parameter is checked as Avant code sees it: its narrow
+      // C scalars are their Avant views (fn(UInt8) takes fn(Int)).
+      params: Array(Ty) = []
+      for p in sig.params {
+        params.push(ty_cb_view(p))
+      }
+      if !check_out_args(expr, sig.params, "${lib_name}.${expr.callee}") {
+        return ty_c_view(sig.ret)
+      }
+      check_args(expr, params, "${lib_name}.${expr.callee}")
       if self.has_err() {
         return ty_c_view(sig.ret)
       }
@@ -4978,6 +5858,18 @@ pub class Checker {
 
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     got = check_method_call_of(expr, recv, has_want, want)
+    if !self.has_err() {
+      if r0 = expr.receiver {
+        note_copy_call(expr, r0)
+      }
+    }
+    if !self.has_err() && handler_method(expr.callee) {
+      if r = expr.receiver, rt = r.ty, is_http_server(rt) {
+        // The server runs a handler on each of its loop threads at once
+        // (checker/spawn.av).
+        check_handler_args(expr)
+      }
+    }
     if !self.has_err() && expr.callee == "recover" && expr.args.size == 1 {
       if r = expr.receiver, rt = r.ty, is_mutex_ty(rt) {
         // `m.recover(v)` gives the mutex v as `Mutex(T).new(v)` does: the
@@ -5063,6 +5955,27 @@ pub class Checker {
     if expr.callee == "new" {
       return check_constructor(expr, recv, has_want, want)
     }
+    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && expr.callee == "from_c" {
+      if found = lookup(recv.ident) {
+      } else {
+        return check_from_c(expr, recv.ident)
+      }
+    }
+    if recv.kind == ex_name() && recv.ident == "Float64" && expr.callee == "from_bits" {
+      if found = lookup(recv.ident) {
+      } else {
+        // `Float64.from_bits(u)`: the float whose 64 bits are u.
+        if expr.args.size != 1 {
+          fail(expr.loc, "Float64.from_bits takes one UInt64")
+          return t_float()
+        }
+        got = check_expr_as(expr.args[0], t_uint64())
+        if !got.is_uint64() {
+          fail(expr.args[0].loc, "Float64.from_bits expects UInt64, got ${got.show()}")
+        }
+        return t_float()
+      }
+    }
     if recv.kind == ex_name() {
       if recv.ident == "String" {
         if expr.callee == "from_utf8" {
@@ -5076,6 +5989,17 @@ pub class Checker {
           }
           return ty_nilable(t_string())
         }
+        if expr.callee == "from_code_point" {
+          if expr.args.size != 1 {
+            fail(expr.loc, "String.from_code_point takes one Int")
+            return t_string()
+          }
+          got = check_expr_as(expr.args[0], t_int())
+          if !got.is_int() {
+            fail(expr.args[0].loc, "String.from_code_point expects Int")
+          }
+          return t_string()
+        }
       }
     }
     // A type without that type-level function: before, its name was
@@ -5087,7 +6011,9 @@ pub class Checker {
     if tn.size == 0 {
       self.recv_name = recv.kind == ex_name()
       self.recv_type = ""
+      self.carray_ok = expr.callee == "to_s" && expr.args.size == 0
       object = check_expr(recv)
+      self.carray_ok = false
       self.recv_name = false
       tn = self.recv_type
     }
@@ -5098,6 +6024,21 @@ pub class Checker {
       fail_no_type_fn(expr.loc, recv, tn, expr.callee)
       return t_int()
     }
+    if object.is_ptr() && expr.callee == "as" {
+      return check_ptr_as(expr, object)
+    }
+    if object.is_carray() {
+      // `r.message.to_s()`: a C char array's text, up to its first NUL
+      // or its N bytes.
+      if ce = object.inner, ce.c_scalar == cs_int8() || ce.c_scalar == cs_uint8() {
+        if expr.callee == "to_s" && expr.args.size == 0 {
+          expr.resolved = "carray.to_s"
+          return t_string()
+        }
+      }
+      fail(expr.loc, "${object.show()} is a C array: read it with [i] and .size (.to_s() reads an Int8 or UInt8 array as text)")
+      return t_int()
+    }
     if new_err_since(mark) && is_ident_chain(recv) {
       // An unknown name is reported once, not again as a method of the
       // Int that stands for it.
@@ -5105,6 +6046,14 @@ pub class Checker {
         check_expr(a)
       }
       return t_int()
+    }
+    if expr.callee == "clone" {
+      // The derived deep copy (checker/clone.av), on every type.
+      cexp: Ty? = nil
+      if has_want {
+        cexp = want
+      }
+      return check_clone_call(expr, object, cexp)
     }
     if expr.callee == "or" {
       if b = expr.block {
@@ -5129,11 +6078,19 @@ pub class Checker {
     }
     if expr.callee == "with" {
       if is_mutex_ty(object) {
+        absorb_lambda_arg(expr, object)
+        if b = expr.block {
+          note_inline(b, "mutex with")
+        }
         return check_mutex_with(expr, object)
       }
     }
     if expr.callee == "try_with" {
       if is_mutex_ty(object) {
+        absorb_lambda_arg(expr, object)
+        if b = expr.block {
+          note_inline(b, "mutex try_with")
+        }
         // `with` that gives the block's value, or a MutexError when the
         // mutex is poisoned (a task trapped holding it): T | MutexError.
         got = check_mutex_with(expr, object)
@@ -5164,6 +6121,15 @@ pub class Checker {
     }
     if object.is_float() || object.is_integer() || object.is_string() || object.is_bytes() || object.is_array() || object.is_hash() || object.is_buf() || object.is_join() {
       return builtin_method(expr, object)
+    }
+    if object.is_hasher() {
+      return check_hasher_method(expr)
+    }
+    if expr.callee == "equals" && expr.args.size == 1 && (object.is_struct() || object.is_class()) && !self.user_op(object, "equals") {
+      if bl = expr.block {
+      } else {
+        return check_equals_call(expr, object)
+      }
     }
     if object.is_bool() && expr.callee == "to_s" {
       return scalar_to_s(expr, object)
@@ -5244,13 +6210,6 @@ pub class Checker {
 
   // An `each` block: its statements are checked as the code around it,
   // so a `return` leaves the function with the function's result type.
-  pub fn check_block_void(block: Block, pname: String, pty: Ty) {
-    self.push_scope()
-    bind(pname, pty)
-    check_body(block.body, self.return_type, false)
-    self.pop_scope()
-  }
-
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     stmt_mode = self.switch_stmt
     self.switch_stmt = false
@@ -5385,8 +6344,8 @@ pub class Checker {
     }
     all_void = true
     any_void = false
-    for i in 0..branch_tys.size {
-      if branch_tys[i].is_void() {
+    for ix in 0..branch_tys.size {
+      if branch_tys[ix].is_void() {
         any_void = true
       } else {
         all_void = false
@@ -5847,18 +6806,74 @@ pub class Checker {
       self.loop_depth = 0
       saved_try = self.try_in
       self.try_in = "a spawn block"
-      result = check_block_value(b)
+      saved_fails = self.spawn_fails
+      self.spawn_fails = []
+      // A spawn inside the block runs no longer than the block's task
+      // (its join waits for it): what it keeps frozen is the block's own
+      // business, under the block's names.
+      saved_ph = self.pending_handles
+      saved_pa = self.pending_arrays
+      self.pending_handles = []
+      self.pending_arrays = []
+      result = check_spawn_value(b)
+      self.pending_handles = saved_ph
+      self.pending_arrays = saved_pa
+      fails = self.spawn_fails
+      self.spawn_fails = saved_fails
       self.try_in = saved_try
       self.loop_depth = saved_loops
       self.in_task -= 1
-      if !result.is_int() {
-        fail(b.loc, "spawn result must be Int")
+      if fails.size > 0 && !self.has_err() {
+        // A `?` in the block: the join gives the value or the failure.
+        parts: Array(Ty) = []
+        parts.push(result)
+        for f in fails {
+          parts.push(f)
+        }
+        result = ty_union_build(parts)
+      }
+      if !self.has_err() && ty_holds_ptr(result) {
+        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it does not cross to another task")
       }
       collect_spawn_captures(expr, b.body)
       return ty_join(result)
     }
     fail(expr.loc, "spawn needs a block")
     ty_join(t_int())
+  }
+
+  // A spawn block's value: its last expression's type, or Void when it
+  // ends with a statement or a call that gives nothing (the join then
+  // gives `Void | TaskError`).
+  pub fn check_spawn_value(block: Block): Ty {
+    if block.body.size > 0 {
+      last = block.body[block.body.size - 1]
+      gives = last.kind == st_expr() || (last.kind == st_if() && last.else_body.size > 0)
+      if !gives {
+        self.push_scope()
+        for stmt in block.body {
+          check_block_stmt(stmt, self.return_type, false)
+        }
+        self.pop_scope()
+        return t_void()
+      }
+      if last.kind == st_expr() {
+        if e = last.expr, e.kind == ex_call() || e.kind == ex_field() {
+          // A call that gives nothing ends a Void block.
+          self.push_scope()
+          i = 0
+          while i < block.body.size - 1 {
+            check_block_stmt(block.body[i], self.return_type, false)
+            i += 1
+          }
+          scan_pending_expr(e)
+          ty = check_expr(e)
+          self.pop_scope()
+          return ty
+        }
+      }
+    }
+    check_block_value(block)
   }
 
   pub fn check_block_value(block: Block): Ty {
@@ -5904,6 +6919,14 @@ pub class Checker {
             return ty
           }
         }
+        if stmt.kind == st_return() && self.inline_what.size > 0 {
+          // A lambda's last statement may be its `return`.
+          if x = stmt.expr {
+            check_block_stmt(stmt, self.return_type, false)
+            self.pop_scope()
+            return self.return_type
+          }
+        }
         fail(stmt.loc, "block must end with a value")
         self.pop_scope()
         return t_int()
@@ -5936,6 +6959,7 @@ pub class Checker {
         annotate_vstep(b.body[i - 1], st)
       }
       self.clear_poison()
+      self.facts.after_follows = true
       check_block_stmt(st, self.return_type, false)
       if self.has_err() {
         return t_void()
@@ -6071,7 +7095,7 @@ pub class Checker {
       }
       dropped = self.with_drop == expr.loc.show()
       self.with_drop = ""
-      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" {
+      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" && self.try_in != "a spawn block" && self.try_in != "a parallel block" && self.inline_what.size == 0 && !b.paren {
         // `return` and `?` leave a `with` as they leave the code around
         // it, which here cannot return (a spawn or parallel block, a
         // field default): refused there as before.
@@ -6080,6 +7104,7 @@ pub class Checker {
           return t_void()
         }
       }
+      refuse_block_param_outer(b, expr.callee)
       self.push_scope()
       bind(b.params[0], t)
       // `return`, `break`, `continue` and `?` leave the block as they
@@ -6087,7 +7112,24 @@ pub class Checker {
       // out (mir/lower_task.av lower_mutex_with), as a `gc.hold` ends.
       // Used as a statement, the block ends without a value; used as a
       // value, its last expression is the value.
-      result = check_with_body(b, !dropped)
+      result = t_void()
+      if b.paren {
+        res = t_void()
+        if !dropped {
+          res = inline_result(b)
+        }
+        s = inline_enter(b, expr.callee, res)
+        result = check_with_body(b, !dropped)
+        inline_leave(s)
+        if !dropped && !res.is_var() && !self.has_err() {
+          if !ty_assignable(result, res) {
+            fail(b.body[b.body.size - 1].loc, "the lambda's result is ${res.show()}, its last expression ${result.show()}")
+          }
+          result = res
+        }
+      } else {
+        result = check_with_body(b, !dropped)
+      }
       self.pop_scope()
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out
@@ -6181,11 +7223,7 @@ pub class Checker {
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {
-    if expr.callee == "join" {
-      if self.in_task > 0 {
-        fail(expr.loc, "join inside a pool worker")
-      }
-    } else {
+    if expr.callee != "join" {
       fail_hint(expr.loc, "no method ${expr.callee} on JoinHandle", builtin_hint(handle, expr.callee))
       if inner = handle.inner {
         return inner
@@ -6429,6 +7467,9 @@ pub fn clayout_holds_ref(t: Ty): Bool {
   for field in t.fields {
     ft = field.ty
     if ft.is_string() {
+      return true
+    }
+    if r = ty_opt_ref(ft), r.is_string() {
       return true
     }
     if ft.is_clayout() && clayout_holds_ref(ft) {

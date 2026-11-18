@@ -1,0 +1,121 @@
+// A long slice is a view of its string: the bytes stay where they are,
+// the view names its base, an offset and a length (a short slice, or one
+// that would keep a much larger string alive, is a copy). Every
+// operation reads a view as the string it is: size, indexing, get,
+// equality and order, interpolation and concatenation, a switch, a hash
+// key (a String key and a key with its own hash), an array of them
+// (sort, contains, index, min, max), Buf, parsing, chars, strip and
+// split. A view outlives the name of its base, through
+// young and full collections that move the base (AVANT_YOUNG_MB=1,
+// AVANT_GC_STRESS=1 in the gate's passes).
+
+lib gcy {
+  fun avant_gc_collect_young
+}
+
+lib gcrt {
+  fun avant_gc_collect
+}
+
+class Keep {
+  pub views: Array(String) = []
+}
+
+// A key with its own hash: the hasher reads a view's bytes.
+struct Tag {
+  name: String
+
+  fn equals(other: Tag): Bool {
+    name == other.name
+  }
+
+  fn hash(h: Hasher) {
+    h.add(name)
+  }
+}
+
+// A string of n bytes made at run time: "a0b1c2..." cycling.
+fn text(n: Int, seed: Int): String {
+  out = Buf.new()
+  i = 0
+  while i < n {
+    out.push_byte(97 + (i + seed) % 26)
+    i += 1
+  }
+  out.to_s()
+}
+
+fn churn(n: Int): Int {
+  k = 0
+  for i in 0..n {
+    t = "churn-${i}-${k}"
+    k += t.size
+  }
+  k
+}
+
+fn sum_bytes(s: String): Int {
+  t = 0
+  i = 0
+  while i < s.size {
+    t += s[i]
+    i += 1
+  }
+  t
+}
+
+fn main {
+  big = text(200, 0)
+  v = str_slice(big, 10, 150)
+  puts("${v.size} ${v[0]} ${v[139]} ${v.get(140) ?? -1} ${sum_bytes(v)}")
+  w = str_slice(v, 5, 100)
+  puts("${w.size} ${w[0] == big[15]} ${w == str_slice(big, 15, 110)}")
+  short = str_slice(big, 0, 10)
+  puts("${short} ${short.size}")
+  puts("${v < big} ${big < v} ${v == v} ${str_slice(v, 0, 0).size}")
+  puts("${str_slice(v, 0, 20)}|${str_slice(v, 120, 140)}")
+  joined = w + "!" + v
+  puts("${joined.size} ${joined[95]}")
+  label = str_slice(text(100, 3), 0, 70)
+  switch label {
+    case "nothing" { puts("no") }
+    else { puts("switch else ${label.size}") }
+  }
+  h = Hash(String, Int).new()
+  h[v] = 1
+  h[w] = 2
+  puts("${h[str_slice(big, 10, 150)] ?? 0} ${h[w] ?? 0} ${h.size}")
+  tags = Hash(Tag, Int).new()
+  tags[Tag { name: v }] = 7
+  puts("own hash ${tags[Tag { name: str_slice(big, 10, 150) }] ?? 0} ${tags[Tag { name: w }] ?? 0}")
+  arr: Array(String) = [v, w, short]
+  arr.sort()
+  puts("${arr[0].size} ${arr.contains(w)} ${arr.index_of(v) ?? -1} ${(arr.min() ?? "").size} ${(arr.max() ?? "").size}")
+  b = Buf.new()
+  b.push_str(w)
+  b.push_slice(v, 0, 3)
+  puts("${b.size} ${b.starts_with(str_slice(w, 0, 70))}")
+  digits = "x" + repeat_byte(55, 80)
+  num = str_slice(digits, 1, 66)
+  puts("${num.size} ${(str_slice(num, 0, 18).to_i() ?? -1) > 0} ${(num.to_f() ?? 0.0) > 1.0}")
+  padded = "   " + text(90, 1) + "   "
+  s = padded.strip()
+  puts("${s.size} ${s[0]} ${s.chars().size}")
+  parts = (text(80, 2) + "," + text(90, 4)).split(",")
+  puts("${parts.size} ${parts[0].size} ${parts[1].size} ${parts[1][0]}")
+  // The views outlive the name of their base, through collections that
+  // move it.
+  keep = Keep.new()
+  for r in 0..40 {
+    base = text(300, r)
+    keep.views.push(str_slice(base, 100, 260))
+    churn(200)
+    gcy.avant_gc_collect_young()
+  }
+  gcrt.avant_gc_collect()
+  total = 0
+  for x in keep.views {
+    total += sum_bytes(x)
+  }
+  puts("kept ${keep.views.size} ${keep.views[39].size} ${total} ${keep.views[0][0]}")
+}

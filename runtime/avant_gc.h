@@ -180,11 +180,11 @@
  *   row converted; "C" converted to RC1-RC3, "N" nothing
  *   held, or a no-GC region kept, with its reason):
  *     row (unit)                                   verdict
- *     avant_str_concat, _cat_i32, _from_i32_bytes  C (operands, array)
+ *     avant_str_concat, _cat_int, _from_int_bytes  C (operands, array)
  *     dup_bytes_at, slice, strip (avant_str.c)     C (text + offset, RC2)
  *     avant_str_split, _fields, chars_build        C (array filled in
  *                                                  place, str_array_new)
- *     avant_str_repeat_byte, avant_hash_new        N (integer inputs)
+ *     avant_str_repeat_byte, avant_hash_create     N (integer inputs)
  *     array push_slot/_ptr/_i32, reserve,
  *       array_grow                                 C (scope on growth)
  *     avant_array_copy                             C
@@ -192,11 +192,11 @@
  *     avant_buf_new, _to_str, _ensure,
  *       avant_bytes_to_buf                         C
  *     hash grow, setters, inc_slice                C
- *     inc_str, inc_i32k                            C
+ *     put, upsert (their growth)                   C
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
  *     avant_json_parse                             C (yyjson allocates
  *                                                  from its own pool)
- *     avant_json_f64s, copy_str                    C
+ *     copy_str (avant_json.c)                      C
  *     base64 encode/decode, zlib                   C
  *     sha256 (avant_codec.c)                       N (digest in C)
  *     avant_argv, avant_sys_list                   C (array filled in
@@ -460,12 +460,27 @@ __attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRo
  * thread's chain, the type every frame has (avant_gc_internal.h calls it
  * Frame): generated code's frames live in its own stack frames
  * (avant_gc_frame_enter), user C's come from avant_gc_enter's
- * free list, a scope's lives in the C function's own stack frame. scope is 0 for a
- * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope (the
- * NOGC bit, a scope's no-GC region in a shared program, went with the
- * safepoint handshake). avant_gc_top is the thread's innermost frame (ABI:
- * generated code links its stack frame records itself, avant_rt.h; user
- * C opens frames with avant_gc_enter and avant_gc_root_begin). */
+ * free list, a scope's lives in the C function's own stack frame.
+ *
+ * Two layouts share the chain, told apart by the second word. A record
+ * generated code links holds its root words in place: { prev, desc }
+ * and, right after those two words, the function's slot locals
+ * themselves (avant_rt.h). desc's low two bits are not both clear: an
+ * odd desc (AVANT_GC_FRAME_INPLACE) is an inline map, bit i + 1 set when
+ * word i after the header is a root word; a desc whose low two bits are
+ * 2 (AVANT_GC_FRAME_MAPPED) is the address plus 2 of a constant
+ * AvantGcFrameMap listing the root words. Only prev and desc
+ * of such a record are AvantGcFrame fields; n, cap and scope are the
+ * function's own locals and mean nothing. Every other record (user C's,
+ * a scope's, and the frames of a compiler built before the in-place
+ * layout) is an AvantGcFrame with a slot array: slots is the array (8-byte
+ * aligned or null, so desc's low two bits are clear), n its slots in use, and
+ * scope 0 for such a generated frame, AVANT_GC_SCOPE_OPEN for an open
+ * scope (the NOGC bit, a scope's no-GC region in a shared program, went
+ * with the safepoint handshake), AVANT_GC_FRAME_C for a user frame.
+ * avant_gc_top is the thread's innermost frame (ABI: generated code
+ * links its stack frame records itself, avant_rt.h; user C opens frames
+ * with avant_gc_enter and avant_gc_root_begin). */
 typedef struct AvantGcFrame {
   struct AvantGcFrame *prev;
   void ***slots;
@@ -474,10 +489,21 @@ typedef struct AvantGcFrame {
   uint32_t scope;
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
-/* A frame avant_gc_enter opened (user C's, or a seed-built compiler's):
- * the only kind avant_gc_root and avant_gc_root_begin register slots in. Its
- * slot array is the runtime's own; a
- * generated frame's record and a scope's array live in a stack. */
+/* The low bit of an in-place record's inline desc, and the low two bits
+ * of a desc that is a map's address plus 2 (the map is 8-byte aligned). */
+#define AVANT_GC_FRAME_INPLACE 1u
+#define AVANT_GC_FRAME_MAPPED 2u
+/* An in-place record's map when its words do not fit an inline desc
+ * (more than 62 words after the header): n root words, at the word
+ * indices word[0..n) after the header. */
+typedef struct AvantGcFrameMap {
+  uint64_t n;
+  uint32_t word[];
+} AvantGcFrameMap;
+/* A frame avant_gc_enter opened (user C's): the only kind avant_gc_root
+ * and avant_gc_root_begin register slots in. Its slot array is the
+ * runtime's own; a generated frame's record and a scope's array live in
+ * a stack. */
 #define AVANT_GC_FRAME_C 2u
 extern __thread AvantGcFrame *avant_gc_top;
 void avant_gc_frame_enter(AvantGcFrame *frame);

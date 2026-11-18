@@ -25,10 +25,13 @@ import std.http
 // bytes, and one the socket takes in part. And the
 // WebSocket client's deadlines under a step of the wall
 // clock. And the client's request checks; a response
-// literal and a status outside 100-599; a response with
+// literal and a status outside 200-599; a response with
 // two Content-Length values; interim 1xx answers; a
 // Host value that is not host[:port]; the write paths
-// past the piece.
+// past the piece. And a client sending a request head, a
+// body or reading an answer slowly. And a handler that traps.
+// And the body budget, the connection limit, the shutdown
+// deadline and the memory ceiling.
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -42,14 +45,6 @@ fn sleep_ms(ms: Int) {
 fn set_env(name: String, value: String) {
   one: Int32 = 1
   _ = c.setenv(name, value, one)
-}
-
-class Hits {
-  pub n: Int
-
-  pub fn initialize {
-    self.n = 0
-  }
 }
 
 // This process's peak resident memory in kB (VmHWM), 0 when unreadable.
@@ -118,7 +113,7 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
 // machine and the collector's check modes; alone it is a few ms).
 fn timed(what: String, started: Int, limit: Int, message: String): String {
   took = now_ms() - started
-  if str_has(message, "timed out") && took >= limit && took < limit + 1500 {
+  if message.contains("timed out") && took >= limit && took < limit + 1500 {
     return "${what}=timed out in time"
   }
   "${what}=${message} after ${took} ms, limit ${limit}"
@@ -194,14 +189,14 @@ fn client_cases(c: Checks) {
   set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
   if opened = listened {
     server = opened
-    server.post("/raw") { |req|
+    server.post("/raw", (req) {
       sum = 0
       for i in 0..req.body.size {
         sum = sum * 7 + req.body[i]
       }
       Response.text("${req.body.size} bytes, sum ${sum}")
-    }
-    server.post("/len") { |req|
+    })
+    server.post("/len", (req) {
       body = req.body
       bad = 0
       for i in 0..body.size {
@@ -210,11 +205,11 @@ fn client_cases(c: Checks) {
         }
       }
       Response.text("${body.size} bytes, ${bad} out of place")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(2)
     task = spawn {
@@ -228,210 +223,6 @@ fn client_cases(c: Checks) {
     expect_lines(c, out, want, "the client's request body reaches the server whole and in order (8 MiB; 4 bytes not UTF-8):")
   } else {
     c.expect(false, "listen for the client's large request")
-  }
-}
-
-class Kept {
-  pub conns: Array(WsConn)
-
-  pub fn initialize {
-    self.conns = []
-  }
-}
-
-// Every operation through each kept WsConn: how many answered anything
-// but "closed".
-fn stale_answers(kept: Kept): Int {
-  bad = 0
-  i = 0
-  while i < kept.conns.size {
-    conn = kept.conns[i]
-    if conn.send_text("ghost") {
-      bad += 1
-    }
-    if conn.send_bytes("ghost".bytes) {
-      bad += 1
-    }
-    if conn.sender().send_text("ghost") {
-      bad += 1
-    }
-    if conn.close(1000, "ghost") {
-      bad += 1
-    }
-    i += 1
-  }
-  bad
-}
-
-// Against the first server: n connections that each echo one message
-// and close (the server keeps their WsConn values), then the rest.
-fn ws_keep_round(port: Int, n: Int, out: Channel(String)): Int {
-  url = "ws://127.0.0.1:${port}/keep"
-  echoed = 0
-  for i in 0..n {
-    if conn = Ws.connect(url) {
-      if conn.send_text("hi ${i}") {
-        if msg = conn.recv(2000) {
-          if (msg.text() ?? "") == "hi ${i}" {
-            echoed += 1
-          }
-        }
-      }
-      conn.close()
-    }
-  }
-  out.send("echoed ${echoed} of ${n}")
-  // The registry of open client connections held addresses, and
-  // the next connection was given the address the closed one had: a
-  // copy of the closed value sent on the new connection and closed it.
-  if first = Ws.connect(url) {
-    stale = first
-    first.close()
-    if later = Ws.connect(url) {
-      sent = stale.send_text("from a closed copy")
-      stale.close()
-      code = stale.close_code()
-      got = "nothing"
-      if m = stale.recv(50) {
-        got = "a message"
-      }
-      alive = "closed"
-      if later.send_text("still here") {
-        if msg = later.recv(2000) {
-          alive = msg.text() ?? "?"
-        }
-      }
-      out.send("closed copy: send=${sent} recv=${got} close_code=${code}; the later connection: ${alive}")
-      later.close()
-    } else {
-      out.send("second connect failed")
-    }
-  } else {
-    out.send("first connect failed")
-  }
-  // spawn-crossing: begin (a WsConnection is an id now, so it
-  // may cross a spawn; before, it held a pointer and could not)
-  if conn = Ws.connect(url) {
-    woke = Channel(Int).new(1)
-    waiter = spawn {
-      r = 0
-      if m = conn.recv() {
-        r = 1
-      }
-      woke.send(r)
-      r
-    }
-    sleep_ms(100)
-    conn.close()
-    got = woke.recv() ?? -1
-    out.send("a recv waiting in another task when close is called returns nil: ${got == 0}")
-  } else {
-    out.send("third connect failed")
-  }
-  // spawn-crossing: end
-  stop(port)
-  0
-}
-
-// Against the second server: n connections held open, then "probe" on
-// the first; its answer, and whatever else arrives on any of them.
-fn ws_probe_round(port: Int, n: Int, out: Channel(String)): Int {
-  url = "ws://127.0.0.1:${port}/probe"
-  conns: Array(WsConnection) = []
-  for i in 0..n {
-    if conn = Ws.connect(url) {
-      conns.push(conn)
-    }
-  }
-  if conns.size == n {
-    _ = conns[0].send_text("probe")
-    if msg = conns[0].recv(2000) {
-      out.send(msg.text() ?? "?")
-    } else {
-      out.send("no answer to the probe")
-    }
-    stray = 0
-    i = 0
-    while i < conns.size {
-      if msg = conns[i].recv(50) {
-        stray += 1
-      }
-      i += 1
-    }
-    out.send("stray messages: ${stray}")
-  } else {
-    out.send("connected ${conns.size} of ${n}")
-    out.send("")
-  }
-  i = 0
-  while i < conns.size {
-    conns[i].close()
-    i += 1
-  }
-  stop(port)
-  0
-}
-
-// A WsConn held the address of its connection's record, and the
-// records were freed when `serve` returned: a WsConn kept past that
-// read freed memory, and once a later server's connection was given
-// the same memory, the kept value sent on that connection. The value
-// now carries the connection's id beside the address of a record that
-// is never freed, and every operation checks the id first.
-fn ws_cases(c: Checks) {
-  kept = Kept.new()
-  n = 6
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
-    server = opened
-    server.websocket("/keep") { |conn, msg|
-      kept.conns.push(conn)
-      _ = conn.send_message(msg)
-    }
-    server.get("/__stop") { |req|
-      server.close()
-      Response.text("bye")
-    }
-    port = server.port()
-    out = Channel(String).new(4)
-    task = spawn {
-      ws_keep_round(port, n, out)
-    }
-    server.serve()
-    c.eq_int(task.join() ?? -1, 0, "ws keep task")
-    want: Array(String) = []
-    want.push("echoed ${n} of ${n}")
-    want.push("closed copy: send=false recv=nothing close_code=1006; the later connection: still here")
-    // spawn-crossing: begin
-    want.push("a recv waiting in another task when close is called returns nil: true")
-    // spawn-crossing: end
-    expect_lines(c, out, want, "a copy of a closed WsConnection addresses no later connection:")
-    c.expect(kept.conns.size >= n, "the server kept its WsConn values")
-    c.eq_int(stale_answers(kept), 0, "operations through a WsConn after serve returned that did not answer closed")
-  } else {
-    c.expect(false, "listen for the kept WsConn test")
-  }
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
-    server = opened
-    server.websocket("/probe") { |conn, msg|
-      _ = conn.send_text("operations through the first server's WsConn values that did not answer closed: ${stale_answers(kept)}")
-    }
-    server.get("/__stop") { |req|
-      server.close()
-      Response.text("bye")
-    }
-    port = server.port()
-    out = Channel(String).new(4)
-    task = spawn {
-      ws_probe_round(port, n, out)
-    }
-    server.serve()
-    c.eq_int(task.join() ?? -1, 0, "ws probe task")
-    want: Array(String) = []
-    want.push("operations through the first server's WsConn values that did not answer closed: 0")
-    want.push("stray messages: 0")
-    expect_lines(c, out, want, "a WsConn of a closed server addresses no connection of a later one:")
-  } else {
-    c.expect(false, "listen for the later server")
   }
 }
 
@@ -507,19 +298,19 @@ fn ws_route_cases(c: Checks) {
   rounds = 200
   if opened = Http.listen(0, "127.0.0.1", 1048576, 8) {
     server = opened
-    server.websocket("/b") { |conn, msg|
+    server.websocket("/b", (conn, msg) {
       _ = conn.send_text("b1 ${msg.text() ?? "?"}")
-    }
-    server.websocket("/a") { |conn, msg|
+    })
+    server.websocket("/a", (conn, msg) {
       _ = conn.send_text("a ${msg.text() ?? "?"}")
-    }
-    server.websocket("/b") { |conn, msg|
+    })
+    server.websocket("/b", (conn, msg) {
       _ = conn.send_text("b2 ${msg.text() ?? "?"}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     done = Channel(Int).new(tasks)
     wrongs = Channel(String).new(tasks)
@@ -558,8 +349,9 @@ fn ws_route_cases(c: Checks) {
 // A route registered while the server serves:
 // the route tables are read by the loop threads with no lock, so every
 // route method traps once `serve` runs. The fixture registers the route
-// from a handler, on a loop thread, with each method in turn; each run
-// must end with status 1 and the trap's line, its request unanswered.
+// from a handler, on a loop thread, with each method in turn; each trap
+// prints its line and fails its request (answered 500), and the server
+// goes on to its stop.
 fn route_serving_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
@@ -575,8 +367,31 @@ fn route_serving_cases(c: Checks, root: String) {
       args.push(kinds[i])
       status = process_run_out(bin, args, log) ?? -1
       text = file_read(log) ?? ""
-      c.eq_int(status, 1, "Server.${kinds[i]} while serving: status 1")
-      c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\n", "Server.${kinds[i]} while serving: the trap's line, the request unanswered")
+      c.eq_int(status, 0, "Server.${kinds[i]} while serving: the server goes on, status 0")
+      c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\nanswered 500\n", "Server.${kinds[i]} while serving: the trap's line, the request answered 500")
+    }
+    // A limit is set before serving, like a route (from a handler, a
+    // trap that fails its request); a negative one traps, before serving
+    // a trap that ends the program.
+    limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative"]
+    lines = [
+      "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\nanswered 500\n",
+      "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\nanswered 500\n",
+      "avant runtime: Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
+      "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n"
+    ]
+    for i in 0..limits.size {
+      log = "${scratch()}/http-route-serving-${stamp}-${limits[i]}.log"
+      args: Array(String) = []
+      args.push(limits[i])
+      status = process_run_out(bin, args, log) ?? -1
+      text = file_read(log) ?? ""
+      want_status = 1
+      if i < 2 {
+        want_status = 0
+      }
+      c.eq_int(status, want_status, "Server ${limits[i]}: status ${want_status}")
+      c.eq_str(text, lines[i], "Server ${limits[i]}: the trap's line")
     }
   } else {
     c.expect(false, "AVANT_COMPILER is set for the route-while-serving test")
@@ -587,9 +402,10 @@ fn route_serving_cases(c: Checks, root: String) {
 // a token: appended as it came, it added header lines or a second
 // answer (response splitting). `header` traps now. The fixture's
 // handler sets the header its argument names, and a raw client
-// reads what reaches the wire: nothing, since the process stops
-// at the trap before the answer is written. The valid case (a
-// tab, a quote and bytes over 127 in the value, the token's
+// reads what reaches the wire: the trap fails the request before
+// any of its answer is written, so the answer is the 500 the server
+// gives a handler that trapped, with none of the header. The valid
+// case (a tab, a quote and bytes over 127 in the value, the token's
 // punctuation in the name) is answered with the header as given.
 fn header_split_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
@@ -600,8 +416,8 @@ fn header_split_cases(c: Checks, root: String) {
     c.eq_int(code, 0, "the header-split fixture compiles")
     value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
     name_rule = "is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
-    status_rule = "is not 100 to 599 (RFC 9110)"
-    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "ok", "status-100", "status-599"]
+    status_rule = "is not 200 to 599: a handler gives the final answer, never an interim 1xx (RFC 9110)"
+    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "status-100", "status-101", "status-199", "ok", "status-200", "status-599"]
     lines = [
       "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
       "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
@@ -617,6 +433,9 @@ fn header_split_cases(c: Checks, root: String) {
       "avant runtime: a response's status 600 ${status_rule}\n",
       "avant runtime: a response's status -200 ${status_rule}\n",
       "avant runtime: a response's status 99999999999 ${status_rule}\n",
+      "avant runtime: a response's status 100 ${status_rule}\n",
+      "avant runtime: a response's status 101 ${status_rule}\n",
+      "avant runtime: a response's status 199 ${status_rule}\n",
       "",
       "",
       ""
@@ -643,19 +462,19 @@ fn header_split_cases(c: Checks, root: String) {
       text = file_read(log) ?? ""
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
-        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
-      } else if kind == "status-100" || kind == "status-599" {
+        c.eq_str(wire, "header_split=1 answer(s) 200 Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
+      } else if kind == "status-200" || kind == "status-599" {
         // The ends of the range are answered.
         c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
-        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
+        c.eq_str(wire, "header_split=1 answer(s) ${str_slice(kind, 7, kind.size)} Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
         what = "Response.header ${kind}"
         if kind.size > 7 && str_slice(kind, 0, 7) == "status-" {
           what = "a response's ${kind}"
         }
-        c.eq_int(status, 1, "${what}: status 1")
+        c.eq_int(status, 0, "${what}: the server goes on, status 0")
         c.eq_str(text, lines[i], "${what}: the trap's line")
-        c.eq_str(wire, "header_split=nothing", "${what}: nothing on the wire")
+        c.eq_str(wire, "header_split=1 answer(s) 500 Content-Type: text/plain|Content-Length: 21|Connection: close", "${what}: answered 500, none of the header on the wire")
       }
     }
   } else {
@@ -689,7 +508,7 @@ fn response_literal_cases(c: Checks) {
         c.eq_int(code, 0, "a response built by Response.text and header compiles")
       } else {
         c.expect(code != 0, "Response.head outside std.http (${names[i]}): a compile error")
-        c.expect(str_has(text, "field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
+        c.expect(text.contains("field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
       }
     }
   } else {
@@ -844,6 +663,17 @@ fn client_request_cases(c: Checks, root: String) {
   ok.push(Header { name: "Connection", value: "keep-alive" })
   c.eq_str(outcome(Http.request("POST", "${base}/echo", "abc".bytes, ok, false, 4000)), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-Ok!#$%&'*+-.^_`|~: a\tb \"c\" ${chr(195)}${chr(169)}|Content-Length: 3|Connection: close", "a valid request is sent as given, without the caller's Content-Length and Connection")
   c.eq_str(outcome(Http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
+  // A caller's Host was sent beside the URL's: two Host lines, which a
+  // server refuses. It replaces the URL's, in any case of its name.
+  for name in ["Host", "host", "HOST"] {
+    vh: Array(Header) = []
+    vh.push(Header { name: "X-A", value: "1" })
+    vh.push(Header { name: name, value: "example.test:8080" })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, vh, false, 4000)), "200 GET /echo HTTP/1.1|Host: example.test:8080|X-A: 1|Content-Length: 0|Connection: close", "a caller's ${name} replaces the URL's: one Host line")
+  }
+  bad_host: Array(Header) = []
+  bad_host.push(Header { name: "Host", value: "a\r\nX-Injected: 1" })
+  c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, bad_host, false, 4000)), "invalid request header value of Host (byte 13 at 1): ${value_rule}", "a caller's Host is checked as any value")
   if resp = Http.get("${base}/__stop", true, 4000) {
   }
   c.eq_int(server.join() ?? -1, 0, "the echo server ends")
@@ -901,14 +731,6 @@ fn client_interim_cases(c: Checks, root: String) {
   client_response_round(c, root, "interim answers are read past", paths, wants)
 }
 
-class BigSent {
-  pub sent: String
-
-  pub fn initialize {
-    self.sent = "nothing"
-  }
-}
-
 // A WebSocket message larger than the socket takes at once, sent from
 // the handler (the owner thread's direct write) to a client that reads
 // late: the socket took a part, the rest was refused
@@ -931,8 +753,8 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
   set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
   if opened = listened {
     server = opened
-    big = BigSent.new()
-    server.websocket("/ws-big") { |conn, msg|
+    big = Mutex(String).new("nothing")
+    server.websocket("/ws-big", (conn, msg) {
       text = msg.text() ?? ""
       if text.size > 4 && str_slice(text, 0, 4) == "big " {
         n = str_slice(text, 4, text.size).to_i() ?? 0
@@ -940,15 +762,17 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
         for i in 0..n {
           b.push_byte(97 + i % 26)
         }
-        big.sent = "${conn.send_text(b.to_s())}"
+        sent = "${conn.send_text(b.to_s())}"
+        big.with (v) { v = sent }
       } else {
-        _ = conn.send_text("the big send returned ${big.sent}")
+        said = big.with (v) { v }
+        _ = conn.send_text("the big send returned ${said}")
       }
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     stamp = now_ms()
     out = Channel(String).new(2)
@@ -998,19 +822,19 @@ fn write_piece_cases(c: Checks) {
   listened = Http.listen(0, "127.0.0.1", 4194304, 1, 4194304)
   if opened = listened {
     server = opened
-    server.get("/big") { |req|
+    server.get("/big", (req) {
       Response.text(big)
-    }
-    server.post("/size") { |req|
+    })
+    server.post("/size", (req) {
       Response.text("${req.body.size} ${(String.from_utf8(req.body) ?? "?") == big}")
-    }
-    server.websocket("/ws") { |conn, msg|
+    })
+    server.websocket("/ws", (conn, msg) {
       _ = conn.send_text("${msg.body.size} ${(msg.text() ?? "") == big}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(4)
     task = spawn {
@@ -1152,6 +976,257 @@ fn ws_deadline_cases(c: Checks, root: String) {
   }
 }
 
+fn deadline_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "trickle_head", ""))
+  out.send(raw_client(port, root, stamp, "slow_body", ""))
+  out.send(raw_client(port, root, stamp, "fast_body", ""))
+  out.send(raw_client(port, root, stamp, "slow_read", ""))
+  stop(port)
+  0
+}
+
+// The idle timeout was the only deadline, and it started again at every
+// byte: a client sending a byte now and then held a connection for
+// good, and so did one sending a body or reading an answer as slowly.
+// A request head has a time from its first byte (head_timeout), and a
+// body and an answer's queued tail a minimum rate once a grace has
+// passed (min_rate). The server here has a head timeout of 1 s and a
+// rate of 1000 bytes a second after 0.5 s, so each round takes about
+// that long; a body fast enough is answered although it takes longer
+// than the grace.
+fn deadline_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.head_timeout(1000).min_rate(1000, 500)
+    huge = buf_new()
+    for i in 0..33554432 {
+      huge.push_byte(97 + i % 26)
+    }
+    huge_bytes = huge.to_s().bytes
+    server.get("/ping", (req) {
+      Response.text("pong")
+    })
+    server.post("/len", (req) {
+      Response.text("${req.body.size} bytes")
+    })
+    server.get("/huge", (req) {
+      Response.bytes(huge_bytes)
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    out = Channel(String).new(8)
+    task = spawn {
+      deadline_round(port, out, root, stamp)
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "deadline task")
+    want: Array(String) = []
+    want.push("trickle_head=408 in time")
+    want.push("slow_body=408 in time")
+    want.push("fast_body=answered 200: 40000 bytes")
+    want.push("slow_read=cut")
+    expect_lines(c, out, want, "a slow head, body or reader meets its deadline:")
+  } else {
+    c.expect(false, "listen for the deadline test")
+  }
+}
+
+// A trap in a handler ended the server; it fails its request now. The
+// fixture's routes each trap their own way (tests/fixtures/http/
+// handler_trap.av; the program spawns nothing, so its recovery points
+// come from std.http alone); a raw client asks each on one kept-alive
+// connection and then asks again: 500, then the next answer. Each trap
+// is printed when it happens, in order. A trap inside a C callback the
+// handler made still ends the program, its request unanswered.
+fn handler_trap_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/http-handler-trap-${stamp}.bin"
+    clog = "${scratch()}/http-handler-trap-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/handler_trap.av", bin, clog)
+    c.eq_int(code, 0, "the handler-trap fixture compiles")
+    modes = ["handler_trap", "callback_trap"]
+    for mode in modes {
+      log = "${scratch()}/http-handler-trap-${stamp}-${mode}.log"
+      port_file = "${scratch()}/http-handler-trap-${stamp}-${mode}.port"
+      server = spawn {
+        args: Array(String) = []
+        args.push(port_file)
+        process_run_out(bin, args, log) ?? -1
+      }
+      wlog = "${scratch()}/http-handler-trap-${stamp}-${mode}.wire"
+      pargs: Array(String) = []
+      pargs.push("${root}/tests/fixtures/http/raw_client.py")
+      pargs.push("0")
+      pargs.push(mode)
+      pargs.push(port_file)
+      _ = process_run_out("/usr/bin/python3", pargs, wlog)
+      wire = nth_line(file_read(wlog) ?? "", 0)
+      status = server.join() ?? -1
+      text = file_read(log) ?? ""
+      if mode == "handler_trap" {
+        c.eq_int(status, 0, "a handler's trap: the server goes on to its stop, status 0")
+        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,grow-hash:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
+        whats = [
+          "index 7 out of bounds (size 3)",
+          "division by zero",
+          "push on an array a running task reads",
+          "a store on a hash a running task reads",
+          "a response's status 99 is not 200 to 599",
+          "Response.header value of X-A holds a control character (byte 13 at 1)",
+          "route GET /late registered while the server is serving",
+          "index 9 out of bounds (size 3)",
+          "Mutex.with on a poisoned mutex",
+          "index 8 out of bounds (size 3)",
+          "index 7 out of bounds (size 3)",
+          "index 7 out of bounds (size 3)",
+          "index 5 out of bounds (size 3)"
+        ]
+        lines = text.split("\n")
+        c.eq_int(lines.size, whats.size + 2, "one line per trap, then served (${text})")
+        for i in 0..whats.size {
+          line = lines.get(i) ?? ""
+          c.expect(line.contains("avant runtime: ${whats[i]}"), "trap ${i} printed in order: ${line}")
+        }
+        c.eq_str(lines.get(whats.size) ?? "", "served", "serve returned")
+      } else {
+        c.eq_int(status, 1, "a trap in a C callback inside a handler ends the program, status 1")
+        c.eq_str(wire, "callback_trap=0 closed", "a trap in a C callback: the request unanswered")
+        c.expect(text.contains("avant runtime: division by zero"), "a trap in a C callback: its line (${text})")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the handler-trap test")
+  }
+}
+
+fn limit_round(port: Int, out: Channel(String), root: String, stamp: Int, mode: String): Int {
+  out.send(raw_client(port, root, stamp, mode, ""))
+  stop(port)
+  0
+}
+
+// The production limits beside the deadlines: a server-wide budget for
+// the bodies waiting for their bytes (503 past it), a connection limit
+// that closes the longest idle connection (or the new one, with none
+// idle), a memory ceiling past which requests are answered 503, and a
+// shutdown deadline after which `close` closes what it left to finish.
+fn limit_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.body_budget(1000)
+    server.post("/len", (req) {
+      Response.text("${req.body.size} bytes")
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    out = Channel(String).new(2)
+    task = spawn {
+      limit_round(port, out, root, stamp, "budget")
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "budget task")
+    want: Array(String) = []
+    want.push("budget=second:503 closed,first:200,third:200")
+    expect_lines(c, out, want, "the body budget answers 503 past it and is given back:")
+  } else {
+    c.expect(false, "listen for the body budget test")
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.max_connections(3)
+    server.get("/ping", (req) {
+      Response.text("pong")
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    out = Channel(String).new(2)
+    task = spawn {
+      limit_round(port, out, root, stamp, "conn_limit")
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "connection limit task")
+    want: Array(String) = []
+    want.push("conn_limit=d:True,a closed:True,b:True,c:True,e closed:True")
+    expect_lines(c, out, want, "the connection limit closes the longest idle connection, or the new one:")
+  } else {
+    c.expect(false, "listen for the connection limit test")
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.shutdown_timeout(500)
+    opened_ws = Channel(Int).new(1)
+    server.websocket("/ws", (conn, msg) {
+      _ = conn.send_message(msg)
+    })
+    server.websocket_open("/ws", (conn) {
+      _ = opened_ws.send(1)
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    asked = Channel(Int).new(1)
+    out = Channel(String).new(2)
+    silent = spawn {
+      out.send(raw_client(port, root, stamp, "ws_silent", ""))
+      0
+    }
+    stopper = spawn {
+      _ = opened_ws.recv()
+      asked.send(now_ms())
+      stop(port)
+      0
+    }
+    server.serve()
+    returned = now_ms()
+    t_ask = asked.recv() ?? 0
+    c.eq_int(stopper.join() ?? -1, 0, "shutdown stopper task")
+    c.eq_int(silent.join() ?? -1, 0, "shutdown client task")
+    took = returned - t_ask
+    c.expect(took >= 400 && took < 3000, "serve returns at the shutdown deadline with a WebSocket client that never closes (${took} ms)")
+    line = out.recv() ?? ""
+    c.eq_str(line, "ws_silent=the server ended its side", "the silent client was sent the server's end")
+  } else {
+    c.expect(false, "listen for the shutdown deadline test")
+  }
+  if compiler = env_get("AVANT_COMPILER") {
+    bin = "${scratch()}/http-ceiling-${stamp}.bin"
+    clog = "${scratch()}/http-ceiling-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/handler_trap.av", bin, clog)
+    c.eq_int(code, 0, "the memory-ceiling fixture compiles")
+    log = "${scratch()}/http-ceiling-${stamp}.log"
+    port_file = "${scratch()}/http-ceiling-${stamp}.port"
+    ceiling_server = spawn {
+      args: Array(String) = []
+      args.push("4")
+      args.push(bin)
+      args.push(port_file)
+      args.push("ceiling")
+      process_run_out("/usr/bin/timeout", args, log) ?? -1
+    }
+    wlog = "${scratch()}/http-ceiling-${stamp}.wire"
+    pargs: Array(String) = []
+    pargs.push("${root}/tests/fixtures/http/raw_client.py")
+    pargs.push("0")
+    pargs.push("ceiling")
+    pargs.push(port_file)
+    _ = process_run_out("/usr/bin/python3", pargs, wlog)
+    c.eq_str(nth_line(file_read(wlog) ?? "", 0), "ceiling=503 closed", "past the memory ceiling a request is answered 503")
+    c.eq_int(ceiling_server.join() ?? -1, 124, "the memory-ceiling server ends by its timeout")
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the memory-ceiling test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -1175,19 +1250,19 @@ fn test_std_http_safety(c: Checks, root: String) {
   // answer of the connection is written by the same thread, in order.
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    server.get("/ping") { |req|
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.post("/echo") { |req|
+    })
+    server.post("/echo", (req) {
       Response.bytes(req.body)
-    }
-    server.get("/hidden") { |req|
+    })
+    server.get("/hidden", (req) {
       Response.text("smuggled")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     handle = spawn {
@@ -1251,25 +1326,25 @@ fn test_std_http_safety(c: Checks, root: String) {
       }
       digits.push(b.to_s().bytes)
     }
-    flood_hits = Hits.new()
-    server.get("/big") { |req|
+    flood_hits = Mutex(Int).new(0)
+    server.get("/big", (req) {
       Response.bytes(big_bytes)
-    }
-    server.get("/n") { |req|
+    })
+    server.get("/n", (req) {
       k = (req.query ?? "0").to_i() ?? 0
       Response.bytes(digits[k % 10])
-    }
-    server.get("/f") { |req|
-      flood_hits.n += 1
+    })
+    server.get("/f", (req) {
+      flood_hits.with (n) { n += 1 }
       Response.bytes(digits[1])
-    }
-    server.get("/ping") { |req|
+    })
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     idle_out = Channel(String).new(2)
@@ -1329,7 +1404,8 @@ fn test_std_http_safety(c: Checks, root: String) {
     want.push("half_close=2 whole,then eof")
     want.push("flood=held back")
     expect_lines(c, out, want, "an answer the socket takes in part is queued, not cut:")
-    c.expect(flood_hits.n > 0 && flood_hits.n < 2000, "a client that reads nothing is served a bounded number of requests")
+    hit = flood_hits.with (n) { n }
+    c.expect(hit > 0 && hit < 2000, "a client that reads nothing is served a bounded number of requests")
     c.expect(before_kb > 0 && peak_rss_kb() - before_kb < 65536, "a client that reads nothing does not grow the server's memory")
     idle_want: Array(String) = []
     idle_want.push("idle=idle closed,busy alive")
@@ -1347,10 +1423,10 @@ fn main: Int {
   c.started = now_ms()
   test_std_http_safety(c, avant_test_root())
   client_cases(c)
-  ws_cases(c)
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
+  handler_trap_cases(c, avant_test_root())
   response_literal_cases(c)
   client_framing_cases(c, avant_test_root())
   client_request_cases(c, avant_test_root())
@@ -1358,6 +1434,8 @@ fn main: Int {
   client_interim_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   write_piece_cases(c)
+  deadline_cases(c, avant_test_root())
+  limit_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
   c.finish()

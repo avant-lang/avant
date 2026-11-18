@@ -61,6 +61,17 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
     lw.at(loc)
     return lw.tmp(pw, lw.lw_b.rv_cast(o, pw))
   }
+  if ptr_void_takes(want, got) && !lw.failed() {
+    // A Ptr as a Ptr(Void)? (C's `void *` that may be NULL): one word
+    // either way, a pointer cast when the MIR types differ.
+    pw2 = lw.ty_at(want, loc, "a pointer")
+    pg2 = lw.ty_at(got, loc, "a pointer")
+    if lw.failed() || pw2 == pg2 {
+      return o
+    }
+    lw.at(loc)
+    return lw.tmp(pw2, lw.lw_b.rv_cast(o, pw2))
+  }
   if !want.is_union() || got.same_as(want) || lw.failed() {
     return o
   }
@@ -755,7 +766,9 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     b.at(bt)
     lw.cov_branch(st.loc)
     v = lw.unwrap(src, uty, success, st.loc)
-    lw.bind_name(st.bind, success, sty, v, st.loc, false)
+    // A `for` loop's step over next (for_kind 7): a lambda that captures
+    // the variable keeps that iteration's value, as over an array.
+    lw.bind_name(st.bind, success, sty, v, st.loc, st.for_kind == 7)
     lw.lower_stmts(st.then_body)
     lw.goto_if_open(join, st.loc)
     if st.else_body.size > 0 || lw.lw_cov.on {
@@ -1054,9 +1067,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
       v = lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
     } else {
-      pu8 = b.ptr_to(mt_u8())
-      pv = lw.tmp(pu8, b.rv_cast(b.copy_local(h), pu8))
-      pk = mir_bare_copy(pv)
+      pk = lw.str_data(b.copy_local(h))
       byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
       v = lw.tmp(mt_int(), b.rv_cast(byte2, mt_int()))
     }
@@ -1171,7 +1182,7 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
       if f == "delete" {
         op = "take"
       }
-      v = lw.hash_find_load(ht, op, ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty)
+      v = lw.hash_find_load(ht, op, ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty, e.loc)
       return lw.opt_of(t, lw.found_is(fl), v, vt, e.loc)
     }
     ops.push(lw.found_ptr(fl))

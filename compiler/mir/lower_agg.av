@@ -363,6 +363,9 @@ pub fn mir_field_in_element(t: Expr): Bool {
 // a temporary, whose place is returned.
 pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   b = lw.lw_b
+  if mir_ptr_index(e) {
+    return lw.ptr_index_place(e)
+  }
   if e.kind == ex_index() {
     if arr = e.left, at = arr.ty, at.is_array() || at.is_buf() {
       return lw.index_place(e)
@@ -595,6 +598,9 @@ pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
 pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
   b = lw.lw_b
   if t = e.ty {
+    if t.is_class() && e.derived {
+      return lw.lower_class_lit(e, t)
+    }
     sty = lw.ety(e)
     if lw.failed() || !t.is_struct() {
       lw.refuse(e.loc, "this struct literal")
@@ -636,6 +642,54 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
   b.c_i32(0)
 }
 
+// The literal of a class that a derived clone builds
+// (checker/clone.av): every field's value, left to right, then the
+// allocation, as lower_ctor_inline orders a constructor's arguments and
+// its allocation (the frame roots the values across it), then each
+// field's store; no initialize runs, as the fields hold its work.
+pub fn (lw: MirLower) lower_class_lit(e: Expr, t: Ty): MOperand {
+  b = lw.lw_b
+  cty = lw.value_agg_ty(t, e.loc)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  layout = b.types.layout_of(cty)
+  n = t.fields.size
+  if e.field_names.size != n {
+    lw.refuse(e.loc, "a class literal without every field")
+    return b.c_i32(0)
+  }
+  vals: Array(MOperand) = []
+  ks: Array(Int) = []
+  for i in 0..n {
+    k = t.field_index(e.field_names[i])
+    if k < 0 {
+      lw.refuse(e.loc, "a class literal's field ${e.field_names[i]}")
+      return b.c_i32(0)
+    }
+    o = lw.lower_coerced(e.field_exprs[i], b.types.layouts[layout].fields[k], t.fields[k].ty)
+    for j in i + 1..n {
+      o = lw.snap(o, e.field_exprs[j])
+    }
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    vals.push(lw.tmp(b.types.layouts[layout].fields[k], b.rv_use(o)))
+    ks.push(k)
+  }
+  lw.at(e.loc)
+  obj = b.temp(cty)
+  aargs: Array(MOperand) = []
+  aargs.push(b.c_u64(b.types.layouts[layout].size.to_i()))
+  aargs.push(b.c_u32(b.types.layouts[layout].type_id))
+  b.call(obj, "avant_alloc", aargs)
+  for i in 0..n {
+    k = ks[i]
+    lw.store_place(b.field(b.deref(b.pl(obj)), k), b.types.layouts[layout].fields[k], vals[i])
+  }
+  b.copy_local(obj)
+}
+
 // ---- calls
 
 // `recv.m(args)` and the field form `recv.m` on a struct or class
@@ -657,6 +711,28 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
       ops[0] = lw.send_copy(ops[0], lw.ety(args[0]), at)
     }
   }
+  if rt.is_struct() && mir_is_http_server(rt) && mir_handler_method(e.callee) {
+    // A handler runs on each of the server's loop threads at once: an
+    // Array it captures is frozen from its registration on, so a change
+    // through any path traps (the checker refuses one through the
+    // captured name).
+    for a in args {
+      if a.kind == ex_lambda() {
+        ci = 0
+        while ci < a.cap_names.size && !lw.failed() {
+          ct = a.cap_tys[ci]
+          if ct.is_array() || ct.is_hash() {
+            v = lw.capture_value(a.cap_names[ci], ct, a.loc)
+            lw.freeze_array(v, ct, a.loc)
+          }
+          ci += 1
+        }
+      }
+    }
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+  }
   r = b.c_i32(0)
   if !rt.is_struct() {
     r = lw.lower_expr(recv)
@@ -665,8 +741,11 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     // (`xs[i].bump`), writes the array's buffer: the index checks the
     // freeze, as an element store does.
     lw.lw_task.store_check = lw.lw_m.shared && rw_element_place(recv) && lw.method_writes(e.resolved)
+    lw.lw_task.hold_req = e.elem_hold
+    lw.lw_task.hold_arr = -1
     p = lw.place_of(recv)
     lw.lw_task.store_check = false
+    lw.lw_task.hold_req = false
     if lw.failed() {
       return b.c_i32(0)
     }
@@ -674,6 +753,11 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     a = b.temp(b.types.addr_of(lw.ety(recv)))
     b.assign(b.pl(a), b.rv_addr(p))
     r = b.copy_local(a)
+    held = lw.lw_task.hold_arr
+    lw.lw_task.hold_arr = -1
+    if e.elem_hold && held >= 0 {
+      return lw.held_method_call(e, recv, ret, sym, r, ops, held)
+    }
   }
   if lw.failed() {
     return b.c_i32(0)
@@ -687,6 +771,53 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   }
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
+}
+
+// The call of a method that changes its receiver, an element of the
+// Array held in _h, when the call may reach that Array: the Array is
+// frozen for the call (`avant_array_hold`, the freeze a task's capture
+// takes, noted with the call's name and site for the trap's text), so
+// any change to its size or order while the method runs (a push, even
+// one with room, `pop`, `clear`, `reserve`, `sort`, `reverse`) traps,
+// and the receiver's address stays the element's. The runtime names
+// the holder's slot (its address: a collection that moves the Array
+// rewrites the slot), so a trap that ends a task thaws it.
+pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: String, r: MOperand, ops: Array(MOperand), h: Int): MOperand {
+  b = lw.lw_b
+  aty = b.func.locals[h].ty
+  slot = lw.tmp(b.types.ptr_to(aty), b.rv_addr_raw(b.pl(h)))
+  name = e.callee
+  if e.kind == ex_field() {
+    name = e.ident
+  }
+  if rt = recv.ty {
+    name = "${rt.show()}.${name}"
+  }
+  hargs: Array(MOperand) = []
+  hargs.push(slot)
+  hargs.push(lw.elem_size(aty))
+  hargs.push(b.str_const(name))
+  hargs.push(b.str_const(e.loc.show()))
+  b.call(-1, "avant_array_hold", hargs)
+  all: Array(MOperand) = []
+  all.push(r)
+  i = 0
+  while i < ops.size {
+    all.push(ops[i])
+    i += 1
+  }
+  lw.at(e.loc)
+  v = lw.call_to(ret, sym, all)
+  k = -1
+  if ret != mt_void() {
+    k = lw.hold(v, ret)
+  }
+  lw.at(e.loc)
+  b.call(-1, "avant_array_unhold", lw.one(lw.tmp(b.types.ptr_to(aty), b.rv_addr_raw(b.pl(h)))))
+  if k >= 0 {
+    return b.copy_local(k)
+  }
+  v
 }
 
 // Whether the struct method with emit name sym changes its receiver
@@ -868,7 +999,7 @@ pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
     }
     // Only a constructor with a reference argument: its `new` holds the
     // argument across the allocation, so it links a record of slots on
-    // every call; without one `new` has no slot, links nothing since M4,
+    // every call; without one `new` has no slot, links nothing (no record),
     // and LLVM inlines it where that pays.
     if sig = lw.lw_syms.find_method_emit(f.emit_name) {
       for param in sig.params {
@@ -1018,4 +1149,32 @@ pub fn mir_bare_copy(o: MOperand): Int {
     return p.local
   }
   -1
+}
+
+// std.http's Server, and its methods that register a handler (the
+// checker's rule for what a handler captures: checker/spawn.av).
+pub fn mir_is_http_server(t: Ty): Bool {
+  t.is_struct() && t.mod_name == "std.http" && t.name == "Server"
+}
+
+pub fn mir_handler_method(name: String): Bool {
+  name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close"
+}
+
+// Whether a route call registers a handler that captures an Array or a
+// Hash: it is frozen there, so the program's element stores check the
+// freeze (its module is shared, as a program that spawns is).
+pub fn mir_handler_freezes(e: Expr): Bool {
+  if recv = e.receiver, rt = recv.ty, mir_is_http_server(rt) && mir_handler_method(e.callee) {
+    for a in e.args {
+      if a.kind == ex_lambda() {
+        for ct in a.cap_tys {
+          if ct.is_array() || ct.is_hash() {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
 }

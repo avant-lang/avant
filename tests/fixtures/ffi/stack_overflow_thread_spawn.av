@@ -1,0 +1,19 @@
+// The same in a program that spawns, whose callback allocates nothing:
+// the callback's entry gives the C thread its signal stack.
+lib so {
+  fun so_call_on_thread(f: fn(Int): Int): Int
+}
+
+fn depth(n: Int): Int {
+  if n == 0 {
+    return 0
+  }
+  d = depth(n - 1)
+  d + 1 + ((d + n) & 1)
+}
+
+fn main {
+  h = spawn { 41 + 1 }
+  puts(h.join() ?? -1)
+  puts(so.so_call_on_thread(depth))
+}

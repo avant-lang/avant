@@ -22,6 +22,39 @@ static char *g_empty;
 
 static char *empty_str(void);
 
+/* A string's length is its header's: every String and Bytes value a
+ * program holds is a string object (a heap one, or a literal the
+ * compiler emitted with the same header), whose header size is the bytes
+ * and the terminator. A C function's result, a C field's string and a C
+ * callback's string argument are copied into the heap on the way in
+ * (avant_c_str), so no bare C pointer is ever a String.
+ *
+ * The program says so by defining avant_str_headered as 1 (the compiler
+ * emits it beside `main`). This weak 0 is what the previous release's
+ * compiler gets, whose code still passes literals without a header and
+ * C strings as they are: the bootstrap's B is that code, and for it the
+ * length is read as before (str_n_compat, below). Not `const`: GCC
+ * folds a weak constant's value into its readers. */
+__attribute__((weak)) int32_t avant_str_headered = 0;
+
+static size_t str_n_compat(const char *s);
+
+size_t avant_str_n(const char *s) {
+  if (!s) {
+    return 0;
+  }
+  if (__builtin_expect(avant_str_headered != 0, 1)) {
+    const AvantHeader *h = avant_header((void *)s);
+    if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
+      return ((const AvantStrView *)(const void *)s)->len;
+    }
+    return (size_t)h->size - 1;
+  }
+  return str_n_compat(s);
+}
+
+/* ---- the previous compiler's strings (avant_str_headered 0) ---- */
+
 /* Short tagged strings keep the length in the header. The NUL check stays
  * inside the same page, so a lookalike header cannot fault. Longer strings
  * and raw C pointers still take the block walk or strlen. */
@@ -122,11 +155,8 @@ static size_t str_n_long(const char *s) {
   return n;
 }
 
-size_t avant_str_n(const char *s) {
+static size_t str_n_compat(const char *s) {
   size_t meta = 0;
-  if (!s) {
-    return 0;
-  }
   if (str_meta_len(s, &meta)) {
     return meta;
   }
@@ -137,11 +167,12 @@ char *avant_str_empty(void) {
   return empty_str();
 }
 
-/* A copy of the N bytes at S + OFF (RC1/RC2, avant_gc.h): S is a handle
- * across the allocation (a heap string, or a C
- * buffer, which its slot leaves alone) and the source is formed from it
- * after the allocation. */
-static char *dup_bytes_at(const char *s, size_t off, size_t n) {
+/* A copy of the N bytes at S + OFF (RC1/RC2, avant_gc.h), S a C buffer
+ * or an address inside a heap object: S is a handle across the
+ * allocation (its slot leaves C memory alone and follows the object an
+ * inside address lies in) and the source is formed from it after the
+ * allocation. */
+static char *dup_raw_at(const char *s, size_t off, size_t n) {
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
   char *p = avant_str_alloc((uint64_t)n);
@@ -154,7 +185,103 @@ static char *dup_bytes_at(const char *s, size_t off, size_t n) {
 }
 
 static char *dup_bytes(const char *s, size_t n) {
+  return dup_raw_at(s, 0, n);
+}
+
+/* A copy of the N bytes of the String S from its byte OFF on: S (flat or
+ * a view) is a handle across the allocation and its bytes are formed
+ * again after it. */
+static char *dup_bytes_at(const char *s, size_t off, size_t n) {
+  size_t sn;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  char *p = avant_str_alloc((uint64_t)n);
+  if (n) {
+    memcpy(p, avant_str_bytes(s, &sn) + off, n);
+  }
+  p[n] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* The bytes of S from OFF, N of them, as a String: a view when it is
+ * worth an object and cannot hold a much larger parent alive (avant_rt.h,
+ * AvantStrView), else a copy. S is the whole string N and OFF lie in;
+ * a view of a view names the first one's base. */
+static char *str_part(const char *s, size_t off, size_t n) {
+  size_t sn;
+  char *base;
+  uint32_t boff;
+  size_t bn;
+  AvantStrView *v;
+  if (n == 0) {
+    return empty_str();
+  }
+  avant_str_bytes(s, &sn);
+  if (off == 0 && n == sn) {
+    return (char *)s;
+  }
+  if (!avant_str_headered || n < AVANT_VIEW_MIN) {
+    return dup_bytes_at(s, off, n);
+  }
+  if (avant_str_is_view(s)) {
+    base = ((const AvantStrView *)(const void *)s)->base;
+    boff = ((const AvantStrView *)(const void *)s)->off;
+  } else {
+    base = (char *)s;
+    boff = 0;
+  }
+  bn = (size_t)avant_header(base)->size - 1;
+  if (n * AVANT_VIEW_SHARE < bn) {
+    return dup_bytes_at(s, off, n);
+  }
+  {
+    /* RC1: the base is a handle across the view's allocation. */
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &base);
+    v = (AvantStrView *)avant_alloc(sizeof(AvantStrView), AVANT_TYPE_STRVIEW);
+    /* The barrier before the store (RC3): the view may be born mature. */
+    avant_barrier(v);
+    v->base = base;
+    v->off = boff + (uint32_t)off;
+    v->len = (uint32_t)n;
+    return (char *)v;
+  }
+}
+
+/* The call form of the generated code's inline read of a string's bytes
+ * (compiler/llvm/emit_gc.av, ll_str_data). */
+const char *avant_str_data(const char *s, int32_t is_view) {
+  size_t n;
+  (void)is_view;
+  return avant_str_bytes(s, &n);
+}
+
+/* The call form of the generated code's inline view test
+ * (compiler/llvm/emit_gc.av, ll_str_view_test). */
+int32_t avant_str_view_test(const char *s) {
+  return avant_str_is_view(s) ? 1 : 0;
+}
+
+char *avant_str_flat(const char *s) {
+  size_t n;
+  if (!avant_str_is_view(s)) {
+    return (char *)s;
+  }
+  avant_str_bytes(s, &n);
   return dup_bytes_at(s, 0, n);
+}
+
+char *avant_str_c_arg(const char *s) {
+  const AvantStrView *v;
+  if (!avant_str_is_view(s)) {
+    return (char *)s;
+  }
+  v = (const AvantStrView *)(const void *)s;
+  if ((size_t)v->off + v->len == (size_t)avant_header(v->base)->size - 1) {
+    return v->base + v->off;
+  }
+  return dup_bytes_at(s, 0, v->len);
 }
 
 /* gc-lint: holds nothing (its input is a C literal; the result is pinned before any other call). */
@@ -166,23 +293,31 @@ static char *empty_str(void) {
   return g_empty;
 }
 
-/* A C function's `String` result (compiler/mir/lower_ffi.av passes every
- * one through here). C may return
- * an address inside a heap object (`strchr` of a heap string): a root
- * slot may hold one, a reference-typed field may not (the field rule,
- * avant_gc_internal.h: a trace reads the eight bytes before a field's
- * word as a header), and the program may store the result in either. An
- * address outside the collected heap (C's own memory, a literal), null
- * and the exact start of a heap string are returned as they are; an
- * address inside the heap that is not an object's start is returned as a
- * fresh copy of the C string there (to its terminator). The copy
- * allocates, so this is a collecting call: S is a handle across it
- * (dup_bytes_at: a root slot keeps the object S lies in and follows it
- * when it moves). */
+/* A string that came from C: a C function's `String` result, a `String`
+ * field of C memory or of a struct C returned, a C callback's `String`
+ * argument (compiler/mir/lower_ffi.av passes each one through here).
+ * Every String the program holds carries its length in its header, and
+ * an address C hands back has none unless it is the exact start of a
+ * heap string (one the program passed to C, or the runtime's own result:
+ * a heap object of bytes whose header size ends at its terminator): that
+ * one comes back as it is, and null too. Anything else (C's own
+ * memory, a literal of C, the inside of a heap object, which a
+ * reference-typed field may not hold either: avant_gc_internal.h) comes
+ * back as a fresh heap copy of the C string there, to its terminator, so
+ * C may free or change its memory afterwards. The copy allocates, so
+ * this is a collecting call: S is a handle across it (dup_bytes_at: a
+ * root slot keeps the object S lies in and follows it when it moves, and
+ * leaves C's memory alone). */
 char *avant_c_str(char *s) {
   size_t n;
-  if (!avant_gc_interior(s)) {
+  if (!s) {
     return s;
+  }
+  if (((uintptr_t)s & 7u) == 0 && avant_is_heap(s)) {
+    AvantHeader *h = avant_header(s);
+    if (h->type_id == AVANT_TYPE_BYTES && h->size > 0 && s[h->size - 1] == 0) {
+      return s;
+    }
   }
   n = strlen(s);
   avant_size_check(n, AVANT_SIZE_STRING);
@@ -191,10 +326,10 @@ char *avant_c_str(char *s) {
 
 char *avant_str_concat(const char *a, const char *b) {
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
   }
   size_t na = avant_str_n(a);
   size_t nb = avant_str_n(b);
@@ -208,15 +343,16 @@ char *avant_str_concat(const char *a, const char *b) {
   AVANT_GC_ROOT(0, &a);
   AVANT_GC_ROOT(1, &b);
   char *p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
-  memcpy(p, a, na);
-  memcpy(p + na, b, nb);
+  /* RC2: the bytes are formed after the allocation (a view's too). */
+  memcpy(p, avant_str_bytes(a, &na), na);
+  memcpy(p + na, avant_str_bytes(b, &nb), nb);
   p[na + nb] = 0;
   avant_str_tag(p);
   return p;
 }
 
 /* bytes_to_str: the bytes are an Array(Int)'s elements (avant_int). */
-char *avant_str_from_i32_bytes(void *arr) {
+char *avant_str_from_int_bytes(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int32_t n = 0;
   const avant_int *src = NULL;
@@ -273,22 +409,18 @@ static void check_range(size_t n, avant_int start, avant_int stop, size_t *out_i
   *out_len = (size_t)(stop - start);
 }
 
-/* RC2: the source is passed as the string and an offset (dup_bytes_at),
- * never as s + i formed before the allocation. */
-/* gc-lint: holds nothing (dup_bytes_at roots the string itself; nothing is read after it). */
+/* RC2: the source is passed as the string and an offset (str_part),
+ * never as s + i formed before the allocation. A long slice is a view
+ * (str_part's rule), a short one a copy. */
+/* gc-lint: holds nothing (str_part roots what it holds; nothing is read after it). */
 char *avant_str_slice(const char *s, avant_int start, avant_int stop) {
-  char *r;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   size_t i = 0;
   size_t len = 0;
   check_range(avant_str_n(s), start, stop, &i, &len);
-  if (len == 0) {
-    return empty_str();
-  }
-  r = dup_bytes_at(s, i, len);
-  return r;
+  return str_part(s, i, len);
 }
 
 char *avant_str_from_int(avant_int n) {
@@ -488,7 +620,8 @@ void avant_puts_f64(double v) {
 /* puts of a String: its bytes by length, so a NUL byte inside prints
  * (printf's %s stopped at it). */
 void avant_puts_str(const char *s) {
-  size_t n = s ? avant_str_n(s) : 0;
+  size_t n;
+  s = avant_str_bytes(s, &n);
   /* The text and its newline under one hold of stdout's lock: another
    * thread's flush between them (a task's trap flushes stdout) would
    * write the line without its end, and the trap's line after it. */
@@ -560,7 +693,7 @@ char *avant_str_from_byte(avant_int b) {
   return p;
 }
 
-char *avant_str_cat_i32(const char *prefix, avant_int n) {
+char *avant_str_cat_int(const char *prefix, avant_int n) {
   char digs[24];
   int nd = 0;
   uint64_t u;
@@ -582,14 +715,14 @@ char *avant_str_cat_i32(const char *prefix, avant_int n) {
     }
   }
   if (!prefix) {
-    prefix = "";
+    prefix = AVANT_STR_EMPTY;
   }
   size_t np = avant_str_n(prefix);
   size_t neg = n < 0 ? 1u : 0u;
   size_t total = np + neg + (size_t)nd;
   char *p = avant_str_alloc((uint64_t)total);
   if (np) {
-    memcpy(p, prefix, np);
+    memcpy(p, avant_str_bytes(prefix, &np), np);
   }
   size_t k = np;
   if (neg) {
@@ -773,16 +906,20 @@ static int64_t parse_signed(const char *p, size_t n, avant_int base, uint64_t ma
 }
 
 int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok) {
-  return (int32_t)parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 2147483647ull, ok);
+  size_t n;
+  const char *p = avant_str_bytes(s, &n);
+  return (int32_t)parse_signed(p, n, base, 2147483647ull, ok);
 }
 
 int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok) {
-  return parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 9223372036854775807ull, ok);
+  size_t n;
+  const char *p = avant_str_bytes(s, &n);
+  return parse_signed(p, n, base, 9223372036854775807ull, ok);
 }
 
 uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok) {
-  const char *p = s ? s : "";
-  size_t n = s ? avant_str_n(s) : 0;
+  size_t n;
+  const char *p = avant_str_bytes(s, &n);
   uint64_t m = 0;
   if (base < 2 || base > 36) {
     trap_base(base);
@@ -871,7 +1008,9 @@ static double parse_float(const char *p, size_t n, int32_t *ok) {
  * with no flag through memory. */
 double avant_str_parse_f64(const char *s) {
   int32_t ok = 0;
-  double v = parse_float(s ? s : "", s ? avant_str_n(s) : 0, &ok);
+  size_t n;
+  const char *p = avant_str_bytes(s, &n);
+  double v = parse_float(p, n, &ok);
   return ok ? v : NAN;
 }
 
@@ -879,8 +1018,10 @@ double avant_str_parse_f64_slice(const char *s, avant_int start, avant_int stop)
   size_t i = 0;
   size_t len = 0;
   int32_t ok = 0;
-  check_range(s ? avant_str_n(s) : 0, start, stop, &i, &len);
-  double v = parse_float((s ? s : "") + i, len, &ok);
+  size_t n;
+  const char *p = avant_str_bytes(s, &n);
+  check_range(n, start, stop, &i, &len);
+  double v = parse_float(p + i, len, &ok);
   return ok ? v : NAN;
 }
 
@@ -903,14 +1044,10 @@ char *avant_str_fmt_float(double v, avant_int prec) {
 }
 
 int32_t avant_str_eq(const char *a, const char *b) {
-  if (!a) {
-    a = "";
-  }
-  if (!b) {
-    b = "";
-  }
-  size_t na = avant_str_n(a);
-  size_t nb = avant_str_n(b);
+  size_t na;
+  size_t nb;
+  a = avant_str_bytes(a, &na);
+  b = avant_str_bytes(b, &nb);
   if (na != nb) {
     return 0;
   }
@@ -920,14 +1057,10 @@ int32_t avant_str_eq(const char *a, const char *b) {
 /* String order: byte by byte, then the shorter
  * first, as sort orders Strings (avant_array.c str_cmp_raw); -1, 0 or 1. */
 int32_t avant_str_cmp(const char *a, const char *b) {
-  if (!a) {
-    a = "";
-  }
-  if (!b) {
-    b = "";
-  }
-  size_t na = avant_str_n(a);
-  size_t nb = avant_str_n(b);
+  size_t na;
+  size_t nb;
+  a = avant_str_bytes(a, &na);
+  b = avant_str_bytes(b, &nb);
   size_t n = na < nb ? na : nb;
   int c = n ? memcmp(a, b, n) : 0;
   if (c != 0) {
@@ -941,22 +1074,16 @@ avant_int avant_str_size(const char *s) {
 }
 
 avant_int avant_str_byte(const char *s, avant_int i) {
-  if (!s || i < 0) {
-    return 0;
-  }
-  size_t n = avant_str_n(s);
-  if ((size_t)i >= n) {
+  size_t n;
+  s = avant_str_bytes(s, &n);
+  if (i < 0 || (size_t)i >= n) {
     return 0;
   }
   return (avant_int)(unsigned char)s[i];
 }
 
-int32_t avant_checksum_str(const char *s) {
+static int32_t checksum_bytes(const char *s, size_t n) {
   uint32_t hash = 5381u;
-  if (!s) {
-    return (int32_t)hash;
-  }
-  size_t n = avant_str_n(s);
   size_t i;
   for (i = 0; i < n; i++) {
     hash = ((hash << 5) + hash) + (unsigned char)s[i];
@@ -964,10 +1091,23 @@ int32_t avant_checksum_str(const char *s) {
   return (int32_t)hash;
 }
 
+int32_t avant_checksum_str(const char *s) {
+  size_t n;
+  s = avant_str_bytes(s, &n);
+  return checksum_bytes(s, n);
+}
+
 int32_t avant_checksum_f64(double v) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "%.7f", v);
-  return avant_checksum_str(buf);
+  int k = snprintf(buf, sizeof(buf), "%.7f", v);
+  if (k < 0) {
+    k = 0;
+  }
+  if ((size_t)k >= sizeof(buf)) {
+    k = (int)sizeof(buf) - 1;
+  }
+  /* A C buffer, not a String: its bytes by its own length. */
+  return checksum_bytes(buf, (size_t)k);
 }
 
 static int is_ascii_space(unsigned char c) {
@@ -978,30 +1118,27 @@ static int is_ascii_space(unsigned char c) {
 char *avant_str_strip(const char *s, int32_t mode) {
   size_t i = 0;
   size_t len;
+  const char *d;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
-  len = avant_str_n(s);
+  d = avant_str_bytes(s, &len);
   if (mode == 0 || mode == 1) {
-    while (i < len && is_ascii_space((unsigned char)s[i])) {
+    while (i < len && is_ascii_space((unsigned char)d[i])) {
       i++;
     }
   }
   if (mode == 0 || mode == 2) {
-    while (len > i && is_ascii_space((unsigned char)s[len - 1])) {
+    while (len > i && is_ascii_space((unsigned char)d[len - 1])) {
       len--;
     }
-  }
-  if (i == 0 && len == avant_str_n(s)) {
-    return (char *)s;
   }
   if (len <= i) {
     return empty_str();
   }
-  {
-    /* As in avant_str_slice: the string and an offset (RC2). */
-    return dup_bytes_at(s, i, len - i);
-  }
+  /* As in avant_str_slice: the string and an offset (RC2); the whole
+   * string comes back as it is. */
+  return str_part(s, i, len - i);
 }
 
 /* An array of strings built in place (RC1, avant_gc.h):
@@ -1030,9 +1167,11 @@ static void str_array_put(AvantArray *a, char *p) {
   *slot = p;
 }
 
-/* Keeps empty fields. Empty separator traps. RC1: the text, the
- * separator and the array are handles across each piece's allocation. */
-void *avant_str_split(const char *s, const char *sep) {
+/* Keeps empty fields. Empty separator traps. At most LIMIT fields (the
+ * last holds the rest of the text, separators and all); a LIMIT below 1
+ * means no limit. RC1: the text, the separator and the array are handles
+ * across each piece's allocation. */
+static void *split_limit(const char *s, const char *sep, int64_t limit) {
   size_t n;
   size_t m;
   size_t i;
@@ -1040,18 +1179,18 @@ void *avant_str_split(const char *s, const char *sep) {
   int32_t count = 1;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   if (!sep) {
-    sep = "";
+    sep = AVANT_STR_EMPTY;
   }
-  n = avant_str_n(s);
-  m = avant_str_n(sep);
+  const char *d = avant_str_bytes(s, &n);
+  const char *e = avant_str_bytes(sep, &m);
   if (m == 0) {
     avant_trap_text("split separator is empty");
   }
-  for (i = 0; i + m <= n; i++) {
-    if (memcmp(s + i, sep, m) == 0) {
+  for (i = 0; i + m <= n && (limit < 1 || count < limit); i++) {
+    if (memcmp(d + i, e, m) == 0) {
       count++;
       i += m - 1;
     }
@@ -1063,10 +1202,15 @@ void *avant_str_split(const char *s, const char *sep) {
   a = (AvantArray *)str_array_new(count);
   start = 0;
   i = 0;
-  while (i + m <= n) {
-    if (memcmp(s + i, sep, m) == 0) {
-      char *p = dup_bytes_at(s, start, i - start);
+  /* RC2: both texts' bytes are formed again after each allocation. */
+  d = avant_str_bytes(s, &n);
+  e = avant_str_bytes(sep, &m);
+  while (i + m <= n && a->size + 1 < count) {
+    if (memcmp(d + i, e, m) == 0) {
+      char *p = str_part(s, start, i - start);
       str_array_put(a, p);
+      d = avant_str_bytes(s, &n);
+      e = avant_str_bytes(sep, &m);
       i += m;
       start = i;
     } else {
@@ -1074,10 +1218,27 @@ void *avant_str_split(const char *s, const char *sep) {
     }
   }
   {
-    char *p = dup_bytes_at(s, start, n - start);
+    char *p = str_part(s, start, n - start);
     str_array_put(a, p);
   }
   return a;
+}
+
+/* gc-lint: holds nothing (split_limit is its only statement). */
+void *avant_str_split(const char *s, const char *sep) {
+  return split_limit(s, sep, 0);
+}
+
+/* s.split(sep, limit): at most LIMIT fields, the last the rest of the
+ * text; a LIMIT below 1 traps. */
+/* gc-lint: holds nothing (split_limit is its last statement). */
+void *avant_str_split_n(const char *s, const char *sep, avant_int limit) {
+  if (limit < 1) {
+    char msg[64];
+    snprintf(msg, sizeof msg, "split limit %lld is less than 1", (long long)limit);
+    avant_trap_text(msg);
+  }
+  return split_limit(s, sep, limit);
 }
 
 /* Splits on runs of ASCII whitespace and drops empty fields. */
@@ -1087,18 +1248,18 @@ void *avant_str_fields(const char *s) {
   int32_t count = 0;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
-  n = avant_str_n(s);
+  const char *d = avant_str_bytes(s, &n);
   while (i < n) {
-    while (i < n && is_ascii_space((unsigned char)s[i])) {
+    while (i < n && is_ascii_space((unsigned char)d[i])) {
       i++;
     }
     if (i >= n) {
       break;
     }
     count++;
-    while (i < n && !is_ascii_space((unsigned char)s[i])) {
+    while (i < n && !is_ascii_space((unsigned char)d[i])) {
       i++;
     }
   }
@@ -1110,17 +1271,19 @@ void *avant_str_fields(const char *s) {
   i = 0;
   while (i < n && a->size < count) {
     size_t st;
-    while (i < n && is_ascii_space((unsigned char)s[i])) {
+    /* RC2: the bytes are formed again after each allocation. */
+    d = avant_str_bytes(s, &n);
+    while (i < n && is_ascii_space((unsigned char)d[i])) {
       i++;
     }
     if (i >= n) {
       break;
     }
     st = i;
-    while (i < n && !is_ascii_space((unsigned char)s[i])) {
+    while (i < n && !is_ascii_space((unsigned char)d[i])) {
       i++;
     }
-    char *p = dup_bytes_at(s, st, i - st);
+    char *p = str_part(s, st, i - st);
     str_array_put(a, p);
   }
   return a;
@@ -1188,10 +1351,10 @@ static int utf8_valid(const unsigned char *s, size_t n) {
 char *avant_str_from_utf8(const char *s, int32_t *found) {
   size_t n;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
-  n = avant_str_n(s);
-  if (!utf8_valid((const unsigned char *)s, n)) {
+  const char *d = avant_str_bytes(s, &n);
+  if (!utf8_valid((const unsigned char *)d, n)) {
     if (found) {
       *found = 0;
     }
@@ -1261,17 +1424,17 @@ static void *chars_build(const char *s, const char *type) {
   int32_t count = 0;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
-  n = avant_str_n(s);
-  if (!utf8_valid((const unsigned char *)s, n)) {
+  const char *d = avant_str_bytes(s, &n);
+  if (!utf8_valid((const unsigned char *)d, n)) {
     char msg[64];
     snprintf(msg, sizeof msg, "%s.chars needs valid UTF-8", type);
     avant_trap_text(msg);
   }
   while (i < n) {
     int valid = 0;
-    size_t len = utf8_char_len((const unsigned char *)s, n, i, &valid);
+    size_t len = utf8_char_len((const unsigned char *)d, n, i, &valid);
     (void)valid;
     count++;
     i += len;
@@ -1284,7 +1447,9 @@ static void *chars_build(const char *s, const char *type) {
   i = 0;
   while (i < n && a->size < count) {
     int valid = 0;
-    size_t len = utf8_char_len((const unsigned char *)s, n, i, &valid);
+    /* RC2: the bytes are formed again after each allocation. */
+    const unsigned char *b = (const unsigned char *)avant_str_bytes(s, &n);
+    size_t len = utf8_char_len(b, n, i, &valid);
     char *p = valid ? dup_bytes_at(s, i, len) : dup_bytes("\xef\xbf\xbd", 3);
     str_array_put(a, p);
     i += len;
@@ -1298,4 +1463,434 @@ void *avant_str_chars(const char *s) {
 
 void *avant_bytes_chars(const char *s) {
   return chars_build(s, "Bytes");
+}
+
+/* The code point at S[I], a valid UTF-8 sequence of LEN bytes
+ * (utf8_char_len). */
+static avant_int utf8_decode(const unsigned char *s, size_t i, size_t len) {
+  uint32_t cp;
+  size_t k;
+  if (len == 1) {
+    return (avant_int)s[i];
+  }
+  cp = (uint32_t)s[i] & (len == 2 ? 0x1fu : len == 3 ? 0x0fu : 0x07u);
+  for (k = 1; k < len; k++) {
+    cp = (cp << 6) | (uint32_t)(s[i + k] & 0x3fu);
+  }
+  return (avant_int)cp;
+}
+
+/* String.code_points and Bytes.code_points: each code point's number, in
+ * order, as an Array(Int); invalid UTF-8 traps as chars does. RC1: the
+ * text and the array are handles across the allocations; the text's
+ * bytes are formed again after them (RC2). */
+static void *code_points_build(const char *s, const char *type) {
+  size_t n;
+  size_t i = 0;
+  int32_t count = 0;
+  int32_t k = 0;
+  AvantArray *a = NULL;
+  avant_int *buf = NULL;
+  const unsigned char *d = (const unsigned char *)avant_str_bytes(s, &n);
+  if (!utf8_valid(d, n)) {
+    char msg[64];
+    snprintf(msg, sizeof msg, "%s.code_points needs valid UTF-8", type);
+    avant_trap_text(msg);
+  }
+  while (i < n) {
+    int valid = 0;
+    i += utf8_char_len(d, n, i, &valid);
+    count++;
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  if (count > 0) {
+    buf = (avant_int *)avant_alloc((uint64_t)count * sizeof(avant_int), AVANT_TYPE_BYTES);
+    avant_barrier(a);
+    a->buf = buf;
+    a->cap = count;
+  }
+  d = (const unsigned char *)avant_str_bytes(s, &n);
+  i = 0;
+  while (i < n && k < count) {
+    int valid = 0;
+    size_t len = utf8_char_len(d, n, i, &valid);
+    buf[k++] = utf8_decode(d, i, len);
+    i += len;
+  }
+  a->size = k;
+  return a;
+}
+
+void *avant_str_code_points(const char *s) {
+  return code_points_build(s, "String");
+}
+
+void *avant_bytes_code_points(const char *s) {
+  return code_points_build(s, "Bytes");
+}
+
+/* String.from_code_point(n): the UTF-8 of one code point, 0 to 0x10FFFF
+ * outside the surrogates 0xD800 to 0xDFFF; anything else traps. */
+/* gc-lint: holds nothing (its input is an integer). */
+char *avant_str_from_code_point(avant_int cp) {
+  char b[4];
+  size_t n;
+  if (cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "String.from_code_point: %lld is not a code point", (long long)cp);
+    avant_trap_text(msg);
+  }
+  if (cp < 0x80) {
+    b[0] = (char)cp;
+    n = 1;
+  } else if (cp < 0x800) {
+    b[0] = (char)(0xc0 | (cp >> 6));
+    b[1] = (char)(0x80 | (cp & 0x3f));
+    n = 2;
+  } else if (cp < 0x10000) {
+    b[0] = (char)(0xe0 | (cp >> 12));
+    b[1] = (char)(0x80 | ((cp >> 6) & 0x3f));
+    b[2] = (char)(0x80 | (cp & 0x3f));
+    n = 3;
+  } else {
+    b[0] = (char)(0xf0 | (cp >> 18));
+    b[1] = (char)(0x80 | ((cp >> 12) & 0x3f));
+    b[2] = (char)(0x80 | ((cp >> 6) & 0x3f));
+    b[3] = (char)(0x80 | (cp & 0x3f));
+    n = 4;
+  }
+  return dup_bytes(b, n);
+}
+
+/* String.from_c(p, n) and Bytes.from_c(p, n): a copy of the N bytes of C
+ * memory at P, NULs kept. The generated code traps before the call on a
+ * negative N and on a NULL P with N above 0, so P is read only when N > 0. */
+/* gc-lint: holds nothing (P is C memory, outside the collected heap). */
+char *avant_str_from_c(const void *p, avant_int n) {
+  char *s = avant_str_alloc((uint64_t)n);
+  if (n > 0) {
+    memcpy(s, p, (size_t)n);
+  }
+  s[n] = 0;
+  avant_str_tag(s);
+  return s;
+}
+
+/* The names the seed's compiler calls: the compiler B, built by the seed
+ * release, links this runtime. They go when a release that emits
+ * avant_str_cat_int and avant_str_from_int_bytes is the seed. */
+char *avant_str_cat_i32(const char *prefix, avant_int n) {
+  return avant_str_cat_int(prefix, n);
+}
+
+char *avant_str_from_i32_bytes(void *arr) {
+  return avant_str_from_int_bytes(arr);
+}
+
+/* s.replace(from, to): every FROM in S, left to right and without
+ * overlapping, replaced by TO; an empty FROM traps (as split's empty
+ * separator does). No FROM: S itself. RC1: the three strings are handles
+ * across the allocation; RC2: their bytes are formed after it. */
+char *avant_str_replace(const char *s, const char *from, const char *to) {
+  size_t n;
+  size_t m;
+  size_t k;
+  size_t i = 0;
+  size_t o = 0;
+  uint64_t count = 0;
+  const char *d;
+  const char *f;
+  const char *t;
+  const char *at;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (!from) {
+    from = AVANT_STR_EMPTY;
+  }
+  if (!to) {
+    to = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  f = avant_str_bytes(from, &m);
+  avant_str_bytes(to, &k);
+  if (m == 0) {
+    avant_trap_text("replace of an empty pattern");
+  }
+  while (i + m <= n && (at = (const char *)memmem(d + i, n - i, f, m)) != NULL) {
+    count++;
+    i = (size_t)(at - d) + m;
+  }
+  if (count == 0) {
+    return (char *)s;
+  }
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &from);
+  AVANT_GC_ROOT(2, &to);
+  p = avant_str_alloc((uint64_t)n - count * (uint64_t)m + count * (uint64_t)k);
+  d = avant_str_bytes(s, &n);
+  f = avant_str_bytes(from, &m);
+  t = avant_str_bytes(to, &k);
+  i = 0;
+  while (i + m <= n && (at = (const char *)memmem(d + i, n - i, f, m)) != NULL) {
+    size_t j = (size_t)(at - d);
+    memcpy(p + o, d + i, j - i);
+    o += j - i;
+    memcpy(p + o, t, k);
+    o += k;
+    i = j + m;
+  }
+  memcpy(p + o, d + i, n - i);
+  o += n - i;
+  p[o] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.repeat(n): N copies of S one after another; a negative N traps. RC1:
+ * S is a handle across the allocation. */
+char *avant_str_repeat(const char *s, avant_int count) {
+  size_t n;
+  uint64_t total;
+  size_t i;
+  const char *d;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (count < 0) {
+    avant_trap_negative(count, 2);
+  }
+  avant_str_bytes(s, &n);
+  if (count == 0 || n == 0) {
+    return empty_str();
+  }
+  if (count == 1) {
+    return (char *)s;
+  }
+  if (__builtin_mul_overflow((uint64_t)n, (uint64_t)count, &total)) {
+    total = UINT64_MAX;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc(total);
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < (size_t)count; i++) {
+    memcpy(p + i * n, d, n);
+  }
+  p[total] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.pad_left(width, fill) (LEFT 1) and s.pad_right(width, fill) (LEFT
+ * 0): S with the byte FILL added before or after it up to WIDTH bytes; S
+ * itself when it has WIDTH bytes or more. A FILL outside 0..255 traps.
+ * RC1: S is a handle across the allocation. */
+char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left) {
+  size_t n;
+  size_t extra;
+  const char *d;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if ((uint64_t)fill > 255u) {
+    avant_trap_byte(fill);
+  }
+  avant_str_bytes(s, &n);
+  if (width <= 0 || (uint64_t)width <= (uint64_t)n) {
+    return (char *)s;
+  }
+  extra = (size_t)width - n;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc((uint64_t)width);
+  d = avant_str_bytes(s, &n);
+  if (left) {
+    memset(p, (unsigned char)fill, extra);
+    memcpy(p + extra, d, n);
+  } else {
+    memcpy(p, d, n);
+    memset(p + n, (unsigned char)fill, extra);
+  }
+  p[width] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.to_ascii_lower() (UPPER 0) and s.to_ascii_upper() (UPPER 1): S with
+ * each ASCII letter changed to the other case (A-Z to a-z, or a-z to
+ * A-Z) and every other byte kept, so a UTF-8 text stays valid and keeps
+ * its size; S itself when no byte changes. RC1: S is a handle across the
+ * allocation. */
+char *avant_str_ascii_case(const char *s, int32_t upper) {
+  size_t n;
+  size_t i;
+  const char *d;
+  char *p;
+  unsigned char from = upper ? 'a' : 'A';
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < n; i++) {
+    if ((unsigned char)((unsigned char)d[i] - from) < 26u) {
+      break;
+    }
+  }
+  if (i == n) {
+    return (char *)s;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc((uint64_t)n);
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)d[i];
+    p[i] = (char)((unsigned char)(c - from) < 26u ? c ^ 0x20 : c);
+  }
+  p[n] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.delete_prefix(p) (SUFFIX 0) and s.delete_suffix(p) (SUFFIX 1): S
+ * without P at its start (or its end), a view or a copy as a slice is;
+ * S itself when it does not start (or end) with P, or P is empty. */
+/* gc-lint: holds nothing (str_part is its only allocation and its last call). */
+char *avant_str_delete_affix(const char *s, const char *pat, int32_t suffix) {
+  size_t n;
+  size_t m;
+  const char *d;
+  const char *e;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (!pat) {
+    pat = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  e = avant_str_bytes(pat, &m);
+  if (m == 0 || m > n) {
+    return (char *)s;
+  }
+  if (suffix) {
+    if (memcmp(d + n - m, e, m) != 0) {
+      return (char *)s;
+    }
+    return str_part(s, 0, n - m);
+  }
+  if (memcmp(d, e, m) != 0) {
+    return (char *)s;
+  }
+  return str_part(s, m, n - m);
+}
+
+/* s.lines(): the lines of S, each ended by "\n" or "\r\n" (the ending
+ * not kept); a last line without an ending is a line, and a final ending
+ * adds no empty line: "a\nb\n" and "a\r\nb" are ["a", "b"], "" is [],
+ * "\n" is [""]. A "\r" alone ends no line. RC1: the text and the array
+ * are handles across each line's allocation; RC2: the bytes are formed
+ * again after it. */
+void *avant_str_lines(const char *s) {
+  size_t n;
+  size_t start = 0;
+  int32_t count = 0;
+  const char *d;
+  const char *nl;
+  AvantArray *a = NULL;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  while (start < n) {
+    nl = (const char *)memchr(d + start, '\n', n - start);
+    count++;
+    if (!nl) {
+      break;
+    }
+    start = (size_t)(nl - d) + 1;
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)str_array_new(count);
+  start = 0;
+  d = avant_str_bytes(s, &n);
+  while (start < n) {
+    size_t stop;
+    size_t next;
+    nl = (const char *)memchr(d + start, '\n', n - start);
+    if (nl) {
+      stop = (size_t)(nl - d);
+      next = stop + 1;
+      if (stop > start && d[stop - 1] == '\r') {
+        stop--;
+      }
+    } else {
+      stop = n;
+      next = n;
+    }
+    {
+      char *p = str_part(s, start, stop - start);
+      str_array_put(a, p);
+    }
+    d = avant_str_bytes(s, &n);
+    start = next;
+  }
+  return a;
+}
+
+/* xs.join(sep) of an Array(String): the elements in order with SEP
+ * between them; an empty array is "", one element is that element. RC1:
+ * the array and the separator are handles across the allocation; RC2:
+ * every element's bytes are formed after it. */
+char *avant_str_join(void *arr, const char *sep) {
+  AvantArray *a = (AvantArray *)arr;
+  size_t m;
+  size_t n;
+  uint64_t total = 0;
+  int32_t i;
+  size_t o = 0;
+  const char *e;
+  char *p;
+  if (!sep) {
+    sep = AVANT_STR_EMPTY;
+  }
+  if (!a || a->size <= 0) {
+    return empty_str();
+  }
+  if (a->size == 1) {
+    char *only = ((char **)a->buf)[0];
+    return only ? only : empty_str();
+  }
+  avant_str_bytes(sep, &m);
+  for (i = 0; i < a->size; i++) {
+    avant_str_bytes(((char **)a->buf)[i], &n);
+    total += (uint64_t)n;
+  }
+  total += (uint64_t)m * (uint64_t)(a->size - 1);
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &sep);
+  p = avant_str_alloc(total);
+  e = avant_str_bytes(sep, &m);
+  for (i = 0; i < a->size; i++) {
+    const char *d = avant_str_bytes(((char **)a->buf)[i], &n);
+    if (i > 0) {
+      memcpy(p + o, e, m);
+      o += m;
+    }
+    memcpy(p + o, d, n);
+    o += n;
+  }
+  p[o] = 0;
+  avant_str_tag(p);
+  return p;
 }

@@ -34,7 +34,7 @@ fn say(s: String): Int {
 }
 
 fn first_over(xs: Array(Int), limit: Int) {
-  xs.each { |x|
+  for x in xs {
     if x > limit {
       puts("first over ${limit}: ${x}")
       return
@@ -44,13 +44,13 @@ fn first_over(xs: Array(Int), limit: Int) {
 }
 
 fn each_twice(xs: Array(Int), f: fn(Int)) {
-  xs.each { |x| f(x) }
-  xs.each { |x| f(x * 2) }
+  xs.each (x) { f(x) }
+  xs.each (x) { f(x * 2) }
 }
 
 fn count_if(xs: Array(Int), p: fn(Int): Bool): Int {
   n = 0
-  xs.each { |x|
+  xs.each (x) {
     if p(x) {
       n += 1
     }
@@ -61,12 +61,12 @@ fn count_if(xs: Array(Int), p: fn(Int): Bool): Int {
 fn main {
   xs = [3, 1, 4, 1, 5, 9, 2, 6]
   sum = 0
-  xs.each { |x| sum += x }
+  xs.each (x) { sum += x }
   puts(sum)
   prod = 1
   rounds = 0
   while rounds < 2 {
-    xs.each { |x|
+    for x in xs {
       if x == 9 {
         break
       }
@@ -77,26 +77,26 @@ fn main {
   puts(prod)
   first_over(xs, 4)
   first_over(xs, 10)
-  puts(xs.any { |x| x > 8 })
-  puts(xs.any { |x| x > 9 })
-  puts(xs.all { |x| x > 0 })
-  puts(xs.all { |x| x > 1 })
+  puts(xs.any (x) { x > 8 })
+  puts(xs.any (x) { x > 9 })
+  puts(xs.all (x) { x > 0 })
+  puts(xs.all (x) { x > 1 })
   calls = 0
-  hit = xs.any { |x|
+  hit = xs.any (x) {
     calls += 1
     x == 4
   }
   puts(hit)
   puts(calls)
-  ys = xs.sorted { |a, b| a < b }
+  ys = xs.sorted (a, b) { a < b }
   puts(ys[0] * 10000000 + ys[1] * 1000000 + ys[2] * 100000 + ys[3] * 10000 + ys[4] * 1000 + ys[5] * 100 + ys[6] * 10 + ys[7])
   puts(xs[0])
-  xs.sort { |a, b| a > b }
+  xs.sort (a, b) { a > b }
   puts(xs[0] * 10 + xs[7])
   pairs = 0
   ms = [1, 2, 3]
-  ms.each { |a|
-    ms.each { |b|
+  ms.each (a) {
+    ms.each (b) {
       if a < b {
         pairs += 1
       }
@@ -105,26 +105,26 @@ fn main {
   puts(pairs)
   grow = [1, 2, 3]
   seen = 0
-  grow.each { |g|
+  grow.each (g) {
     seen += g
     grow = [100, 200, 300, 400]
   }
   puts(seen)
   puts(grow.size)
   words = ["pear", "fig", "apple", "kiwi"]
-  words.sort { |w1, w2| w1.size < w2.size }
+  words.sort (w1, w2) { w1.size < w2.size }
   puts(words[0] + " " + words[3])
   items: Array(Item) = []
   items.push(Item.new("c", 3))
   items.push(Item.new("a", 1))
   items.push(Item.new("b", 2))
-  by_rank = items.sorted { |p, q| p.rank < q.rank }
+  by_rank = items.sorted (p, q) { p.rank < q.rank }
   puts(by_rank[0].name + by_rank[1].name + by_rank[2].name)
   puts(items[0].name)
   tags: Array(Tag) = []
   tags.push(Tag { label: "z" + "z", w: 2 })
   tags.push(Tag { label: "y" + "y", w: 1 })
-  tags.sort { |t1, t2| t1.w < t2.w }
+  tags.sort (t1, t2) { t1.w < t2.w }
   puts(tags[0].label + tags[1].label)
   h = Hash(String, Int).new()
   h["one"] = 1
@@ -132,7 +132,7 @@ fn main {
   h["three"] = 3
   total = 0
   names = ""
-  h.each { |k, v|
+  h.each (k, v) {
     total += v
     names = names + k
   }
@@ -142,28 +142,28 @@ fn main {
   hi[10] = 100
   hi[20] = 200
   hsum = 0
-  hi.each { |ik, iv| hsum += ik + iv }
+  hi.each (ik, iv) { hsum += ik + iv }
   puts(hsum)
   hs = Hash(String, String).new()
   hs["k"] = "v"
-  hs.each { |sk, sv| puts(sk + sv) }
-  each_twice([1, 2]) { |x| sum += x }
+  hs.each (sk, sv) { puts(sk + sv) }
+  each_twice([1, 2], (x) { sum += x })
   puts(sum)
-  puts(count_if(xs) { |x| x > 3 })
+  puts(count_if(xs, (x) { x > 3 }))
   limit = 5
-  puts(count_if(xs) { |x| x > limit })
+  puts(count_if(xs, (x) { x > limit }))
   fs: Array(fn(): Int) = []
   base = 7
-  xs.each { |x|
+  xs.each (x) {
     if x > 5 {
       y = x
-      fs.push({ || base + y })
+      fs.push(() { base + y })
     }
   }
   base = 1000
   puts(fs.size)
   puts((fs[0])())
   order = [say("receiver")]
-  order.each { |o| sum += o }
+  order.each (o) { sum += o }
   puts(sum)
 }

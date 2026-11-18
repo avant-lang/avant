@@ -12,6 +12,8 @@ pub fn reserved_c_names: Hash(String, Int) {
   names = [
     "main",
     "avant_alloc",
+    "avant_alloc_slow",
+    "avant_c_str",
     "avant_gc_hold_begin",
     "avant_gc_hold_end",
     "avant_pin",
@@ -35,6 +37,9 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_barrier_at",
     "avant_str_concat",
     "avant_str_from_i32_bytes",
+    "avant_str_from_int_bytes",
+    "avant_str_cat_i32",
+    "avant_str_cat_int",
     "avant_str_repeat_byte",
     "avant_str_slice",
     "avant_str_from_int",
@@ -70,19 +75,11 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_crc32_bytes",
     "avant_sha256_word0",
     "avant_sha256",
-    "avant_hash_new",
     "avant_hash_size",
-    "avant_hash_set_i32",
-    "avant_hash_set_str",
-    "avant_hash_set_i32k_i32",
-    "avant_hash_get_i32",
-    "avant_hash_get_str",
-    "avant_hash_get_i32k_i32",
     "avant_hash_del",
     "avant_hash_del_i32k",
-    "avant_hash_take_i32",
-    "avant_hash_take_str",
-    "avant_hash_take_i32k_i32",
+    "avant_hash_del_sk",
+    "avant_hash_del_ik",
     "avant_hash_inc_slice",
     "avant_hash_last_key",
     "avant_hash_get_str_slice",
@@ -100,6 +97,26 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_hash_take_sk",
     "avant_hash_keys",
     "avant_hash_values",
+    "avant_hash_create_typed",
+    "avant_hash_find_xk",
+    "avant_hash_put_xk",
+    "avant_hash_upsert_xk",
+    "avant_hash_set_ref_xk",
+    "avant_hash_take_xk",
+    "avant_hash_del_xk",
+    "avant_hash_slot_ik",
+    "avant_hash_slot_sk",
+    "avant_hash_slot_xk",
+    "avant_hash_user",
+    "avant_hasher_add",
+    "avant_hasher_add_str",
+    "avant_hash_find_uk",
+    "avant_hash_put_uk",
+    "avant_hash_upsert_uk",
+    "avant_hash_set_ref_uk",
+    "avant_hash_take_uk",
+    "avant_hash_del_uk",
+    "avant_hash_slot_uk",
     "avant_array_push_slot",
     "avant_array_push_ptr",
     "avant_array_set_ptr",
@@ -114,6 +131,9 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_array_fill_u8",
     "avant_array_freeze",
     "avant_array_thaw",
+    "avant_value_freeze",
+    "avant_value_thaw",
+    "avant_trap_frozen_hash",
     "avant_trap_empty",
     "avant_trap_bounds",
     "avant_trap_div_zero",
@@ -199,13 +219,29 @@ pub fn reserved_c_names: Hash(String, Int) {
 // of it carries: it has no module of its own, so its external methods are
 // seen as functions are (in their module, and in its importers when pub).
 pub fn builtin_owner_name(name: String): Bool {
-  name == "String" || name == "Bytes" || name == "Buf" || name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Float64" || name == "Bool"
+  name == "String" || name == "Bytes" || name == "Buf" || name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Float64" || name == "Bool" || name == "Array" || name == "Hash" || name == "Set"
 }
 
 // The builtin value types an external method may extend, besides the
 // program's own types and C pointers.
 pub fn builtin_receiver_ok(ty: Ty): Bool {
   ty.is_bytes() || ty.is_string() || ty.is_buf() || ty.is_integer() || ty.is_float() || ty.is_bool()
+}
+
+// The owner a program's method on a builtin container is filed under
+// ("Array", "Hash", "Set"), or "" for any other type: one name for every
+// element type, the receiver's declared type telling the instances apart.
+pub fn container_owner(ty: Ty): String {
+  if ty.is_array() {
+    return "Array"
+  }
+  if ty.is_set() {
+    return "Set"
+  }
+  if ty.is_hash() {
+    return "Hash"
+  }
+  ""
 }
 
 pub fn is_op_fn_name(name: String): Bool {
@@ -302,6 +338,9 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
   if k == tyk_buf() {
     return TypeName.new(loc, "Buf")
   }
+  if k == tyk_hasher() {
+    return TypeName.new(loc, "Hasher")
+  }
   if k == tyk_bytes() {
     return TypeName.new(loc, "Bytes")
   }
@@ -315,6 +354,13 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     tn = TypeName.new(loc, "Array")
     if e = ty.inner {
       tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_hash() && ty.is_set() {
+    tn = TypeName.new(loc, "Set")
+    if ke = ty.key {
+      tn.args.push(ty_to_type_name(ke, loc))
     }
     return tn
   }
@@ -454,6 +500,9 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     return false
   }
   if a.is_hash() {
+    if a.is_set() != b.is_set() {
+      return false
+    }
     if ak = a.key, av = a.val, bk = b.key, bv = b.val, ty_eq_sig(ak, bk, ap, bp) {
       return ty_eq_sig(av, bv, ap, bp)
     }

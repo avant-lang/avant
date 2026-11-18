@@ -1,8 +1,9 @@
 // Equality and ordering beyond the scalars. The rule:
 //
-//   - a class compares by identity unless it defines fn ==;
+//   - a class compares by identity unless it defines fn equals (its
+//     ==, spell_protocols);
 //   - a struct compares its fields in order, each by its own ==, unless
-//     it defines fn ==: the checker writes that method the first time a
+//     it defines fn equals: the checker writes that method the first time a
 //     program compares the struct or opts it into an interface that asks
 //     for == (derive_eq_method), so it is an ordinary method, a witness of
 //     `interface Eq(T)` included;
@@ -12,7 +13,8 @@
 //     (eq_template) and instantiates for each element type;
 //   - a Float64 compares by IEEE (NaN equals nothing, itself included),
 //     so an array or struct holding NaN is not equal to itself;
-//   - != is always !(a == b); >, <= and >= of a type that defines < are
+//   - != is always !(a == b); a type's order is its fn compare, from
+//     which the checker writes < (derive_orders); >, <= and >= are
 //     b < a, !(b < a) and !(a < b);
 //   - two values of different types do not compare (a compile error),
 //     an optional is never compared with nil, and a Hash, a
@@ -33,10 +35,452 @@ import checker.names
 import checker
 import checker.match
 
+// Why the struct key (or a field of one, named by path) cannot be a
+// Hash key, or "". A struct key's hash is derived from its fields the
+// way its derived == compares them (runtime/avant_hash.c): every field
+// must be a key itself (an integer, a Bool, an enum, a String or such a
+// struct). A struct that defines its own == is a key when it defines its
+// own hash too (fn hash(h: Hasher)), which feeds the hasher the values
+// that == compares: the table hashes and compares it by those two
+// methods (key_fns), and its fields may be anything. One with == and no
+// hash is refused: a hash derived from all its fields could disagree
+// with that == (two equal keys hashed apart are an entry that cannot be
+// found). seen holds the structs being looked into.
+pub fn (checker_self: Checker) hash_key_problem(ty: Ty, seen: Array(String), path: String): String {
+  return checker_self.key_problem(ty, seen, path, "a Hash key")
+}
+
+// The same for a Set's element (what is "a Set element") or a Hash's key.
+pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: String, what: String): String {
+  if ty.is_integer() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_var() {
+    return ""
+  }
+  if ty.is_float() {
+    return "${what} cannot hold a Float64 (${path}): its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; key by an integer (a fixed-point value, or an index)"
+  }
+  if !ty.is_struct() {
+    return "${what}'s fields are integers, Bools, enums, Strings or structs of those, not ${ty.show()} (${path}): key by a struct of the other fields, or keep this one out of the key (a value beside it)"
+  }
+  if checker_self.own_op(ty, "==") {
+    if sig = checker_self.own_hash(ty) {
+      return ""
+    }
+    return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
+  }
+  if seen.contains(ty_seen_key(ty)) {
+    return ""
+  }
+  seen.push(ty_seen_key(ty))
+  for f in ty.fields {
+    m = checker_self.key_problem(f.ty, seen, "the field ${ty.show()}.${f.name}", what)
+    if m.size > 0 {
+      return m
+    }
+  }
+  ""
+}
+
+// The resolver's Hash types with a struct key made so far: each key is
+// tested by hash_key_problem, an error at the Hash type when it fails.
+pub fn (checker_self: Checker) check_hash_key_uses {
+  saved = checker_self.current_module
+  while checker_self.hash_key_done < checker_self.resolver.hash_key_uses.size {
+    use = checker_self.resolver.hash_key_uses[checker_self.hash_key_done]
+    checker_self.hash_key_done += 1
+    if use.mod_name.size > 0 {
+      checker_self.current_module = use.mod_name
+    }
+    seen: Array(String) = []
+    why = checker_self.key_problem(use.key, seen, "", use.what)
+    if why.size > 0 {
+      checker_self.fail(use.loc, why)
+    }
+    checker_self.current_module = saved
+  }
+}
+
+// Whether ty (a struct or class) has a method of this name that the
+// program wrote (not one the checker derived: derive_eq_method's ==,
+// derive_hash_method's hash).
+pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
+  for ms in checker_self.methods {
+    if ms.is_method_of(ty) && ms.name == name && !ms.node.lazy {
+      return true
+    }
+  }
+  false
+}
+
+// The struct's hash method, written by the program: `fn hash(h: Hasher)`.
+pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.is_method_of(ty) && ms.name == "hash" && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+      return ms
+    }
+  }
+  nil
+}
+
+// The struct's hash method, its own or the one derive_hash_method wrote.
+pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.is_method_of(ty) && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+      return ms
+    }
+  }
+  nil
+}
+
+// Whether a Hash keyed by ty (a struct the key rule accepts) hashes and
+// compares it by its type's methods (the runtime's _uk entries): ty, or a
+// struct among its fields at any depth, defines its own ==.
+pub fn (checker_self: Checker) key_by_methods(ty: Ty, seen: Array(String)): Bool {
+  if !ty.is_struct() || seen.contains(ty_seen_key(ty)) {
+    return false
+  }
+  if checker_self.own_op(ty, "==") {
+    return true
+  }
+  seen.push(ty_seen_key(ty))
+  for f in ty.fields {
+    if checker_self.key_by_methods(f.ty, seen) {
+      return true
+    }
+  }
+  false
+}
+
+// The two functions a Hash keyed by such a struct calls (written once
+// per key type, from key_template_source): the key fed to the hasher,
+// and two keys compared. Made where the program makes such a Hash or
+// Set; the lowering finds them by their emit names
+// (compiler/mir/lower_hash.av).
+pub fn (checker_self: Checker) key_fns(key: Ty, loc: Location) {
+  seen: Array(String) = []
+  if !checker_self.key_by_methods(key, seen) {
+    return
+  }
+  seen2: Array(String) = []
+  if checker_self.key_problem(key, seen2, "", "a Hash key").size > 0 {
+    return
+  }
+  for name in ["__avant_key_hash", "__avant_key_eq"] {
+    if sig = checker_self.eq_template(name) {
+      subst: Array(Ty) = []
+      subst.push(key)
+      _ = checker_self.instantiate_function(sig, subst, loc)
+    }
+  }
+}
+
+// Why a value of type ty cannot be added to a Hasher, or "": an integer,
+// a Bool, an enum, a String, or a struct whose hash is its own or
+// derived from fields that are all such values. A struct with its own ==
+// and no hash is refused (equal values must hash alike). seen holds the
+// structs being looked into.
+pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): String {
+  if ty.is_integer() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_var() {
+    return ""
+  }
+  if ty.is_float() {
+    return "a Hasher takes no Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; add an integer made from it (a fixed-point value)"
+  }
+  if !ty.is_struct() {
+    return "a Hasher takes integers, Bools, enums, Strings and structs, not ${ty.show()}: add the values it holds (each element, or its size and its elements)"
+  }
+  if sig = checker_self.hash_method(ty) {
+    return ""
+  }
+  if checker_self.own_op(ty, "==") {
+    return "${ty.show()} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
+  }
+  if seen.contains(ty_seen_key(ty)) {
+    return ""
+  }
+  seen.push(ty_seen_key(ty))
+  for f in ty.fields {
+    m = checker_self.hash_add_problem(f.ty, seen)
+    if m.size > 0 {
+      if f.ty.is_struct() {
+        return m
+      }
+      return "${m} (the field ${ty.show()}.${f.name}: give ${ty.show()} its own fn hash(h: Hasher), or leave the field out of it)"
+    }
+  }
+  ""
+}
+
+// `h.add(v)` on a Hasher (h the receiver, checked): an integer, a Bool,
+// an enum or a String the runtime mixes in; a struct is the call of its
+// hash method with h (its own, or the one derive_hash_method writes:
+// each field added in order), so the expression becomes `v.hash(h)`.
+pub fn (checker_self: Checker) check_hasher_method(expr: Expr): Ty {
+  if expr.callee != "add" || expr.args.size != 1 {
+    for a in expr.args {
+      checker_self.check_expr(a)
+    }
+    checker_self.fail(expr.loc, "a Hasher has one method, add(v): it takes each value the type's equality compares")
+    return checker_self.t_void()
+  }
+  if bl = expr.block {
+    checker_self.fail(expr.loc, "Hasher.add does not take a block")
+    return checker_self.t_void()
+  }
+  v = checker_self.check_expr(expr.args[0])
+  if checker_self.has_err() {
+    return checker_self.t_void()
+  }
+  seen: Array(String) = []
+  why = checker_self.hash_add_problem(v, seen)
+  if why.size > 0 {
+    checker_self.fail(expr.args[0].loc, why)
+    return checker_self.t_void()
+  }
+  if v.is_struct() {
+    checker_self.derive_hash_method(v, expr.loc)
+    if sig = checker_self.hash_method(v), h = expr.receiver {
+      args: Array(Expr) = []
+      args.push(h)
+      expr.receiver = expr.args[0]
+      expr.args = args
+      expr.callee = "hash"
+      expr.resolved = sig.node.emit_name
+    }
+  }
+  checker_self.t_void()
+}
+
+// The derived hash of the struct sty: `fn hash(h: Hasher)`, each field
+// added in order (`h.add(self.f)`), as derive_eq_method writes ==;
+// lazy, public, in the struct's module. The caller has checked
+// hash_add_problem.
+pub fn (checker_self: Checker) derive_hash_method(sty: Ty, loc: Location) {
+  if sig = checker_self.hash_method(sty) {
+    return
+  }
+  sloc = loc
+  for sdef in checker_self.program.structs {
+    if sdef.name == sty.name && sdef.mod_name == sty.mod_name {
+      sloc = sdef.loc
+    }
+  }
+  fnn = Function.new(sloc, "hash")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.params.push(Param.new(sloc, "__avant_h", TypeName.new(sloc, "Hasher")))
+  for f in sty.fields {
+    call = Expr.new(ex_call(), sloc)
+    call.callee = "add"
+    hn = Expr.new(ex_name(), sloc)
+    hn.ident = "__avant_h"
+    call.receiver = hn
+    call.args.push(eq_field_of(sloc, "self", f.name))
+    fnn.body.push(stmt_expr(sloc, call))
+  }
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  params.push(ty_hasher())
+  sig = FuncSig.new(fnn.name, fnn, params, checker_self.t_void())
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
+  }
+}
+
+// The protocol methods are named methods (equals, compare, hash), and
+// the operators call them: `fn equals(other: T): Bool` (one parameter)
+// is registered under the name == (so the derived ==, the Eq bounds,
+// contains, index_of and the keys find it as before; messages show
+// equals), and a method declared `fn ==`, `fn <`, `fn <=`, `fn >` or
+// `fn >=` (in a type's body, as an external method, or in an interface)
+// is refused with the method to write.
+pub fn (checker_self: Checker) spell_protocols {
+  for fnn in program_all_functions(checker_self.program) {
+    if fn_is_method(fnn) {
+      checker_self.spell_method(fnn)
+    }
+  }
+  for idef in checker_self.program.interfaces {
+    for m in idef.methods {
+      checker_self.spell_method(m)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) spell_method(fnn: Function) {
+  if fnn.lazy || fnn.shown_name.size > 0 {
+    return
+  }
+  pt = "T"
+  if fnn.params.size == 1 && fnn.params[0].type.name.size > 0 {
+    pt = fnn.params[0].type.name
+  }
+  if fnn.name == "==" {
+    checker_self.fail(fnn.loc, "fn == is spelled equals: write fn equals(other: ${pt}): Bool: == calls it")
+  } else if fnn.name == "<" || fnn.name == "<=" || fnn.name == ">" || fnn.name == ">=" {
+    checker_self.fail(fnn.loc, "fn ${fnn.name} is spelled compare: write fn compare(other: ${pt}): Int: <, <=, >, >= and sort use it")
+  } else if fnn.name == "equals" && fnn.params.size == 1 && !fnn.type_method {
+    fnn.name = "=="
+    fnn.shown_name = "equals"
+  }
+}
+
+// A type's order: each `fn compare(other: T): Int` of a struct or class
+// gets the internal `<` the order machinery calls (`self.compare(other)
+// < 0`, lazy, as derive_eq_method writes ==), so >, <=, >=, sort,
+// sorted, min and max follow compare and cannot disagree with it.
+pub fn (checker_self: Checker) derive_orders {
+  n = checker_self.methods.size
+  i = 0
+  while i < n {
+    ms = checker_self.methods[i]
+    i += 1
+    if ms.node.lazy || ms.name != "compare" || ms.params.size != 1 || !ms.ret.is_int() || ms.node.generic {
+      continue
+    }
+    if oty = checker_self.resolver.get_named_in(ms.node.owner_mod, ms.owner) {
+      if (oty.is_struct() || oty.is_class()) && ms.params[0].same_as(oty) && !checker_self.user_op(oty, "<") {
+        checker_self.derive_lt_method(oty, ms.node.loc)
+      }
+    }
+  }
+}
+
+// Whether a struct or class ty orders by its `<`: derived here from its
+// `fn compare` when derive_orders could not (an instance of a generic
+// struct, whose methods exist only once it is instantiated).
+pub fn (checker_self: Checker) has_order(ty: Ty, loc: Location): Bool {
+  if checker_self.user_op(ty, "<") {
+    return true
+  }
+  if !ty.is_struct() && !ty.is_class() {
+    return false
+  }
+  for ms in checker_self.methods {
+    if ms.is_method_of(ty) && ms.name == "compare" && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
+      checker_self.derive_lt_method(ty, loc)
+      return true
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) derive_lt_method(sty: Ty, loc: Location) {
+  fnn = Function.new(loc, "<")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.return_type = TypeName.new(loc, "Bool")
+  fnn.params.push(Param.new(loc, "other", ty_to_type_name(sty, loc)))
+  call = Expr.new(ex_call(), loc)
+  call.callee = "compare"
+  me = Expr.new(ex_name(), loc)
+  me.ident = "self"
+  call.receiver = me
+  o = Expr.new(ex_name(), loc)
+  o.ident = "other"
+  call.args.push(o)
+  zero = Expr.new(ex_int(), loc)
+  zero.int_bits = 0u64
+  lt = Expr.new(ex_binary(), loc)
+  lt.op = tk_less()
+  lt.left = call
+  lt.right = zero
+  fnn.body.push(stmt_expr(loc, lt))
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  params.push(sty)
+  sig = FuncSig.new(fnn.name, fnn, params, checker_self.t_bool())
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
+  }
+}
+
+// `a.equals(b)` of a struct or a class: the comparison `a == b` (its
+// receiver already checked as left), resolved as the operator is.
+pub fn (checker_self: Checker) check_equals_call(expr: Expr, left: Ty): Ty {
+  if recv = expr.receiver {
+    r = expr.args[0]
+    args: Array(Expr) = []
+    expr.kind = ex_binary()
+    expr.op = tk_eq_eq()
+    expr.left = recv
+    expr.right = r
+    expr.receiver = nil
+    expr.args = args
+    expr.callee = ""
+    if got = checker_self.check_agg_compare(expr, r, tk_eq_eq(), "==", left) {
+      return got
+    }
+  }
+  checker_self.t_bool()
+}
+
+// A type that defines its own equality defines its own hash, and one
+// that defines `fn hash(h: Hasher)` defines its own equality: equal
+// values must hash alike, so one without the other is refused at its
+// declaration, as is a hash of another signature beside an equality.
+// Classes too (a class is never a key, but the pair is one protocol).
+pub fn (checker_self: Checker) check_hash_pairs {
+  for ms in checker_self.methods {
+    if !ms.node.lazy && ms.name == "==" {
+      hm = checker_self.named_method(ms.owner, ms.node.owner_mod, "hash")
+      if h = hm {
+        if !(h.params.size == 1 && h.params[0].is_hasher() && h.ret.is_void()) {
+          checker_self.fail(h.node.loc, "hash takes the Hasher: fn hash(h: Hasher)")
+        }
+      } else {
+        checker_self.fail(ms.node.loc, "${ms.owner} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares")
+      }
+    }
+    if !ms.node.lazy && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() {
+      if e = checker_self.named_method(ms.owner, ms.node.owner_mod, "==") {
+      } else {
+        checker_self.fail(ms.node.loc, "${ms.owner} defines hash but no equals: a hash agrees with an equality; add fn equals(other: ${ms.owner}): Bool comparing the values hash adds")
+      }
+    }
+  }
+}
+
+// The method of owner (of module owner_mod) with this name that the
+// program wrote, or nil.
+pub fn (checker_self: Checker) named_method(owner: String, owner_mod: String, name: String): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.owner == owner && (owner_mod.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == owner_mod) && ms.name == name && !ms.node.lazy {
+      return ms
+    }
+  }
+  nil
+}
+
 // Whether ty (a struct or class) has a method of this name.
 pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == name {
+    if ms.is_method_of(ty) && ms.name == name {
       return true
     }
   }
@@ -52,10 +496,10 @@ pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
     return ""
   }
   if ty.is_struct() {
-    if checker_self.user_op(ty, "==") || seen.contains(ty.name) {
+    if checker_self.user_op(ty, "==") || seen.contains(ty_seen_key(ty)) {
       return ""
     }
-    seen.push(ty.name)
+    seen.push(ty_seen_key(ty))
     for f in ty.fields {
       m = checker_self.eq_missing(f.ty, seen)
       if m.size > 0 {
@@ -84,7 +528,7 @@ pub fn (checker_self: Checker) eq_refusal(ty: Ty, missing: String): String {
     return "${ty.show()} has no ==: take it apart with switch and compare its members"
   }
   if ty.is_struct() {
-    return "cannot compare ${ty.show()}: ${missing} has no ==; define fn == on ${ty.show()}"
+    return "cannot compare ${ty.show()}: ${missing} has no ==; define fn equals(other: ${ty.show()}): Bool on ${ty.show()}"
   }
   if missing == ty.show() {
     return "${ty.show()} has no =="
@@ -154,6 +598,12 @@ pub fn (checker_self: Checker) derive_eq_method(sty: Ty, loc: Location) {
   }
 }
 
+// A struct's name in the lists of structs being looked into, with its
+// module: two modules' structs of one name are two structs.
+pub fn ty_seen_key(ty: Ty): String {
+  "${ty.mod_name}.${ty.name}"
+}
+
 pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
   o = Expr.new(ex_name(), loc)
   o.ident = obj
@@ -167,6 +617,12 @@ pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
 // array's min and max by a user < (each keeps the first of equal
 // elements), as Avant, parsed once per program when first needed.
 pub fn eq_template_source(name: String): String {
+  if name == "__avant_key_hash" {
+    return "fn __avant_key_hash(k: T, h: Hasher) {\n  h.add(k)\n}\n"
+  }
+  if name == "__avant_key_eq" {
+    return "fn __avant_key_eq(a: T, b: T): Bool {\n  a == b\n}\n"
+  }
   if name == "__avant_eq_array" {
     return "fn __avant_eq_array(a: Array(T), b: Array(T)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  i = 0\n  while i < a.size {\n    if a[i] != b[i] {\n      return false\n    }\n    i += 1\n  }\n  true\n}\n"
   }
@@ -302,8 +758,8 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
     }
     return checker_self.t_bool()
   }
-  if !checker_self.user_op(left, "<") {
-    checker_self.fail(expr.loc, "${left.show()} has no order: define fn < on it (>, <= and >= derive from <)")
+  if !checker_self.has_order(left, expr.loc) {
+    checker_self.fail(expr.loc, "${left.show()} has no order: define fn compare(other: ${left.show()}): Int on it (negative, zero or positive: <, <=, >, >=, sort, min and max use it)")
     return checker_self.t_bool()
   }
   if checker_self.resolve_compare(expr, left, right, "<") {
@@ -349,7 +805,7 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
   if _ = expr.block {
     return nil
   }
-  if e = array.inner, e.is_agg() && checker_self.user_op(e, "<") {
+  if e = array.inner, e.is_agg() && checker_self.has_order(e, expr.loc) {
     if name == "sort" || name == "sorted" {
       blk = Block.new(expr.loc)
       blk.params.push("__avant_a")
@@ -384,7 +840,7 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
   nil
 }
 
-// `xs.contains(v)` and `xs.index_of(v)` (expr, its argument checked)
+// `xs.has(v)` and `xs.index_of(v)` (expr, its argument checked)
 // with elements of type e: they compare by the element's ==, and refuse
 // what == refuses. An element the runtime searches as == compares it (an
 // integer, a Float64 by IEEE, a Bool, a String by bytes, a class without
@@ -408,6 +864,9 @@ pub fn (checker_self: Checker) search_by_eq(expr: Expr, e: Ty) {
     checker_self.derive_eq_method(e, expr.loc)
   }
   name = "__avant_${expr.callee}"
+  if expr.callee == "has" {
+    name = "__avant_contains"
+  }
   if recv = expr.receiver, sig = checker_self.eq_template(name) {
     subst: Array(Ty) = []
     subst.push(e)

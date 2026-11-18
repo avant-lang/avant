@@ -77,30 +77,6 @@ fn testing_write(s: String) {
   avant_testing_io.avant_test_write(line, line.size)
 }
 
-fn testing_slice(s: String, start: Int, stop: Int): String {
-  b = buf_new()
-  b.push_slice(s, start, stop)
-  b.to_s()
-}
-
-fn testing_has(hay: String, needle: String): Bool {
-  if needle.size == 0 {
-    return true
-  }
-  if needle.size > hay.size {
-    return false
-  }
-  last = hay.size - needle.size
-  i = 0
-  while i <= last {
-    if testing_slice(hay, i, i + needle.size) == needle {
-      return true
-    }
-    i += 1
-  }
-  false
-}
-
 fn testing_read(path: String): String {
   if text = file_read(path) {
     return text
@@ -124,11 +100,7 @@ fn testing_run(bin: String, args: Array(String), out_path: String, err_path: Str
   wrapped.push("-u")
   wrapped.push("AVANT_TEST_MATCHES")
   wrapped.push(bin)
-  i = 0
-  while i < args.size {
-    wrapped.push(args[i])
-    i += 1
-  }
+  wrapped.concat(args)
   avant_testing_fs.avant_process_run_split("/usr/bin/env", wrapped, out_path, err_path)
 }
 
@@ -200,7 +172,7 @@ pub class Test {
     if self.filter.size == 0 || self.depth > 0 {
       return true
     }
-    if testing_has(name, self.filter) {
+    if name.contains(self.filter) {
       self.matched += 1
       return true
     }
@@ -403,7 +375,7 @@ pub class Test {
   }
 
   fn remember_parallel(name: String): Bool {
-    if name.size == 0 || testing_has(name, "\n") {
+    if name.size == 0 || name.contains("\n") {
       self.dup = true
       testing_write("FAIL parallel name must be one line")
       return false
@@ -580,7 +552,7 @@ pub class Test {
       testing_write("  compiled successfully")
       return nil
     }
-    if testing_has(err, substring) {
+    if err.contains(substring) {
       pass_line(label)
     } else {
       fail_line(label)

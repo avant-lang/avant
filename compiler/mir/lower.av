@@ -101,6 +101,13 @@ pub class MirCb {
 pub class MirFfi {
   pub cbs: Array(MirCb) = []
   pub cb_seen: Hash(String, Int) = Hash(String, Int).new()
+  // The key types of the hashes keyed by their type's own hash and
+  // equality, each once (by its MIR text), and where its first hash is
+  // made: their two thunks are written after the functions
+  // (lower_hash.av lower_key_thunks).
+  pub ukeys: Array(Ty) = []
+  pub ukey_locs: Array(Location) = []
+  pub ukey_seen: Hash(String, Int) = Hash(String, Int).new()
   pub pins: Array(Int) = []
   pub pin_depth: Array(Int) = []
   // A `Mutex.with` block's pin entry is -2 - h, h the local holding the
@@ -147,6 +154,12 @@ pub class MirTasks {
   // lower_field_assign): the array index it goes through checks the
   // freeze (lower_arr.av index_place).
   pub store_check: Bool = false
+  // A method call's receiver place is being formed for a freeze of its
+  // Array (lower_agg.av lower_method_call): the index that reaches the
+  // element leaves its Array's holder in hold_arr (lower_arr.av
+  // index_place); -1 when none.
+  pub hold_req: Bool = false
+  pub hold_arr: Int = -1
   // Which struct methods change their receiver (made at the first
   // method call on an element in a program that spawns).
   pub writes: ReceiverWrites? = nil
@@ -189,6 +202,15 @@ pub class MirLower {
   pub lw_arg_ops: Array(MOperand)
   pub lw_heads: Array(Int)
   pub lw_exits: Array(Int)
+  // The lambdas in parentheses a builtin inlines whose body returns
+  // (Block.returns), innermost last: where a `return` goes on (the end
+  // of that run of the body), the local its value goes to (-1 for none),
+  // that value's type, and the pins open when the body began
+  // (lower_block.av lam_open).
+  pub lw_lam_ends: Array(Int)
+  pub lw_lam_slots: Array(Int)
+  pub lw_lam_tys: Array(Ty)
+  pub lw_lam_pins: Array(Int)
   pub lw_ret: Int = 0
   pub lw_main: Bool = false
   pub lw_fn_loc: Location
@@ -221,6 +243,10 @@ pub class MirLower {
     self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
+    self.lw_lam_ends = []
+    self.lw_lam_slots = []
+    self.lw_lam_tys = []
+    self.lw_lam_pins = []
     self.lw_fn_loc = program.loc
     self.lw_self_name = ""
     self.lw_busy = Hash(String, Int).new()
@@ -241,6 +267,20 @@ pub class MirLower {
       return
     }
     r = CompileError.new(loc, "L0001", "not yet supported by the llvm back end: ${what}").render()
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    self.lw_err = r
+  }
+
+  // A form the checker refuses, or the lowering handles before this
+  // point, reached all the same: a compiler bug, not a feature to come.
+  // An internal error at loc naming what; the first failure wins.
+  pub fn internal(loc: Location, what: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    r = CompileError.new(loc, "L0002", "internal error: the llvm back end's lowering reached ${what}, which the checker refuses").render()
     if r.size > 0 && r[r.size - 1] == 10 {
       r = str_slice(r, 0, r.size - 1)
     }
@@ -390,6 +430,7 @@ pub class MirLower {
     self.lower_pending_tasks()
     lower_trampolines(fns)
     self.lower_cb_thunks()
+    self.lower_key_thunks()
     self.lower_pending_lambdas()
     self.lower_lazy(fns)
     if self.failed() {
@@ -507,6 +548,10 @@ pub class MirLower {
     self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
+    self.lw_lam_ends = []
+    self.lw_lam_slots = []
+    self.lw_lam_tys = []
+    self.lw_lam_pins = []
     self.lw_fn_loc = loc
     self.lw_self = 0
     self.lw_self_struct = false

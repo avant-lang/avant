@@ -13,7 +13,7 @@ fn std_expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: St
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), "${tag} reports ${needle}")
+    c.expect(err.contains(needle), "${tag} reports ${needle}")
   } else {
     c.expect(false, "${tag} log readable")
   }
@@ -64,7 +64,7 @@ fn test_stdlib(c: Checks) {
   c.eq_int(orig[0], 3, "sorted leaves original")
 
   items: Array(StdItem) = [StdItem { key: 3, tag: 30 }, StdItem { key: 1, tag: 10 }, StdItem { key: 2, tag: 20 }]
-  items.sort { |a, b| a.key < b.key }
+  items.sort (a, b) { a.key < b.key }
   c.eq_int(items[0].tag, 10, "sort comparator lo")
   c.eq_int(items[2].tag, 30, "sort comparator hi")
 
@@ -73,8 +73,8 @@ fn test_stdlib(c: Checks) {
   c.eq_int(rev[0], 3, "reverse lo")
   c.eq_int(rev[2], 1, "reverse hi")
 
-  c.expect(ints.contains(4), "contains hit")
-  c.expect(!ints.contains(9), "contains miss")
+  c.expect(ints.has(4), "contains hit")
+  c.expect(!ints.has(9), "contains miss")
   if ix = ints.index_of(4) {
     c.eq_int(ix, 3, "index_of hit")
   } else {
@@ -129,17 +129,17 @@ fn test_stdlib(c: Checks) {
   h = Hash(String, Int).new()
   h["b"] = 2
   h["a"] = 1
-  c.expect(h.has_key("a"), "has_key hit")
-  c.expect(!h.has_key("z"), "has_key miss")
-  c.eq_int(h.get_or("z", 42), 42, "get_or miss")
-  c.eq_int(h.get_or("a", 42), 1, "get_or hit")
+  c.expect(h.has("a"), "has hit")
+  c.expect(!h.has("z"), "has miss")
+  c.eq_int(h["z"] ?? 42, 42, "or default, missing")
+  c.eq_int(h["a"] ?? 42, 1, "or default, present")
   c.eq_int(h.inc("a"), 2, "inc existing")
   c.eq_int(h.inc("c", 5), 5, "inc new with amount")
   c.eq_int(h.keys().size, 3, "keys size")
   c.eq_int(h.values().sum(), 9, "values sum")
   each_sum = 0
   each_n = 0
-  h.each { |k, v| each_sum = each_sum + v
+  h.each (k, v) { each_sum = each_sum + v
     each_n += 1 }
   c.eq_int(each_sum, 9, "hash each sum")
   c.eq_int(each_n, 3, "hash each count")
@@ -148,7 +148,7 @@ fn test_stdlib(c: Checks) {
   hi[3] = 30
   hi[1] = 10
   c.eq_int(hi.keys().sorted()[0], 1, "hash Int keys sorted")
-  c.expect(hi.has_key(3), "hash Int has_key")
+  c.expect(hi.has(3), "hash Int has")
   c.eq_int(hi.inc(3, 2), 32, "hash Int inc")
 
   raw = "hello".bytes

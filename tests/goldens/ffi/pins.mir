@@ -19,6 +19,7 @@ const str.9 = "probe-"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %pins.Box stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
@@ -29,8 +30,9 @@ extern avant_pin(ref) -> void never
 extern avant_pin_count() -> i64 collects
 extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
-extern avant_str_cat_i32(ref str, i64) -> ref str collects
+extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_flat(ref str) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_unpin(ref) -> void never
 
@@ -73,7 +75,7 @@ bb1:
   branch copy _6, bb2, bb3   @32:3
 
 bb2:
-  _7 = call avant_str_cat_i32(const str.0, copy _5) collects   @33:9
+  _7 = call avant_str_cat_int(const str.0, copy _5) collects   @33:9
   _8 = call avant_str_concat(copy _7, const str.1) collects   @33:26
   _9 = copy _8   @33:7
   call avant_array_push_ptr(copy _4, copy _9, const u32 65535) collects   @34:9
@@ -106,35 +108,38 @@ bb5:
 
 fn av.pins/early(_1: ref str, _2: i64) -> i64 frame @pins.av:44:1 {
   let _0: i64
-  let _1 (s): ref str
+  let _1 (s): ref str slot
   let _2 (base): i64
-  let _3: ref str slot
-  let _4: i64
-  let _5: bool
-  let _6: i64
+  let _3: ref str
+  let _4: ref str slot
+  let _5: i64
+  let _6: bool
   let _7: i64
+  let _8: i64
 
 bb0:
-  _3 = zero   @44:1
+  _4 = zero   @44:1
   gc.enter   @44:1
-  gc.roots _3   @44:1
-  _3 = copy _1   @45:3
-  call avant_pin(copy _3) nocollect   @45:3
-  _4 = call avant_str_size(copy _1) nocollect   @46:9
-  _5 = gt copy _4, const i64 3   @46:15
-  branch copy _5, bb1, bb2   @46:5
+  gc.roots _1, _4   @44:1
+  _3 = call avant_str_flat(copy _1) collects   @45:3
+  _1 = copy _3   @45:3
+  _4 = copy _1   @45:3
+  call avant_pin(copy _4) nocollect   @45:3
+  _5 = call avant_str_size(copy _1) nocollect   @46:9
+  _6 = gt copy _5, const i64 3   @46:15
+  branch copy _6, bb1, bb2   @46:5
 
 bb1:
-  _6 = call avant_pin_count() collects   @47:16
-  _7 = sub.chk copy _6, copy _2   @47:35
-  _0 = copy _7   @47:7
-  call avant_unpin(copy _3) nocollect   @47:7
+  _7 = call avant_pin_count() collects   @47:16
+  _8 = sub.chk copy _7, copy _2   @47:35
+  _0 = copy _8   @47:7
+  call avant_unpin(copy _4) nocollect   @47:7
   gc.leave   @47:7
   return   @47:7
 
 bb2:
   call avant_puts_str(const str.2) nocollect   @49:5
-  call avant_unpin(copy _3) nocollect   @45:3
+  call avant_unpin(copy _4) nocollect   @45:3
   _0 = const i64 -1   @51:3
   gc.leave   @51:3
   return   @51:3
@@ -148,12 +153,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @pins.av:54:1 {
   let _4 (base): i64
   let _5: ref str
   let _6 (s): ref str slot
-  let _7: ref str slot
-  let _8: i64
+  let _7: ref str
+  let _8: ref str slot
   let _9: i64
-  let _10: ref str slot
-  let _11: i64
-  let _12: i64
+  let _10: i64
+  let _11: ref str
+  let _12: ref str slot
   let _13: i64
   let _14: i64
   let _15: i64
@@ -162,177 +167,189 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @pins.av:54:1 {
   let _18: i64
   let _19: i64
   let _20: i64
-  let _21: ref str slot
-  let _22: ref %pins.Box
-  let _23 (b): ref %pins.Box slot
-  let _24 (total): i64
-  let _25 (i): i64
-  let _26: bool
-  let _27: ref %pins.Box slot
+  let _21: i64
+  let _22: i64
+  let _23: ref str slot
+  let _24: ref %pins.Box
+  let _25 (b): ref %pins.Box slot
+  let _26 (total): i64
+  let _27 (i): i64
   let _28: bool
-  let _29: i64
+  let _29: ref %pins.Box slot
   let _30: bool
-  let _31: ref str
-  let _32 (inner): ref str
+  let _31: i64
+  let _32: bool
   let _33: ref str
-  let _34: i64
-  let _35: i64
-  let _36: i64
+  let _34 (inner): ref str slot
+  let _35: ref str
+  let _36: ref str
   let _37: i64
   let _38: i64
   let _39: i64
   let _40: i64
-  let _41: ref %pins.Box slot
-  let _42 (j): i64
-  let _43: bool
-  let _44: i64
-  let _45: bool
+  let _41: i64
+  let _42: i64
+  let _43: i64
+  let _44: ref %pins.Box slot
+  let _45 (j): i64
   let _46: bool
   let _47: i64
-  let _48: i64
-  let _49: i64
+  let _48: bool
+  let _49: bool
   let _50: i64
-  let _51 (n): i64
-  let _52 (k): i64
-  let _53: bool
-  let _54: ref str
-  let _55 (t): ref str
-  let _56: ref str
-  let _57: i64
-  let _58: i64
-  let _59: i64
-  let _60: i64
+  let _51: i64
+  let _52: i64
+  let _53: i64
+  let _54 (n): i64
+  let _55 (k): i64
+  let _56: bool
+  let _57: ref str
+  let _58 (t): ref str slot
+  let _59: ref str
+  let _60: ref str
   let _61: i64
-  let _62: ref str
+  let _62: i64
+  let _63: i64
+  let _64: i64
+  let _65: i64
+  let _66: ref str
 
 bb0:
   _6 = zero   @54:1
-  _7 = zero   @54:1
-  _10 = zero   @54:1
-  _21 = zero   @54:1
+  _8 = zero   @54:1
+  _12 = zero   @54:1
   _23 = zero   @54:1
-  _27 = zero   @54:1
-  _41 = zero   @54:1
+  _25 = zero   @54:1
+  _29 = zero   @54:1
+  _34 = zero   @54:1
+  _44 = zero   @54:1
+  _58 = zero   @54:1
   gc.enter   @54:1
-  gc.roots _2, _6, _7, _10, _21, _23, _27, _41   @54:1
+  gc.roots _2, _6, _8, _12, _23, _25, _29, _34, _44, _58   @54:1
   call __avant_type_maps() nocollect   @54:1
   call avant_io_init_argv(copy _1, copy _2) collects   @54:1
   _3 = call avant_pin_count() collects   @55:12
   _4 = copy _3   @55:8
   _5 = call avant_str_concat(const str.3, const str.4) collects   @56:15
   _6 = copy _5   @56:5
-  _7 = copy _6   @57:3
-  call avant_pin(copy _7) nocollect   @57:3
-  _8 = call avant_pin_count() collects   @58:12
-  _9 = sub.chk copy _8, copy _4   @58:31
-  call avant_puts_i64(copy _9) nocollect   @58:5
-  _10 = copy _6   @59:5
-  call avant_pin(copy _10) nocollect   @59:5
-  _11 = call avant_pin_count() collects   @60:14
-  _12 = sub.chk copy _11, copy _4   @60:33
-  call avant_puts_i64(copy _12) nocollect   @60:7
-  call avant_unpin(copy _10) nocollect   @59:5
-  _13 = call avant_pin_count() collects   @62:12
-  _14 = sub.chk copy _13, copy _4   @62:31
-  call avant_puts_i64(copy _14) nocollect   @62:5
-  _15 = call av.pins/churn(const i64 30000) collects   @63:10
-  call avant_puts_i64(copy _15) nocollect   @63:5
+  _7 = call avant_str_flat(copy _6) collects   @57:3
+  _6 = copy _7   @57:3
+  _8 = copy _6   @57:3
+  call avant_pin(copy _8) nocollect   @57:3
+  _9 = call avant_pin_count() collects   @58:12
+  _10 = sub.chk copy _9, copy _4   @58:31
+  call avant_puts_i64(copy _10) nocollect   @58:5
+  _11 = call avant_str_flat(copy _6) collects   @59:5
+  _6 = copy _11   @59:5
+  _12 = copy _6   @59:5
+  call avant_pin(copy _12) nocollect   @59:5
+  _13 = call avant_pin_count() collects   @60:14
+  _14 = sub.chk copy _13, copy _4   @60:33
+  call avant_puts_i64(copy _14) nocollect   @60:7
+  call avant_unpin(copy _12) nocollect   @59:5
+  _15 = call avant_pin_count() collects   @62:12
+  _16 = sub.chk copy _15, copy _4   @62:31
+  call avant_puts_i64(copy _16) nocollect   @62:5
+  _17 = call av.pins/churn(const i64 30000) collects   @63:10
+  call avant_puts_i64(copy _17) nocollect   @63:5
   call avant_puts_str(copy _6) nocollect   @64:5
-  call avant_unpin(copy _7) nocollect   @57:3
-  _16 = call avant_pin_count() collects   @66:10
-  _17 = sub.chk copy _16, copy _4   @66:29
-  call avant_puts_i64(copy _17) nocollect   @66:3
-  _18 = call av.pins/early(const str.5, copy _4) collects   @67:8
-  call avant_puts_i64(copy _18) nocollect   @67:3
-  _19 = call avant_pin_count() collects   @68:10
-  _20 = sub.chk copy _19, copy _4   @68:29
-  call avant_puts_i64(copy _20) nocollect   @68:3
-  _21 = call avant_str_concat(const str.6, const str.7) collects   @70:23
-  _22 = call avant_alloc(const u64 16, const u32 1) collects fresh   @70:10
-  call av.pins/Box.initialize(copy _22, copy _21, const i64 3) nocollect   @70:10
-  _23 = copy _22   @70:5
-  _24 = const i64 0   @71:9
-  _25 = const i64 0   @72:5
+  call avant_unpin(copy _8) nocollect   @57:3
+  _18 = call avant_pin_count() collects   @66:10
+  _19 = sub.chk copy _18, copy _4   @66:29
+  call avant_puts_i64(copy _19) nocollect   @66:3
+  _20 = call av.pins/early(const str.5, copy _4) collects   @67:8
+  call avant_puts_i64(copy _20) nocollect   @67:3
+  _21 = call avant_pin_count() collects   @68:10
+  _22 = sub.chk copy _21, copy _4   @68:29
+  call avant_puts_i64(copy _22) nocollect   @68:3
+  _23 = call avant_str_concat(const str.6, const str.7) collects   @70:23
+  _24 = call avant_alloc(const u64 16, const u32 1) collects fresh   @70:10
+  call av.pins/Box.initialize(copy _24, copy _23, const i64 3) nocollect   @70:10
+  _25 = copy _24   @70:5
+  _26 = const i64 0   @71:9
+  _27 = const i64 0   @72:5
   goto bb1   @73:3
 
 bb1:
-  _26 = lt copy _25, const i64 6   @73:11
-  branch copy _26, bb2, bb3   @73:3
+  _28 = lt copy _27, const i64 6   @73:11
+  branch copy _28, bb2, bb3   @73:3
 
 bb2:
-  _27 = copy _23   @74:5
-  call avant_pin(copy _27) nocollect   @74:5
-  _28 = eq copy _25, const i64 1   @75:12
-  branch copy _28, bb4, bb5   @75:7
+  _29 = copy _25   @74:5
+  call avant_pin(copy _29) nocollect   @74:5
+  _30 = eq copy _27, const i64 1   @75:12
+  branch copy _30, bb4, bb5   @75:7
 
 bb3:
-  call avant_puts_i64(copy _24) nocollect   @89:3
-  _39 = call avant_pin_count() collects   @90:10
-  _40 = sub.chk copy _39, copy _4   @90:29
-  call avant_puts_i64(copy _40) nocollect   @90:3
-  _41 = copy _23   @93:3
-  call avant_pin(copy _41) nocollect   @93:3
-  _42 = const i64 0   @94:7
+  call avant_puts_i64(copy _26) nocollect   @89:3
+  _42 = call avant_pin_count() collects   @90:10
+  _43 = sub.chk copy _42, copy _4   @90:29
+  call avant_puts_i64(copy _43) nocollect   @90:3
+  _44 = copy _25   @93:3
+  call avant_pin(copy _44) nocollect   @93:3
+  _45 = const i64 0   @94:7
   goto bb8   @95:5
 
 bb4:
-  _29 = add copy _25, const i64 1   @76:15
-  _25 = copy _29   @76:11
-  call avant_unpin(copy _27) nocollect   @77:9
+  _31 = add copy _27, const i64 1   @76:15
+  _27 = copy _31   @76:11
+  call avant_unpin(copy _29) nocollect   @77:9
   goto bb1   @77:9
 
 bb5:
-  _30 = eq copy _25, const i64 4   @79:12
-  branch copy _30, bb6, bb7   @79:7
+  _32 = eq copy _27, const i64 4   @79:12
+  branch copy _32, bb6, bb7   @79:7
 
 bb6:
-  call avant_unpin(copy _27) nocollect   @80:9
+  call avant_unpin(copy _29) nocollect   @80:9
   goto bb3   @80:9
 
 bb7:
-  _31 = call avant_str_cat_i32(const str.8, copy _25) collects   @82:15
-  _32 = copy _31   @82:13
-  _33 = copy _32   @83:7
-  call avant_pin(copy _33) nocollect   @83:7
-  _34 = call avant_str_size(copy _32) nocollect   @84:30
-  _35 = add.chk copy _24, copy _34   @84:23
-  _36 = copy (*_23).1   @84:39
-  _37 = add.chk copy _35, copy _36   @84:36
-  _24 = copy _37   @84:15
-  call avant_unpin(copy _33) nocollect   @83:7
-  call avant_unpin(copy _27) nocollect   @74:5
-  _38 = add.chk copy _25, const i64 1   @87:11
-  _25 = copy _38   @87:7
+  _33 = call avant_str_cat_int(const str.8, copy _27) collects   @82:15
+  _34 = copy _33   @82:13
+  _35 = call avant_str_flat(copy _34) collects   @83:7
+  _34 = copy _35   @83:7
+  _36 = copy _34   @83:7
+  call avant_pin(copy _36) nocollect   @83:7
+  _37 = call avant_str_size(copy _34) nocollect   @84:30
+  _38 = add.chk copy _26, copy _37   @84:23
+  _39 = copy (*_25).1   @84:39
+  _40 = add.chk copy _38, copy _39   @84:36
+  _26 = copy _40   @84:15
+  call avant_unpin(copy _36) nocollect   @83:7
+  call avant_unpin(copy _29) nocollect   @74:5
+  _41 = add.chk copy _27, const i64 1   @87:11
+  _27 = copy _41   @87:7
   goto bb1   @73:3
 
 bb8:
-  _43 = lt copy _42, const i64 5   @95:13
-  branch copy _43, bb9, bb10   @95:5
+  _46 = lt copy _45, const i64 5   @95:13
+  branch copy _46, bb9, bb10   @95:5
 
 bb9:
-  _44 = add copy _42, const i64 1   @96:13
-  _42 = copy _44   @96:9
-  _45 = eq copy _42, const i64 2   @97:12
-  branch copy _45, bb11, bb12   @97:7
+  _47 = add copy _45, const i64 1   @96:13
+  _45 = copy _47   @96:9
+  _48 = eq copy _45, const i64 2   @97:12
+  branch copy _48, bb11, bb12   @97:7
 
 bb10:
-  _47 = call avant_pin_count() collects   @104:12
-  _48 = sub.chk copy _47, copy _4   @104:31
-  call avant_puts_i64(copy _48) nocollect   @104:5
-  call avant_unpin(copy _41) nocollect   @93:3
-  _49 = call avant_pin_count() collects   @106:10
-  _50 = sub.chk copy _49, copy _4   @106:29
-  call avant_puts_i64(copy _50) nocollect   @106:3
-  _51 = const i64 0   @108:5
-  _52 = const i64 0   @109:5
+  _50 = call avant_pin_count() collects   @104:12
+  _51 = sub.chk copy _50, copy _4   @104:31
+  call avant_puts_i64(copy _51) nocollect   @104:5
+  call avant_unpin(copy _44) nocollect   @93:3
+  _52 = call avant_pin_count() collects   @106:10
+  _53 = sub.chk copy _52, copy _4   @106:29
+  call avant_puts_i64(copy _53) nocollect   @106:3
+  _54 = const i64 0   @108:5
+  _55 = const i64 0   @109:5
   goto bb15   @110:3
 
 bb11:
   goto bb8   @98:9
 
 bb12:
-  _46 = eq copy _42, const i64 4   @100:12
-  branch copy _46, bb13, bb14   @100:7
+  _49 = eq copy _45, const i64 4   @100:12
+  branch copy _49, bb13, bb14   @100:7
 
 bb13:
   goto bb10   @101:9
@@ -341,29 +358,31 @@ bb14:
   goto bb8   @95:5
 
 bb15:
-  _53 = lt copy _52, const i64 20000   @110:11
-  branch copy _53, bb16, bb17   @110:3
+  _56 = lt copy _55, const i64 20000   @110:11
+  branch copy _56, bb16, bb17   @110:3
 
 bb16:
-  _54 = call avant_str_cat_i32(const str.9, copy _52) collects   @111:9
-  _55 = copy _54   @111:7
-  _56 = copy _55   @112:5
-  call avant_pin(copy _56) nocollect   @112:5
-  _57 = call avant_str_size(copy _55) nocollect   @113:16
-  _58 = add.chk copy _51, copy _57   @113:13
-  _51 = copy _58   @113:9
-  call avant_unpin(copy _56) nocollect   @112:5
-  _59 = add copy _52, const i64 1   @115:11
-  _52 = copy _59   @115:7
+  _57 = call avant_str_cat_int(const str.9, copy _55) collects   @111:9
+  _58 = copy _57   @111:7
+  _59 = call avant_str_flat(copy _58) collects   @112:5
+  _58 = copy _59   @112:5
+  _60 = copy _58   @112:5
+  call avant_pin(copy _60) nocollect   @112:5
+  _61 = call avant_str_size(copy _58) nocollect   @113:16
+  _62 = add.chk copy _54, copy _61   @113:13
+  _54 = copy _62   @113:9
+  call avant_unpin(copy _60) nocollect   @112:5
+  _63 = add copy _55, const i64 1   @115:11
+  _55 = copy _63   @115:7
   goto bb15   @110:3
 
 bb17:
-  call avant_puts_i64(copy _51) nocollect   @117:3
-  _60 = call avant_pin_count() collects   @118:10
-  _61 = sub.chk copy _60, copy _4   @118:29
-  call avant_puts_i64(copy _61) nocollect   @118:3
-  _62 = copy (*_23).0   @119:9
-  call avant_puts_str(copy _62) nocollect   @119:3
+  call avant_puts_i64(copy _54) nocollect   @117:3
+  _64 = call avant_pin_count() collects   @118:10
+  _65 = sub.chk copy _64, copy _4   @118:29
+  call avant_puts_i64(copy _65) nocollect   @118:3
+  _66 = copy (*_25).0   @119:9
+  call avant_puts_str(copy _66) nocollect   @119:3
   _0 = const i32 0   @54:1
   gc.leave   @54:1
   return   @54:1

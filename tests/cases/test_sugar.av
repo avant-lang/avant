@@ -8,7 +8,7 @@ fn sugar_expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: 
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), "${tag} reports ${needle}")
+    c.expect(err.contains(needle), "${tag} reports ${needle}")
   } else {
     c.expect(false, "${tag} log readable")
   }
@@ -51,30 +51,30 @@ fn test_sugar(c: Checks) {
   c.eq_str(bch[1], "é", "Bytes chars multibyte")
 
   xs: Array(Int) = [1, 2, 3]
-  c.expect(xs.any { |x| x > 2 }, "any hit")
-  c.expect(!xs.any { |x| x > 9 }, "any miss")
-  c.expect(xs.all { |x| x > 0 }, "all hit")
-  c.expect(!xs.all { |x| x > 1 }, "all miss")
+  c.expect(xs.any (x) { x > 2 }, "any hit")
+  c.expect(!xs.any (x) { x > 9 }, "any miss")
+  c.expect(xs.all (x) { x > 0 }, "all hit")
+  c.expect(!xs.all (x) { x > 1 }, "all miss")
   empty_xs: Array(Int) = []
-  c.expect(!empty_xs.any { |x| true }, "any empty false")
-  c.expect(empty_xs.all { |x| false }, "all empty true")
+  c.expect(!empty_xs.any (x) { true }, "any empty false")
+  c.expect(empty_xs.all (x) { false }, "all empty true")
   seen = 0
-  short_any = xs.any { |x| seen = seen + 1
+  short_any = xs.any (x) { seen = seen + 1
     x == 1 }
   c.expect(short_any, "any short-circuit value")
   c.eq_int(seen, 1, "any short-circuits")
   seen_all = 0
-  short_all = xs.all { |x| seen_all = seen_all + 1
+  short_all = xs.all (x) { seen_all = seen_all + 1
     x > 1 }
   c.expect(!short_all, "all short-circuit value")
   c.eq_int(seen_all, 1, "all short-circuits")
 
-  if xs.any { |x| x > 2 } {
+  if xs.any((x) { x > 2 }) {
     c.expect(true, "any in if condition")
   } else {
     c.expect(false, "any in if condition")
   }
-  if xs.contains(2) {
+  if xs.has(2) {
     c.expect(true, "call condition still parses")
   } else {
     c.expect(false, "call condition still parses")
@@ -194,7 +194,7 @@ fn test_sugar(c: Checks) {
     sugar_expect_err(c, compiler, stamp, "qq-nonil", "fn main {\n  x = 1 ?? 2\n}\n", "?? needs a value that can fail (T? or T | E with E marked Error), got Int")
     sugar_expect_err(c, compiler, stamp, "qq-badfb", "fn main {\n  x: Int? = nil\n  y = x ?? \"s\"\n}\n", "?? fallback must be Int")
     sugar_expect_err(c, compiler, stamp, "or-nonil", "fn main {\n  x = 1\n  y = x.or(2)\n}\n", "or needs a value that can fail (T? or T | E with E marked Error), got Int")
-    sugar_expect_err(c, compiler, stamp, "for-nonarray", "fn main {\n  for x in 42 {\n    puts(x)\n  }\n}\n", "for needs a range (a..b) or an Array")
+    sugar_expect_err(c, compiler, stamp, "for-nonarray", "fn main {\n  for x in 42 {\n    puts(x)\n  }\n}\n", "for needs a range (a..b), an Array or a type with a method next: T?, got Int")
     sugar_expect_err(c, compiler, stamp, "for-badrange", "fn main {\n  for i in \"a\"..\"b\" {\n    puts(i)\n  }\n}\n", "for range bounds must be Int")
     sugar_expect_err(c, compiler, stamp, "for-scope", "fn main {\n  for i in 0..2 {\n    puts(i)\n  }\n  puts(i)\n}\n", "unknown name i")
   }

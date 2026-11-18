@@ -290,7 +290,7 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
   if k == ex_nil() || k == ex_hash_new() {
     return true
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     for el in e.elems {
       if !checker_self.guard_fresh(el) {
         return false
@@ -591,7 +591,7 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
     }
     return
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     for el in e.elems {
       checker_self.guard_use(w, el, "this element")
     }
@@ -694,6 +694,14 @@ pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
   w.floor = saved
 }
 
+// The array builtins that store their arguments into the array: `push`,
+// `insert` (the position is plain), `fill`, and `concat`, which stores
+// the elements of its argument (so the argument array must be new,
+// plain or reached as a stored value would be).
+pub fn array_stores_arg(callee: String): Bool {
+  callee == "push" || callee == "insert" || callee == "fill" || callee == "concat"
+}
+
 pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
   if inner = e.inner {
     checker_self.guard_expr(w, inner)
@@ -724,15 +732,16 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
     checker_self.guard_expr(w, recv)
     recv_bad = checker_self.guard_bad(w, recv)
   }
-  stores = recv_bad && (e.callee == "push" || e.callee == "fill")
+  stores = recv_bad && array_stores_arg(e.callee)
   for arg in e.args {
     checker_self.guard_use(w, arg, "this argument")
     if checker_self.has_err() {
       return
     }
     if stores {
-      // `push` and `fill` store their argument into a reached array:
-      // what comes in must not stay reachable from outside.
+      // `push`, `insert`, `fill` and `concat` store their argument (or
+      // its elements) into a reached array: what comes in must not stay
+      // reachable from outside.
       checker_self.guard_inward(w, arg)
       if checker_self.has_err() {
         return
@@ -846,26 +855,71 @@ pub fn (checker_self: Checker) check_mutex_value(expr: Expr, ty: Ty, verb: Strin
 
 // `Mutex(T).new(v, recover: f)`: f rebuilds the guarded value on a
 // poisoned mutex, on whichever task meets the poison, and its result
-// becomes the guarded value. So f is a named function or a lambda that
-// captures nothing: a captured name is shared with the code that made the
-// lambda, so it could reach the rebuilt value without the lock, or be
-// read by another task while it changes. (Without captures and with no
-// mutable state outside a function, what f returns is new or plain.)
+// becomes the guarded value. So f is a named function or a lambda written
+// here whose captures are plain values (recover_capture_ok), copied when
+// the mutex is made: the lowering gives this lambda fresh cells holding
+// the captured values at the call (mir/lower_fn.av lower_lambda), as a
+// spawn copies its captures, so no later assignment to a captured name
+// reaches the rebuild and no other task reads a cell that changes. A
+// reference captured (a class, an Array, a Hash, a fn) would be shared
+// with the code that made the lambda, which could reach the rebuilt value
+// without the lock. A function value from a variable is refused: what it
+// captures is not known here.
 pub fn (checker_self: Checker) check_mutex_recover(arg: Expr, ty: Ty) {
   k = arg.kind
   if k == ex_nil() {
     return
   }
   if k == ex_lambda() {
+    i = 0
+    while i < arg.cap_names.size && i < arg.cap_tys.size {
+      ct = arg.cap_tys[i]
+      if !checker_self.recover_capture_ok(ct) {
+        checker_self.fail(arg.loc, "${ty.show()}.new's recover function cannot capture ${arg.cap_names[i]} (${ct.show()}): it runs on whichever task meets the poison and its result becomes the guarded value, so it captures only plain values (a number, a Bool, a String, an enum, or a struct, optional or union of those), copied when the mutex is made; a reference would be shared with the code around, which could reach the rebuilt value without the lock. Build the value from literals, calls and plain captures, or name a function")
+        return
+      }
+      i += 1
+    }
     if arg.cap_names.size > 0 {
-      checker_self.fail(arg.loc, "${ty.show()}.new's recover function cannot capture ${arg.cap_names[0]}: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function")
+      arg.copy_caps = true
     }
     return
   }
   if k == ex_name() && arg.fn_ref {
     return
   }
-  checker_self.fail(arg.loc, "${ty.show()}.new's recover function must be a named function or a lambda written here that captures nothing: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
+  checker_self.fail(arg.loc, "${ty.show()}.new's recover function must be a named function or a lambda written here: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
+}
+
+// What a recover function may capture: a value that holds no reference
+// to mutable state and is copied with its cell (leaves_mutex_with's
+// plain values without the share types: a captured Mutex or Channel
+// would let the rebuild, which runs under this mutex's lock, wait on
+// another lock or a channel; nothing asks for it).
+pub fn (checker_self: Checker) recover_capture_ok(t: Ty): Bool {
+  if checker_self.is_share_ty(t) {
+    return false
+  }
+  if t.is_nil() || t.is_bytes() {
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if !checker_self.recover_capture_ok(m) {
+        return false
+      }
+    }
+    return true
+  }
+  if t.is_struct() {
+    for field in t.fields {
+      if !checker_self.recover_capture_ok(field.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  checker_self.copyable_bits(t)
 }
 
 // The function walks for the consuming calls check_mutex_new recorded.
@@ -954,10 +1008,11 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
 // is refused. An Array is copied at the send (mir/lower_agg.av
 // send_copy), so the receiver owns an independent array; its elements
 // cross in turn, and an array of arrays is copied at every level.
-// Spawn's rule asks the same of a captured Array's elements, so the two
-// rules are one.
+// Spawn's rule asks the same of a captured Array's elements. A Hash
+// crosses a spawn shared and frozen until the task ends; a send has no
+// such end and copies no hash, so a value holding one is refused.
 pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
-  checker_self.copyable_for_spawn(t)
+  checker_self.copyable_for_spawn(t) && !holds_hash(t)
 }
 
 pub fn (checker_self: Checker) check_send(expr: Expr) {
@@ -1005,7 +1060,7 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
 // over the whole method. Then:
 //
 //   - a P value is stored nowhere (a field, an element, a hash entry,
-//     `push` or `fill`): it would keep its caller's reference;
+//     `push`, `insert`, `fill` or `concat`): it would keep its caller's reference;
 //   - an S value is stored only into a place rooted at self (S into S
 //     stays under the lock: `self.root = self.root.left`), or into a
 //     name of the method, which becomes rooted at self;
@@ -1202,7 +1257,7 @@ pub fn (checker_self: Checker) cw_root(w: ClassWalk, e: Expr): Int {
   }
   if k == ex_call() {
     // A call's value may be its receiver's part or one of its arguments
-    // (a builtin's `get_or`, a method that returns its parameter), and a
+    // (a method that returns its parameter), and a
     // constructor's object holds them.
     bits = 0
     if recv = e.receiver {
@@ -1213,7 +1268,7 @@ pub fn (checker_self: Checker) cw_root(w: ClassWalk, e: Expr): Int {
     }
     return bits
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     bits = 0
     for el in e.elems {
       bits = bits | checker_self.cw_root(w, el)
@@ -1403,7 +1458,7 @@ pub fn (checker_self: Checker) cw_alias_stmt(w: ClassWalk, st: Stmt) {
 
 pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
   if e.kind == ex_call() {
-    if recv = e.receiver, e.callee == "push" || e.callee == "fill" {
+    if recv = e.receiver, array_stores_arg(e.callee) {
       base = checker_self.cw_local_base(w, recv)
       if base.size > 0 {
         for a in e.args {
@@ -1613,7 +1668,7 @@ pub fn (checker_self: Checker) cw_call(w: ClassWalk, e: Expr) {
   if checker_self.any_err() {
     return
   }
-  if recv2 = e.receiver, e.resolved.size == 0 && (e.callee == "push" || e.callee == "fill") {
+  if recv2 = e.receiver, e.resolved.size == 0 && array_stores_arg(e.callee) {
     tb = checker_self.cw_root_place(w, recv2)
     for a in e.args {
       checker_self.cw_store(w, tb, a, "an array (${e.callee})")

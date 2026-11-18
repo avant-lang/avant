@@ -402,6 +402,115 @@ pub fn next_significant(tokens: Array(Token), i: Int): Int {
   tk_eof()
 }
 
+// Whether the `(` at i begins the shorthand call `callee (params) {`:
+// after a function's name (not a type's), a lambda's parameter list,
+// maybe its result type, then `{` on the same line not followed by
+// pipes. Set off by the caller in the head of an `if`, `while`, `for`
+// or `switch` (reprint's head_depth), where the parser reads a call.
+pub fn shorthand_at(tokens: Array(Token), i: Int): Bool {
+  p = prev_significant(tokens, i)
+  if p < 0 || tokens[p].kind != tk_ident() {
+    return false
+  }
+  name = tokens[p].value
+  if name.size == 0 || (name[0] >= 65 && name[0] <= 90) {
+    return false
+  }
+  // A declaration's parameters (`fn (c: Counter) scaled(s: Float64)`):
+  // a line that starts with `fn`, `pub` or `fun`.
+  j = p
+  while j > 0 && tokens[j - 1].kind != tk_newline() && tokens[j - 1].kind != tk_file_line() {
+    j -= 1
+  }
+  while j < p && tokens[j].kind == tk_comment() {
+    j += 1
+  }
+  first = tokens[j].kind
+  if first == tk_fn() || first == tk_pub() || first == tk_fun() {
+    return false
+  }
+  lambda_head_brace(tokens, i) >= 0
+}
+
+// The index of the `{` of a lambda whose parameter list opens at the
+// `(` at i, or -1 (the parser's lambda_head_at over the formatter's
+// tokens, comments skipped).
+pub fn lambda_head_brace(tokens: Array(Token), i0: Int): Int {
+  n = tokens.size
+  i = fmt_skip(tokens, i0 + 1, true)
+  if i < n && tokens[i].kind != tk_r_paren() {
+    while true {
+      if i >= n || tokens[i].kind != tk_ident() {
+        return -1
+      }
+      i = fmt_skip(tokens, i + 1, true)
+      if i < n && tokens[i].kind == tk_colon() {
+        depth = 0
+        i = fmt_skip(tokens, i + 1, true)
+        start = i
+        while i < n {
+          k = tokens[i].kind
+          if k == tk_l_paren() || k == tk_l_bracket() {
+            depth += 1
+          } else if (k == tk_r_paren() || k == tk_comma()) && depth == 0 {
+            break
+          } else if k == tk_r_paren() || k == tk_r_bracket() {
+            depth -= 1
+          } else if k == tk_l_brace() || k == tk_r_brace() || k == tk_eq() || k == tk_eof() {
+            return -1
+          }
+          i += 1
+        }
+        if i == start {
+          return -1
+        }
+      }
+      if i < n && tokens[i].kind == tk_comma() {
+        i = fmt_skip(tokens, i + 1, true)
+      } else {
+        break
+      }
+    }
+  }
+  if i >= n || tokens[i].kind != tk_r_paren() {
+    return -1
+  }
+  i = fmt_skip(tokens, i + 1, false)
+  if i < n && tokens[i].kind == tk_colon() {
+    i += 1
+    while i < n && tokens[i].kind != tk_l_brace() {
+      k = tokens[i].kind
+      if k == tk_newline() || k == tk_r_brace() || k == tk_eq() || k == tk_eof() {
+        return -1
+      }
+      i += 1
+    }
+  }
+  if i >= n || tokens[i].kind != tk_l_brace() {
+    return -1
+  }
+  k = next_significant(tokens, i)
+  if k == tk_pipe() || k == tk_pipe_pipe() {
+    return -1
+  }
+  i
+}
+
+// The next index from i that is not a comment (nor a line break when
+// lines is true).
+pub fn fmt_skip(tokens: Array(Token), i0: Int, lines: Bool): Int {
+  i = i0
+  while i < tokens.size {
+    k = tokens[i].kind
+    if k == tk_comment() || (lines && k == tk_newline()) {
+      i += 1
+    } else {
+      return i
+    }
+  }
+  i
+}
+
 pub fn brace_starts_lambda(tokens: Array(Token), i: Int): Bool {
   k = next_significant(tokens, i)
   if k == tk_pipe() {
@@ -603,6 +712,11 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
   if separate {
     return false
   }
+  if curr == tk_l_paren() && shorthand_at(tokens, i) {
+    // `xs.each (x) { ... }`: the lambda that is the call's only argument,
+    // its parameters apart from the callee (parser.av parse_call_args).
+    return false
+  }
   if curr == tk_l_paren() {
     if fn_receiver_space(tokens, i, prev) {
       return false
@@ -762,6 +876,9 @@ pub fn reprint(tokens: Array(Token)): String {
   prev_i = -1
   after_tight = false
   lambda_state = 0
+  // The bracket depth of the head of the `if`, `while`, `for` or
+  // `switch` being printed, up to its body's `{`; -1 outside one.
+  head_depth = -1
   pending = 0
   i = 0
   while i < tokens.size {
@@ -806,6 +923,10 @@ pub fn reprint(tokens: Array(Token)): String {
       nextk = next_significant(tokens, i)
       separate = must_separate(prev, prev2, k, nextk)
       tight = no_space(tokens, i, prev, k, after_tight, lambda_state, separate)
+      if k == tk_l_paren() && !separate && head_depth == opened.size && shorthand_at(tokens, i) {
+        // Directly in a statement's head the `{` begins its body: a call.
+        tight = after_tight || paren_hugs(tokens, i, prev)
+      }
       if tight && prev_i >= 0 && tokens_join(tokens[prev_i], t) {
         tight = false
       }
@@ -815,6 +936,12 @@ pub fn reprint(tokens: Array(Token)): String {
         buf.push_byte(32)
         push_token(buf, t)
       }
+    }
+    if k == tk_l_brace() && head_depth == opened.size {
+      head_depth = -1
+    }
+    if (k == tk_if() || k == tk_while() || k == tk_for() || k == tk_switch()) && head_depth < 0 {
+      head_depth = opened.size
     }
     if opens_bracket(k) {
       opened.push(line_indent)
@@ -840,7 +967,7 @@ pub fn reprint(tokens: Array(Token)): String {
       } else if k == tk_pipe_pipe() {
         lambda_state = 0
         after_tight = false
-      } else if k == tk_minus() {
+      } else if k == tk_minus() || k == tk_amp() {
         lambda_state = 0
         after_tight = minus_is_prefix(prev, started)
       } else {
@@ -851,12 +978,12 @@ pub fn reprint(tokens: Array(Token)): String {
       if k == tk_pipe() {
         lambda_state = 0
         after_tight = false
-      } else if k == tk_minus() {
+      } else if k == tk_minus() || k == tk_amp() {
         after_tight = minus_is_prefix(prev, started)
       } else {
         after_tight = tight_after_kind(k)
       }
-    } else if k == tk_minus() {
+    } else if k == tk_minus() || k == tk_amp() {
       after_tight = minus_is_prefix(prev, started)
     } else {
       after_tight = tight_after_kind(k)

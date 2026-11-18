@@ -4,7 +4,7 @@ One hello-world server per row, with identical behavior: HTTP answers `GET /` wi
 
 | File | Row | What it does |
 | --- | --- | --- |
-| [avant_server.av](avant/bench/http/avant_server.av), [avant_ws.av](avant/bench/http/avant_ws.av) | `avant` | `std.http` servers on ports 18301 (HTTP) and 18311 (WebSocket); thread count with `--threads N` |
+| [avant_server.av](avant/bench/http/avant_server.av), [avant_ws.av](avant/bench/http/avant_ws.av) | `avant` | `std.http` servers on ports 18301 (HTTP) and 18311 (WebSocket); thread count with `--avant-threads=N` |
 | [h2o_server.c](avant/bench/http/h2o_server.c), [h2o_ws.c](avant/bench/http/h2o_ws.c) | `h2o` | C, h2o, one event loop per thread; thread count as the second argument |
 | [rust_server.rs](avant/bench/http/rust_server.rs), [rust_ws.rs](avant/bench/http/rust_ws.rs) | `rust` | Rust, standard library only, thread per connection; no thread control |
 | [rust_hyper/](avant/bench/http/rust_hyper/src/main.rs) | `hyper` | Rust, hyper 1 on tokio's multi-thread runtime, `pipeline_flush(true)` and `writev(true)`; thread count as the second argument; HTTP only |

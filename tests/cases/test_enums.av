@@ -110,8 +110,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/enum-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "enum-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("enum-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -123,13 +123,13 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(sw, "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.from_i(1) ?? Tok.eof))\n}\n")
   c.eq_int(emit_ll(compiler, sw, "${dir}/enum-ll-switch.ll", "${dir}/enum-ll-switch.log"), 0, "ll-switch: emits")
   ll = log_text("${dir}/enum-ll-switch.ll")
-  c.expect(str_has(ll, "@avant_trap_enum_at("), "ll-switch: the no-member path traps")
-  c.expect(str_has(ll, "switch i8 "), "ll-switch: one switch on the enum's byte")
-  c.expect(!str_has(ll, "c\"number\\00\""), "ll-switch: no name table")
+  c.expect(ll.contains("@avant_trap_enum_at("), "ll-switch: the no-member path traps")
+  c.expect(ll.contains("switch i8 "), "ll-switch: one switch on the enum's byte")
+  c.expect(!ll.contains("c\"number\\00\""), "ll-switch: no name table")
   pr = "${dir}/enum-ll-print.av"
   _ = file_write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
   c.eq_int(emit_ll(compiler, pr, "${dir}/enum-ll-print.ll", "${dir}/enum-ll-print.log"), 0, "ll-print: emits")
-  c.expect(str_has(log_text("${dir}/enum-ll-print.ll"), "number"), "ll-print: the names are there when printed")
+  c.expect(log_text("${dir}/enum-ll-print.ll").contains("number"), "ll-print: the names are there when printed")
   // The last arm is the default behind a range
   // test, so a four-member switch has three cases, and the trap stays.
   d4 = "${dir}/enum-ll-last.av"
@@ -138,16 +138,16 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   ll4 = log_text("${dir}/enum-ll-last.ll")
   labels = -1
   for line in ll4.split("\n") {
-    if str_has(line, "switch i8 ") {
+    if line.contains("switch i8 ") {
       labels = line.split("label").size - 1
     }
   }
   c.eq_int(labels, 4, "ll-last: one switch of three cases and a default")
-  c.expect(str_has(ll4, "@avant_trap_enum_at("), "ll-last: the no-member path traps")
+  c.expect(ll4.contains("@avant_trap_enum_at("), "ll-last: the no-member path traps")
   // Every block the dispatch adds is numbered before the arms it enters:
   // an edge into a block numbered lower would be a back edge, which
   // polls in a program that spawns (mir/gc.av), and f has no loop.
-  c.expect(!str_has(ll4, "avant_gc_poll"), "ll-last: no poll in a program without a loop")
+  c.expect(!ll4.contains("avant_gc_poll"), "ll-last: no poll in a program without a loop")
 }
 
 fn test_main(c: Checks) {

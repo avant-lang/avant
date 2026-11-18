@@ -15,8 +15,137 @@ fn churn(rounds: Int) {
   }
 }
 
+// A walk is reachable only through an optional: arr and arr(key) give
+// the elements of an array and nil for any other value, so a handler
+// that sums {"numbers": "many"} learns that numbers is not a list. The
+// walk (iter) used to give an iterator that ended at once on a string,
+// a number, an object or null: a sum of 0, as for an empty list.
+fn sum_numbers(body: String): String {
+  doc = Json.parse(body) ?? return "not JSON"
+  it = doc.arr("numbers") ?? return "not a list"
+  sum = 0
+  n = 0
+  for v in it {
+    sum += v.int() ?? 0
+    n += 1
+  }
+  "${n} numbers, sum ${sum}"
+}
+
+fn json_walks(c: Checks) {
+  c.eq_str(sum_numbers("{\"numbers\": [1, 2, 3]}"), "3 numbers, sum 6", "arr(key) walks an array member")
+  c.eq_str(sum_numbers("{\"numbers\": []}"), "0 numbers, sum 0", "an empty array is an empty walk")
+  c.eq_str(sum_numbers("{\"numbers\": \"many\"}"), "not a list", "arr(key) of a string is nil")
+  c.eq_str(sum_numbers("{\"numbers\": 7}"), "not a list", "arr(key) of a number is nil")
+  c.eq_str(sum_numbers("{\"numbers\": 7.5}"), "not a list", "arr(key) of a float is nil")
+  c.eq_str(sum_numbers("{\"numbers\": {\"a\": 1, \"b\": 2}}"), "not a list", "arr(key) of an object is nil")
+  c.eq_str(sum_numbers("{\"numbers\": null}"), "not a list", "arr(key) of null is nil")
+  c.eq_str(sum_numbers("{\"numbers\": true}"), "not a list", "arr(key) of a Bool is nil")
+  c.eq_str(sum_numbers("{\"count\": [1]}"), "not a list", "arr(key) of a missing member is nil")
+  c.eq_str(sum_numbers("[1, 2]"), "not a list", "arr(key) on an array (no members) is nil")
+  for text in ["\"many\"", "7", "2.5", "{\"a\": [1]}", "null", "false"] {
+    if v = Json.parse(text) {
+      if it = v.arr() {
+        c.expect(false, "arr of ${text} is nil")
+      } else {
+        c.expect(true, "arr of ${text} is nil")
+      }
+    } else {
+      c.expect(false, "parse ${text}")
+    }
+  }
+  if v = Json.parse("[[1, 2], \"x\", [3]]") {
+    it = v.arr() ?? return c.expect(false, "arr of an array")
+    inner = 0
+    lists = 0
+    others = 0
+    for e in it {
+      if sub = e.arr() {
+        lists += 1
+        for x in sub {
+          inner += x.int() ?? 0
+        }
+      } else {
+        others += 1
+      }
+    }
+    c.eq_int(lists, 2, "nested arrays walked")
+    c.eq_int(others, 1, "the string element is not a list")
+    c.eq_int(inner, 6, "nested elements summed")
+  } else {
+    c.expect(false, "parse nested")
+  }
+}
+
+// at(i) and first read an object's members by position, as key_at(i)
+// reads their names: a decoder of an object walks its members by index.
+// They used to be nil on an object, as if it had no members.
+fn json_positions(c: Checks) {
+  doc = Json.parse("{\"a\": 1, \"b\": \"x\", \"c\": [true], \"a\": 2}") ?? return c.expect(false, "positions: parse")
+  got = ""
+  i = 0
+  while i < doc.len() {
+    k = doc.key_at(i) ?? "?"
+    if v = doc.at(i) {
+      got = got + " ${k}=${v.text()}"
+    } else {
+      got = got + " ${k}=nil"
+    }
+    i += 1
+  }
+  c.eq_str(got, " a=1 b=\"x\" c=[true] a=2", "at(i) on an object is member i's value, a repeated name too")
+  if past = doc.at(4) {
+    c.expect(false, "at past an object's last member is nil")
+  } else {
+    c.expect(true, "at past an object's last member is nil")
+  }
+  if neg = doc.at(-1) {
+    c.expect(false, "at(-1) on an object is nil")
+  } else {
+    c.expect(true, "at(-1) on an object is nil")
+  }
+  if head = doc.first() {
+    c.eq_int(head.int() ?? 0, 1, "first on an object is its first member's value")
+  } else {
+    c.expect(false, "first on an object is its first member's value")
+  }
+  for text in ["{}", "[]", "7", "\"s\"", "null"] {
+    if v = Json.parse(text) {
+      if e = v.at(0) {
+        c.expect(false, "at(0) of ${text} is nil")
+      } else {
+        c.expect(true, "at(0) of ${text} is nil")
+      }
+      if f = v.first() {
+        c.expect(false, "first of ${text} is nil")
+      } else {
+        c.expect(true, "first of ${text} is nil")
+      }
+    } else {
+      c.expect(false, "positions: parse ${text}")
+    }
+  }
+}
+
+// A member is found by its name's bytes and size: a name holding a zero
+// byte is not cut at it (by strlen the lookup found "a"). f64 is nil for
+// anything but a number, a missing member included.
+fn json_lookups(c: Checks) {
+  doc = Json.parse("{\"a\\u0000b\": 1, \"a\": 2, \"s\": \"7\", \"i\": 3, \"n\": null}") ?? return c.expect(false, "lookups: parse")
+  c.eq_int(doc.int("a\0b") ?? -1, 1, "a name with a zero byte is found whole")
+  c.eq_int(doc.int("a") ?? -1, 2, "and the shorter name is another member")
+  c.expect((doc.f64("i") ?? -1.0) == 3.0, "f64 of an integer member")
+  c.expect((doc.f64("s") ?? -1.0) == -1.0, "f64 of a string is nil")
+  c.expect((doc.f64("n") ?? -1.0) == -1.0, "f64 of null is nil")
+  c.expect((doc.f64("missing") ?? -1.0) == -1.0, "f64 of a missing member is nil")
+  c.expect((doc.f64() ?? -1.0) == -1.0, "f64 of an object is nil")
+}
+
 fn test_std_json(c: Checks) {
   c.suite("tests/cases/test_std_json.av")
+  json_lookups(c)
+  json_walks(c)
+  json_positions(c)
   if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
     if n = doc.int("n") {
       c.eq_int(n, 7, "int by key")
@@ -113,7 +242,7 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(true, "empty input is an error")
   }
-  built = Json.obj()
+  built = Json.object()
   built.set("n", 7)
   built.set("name", "a\"b\\c\nd")
   built.key("tags").arr().add("x").add("y").end()
@@ -151,7 +280,7 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(false, "first element")
     }
-    it = arr.iter()
+    it = arr.arr() ?? return c.expect(false, "an array has its elements")
     total = 0
     count = 0
     walking = true
@@ -170,27 +299,21 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(true, "iterator stays done")
     }
-    if scalars = arr.f64s("x") {
-      c.expect(false, "f64s on scalar elements is nil")
-    } else {
-      c.expect(true, "f64s on scalar elements is nil")
-    }
   } else {
     c.expect(false, "parse array")
   }
   if objs = Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
-    if xs = objs.f64s("x") {
-      c.eq_int(xs.size, 3, "f64s size")
-      c.eq_int((xs[0] * 10.0).to_i(), 15, "f64s first")
-      c.eq_int((xs[2] * 10.0).to_i(), 30, "f64s last")
-    } else {
-      c.expect(false, "f64s")
+    // A numeric member of every element, by the walk: the general form.
+    it = objs.arr() ?? return c.expect(false, "objects: arr")
+    xs: Array(Float64) = []
+    while e = it.next() {
+      if x = e.f64("x") {
+        xs.push(x)
+      }
     }
-    if badp = objs.f64s("missing") {
-      c.expect(false, "f64s missing key is nil")
-    } else {
-      c.expect(true, "f64s missing key is nil")
-    }
+    c.eq_int(xs.size, 3, "a member of each element")
+    c.eq_int((xs[0] * 10.0).to_i(), 15, "the first element's member")
+    c.eq_int((xs[2] * 10.0).to_i(), 30, "the last element's member")
     if notarr = objs.int() {
       c.expect(false, "int on array is nil")
     } else {
@@ -241,6 +364,88 @@ fn test_json_kinds(c: Checks) {
   }
 }
 
+// A JsonValue is written back by a JsonBuilder (value, add, set): the
+// tree Json.to_value copies out of a document gives the document's text
+// again, an object's members in their order, a repeated name once.
+fn test_json_value_written(c: Checks) {
+  text = "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709551615}"
+  doc = Json.parse(text) ?? return c.expect(false, "value written: parse")
+  v = doc.to_value()
+  b = JsonBuilder.new()
+  b.value(v)
+  c.eq_str(b.to_s(), "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709552000.0}", "to_value written back (an integer beyond Int as its float)")
+  dup = Json.parse("{\"a\":1,\"a\":2}") ?? return c.expect(false, "value written: parse dup")
+  d = JsonBuilder.new()
+  d.value(dup.to_value())
+  c.eq_str(d.to_s(), "{\"a\":1}", "a repeated name written once, with its first value")
+  out = Json.object()
+  item = JsonValue.new()
+  item.kind = JsonKind.str
+  item.str_val = "x"
+  out.set("one", item)
+  out.key("list").arr().add(item).add(v.get("o") ?? item).end()
+  out.end()
+  c.eq_str(out.to_s(), "{\"one\":\"x\",\"list\":[\"x\",{\"k\":\"v\"}]}", "set and add take a JsonValue")
+  hand = JsonValue.new()
+  hand.kind = JsonKind.obj
+  hand.keys.push("gone")
+  h = JsonBuilder.new()
+  h.value(hand)
+  c.eq_str(h.to_s(), "{\"gone\":null}", "a name in keys without a member is null")
+}
+
+// JsonValue's object members: a Hash by name, their names in the
+// document's order; a repeated name keeps its first value.
+fn test_json_members(c: Checks) {
+  if doc = Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2]}, \"b\": 2, \"z\": \"s\"}") {
+    v = doc.to_value()
+    c.eq_int(v.keys.size, 3, "members: one name each")
+    c.eq_str("${v.keys[0]}${v.keys[1]}${v.keys[2]}", "baz", "members: the document's order")
+    c.eq_int(v.members.size, 3, "members: a Hash by name")
+    if b = v.get("b") {
+      c.eq_int(b.int_val, 1, "members: a repeated name keeps its first value")
+    } else {
+      c.expect(false, "members: get b")
+    }
+    if a = v.members["a"], cs = a.members["c"] {
+      c.eq_int(cs.arr.size, 2, "members: a nested object's member")
+    } else {
+      c.expect(false, "members: the nested object")
+    }
+    if gone = v.get("missing") {
+      c.expect(false, "members: a missing name is nil")
+    }
+  } else {
+    c.expect(false, "members: parse")
+  }
+  text = Buf.new()
+  text.push_str("{")
+  i = 0
+  while i < 3000 {
+    if i > 0 {
+      text.push_str(",")
+    }
+    text.push_str("\"k${i}\": ${i}")
+    i += 1
+  }
+  text.push_str("}")
+  if big = Json.parse(text.to_s()) {
+    v = big.to_value()
+    sum = 0
+    i = 0
+    while i < 3000 {
+      if m = v.get("k${i}") {
+        sum += m.int_val
+      }
+      i += 1
+    }
+    c.eq_int(sum, 4498500, "members: 3000 names found by the Hash")
+    c.eq_str(v.keys[2999], "k2999", "members: the last name last")
+  } else {
+    c.expect(false, "members: parse the large object")
+  }
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -249,5 +454,7 @@ fn main: Int {
   c.started = now_ms()
   test_std_json(c)
   test_json_kinds(c)
+  test_json_members(c)
+  test_json_value_written(c)
   c.finish()
 }

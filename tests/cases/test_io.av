@@ -124,7 +124,7 @@ fn leave_cases(xs: Array(IoCase)) {
 
 fn input_cases(xs: Array(IoCase)) {
   loop = "fn main {\n  while true {\n    line = read_line() else e {\n      if err = e {\n        eputs(err.message())\n        exit(1)\n      }\n      break\n    }\n    puts(\"[\${line}]\")\n  }\n  puts(\"end\")\n}\n"
-  xs.push(with_input(accepted("read-while", "fn main {\n  n = 0\n  while line = read_line() {\n    n += 1\n    print(line)\n  }\n  puts(n)\n}\n", "abc3\n"), "a\nb\nc\n"))
+  xs.push(with_input(accepted("read-while", "fn main {\n  n = 0\n  while line = read_line() {\n    n += 1\n    print(line)\n  } else e {\n    if err = e {\n      eputs(err.message())\n    }\n  }\n  puts(n)\n}\n", "abc3\n"), "a\nb\nc\n"))
   xs.push(with_input(accepted("read-lines", loop, "[one]\n[two]\n[]\n[three]\nend\n"), "one\ntwo\r\n\nthree"))
   xs.push(with_input(accepted("read-empty", loop, "end\n"), ""))
   xs.push(accepted("read-devnull", "fn main {\n  if line = read_line() {\n    puts(\"got\")\n  } else {\n    puts(\"none\")\n  }\n}\n", "none\n"))
@@ -133,7 +133,7 @@ fn input_cases(xs: Array(IoCase)) {
   dir.stdin_dir = true
   xs.push(dir)
   // A file read line by line: it closes itself at its end; close stops it.
-  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = file_open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = file_write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = file_open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close()\n  puts(r.read_line() ?? \"closed\")\n  r.close()\n  puts(r.path)\n  w = file_open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\n", "6\nab\nclosed\nfl.txt\n4\ndone\n"))
+  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = file_open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = file_write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = file_open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close()\n  puts(r.read_line() ?? \"closed\")\n  r.close()\n  puts(r.path)\n  w = file_open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  } else e {\n    if err = e {\n      puts(err)\n    } else {\n      puts(\"end\")\n    }\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\n", "6\nab\nclosed\nfl.txt\nend\n4\ndone\n"))
   xs.push(accepted("file-open-errors", "fn main {\n  if r = file_open(\"no-such.txt\") {\n    puts(\"opened\")\n  } else e {\n    puts(\"\${e}\")\n  }\n  if r = file_open(\".\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.message())\n    puts(e.op)\n  }\n}\n", "cannot open no-such.txt: No such file or directory\ncannot open .: Is a directory\nopen\n"))
   xs.push(refused("read-line-dropped", "fn main {\n  read_line()\n}\n", "this statement drops a value that can be an error (Nil | IoError | String)", "2:3"))
 }
@@ -155,7 +155,21 @@ fn process_cases(xs: Array(IoCase)) {
   xs.push(accepted("output-large", "fn main {\n  r = process_output(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero; head -c 2000000 /dev/zero >&2; cat > /dev/null\"], \"x\") ?? return\n  puts(r.stdout.size)\n  puts(r.stderr.size)\n  b = buf_new()\n  for i in 0..200000 {\n    b.push_str(\"line \${i}\\n\")\n  }\n  w = process_output(\"wc\", [\"-l\"], b.to_s()) ?? return\n  puts(w.stdout)\n}\n", "3000000\n2000000\n200000\n\n"))
   xs.push(accepted("output-input-unread", "fn main {\n  b = buf_new()\n  for i in 0..100000 {\n    b.push_str(\"0123456789\")\n  }\n  r = process_output(\"sh\", [\"-c\", \"exit 5\"], b.to_s()) ?? return\n  puts(r.status)\n  puts(\"alive\")\n}\n", "5\nalive\n"))
   xs.push(accepted("output-errors", "fn main {\n  if r = process_output(\"no-such-program-xyz\", []) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.errno > 0)\n  }\n  if r = process_output(\"sh\", [\"-c\", \"kill -9 $$\"]) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.signal)\n  }\n  st = process_output(\"sh\", [\"-c\", \"exit 127\"]) ?? return\n  puts(st.status)\n}\n", "cannot run no-such-program-xyz: No such file or directory\ntrue\nsh killed by signal 9 (Killed)\n9\n127\n"))
+  xs.push(accepted("output-into", "fn main {\n  out = buf_new()\n  err = buf_new()\n  out.push_str(\">\")\n  st = process_output_into(\"sh\", [\"-c\", \"echo one; echo two >&2; exit 4\"], out, err) ?? -1\n  puts(st)\n  print(out.to_s())\n  print(err.to_s())\n  st2 = process_output_into(\"tr\", [\"a-z\", \"A-Z\"], out, err, \"again\\n\") ?? -1\n  puts(st2)\n  print(out.to_s())\n  out.clear()\n  err.clear()\n  for i in 0..3 {\n    _ = process_output_into(\"sh\", [\"-c\", \"printf x\"], out, err)\n  }\n  puts(out.to_s())\n  big = process_output_into(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero\"], out, err) ?? -1\n  puts(big)\n  puts(out.size)\n  if r = process_output_into(\"no-such-program-xyz\", [], out, err) {\n    puts(r)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "4\n>one\ntwo\n0\n>one\nAGAIN\nxxx\n0\n3000003\ncannot run no-such-program-xyz: No such file or directory\n"))
+  xs.push(accepted("reader-scoped", "fn first(path: String): String {\n  got = \"none\"\n  r = file_open(path) ?? return \"missing\"\n  r.scoped((f) {\n    got = f.read_line() ?? \"empty\"\n  })\n  puts(r.read_line() ?? \"closed\")\n  got\n}\nfn main {\n  _ = file_write(\"sc.txt\", \"alpha\\nbeta\\n\")\n  puts(first(\"sc.txt\"))\n  puts(first(\"nope.txt\"))\n  n = 0\n  for i in 0..3000 {\n    r = file_open(\"sc.txt\") ?? return\n    r.scoped((f) {\n      if line = f.read_line() {\n        n += line.size\n      }\n    })\n  }\n  puts(n)\n}\n", "closed\nalpha\nmissing\n15000\n"))
   xs.push(refused("output-dropped", "fn main {\n  process_output(\"true\", [])\n}\n", "this statement drops a value that can be an error (ProcessError | ProcessOutput)", "2:3"))
+}
+
+fn loop_cases(xs: Array(IoCase)) {
+  xs.push(accepted("loop-else-error", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn main {\n  i = 0\n  while v = next(i) {\n    puts(v)\n    i += 1\n  } else e {\n    if err = e {\n      puts(\"ended: \${err}\")\n    } else {\n      puts(\"ended: at the end\")\n    }\n  }\n  i = 4\n  while v = next(i) {\n    puts(v)\n    i += 1\n  } else e {\n    if err = e {\n      puts(\"ended: \${err}\")\n    } else {\n      puts(\"ended: at the end\")\n    }\n  }\n}\n", "0\n1\n2\nended: bad\n4\nended: at the end\n"))
+  xs.push(accepted("loop-else-break-skips", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn main {\n  i = 0\n  while v = next(i) {\n    if v == 1 {\n      break\n    }\n    i += 1\n  } else e {\n    puts(\"never\")\n  }\n  puts(i)\n}\n", "1\n"))
+  xs.push(accepted("loop-else-return", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn sum: Int | Bad {\n  i = 0\n  n = 0\n  while v = next(i) {\n    n += v\n    i += 1\n  } else e {\n    if err = e {\n      return err\n    }\n  }\n  n\n}\nfn main {\n  puts(sum() ?? -1)\n}\n", "-1\n"))
+  xs.push(accepted("loop-optional-no-else", "fn main {\n  xs: Array(Int?) = [1, 2, nil, 4]\n  i = 0\n  n = 0\n  while v = xs[i] {\n    n += v\n    i += 1\n  }\n  puts(n)\n}\n", "3\n"))
+  xs.push(refused("loop-drops-error", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn main {\n  i = 0\n  while v = next(i) {\n    i += 1\n  }\n}\n", "this while would end silently when the value is an error (Bad)", "15:13"))
+  xs.push(refused("loop-chain-drops-error", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn main {\n  i = 0\n  while a = next(i), b = next(i + 1) {\n    i += 1\n  }\n}\n", "this while would end silently when the value is an error (Bad)", "15:13"))
+  xs.push(refused("loop-else-nil-only", "fn main {\n  xs: Array(Int?) = [1]\n  i = 0\n  while v = xs[i] {\n    i += 1\n  } else e {\n    puts(i)\n  }\n}\n", "the loop ends at it by itself: leave the else out", "4:15"))
+  xs.push(refused("loop-else-unnamed", "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn next(i: Int): Int | Bad | Nil {\n  if i == 3 {\n    return Bad.new()\n  }\n  if i == 5 {\n    return nil\n  }\n  i\n}\nfn main {\n  i = 0\n  while v = next(i) {\n    i += 1\n  } else {\n    puts(i)\n  }\n}\n", "a while's else names the failure it reads", "17:10"))
+  xs.push(refused("read-line-loop-drops", "fn main {\n  while line = read_line() {\n    puts(line)\n  }\n}\n", "this while would end silently when the value is an error (IoError)", "2:16"))
 }
 
 fn cases: Array(IoCase) {
@@ -166,6 +180,7 @@ fn cases: Array(IoCase) {
   exit_cases(xs)
   leave_cases(xs)
   input_cases(xs)
+  loop_cases(xs)
   fs_cases(xs)
   process_cases(xs)
   xs
@@ -222,16 +237,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
       c.eq_str(log_text("${dir}/io-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       if !f3.merged {
         err = log_text("${dir}/io-${f3.tag}.run.err")
-        if f3.status == 1 && f3.err.size > 0 && !str_has(f3.err, "\n") {
-          c.expect(str_has(err, f3.err) && str_has(err, "io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
+        if f3.status == 1 && f3.err.size > 0 && !f3.err.contains("\n") {
+          c.expect(err.contains(f3.err) && err.contains("io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
         } else {
           c.eq_str(err, f3.err, "${f3.tag}: stderr")
         }
       }
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }

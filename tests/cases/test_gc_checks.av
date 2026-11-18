@@ -161,7 +161,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   if outer.size > 0 {
     c.skip("churn.av under AVANT_NURSERY=0: nothing remembered", "outer ${outer}")
   } else {
-    c.expect(str_has(stats, " rem_adds=0 ") && str_has(stats, " rem_now=0 "), "churn.av under AVANT_NURSERY=0: nothing remembered (rem_adds=0, rem_now=0)")
+    c.expect(stats.contains(" rem_adds=0 ") && stats.contains(" rem_now=0 "), "churn.av under AVANT_NURSERY=0: nothing remembered (rem_adds=0, rem_now=0)")
   }
   e = 0
   while e < senvs.size {
@@ -172,7 +172,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   }
   lr = runs[progs.size + 1 + senvs.size]
   c.expect(lr.code != 0, "limit_region.av under AVANT_HEAP_MAX_MB=4: fails")
-  c.expect(str_has(log_text("${dir}/limit_region.l.err"), "avant runtime: heap limit in a no-GC region (in main)\n"), "limit_region.av under AVANT_HEAP_MAX_MB=4: heap limit in a no-GC region, named by its function")
+  c.expect(log_text("${dir}/limit_region.l.err").contains("avant runtime: heap limit in a no-GC region (in main)\n"), "limit_region.av under AVANT_HEAP_MAX_MB=4: heap limit in a no-GC region, named by its function")
   e = 0
   while e < tenvs.size {
     tr = runs[progs.size + 2 + senvs.size + e]
@@ -282,7 +282,7 @@ fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[b * 3 + 1].code, 0, "${what} under AVANT_GC_STRESS=1: exit 0")
     c.eq_int(runs[b * 3 + 2].code, 0, "${what} under AVANT_GC_VERIFY=1: exit 0")
     c.eq_str(log_text("${dir}/${what}.verify.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_VERIFY=1: the known stdout")
-    c.expect(!str_has(log_text("${dir}/${what}.verify.err"), "avant gc verify"), "${what} under AVANT_GC_VERIFY=1: the verifier is silent")
+    c.expect(!log_text("${dir}/${what}.verify.err").contains("avant gc verify"), "${what} under AVANT_GC_VERIFY=1: the verifier is silent")
     c.eq_str(log_text("${dir}/${what}.plain.out"), "stress_inline: 0 bad\n", "${what}: the known stdout")
     c.eq_str(log_text("${dir}/${what}.stress.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_STRESS=1: the known stdout")
     c.eq_int(stat_value(plain, "alloc"), 1440000, "${what}: 40,000 allocations of generated code and no other (1,440,000 bytes)")
@@ -334,8 +334,8 @@ fn test_empty_end(c: Checks, compiler: String, root: String, dir: String) {
   }
   clean = log_text("${dir}/empty_end.clean.out")
   c.eq_int(runs[envs.size].code, 0, "empty_end.av, every collector variable unset: exit 0")
-  c.expect(str_has(clean, "empty_end: 0 bad\n"), "empty_end.av, every collector variable unset: 0 bad")
-  c.expect(str_has(clean, "\nreached ") && !str_has(clean, "\nreached 0,"), "empty_end.av, every collector variable unset: the position is reached (one word left in the last block of the highest chunk)")
+  c.expect(clean.contains("empty_end: 0 bad\n"), "empty_end.av, every collector variable unset: 0 bad")
+  c.expect(clean.contains("\nreached ") && !clean.contains("\nreached 0,"), "empty_end.av, every collector variable unset: the position is reached (one word left in the last block of the highest chunk)")
 }
 
 // The field rule and its check.
@@ -376,7 +376,7 @@ fn test_field_rule(c: Checks, compiler: String, root: String, dir: String) {
   for e in 0..brks.size {
     err = log_text("${dir}/field_rule.b${e}.err")
     c.expect(runs[envs.size + e].code != 0, "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the program stops")
-    c.expect(str_has(err, "avant gc verify: field rule: holder ") && str_has(err, "an address inside object "), "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the verifier names the rule and the holder")
+    c.expect(err.contains("avant gc verify: field rule: holder ") && err.contains("an address inside object "), "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the verifier names the rule and the holder")
     c.eq_str(log_text("${dir}/field_rule.b${e}.out"), "", "field_rule.av, a field holding an address inside an object, under ${brks[e]}: stopped before the collection ended")
   }
 }
@@ -456,13 +456,13 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
   for e in 0..brks.size {
     err = log_text("${dir}/rem_invariant.b${e}.err")
     c.eq_str(log_text("${dir}/rem_invariant.b${e}.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under ${brks[e]}: the trace still reaches the field (a root names the holder)")
-    c.expect(str_has(err, "avant gc verify: missing barrier: holder ") && str_has(err, "not remembered"), "rem_invariant.av, a store with no barrier, under ${brks[e]}: the verifier reports the holder that is not remembered")
+    c.expect(err.contains("avant gc verify: missing barrier: holder ") && err.contains("not remembered"), "rem_invariant.av, a store with no barrier, under ${brks[e]}: the verifier reports the holder that is not remembered")
   }
   c.eq_str(log_text("${dir}/rem_invariant.n0.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: the same output")
   c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
   warm_err = log_text("${dir}/rem_invariant.warm.err")
   c.eq_str(log_text("${dir}/rem_invariant.warm.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier after 300 young collections, under AVANT_GC_VERIFY=1: the same output")
-  c.expect(str_has(warm_err, "avant gc verify: missing barrier: holder ") && str_has(warm_err, "not remembered"), "rem_invariant.av, a store with no barrier after the verifier's warm-up: its incremental check finds the holder")
+  c.expect(warm_err.contains("avant gc verify: missing barrier: holder ") && warm_err.contains("not remembered"), "rem_invariant.av, a store with no barrier after the verifier's warm-up: its incremental check finds the holder")
 }
 
 // A C function's `String` result that
@@ -629,7 +629,7 @@ fn test_stall_clock(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(runs[0].code, 0, "stall.av under a wall clock an hour ahead: exit 0")
   c.eq_str(log_text("${dir}/stall_clock.ahead.out"), "collected; the task blocked 1500 ms\n", "stall.av under a wall clock an hour ahead: the known stdout")
   err = log_text("${dir}/stall_clock.ahead.err")
-  c.expect(str_has(err, "avant gc verify: a collection has waited 0.3 s for thread ") && str_has(err, "(the collection keeps waiting)"), "stall.av under a wall clock an hour ahead and a 0.3 s bound: the handshake's report comes at 0.3 s (its deadline is on CLOCK_MONOTONIC)")
+  c.expect(err.contains("avant gc verify: a collection has waited 0.3 s for thread ") && err.contains("(the collection keeps waiting)"), "stall.av under a wall clock an hour ahead and a 0.3 s bound: the handshake's report comes at 0.3 s (its deadline is on CLOCK_MONOTONIC)")
 }
 
 // A stress collection that finds no

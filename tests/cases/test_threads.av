@@ -30,11 +30,7 @@ fn run_env_args(bin: String, name: String, value: String, args: Array(String), l
   full: Array(String) = []
   full.push("${name}=${value}")
   full.push(bin)
-  i = 0
-  while i < args.size {
-    full.push(args[i])
-    i += 1
-  }
+  full.concat(args)
   process_run_out("/usr/bin/env", full, log) ?? -1
 }
 
@@ -68,40 +64,43 @@ fn test_threads(c: Checks) {
       c.expect(false, "read plain run")
     }
 
-    // Space spelling: flag removed from argv, count is the flag value.
+    // --avant-threads=N: the flag removed from argv, the count its value.
     log2 = "${scratch()}/threads-${stamp}.run2"
     a2: Array(String) = []
-    a2.push("--threads")
-    a2.push("3")
+    a2.push("--avant-threads=3")
     a2.push("alpha")
     rc2 = run_args(bin, a2, log2)
-    c.eq_int(rc2, 0, "space flag run exits")
+    c.eq_int(rc2, 0, "--avant-threads run exits")
     if out2 = file_read(log2) {
-      c.expect(!has_sub(out2, "--threads"), "space flag removed from argv")
-      c.expect(has_sub(out2, "alpha"), "program arg survives space flag")
-      c.expect(has_sub(out2, "\n3\n"), "chosen count is the space flag value")
+      c.expect(!has_sub(out2, "avant-threads"), "--avant-threads removed from argv")
+      c.expect(has_sub(out2, ",alpha\n"), "program arg survives --avant-threads")
+      c.expect(has_sub(out2, "\n3\n"), "chosen count is the --avant-threads value")
     } else {
-      c.expect(false, "read space flag run")
+      c.expect(false, "read --avant-threads run")
     }
 
-    // Equals spelling: same behavior, one implementation.
+    // --threads, in both spellings, is the program's: it reaches argv()
+    // unchanged and sets nothing.
     log3 = "${scratch()}/threads-${stamp}.run3"
     a3: Array(String) = []
+    a3.push("--threads")
+    a3.push("3")
     a3.push("--threads=4")
     rc3 = run_args(bin, a3, log3)
-    c.eq_int(rc3, 0, "equals flag run exits")
+    c.eq_int(rc3, 0, "--threads run exits")
     if out3 = file_read(log3) {
-      c.expect(!has_sub(out3, "--threads"), "equals flag removed from argv")
-      c.expect(has_sub(out3, "\n4\n"), "chosen count is the equals flag value")
+      c.expect(has_sub(out3, ",--threads,3,--threads=4\n"), "--threads reaches argv unchanged: ${out3}")
+      lines3 = out3.split("\n")
+      c.expect(lines3.size >= 2 && default_count.size > 0 && lines3[1] == default_count, "--threads does not set the count")
     } else {
-      c.expect(false, "read equals flag run")
+      c.expect(false, "read --threads run")
     }
 
-    // The flag is used when AVANT_THREADS is set too.
+    // AVANT_THREADS is not read: the flag decides with it set, and
+    // without the flag the count stays the machine default.
     log4 = "${scratch()}/threads-${stamp}.run4"
     a4: Array(String) = []
-    a4.push("--threads")
-    a4.push("2")
+    a4.push("--avant-threads=2")
     rc4 = run_env_args(bin, "AVANT_THREADS", "7", a4, log4)
     c.eq_int(rc4, 0, "precedence run exits")
     if out4 = file_read(log4) {
@@ -109,9 +108,6 @@ fn test_threads(c: Checks) {
     } else {
       c.expect(false, "read precedence run")
     }
-
-    // AVANT_THREADS is removed: it is not read, so the count
-    // stays the machine default and a malformed value is no error.
     log5 = "${scratch()}/threads-${stamp}.run5"
     a5: Array(String) = []
     rc5 = run_env_args(bin, "AVANT_THREADS", "6", a5, log5)
@@ -126,35 +122,115 @@ fn test_threads(c: Checks) {
     rc5b = run_env_args(bin, "AVANT_THREADS", "abc", a5, log5b)
     c.eq_int(rc5b, 0, "a malformed AVANT_THREADS is ignored")
 
-    // Malformed values die loudly (nonzero exit).
-    log6 = "${scratch()}/threads-${stamp}.run6"
-    a6: Array(String) = []
-    a6.push("--threads")
-    a6.push("0")
-    rc6 = run_args(bin, a6, log6)
-    c.expect(rc6 != 0, "zero threads is rejected")
-    log7 = "${scratch()}/threads-${stamp}.run7"
-    a7: Array(String) = []
-    a7.push("--threads=abc")
-    rc7 = run_args(bin, a7, log7)
-    c.expect(rc7 != 0, "non-numeric threads is rejected")
+    // A bad value is one line on stderr and status 1, before main runs.
+    bad = ["--avant-threads=0", "--avant-threads=abc", "--avant-threads=", "--avant-threads=-2", "--avant-threads=1025", "--avant-threads=4x", "--avant-threads"]
+    for arg in bad {
+      bl = "${scratch()}/threads-${stamp}.bad"
+      ba: Array(String) = []
+      ba.push("-c")
+      ba.push("${bin} '${arg}' 2>&1")
+      brc = run_args("/bin/sh", ba, bl)
+      c.eq_int(brc, 1, "${arg} is refused with status 1")
+      if bo = file_read(bl) {
+        c.eq_str(bo, "avant runtime: ${arg}: the thread pool's size is --avant-threads=N, N from 1 to 1024\n", "${arg}'s message")
+      } else {
+        c.expect(false, "read ${arg} run")
+      }
+    }
+    // The bounds themselves are taken.
+    for ok in ["1", "1024"] {
+      ol = "${scratch()}/threads-${stamp}.ok${ok}"
+      oa: Array(String) = []
+      oa.push("--avant-threads=${ok}")
+      orc = run_args(bin, oa, ol)
+      c.eq_int(orc, 0, "--avant-threads=${ok} is taken")
+      if oo = file_read(ol) {
+        c.expect(has_sub(oo, "\n${ok}\n"), "--avant-threads=${ok} sets the count")
+      } else {
+        c.expect(false, "read --avant-threads=${ok}")
+      }
+    }
 
     // After a literal -- the flag is program data, not ours.
     log8 = "${scratch()}/threads-${stamp}.run8"
     a8: Array(String) = []
     a8.push("--")
-    a8.push("--threads")
-    a8.push("9")
+    a8.push("--avant-threads=9")
     rc8 = run_args(bin, a8, log8)
     c.eq_int(rc8, 0, "dashdash run exits")
     if out8 = file_read(log8) {
-      c.expect(has_sub(out8, "--threads"), "flag after -- stays in argv")
+      c.expect(has_sub(out8, "--avant-threads=9"), "flag after -- stays in argv")
       c.expect(!has_sub(out8, "\n9\n"), "flag after -- does not set the count")
     } else {
       c.expect(false, "read dashdash run")
     }
 
-    // Without --threads the count is the CPUs the
+    // std.sync's set_pool_size: a program with its own --threads option
+    // passes the number on; pool_size() reads it back and the bound
+    // holds (twelve tasks that wait, at most N at once).
+    pbin = "${scratch()}/threads-${stamp}.pool"
+    pcode = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/pool_size.av", pbin, "${scratch()}/threads-${stamp}.plog")
+    c.eq_int(pcode, 0, "compile pool_size fixture")
+    for n in [1, 2] {
+      pl = "${scratch()}/threads-${stamp}.p${n}"
+      pa: Array(String) = []
+      pa.push("--threads")
+      pa.push("${n}")
+      prc = run_args(pbin, pa, pl)
+      c.eq_int(prc, 0, "set_pool_size(${n}) run exits")
+      if po = file_read(pl) {
+        lines = po.split("\n")
+        c.expect(lines.size >= 2 && lines[0] == "${n}", "pool_size() is ${n} after set_pool_size(${n}): ${po}")
+        if lines.size >= 2 {
+          most = str_slice(lines[1], 13, lines[1].size).to_i() ?? 0
+          c.expect(most >= 1 && most <= n, "set_pool_size(${n}): at most ${n} tasks at once, got ${most}")
+        }
+      } else {
+        c.expect(false, "read set_pool_size(${n})")
+      }
+    }
+    // The program's set wins over --avant-threads=N (it runs later).
+    pwl = "${scratch()}/threads-${stamp}.pw"
+    pwa: Array(String) = []
+    pwa.push("--avant-threads=5")
+    pwa.push("--threads")
+    pwa.push("1")
+    pwrc = run_args(pbin, pwa, pwl)
+    c.eq_int(pwrc, 0, "set_pool_size over --avant-threads exits")
+    if pwo = file_read(pwl) {
+      c.expect(has_sub(pwo, "1\nmost at once 1\n"), "set_pool_size runs after the flag: ${pwo}")
+    } else {
+      c.expect(false, "read set_pool_size over --avant-threads")
+    }
+    // After the pool started the size is fixed: a set traps.
+    pal = "${scratch()}/threads-${stamp}.pafter"
+    paa: Array(String) = []
+    paa.push("-c")
+    paa.push("${pbin} after 2>&1")
+    parc = run_args("/bin/sh", paa, pal)
+    c.eq_int(parc, 1, "set_pool_size after the pool started traps")
+    if pao = file_read(pal) {
+      c.expect(has_sub(pao, "set_pool_size(3) after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when Http.listen without loops: takes its loop count from it"), "the after-start trap names the rule: ${pao}")
+      c.expect(!has_sub(pao, "not reached"), "the program stops at the late set")
+    } else {
+      c.expect(false, "read set_pool_size after start")
+    }
+    // A size out of range traps.
+    for n in ["0", "1025"] {
+      prl = "${scratch()}/threads-${stamp}.prange"
+      pra: Array(String) = []
+      pra.push("-c")
+      pra.push("${pbin} range ${n} 2>&1")
+      prrc = run_args("/bin/sh", pra, prl)
+      c.eq_int(prrc, 1, "set_pool_size(${n}) traps")
+      if pro = file_read(prl) {
+        c.expect(has_sub(pro, "set_pool_size(${n}): the thread pool's size is from 1 to 1024"), "set_pool_size(${n})'s trap: ${pro}")
+      } else {
+        c.expect(false, "read set_pool_size(${n})")
+      }
+    }
+
+    // Without --avant-threads the count is the CPUs the
     // process may use, its affinity mask: under `taskset -c 0` one, under
     // `taskset -c 0-3` four (on a machine with four CPUs or more); the flag
     // still wins. Before, it was the online processors whatever the mask.
@@ -188,13 +264,13 @@ fn test_threads(c: Checks) {
     tfa.push("-c")
     tfa.push("0")
     tfa.push(bin)
-    tfa.push("--threads=3")
+    tfa.push("--avant-threads=3")
     tfrc = run_args("/usr/bin/taskset", tfa, tfl)
-    c.eq_int(tfrc, 0, "taskset with --threads exits")
+    c.eq_int(tfrc, 0, "taskset with --avant-threads exits")
     if tfo = file_read(tfl) {
-      c.expect(has_sub(tfo, "\n3\n"), "--threads wins over the affinity mask")
+      c.expect(has_sub(tfo, "\n3\n"), "--avant-threads wins over the affinity mask")
     } else {
-      c.expect(false, "read taskset with --threads")
+      c.expect(false, "read taskset with --avant-threads")
     }
 
     // As many consumers as the
@@ -202,21 +278,20 @@ fn test_threads(c: Checks) {
     // waiting task lets the pool start one more worker, so the program
     // ends (it hung before). Under /usr/bin/timeout 10: 124 is a hang.
     wbin = "${scratch()}/threads-${stamp}.waiters"
-    wcode = compile_av(compiler, "tests/fixtures/threads/waiters.av", wbin, "${scratch()}/threads-${stamp}.wlog")
+    wcode = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/waiters.av", wbin, "${scratch()}/threads-${stamp}.wlog")
     c.eq_int(wcode, 0, "compile waiters fixture")
     for pool in [1, 2, 4, 16] {
       wl = "${scratch()}/threads-${stamp}.w${pool}"
       wa: Array(String) = []
       wa.push("10")
       wa.push(wbin)
-      wa.push("--threads")
-      wa.push("${pool}")
+      wa.push("--avant-threads=${pool}")
       wrc = run_args("/usr/bin/timeout", wa, wl)
-      c.eq_int(wrc, 0, "waiters with --threads ${pool} end")
+      c.eq_int(wrc, 0, "waiters with --avant-threads=${pool} end")
       if wo = file_read(wl) {
-        c.eq_str(wo, "true\ntrue\n", "waiters with --threads ${pool}: every value received, every lock taken")
+        c.eq_str(wo, "true\ntrue\n", "waiters with --avant-threads=${pool}: every value received, every lock taken")
       } else {
-        c.expect(false, "read waiters --threads ${pool}")
+        c.expect(false, "read waiters --avant-threads=${pool}")
       }
     }
     // Past the pool's thread limit the program is told (the limit lowered
@@ -229,13 +304,12 @@ fn test_threads(c: Checks) {
     la.push("3")
     la.push(wbin)
     la.push("3")
-    la.push("--threads")
-    la.push("1")
+    la.push("--avant-threads=1")
     lrc = run_args("/usr/bin/env", la, ll)
     c.eq_int(lrc, 124, "waiters past the thread limit wait (timeout ends them)")
     if lo = file_read(ll) {
       c.expect(has_sub(lo, "avant runtime: tasks are queued while the pool's 2 threads are all taken, some by tasks waiting on a Channel or a Mutex, and the pool starts no more (its limit is 2 threads)"), "the limit's message names the limit")
-      c.expect(has_sub(lo, "--threads N bounds the tasks that run at once"), "the limit's message names --threads")
+      c.expect(has_sub(lo, "--avant-threads=N bounds the tasks that run at once"), "the limit's message names --avant-threads")
     } else {
       c.expect(false, "read waiters past the limit")
     }

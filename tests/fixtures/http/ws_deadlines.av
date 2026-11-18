@@ -28,12 +28,12 @@ fn main: Int {
   }
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    server.websocket("/silent") { |conn, msg|
-    }
-    server.get("/__stop") { |req|
+    server.websocket("/silent", (conn, msg) {
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     client = spawn {
       if conn = Ws.connect("ws://127.0.0.1:${port}/silent", 5000) {

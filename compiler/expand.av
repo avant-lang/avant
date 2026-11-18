@@ -282,6 +282,7 @@ pub class Expander {
       out = Stmt.new(st_if(), s.loc)
       out.bind = s.bind
       out.else_bind = s.else_bind
+      out.loop_head = s.loop_head
       if c = s.cond {
         out.cond = fill_expr(c)
       }
@@ -408,6 +409,9 @@ pub class Expander {
           b.param_types[i] = fill_type_name(b.param_types[i])
           i += 1
         }
+        if rt = b.ret_type {
+          b.ret_type = fill_type_name(rt)
+        }
         b.body = fill_stmt_list(b.body)
       }
       return e
@@ -466,8 +470,8 @@ pub class Expander {
       out.field_exprs = fe
       return out
     }
-    if k == ex_array() {
-      out = Expr.new(ex_array(), e.loc)
+    if k == ex_array() || k == ex_hash_lit() {
+      out = Expr.new(k, e.loc)
       i = 0
       while i < e.elems.size {
         out.elems.push(fill_expr(e.elems[i]))
@@ -846,7 +850,7 @@ pub class Expander {
       }
       return
     }
-    if k == ex_array() {
+    if k == ex_array() || k == ex_hash_lit() {
       i = 0
       while i < e.elems.size {
         collect_introduced_expr(e.elems[i], into)
@@ -940,6 +944,7 @@ pub class Expander {
         out.bind = mapped
       }
       out.else_bind = s.else_bind
+      out.loop_head = s.loop_head
       if mapped2 = map.get(s.else_bind) {
         out.else_bind = mapped2
       }
@@ -1025,9 +1030,9 @@ pub class Expander {
       out.args = args
       if b = e.block {
         nb = clone_block(b)
-        for i in 0..nb.params.size {
-          if mapped = map.get(nb.params[i]) {
-            nb.params[i] = mapped
+        for ix in 0..nb.params.size {
+          if mapped = map.get(nb.params[ix]) {
+            nb.params[ix] = mapped
           }
         }
         nb.body = rename_stmt_list(b.body, map)
@@ -1085,8 +1090,8 @@ pub class Expander {
       out.field_exprs = fe
       return out
     }
-    if k == ex_array() {
-      out = Expr.new(ex_array(), e.loc)
+    if k == ex_array() || k == ex_hash_lit() {
+      out = Expr.new(k, e.loc)
       i = 0
       while i < e.elems.size {
         out.elems.push(rename_expr(e.elems[i], map))
@@ -1178,6 +1183,7 @@ pub class Expander {
         n = Stmt.new(st_if(), s.loc)
         n.bind = s.bind
         n.else_bind = s.else_bind
+        n.loop_head = s.loop_head
         n.cond = s.cond
         n.pre = expand_stmt_list(s.pre)
         n.then_body = expand_stmt_list(s.then_body)

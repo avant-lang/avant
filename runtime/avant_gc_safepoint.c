@@ -148,7 +148,7 @@ static void hs_report_stalled(uint64_t waited_ns) {
         gen = f;
         break;
       }
-      if (f->scope & AVANT_GC_SCOPE_OPEN) {
+      if (gc_frame_scope(f) & AVANT_GC_SCOPE_OPEN) {
         above_scope++;
       } else {
         above_c++;
@@ -205,19 +205,12 @@ static int others_running(void) {
   return 0;
 }
 
-int gc_stop_world(void) {
+/* The request is raised by this thread, which then waits until every
+ * other registered thread is at a safepoint or native. Under hs_mu, with
+ * no request raised. */
+static void hs_raise_locked(void) {
   uint64_t t0;
   int others;
-  pthread_mutex_lock(&gc_heap.hs_mu);
-  if (atomic_load(&avant_gc_requested)) {
-    /* Another thread is collecting: stop here until it is done. A thread
-     * that is not registered (no frame yet) cannot be told apart from
-     * the others; it waits too. */
-    hs_wait_locked(GC_SAFEPOINT);
-    atomic_store(&gc_thread.reg.state, GC_RUNNING);
-    pthread_mutex_unlock(&gc_heap.hs_mu);
-    return 0;
-  }
   atomic_store(&avant_gc_requested, 1);
   gc_thread.collector = 1;
   others = gc_heap.threads && (gc_heap.threads != &gc_thread.reg || gc_heap.threads->next);
@@ -239,6 +232,20 @@ int gc_stop_world(void) {
       }
     }
   }
+}
+
+int gc_stop_world(void) {
+  pthread_mutex_lock(&gc_heap.hs_mu);
+  if (atomic_load(&avant_gc_requested)) {
+    /* Another thread is collecting: stop here until it is done. A thread
+     * that is not registered (no frame yet) cannot be told apart from
+     * the others; it waits too. */
+    hs_wait_locked(GC_SAFEPOINT);
+    atomic_store(&gc_thread.reg.state, GC_RUNNING);
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  hs_raise_locked();
   pthread_mutex_unlock(&gc_heap.hs_mu);
   return 1;
 }
@@ -319,19 +326,35 @@ void gc_thread_registered(int foreign) {
     became_shared = 1;
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
-  pthread_mutex_unlock(&gc_heap.hs_mu);
   /* The thread that makes the program shared waits, by a handshake, until
    * the one mutator before it has reached a safepoint: until then that
    * mutator may be inside an allocation without the world lock (the
-   * inline path, avant_alloc's unlocked fast path), which read the shared
-   * flag before it was set; after its safepoint it takes the locked path.
-   * Without this a new thread's first allocation could race with it
-   * (found by the handshake's proof of rule 4: "object too large" under
+   * inline path, avant_alloc's unlocked fast path, avant_alloc_slow's
+   * search for room), which read the shared flag before it was set;
+   * after its safepoint it takes the locked path. Without this a new
+   * thread's first allocation could race with it (found by the
+   * handshake's proof of rule 4: "object too large" under
    * AVANT_GC_VERIFY=1, a corrupted header). While it is stopped its
-   * single-mutator inline state (state 1, whose allocations are
-   * counted from its cursor, without a lock) is cleared: from now on a thread bumps only in a hole
-   * the slow path charged to it. */
-  if (became_shared && gc_stop_world()) {
+   * single-mutator inline state (state 1, whose allocations are counted
+   * from its cursor, without a lock) is cleared and its late start bits
+   * built: from now on a thread bumps only in a hole the slow path
+   * charged to it.
+   *
+   * The request is raised under hs_mu in the same hold that set the
+   * flag, so nothing comes between them. When it was raised after hs_mu
+   * was released, a third thread could register in between (it saw the
+   * flag set, so it did not wait) and allocate under the world lock
+   * while the one mutator was still in its unlocked allocation, both
+   * taking blocks from the same lists; and when that third thread's
+   * collection held the request first, this one stopped for it and
+   * skipped the clearing and the start bits altogether (a thread
+   * registering under the stress mode: about 1 run in 100 of four C
+   * threads calling back at once). */
+  if (became_shared) {
+    hs_raise_locked();
+  }
+  pthread_mutex_unlock(&gc_heap.hs_mu);
+  if (became_shared) {
     gc_alloc_shared_now();
     gc_resume_world();
   }

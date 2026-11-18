@@ -1,5 +1,5 @@
 // Hashes, Buf, and Bytes on the new back end: Hash(String, Int),
-// Hash(String, String), Hash(Int, Int) stores, has_key, get_or, inc
+// Hash(String, String), Hash(Int, Int) stores, has, `h[k] ?? d`, inc
 // (with and without a step), delete, inc_slice, keys, values, size,
 // clear; Buf construction, every push form, starts_with, to_s,
 // to_bytes, index reads and stores (plain and compound), size, clear;
@@ -50,14 +50,14 @@ fn hashes {
   puts(put(h, "three", 3))
   hk("recv", h)["four"] = say("val", 4)
   puts(h.size)
-  puts(h.has_key("two"))
-  puts(h.has_key("nine"))
-  puts(hk("recv2", h).get_or("five", say("dflt", 55)))
-  puts(h.get_or("one", 0))
+  puts(h.has("two"))
+  puts(h.has("nine"))
+  puts(hk("recv2", h)["five"] ?? say("dflt", 55))
+  puts(h["one"] ?? 0)
   puts(h.inc("one"))
   puts(hk("recv3", h).inc("one", say("by", 10)))
   h.delete("two")
-  puts(h.has_key("two"))
+  puts(h.has("two"))
   puts(h.inc_slice("xxonexx", 2, 5))
   puts(join(h.keys().sorted()))
   puts(ints(h.values().sorted()))
@@ -67,8 +67,8 @@ fn hashes {
   s = Hash(String, String).new()
   s["a"] = "alpha"
   s["b"] = "beta"
-  puts(s.get_or("a", "?"))
-  puts(s.get_or("z", "?"))
+  puts(s["a"] ?? "?")
+  puts(s["z"] ?? "?")
   puts(join(s.values().sorted()))
   s.delete("a")
   puts(s.size)
@@ -80,11 +80,11 @@ fn hashes {
     i = i + 1
   }
   puts(m.size)
-  puts(m.get_or(70, -1))
+  puts(m[70] ?? -1)
   puts(m.inc(70, 5))
-  puts(m.has_key(71))
+  puts(m.has(71))
   m.delete(70)
-  puts(m.get_or(70, -1))
+  puts(m[70] ?? -1)
   puts(m.keys().size)
   puts(m.values().sum())
   m.clear()

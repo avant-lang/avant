@@ -96,7 +96,8 @@ fn cases: Array(TCase) {
   xs.push(only("fn-value-overloads", "fn f(n: Int): Int? {\n  n\n}\n\nfn f(s: String): Int {\n  s.size\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int? or fn(String): Int, expected fn(Int): Int: a fn type matches only itself", "10:21"))
   xs.push(only("fn-value-unknown", "fn helper(n: Int): Int {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = nothere\n  puts(g(1))\n}\n", "unknown function nothere", "6:21"))
   // The cascade rule: an expression whose type already failed is not reported again.
-  xs.push(only("casc-for-bytes", "fn main {\n  s = \"abc\"\n  for c in s.bytes {\n    puts(c)\n  }\n}\n", "for needs a range (a..b) or an Array, got Bytes", "3:3"))
+  xs.push(only("casc-for-string", "fn main {\n  s = \"abc\"\n  for c in s {\n    puts(c)\n  }\n}\n", "for needs a range (a..b), an Array or a type with a method next: T?, got String", "3:3"))
+  xs.push(only("casc-for-no-next", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  for v in Box.new() {\n    puts(v.n)\n  }\n}\n", "got Box, which has no method next", "6:3"))
   xs.push(only("casc-for-failed-array", "fn main {\n  xs = nosuch()\n  for x in xs {\n    puts(x.foo)\n  }\n  puts(xs.size + 1)\n}\n", "unknown function nosuch", "2:8"))
   xs.push(only("casc-number-mix", "fn main {\n  pa: Int32 = 1\n  pn = 2\n  px = pa + pn\n  puts(px)\n}\n", "binary operator expects matching types, got Int32 and Int", "4:11"))
   xs.push(only("casc-number-mix-float", "fn main {\n  x = 1.5\n  n = 2\n  puts(x * n)\n}\n", "binary operator expects matching types, got Float64 and Int", "4:10"))
@@ -195,16 +196,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(TCase)) {
       file = "main.av"
     }
     c.expect(jobs[i].code != 0 && !file_exists("${dir}/tm-${f2.tag}.bin"), "${f2.tag}: refused")
-    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
-    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    c.expect(log.contains(f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(log.contains("${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
     if f2.single {
-      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+      c.expect(!log.contains("aborting due to"), "${f2.tag}: one error")
     }
     if f2.also.size > 0 {
-      c.expect(str_has(log, f2.also), "${f2.tag}: also says ${f2.also}")
+      c.expect(log.contains(f2.also), "${f2.tag}: also says ${f2.also}")
     }
     if f2.absent.size > 0 {
-      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+      c.expect(!log.contains(f2.absent), "${f2.tag}: does not say ${f2.absent}")
     }
   }
 }

@@ -27,7 +27,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.45.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.46.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -240,6 +240,11 @@ fi
 # each compiler build 900 s; stdin /dev/null).
 letters() { LETTERS_SEED=$seed LETTERS_TIME_DIR=$out sh tools/letters.sh "$@" < /dev/null; }
 letters runtime > "$out/build-runtime.log" 2>&1 || { fail "runtime build failed (rc=$?)"; finish; }
+# The bind helper is part of the runtime's build, and the suite tests
+# `avant bind`: runtime/build.sh skips it with a notice when llvm-config or
+# libclang is missing, so the gate stops here with that reason rather
+# than in the suite.
+[ -x runtime/build/avant-bind ] || { fail "avant-bind was not built: $(grep 'skipped avant-bind' "$out/build-runtime.log" | tail -n 1 | sed 's/^runtime\/build.sh: //') (build-runtime.log)"; finish; }
 letters b > "$out/build-b.log" 2>&1 || { fail "B build failed (rc=$?)"; finish; }
 
 build_c() {
@@ -255,7 +260,7 @@ suite_pass() {
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
   snap "$out/before-$1"
   # shellcheck disable=SC2086 # $3 holds VAR=value words
-  env -u AVANT_BACKEND $3 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || fail "suite on $1 failed (rc=$rc)"
@@ -366,7 +371,7 @@ gc_pass() {
   : > "$out/fails-$1.txt"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
   # shellcheck disable=SC2086 # $2 holds VAR=value words
-  env -u AVANT_BACKEND TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"
@@ -479,6 +484,17 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     tag=$L
     case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
     echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
+  done
+  # The longest suite pass by its own wall time: with the GC passes
+  # overlapped, the one that bounds their wall (a pass's CPU time can be
+  # the largest while another pass is the longest).
+  for L in $SUITES; do
+    r=$(awk '$1 == "real" { print $2 }' "$out/time-$L.txt" 2>/dev/null)
+    [ -n "$r" ] && printf '%s %s\n' "$r" "$L"
+  done | sort -k1,1 -g -r | head -n 1 | while read -r r L; do
+    tag=$L
+    case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
+    echo "longest pass: suite $tag, real $r s"
   done
   echo "format: $(tail -n 1 "$out/format-check.log" 2>/dev/null) $(ptimes "$out/time-format-check.txt")"
   echo "readme: $(tail -n 2 "$out/readme-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/readme-links.log" 2>/dev/null | tr '\n' ' ')"

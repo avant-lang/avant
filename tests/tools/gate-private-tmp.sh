@@ -31,7 +31,9 @@
 #   5. fallback-gone: an entry is removed from the snapshotted directory
 #      during a pass: the gate fails (the snapshot cannot tell whose it
 #      was), naming the entry;
-#   6. require: GATE_PRIVATE_TMP=require refuses to fall back.
+#   6. require: GATE_PRIVATE_TMP=require refuses to fall back;
+#   7. bind-missing: when the runtime's build skipped avant-bind (its
+#      notice), the gate stops after the runtime with that reason.
 # Prints one line per check, `ok: NAME`, `skip: NAME: why` or
 # `FAIL: NAME: why`, then `done`.
 set -u
@@ -52,6 +54,12 @@ cat > "$fake/tools/letters.sh" <<'STUB'
 case "$1" in --print-seed) echo "$STUB_SEED"; exit 0 ;; esac
 for l in "$@"; do
   case "$l" in b|c-llvm|d-llvm) cp tools/stub-avant "bin/avant-$l" && chmod +x "bin/avant-$l" ;; esac
+  # the runtime: the bind helper, or the build's notice without it
+  if [ "$l" = runtime ]; then
+    mkdir -p runtime/build; rm -f runtime/build/avant-bind
+    if [ "${STUB_NO_BIND:-0}" = 1 ]; then echo "runtime/build.sh: skipped avant-bind: llvm-config-22 not found (avant bind needs llvm-config and libclang)" >&2
+    else printf '#!/bin/sh\n' > runtime/build/avant-bind && chmod +x runtime/build/avant-bind; fi
+  fi
 done
 STUB
 printf '#!/bin/sh\necho "gc-lint: clean (stub)"\n' > "$fake/tools/gc-lint.sh"
@@ -182,4 +190,10 @@ grep -q 'litter: gone-c-llvm-gc-stub_wait_1.tmp has 1 entries' "$w/fb-gone.out/s
 fb require "$w/fb-require.out" GATE_PRIVATE_TMP=require
 rc=$?
 [ $rc -eq 1 ] && grep -q '^GATE FAIL: no private /tmp$' "$w/fb-require.out/summary.txt" 2>/dev/null; say require-refuses $? "status $rc: $(tail -1 "$w/fb-require.out/summary.txt" 2>/dev/null)"
+
+# 7. bind-missing.
+fb bind-missing "$w/fb-bind.out" STUB_NO_BIND=1
+rc=$?
+[ $rc -eq 1 ] && grep -q '^GATE FAIL: avant-bind was not built: skipped avant-bind: llvm-config-22 not found (avant bind needs llvm-config and libclang) (build-runtime.log)$' "$w/fb-bind.out/summary.txt" 2>/dev/null && [ ! -e "$w/fb-bind.out/suite-b.log" ]
+say bind-missing $? "status $rc: $(tail -1 "$w/fb-bind.out/summary.txt" 2>/dev/null)"
 echo done

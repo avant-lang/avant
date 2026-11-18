@@ -3,6 +3,7 @@
 #include "yyjson.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -124,8 +125,8 @@ void *avant_json_parse(const char *s) {
      * dropped. Before, it was allocated mature
      * (avant_alloc_in_mature), so a dropped document waited for a full
      * collection, and with collections at the helpers' own allocations
-     * (RC1) the full trigger fired inside avant_json_f64s while the new
-     * document was still live (Json::ParseMapping 34 -> 90 MB). The
+     * (RC1) the full trigger fired inside a helper that allocated an
+     * array from the document while the new document was still live (Json::ParseMapping 34 -> 90 MB). The
      * bracket also turned a mature-allocating thread's setting off. */
     /* The previous document's pool is usually dead by now: let the due
      * young collection free it before this one exists. */
@@ -197,28 +198,64 @@ avant_int avant_json_kind(void *nodep) {
   return 0;
 }
 
+/* The member named key, by the key's bytes and size (avant_str_bytes):
+ * no strlen at each lookup, and a name holding a zero byte (\u0000 in
+ * JSON) is found whole. */
 void *avant_json_get(void *nodep, const char *key) {
   yyjson_val *v = (yyjson_val *)nodep;
+  const char *k;
+  size_t n;
   if (!v || !key || !yyjson_is_obj(v)) {
     return NULL;
   }
-  return yyjson_obj_get(v, key);
+  k = avant_str_bytes(key, &n);
+  return yyjson_obj_getn(v, k, n);
 }
 
+/* The value of an object's member i, in the document's order (the key
+ * avant_json_key_at gives for i), or NULL past the last member. */
+static yyjson_val *obj_value_at(yyjson_val *v, avant_int i) {
+  yyjson_obj_iter iter = yyjson_obj_iter_with(v);
+  yyjson_val *key;
+  avant_int at = 0;
+  while ((key = yyjson_obj_iter_next(&iter)) != NULL) {
+    if (at == i) {
+      return yyjson_obj_iter_get_val(key);
+    }
+    at++;
+  }
+  return NULL;
+}
+
+/* Element i of an array, or the value of member i of an object. */
 void *avant_json_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
-  if (!v || i < 0 || !yyjson_is_arr(v)) {
+  if (!v || i < 0) {
     return NULL;
   }
-  return yyjson_arr_get(v, (size_t)i);
+  if (yyjson_is_arr(v)) {
+    return yyjson_arr_get(v, (size_t)i);
+  }
+  if (yyjson_is_obj(v)) {
+    return obj_value_at(v, i);
+  }
+  return NULL;
 }
 
+/* The first element of an array, or the first member's value of an
+ * object. */
 void *avant_json_first(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
-  if (!v || !yyjson_is_arr(v)) {
+  if (!v) {
     return NULL;
   }
-  return yyjson_arr_get_first(v);
+  if (yyjson_is_arr(v)) {
+    return yyjson_arr_get_first(v);
+  }
+  if (yyjson_is_obj(v)) {
+    return obj_value_at(v, 0);
+  }
+  return NULL;
 }
 
 /* One sibling step. Only meaningful while a next sibling exists; the
@@ -229,58 +266,6 @@ void *avant_json_next(void *nodep) {
     return NULL;
   }
   return unsafe_yyjson_get_next(v);
-}
-
-typedef struct {
-  void *buf;
-  int32_t size;
-  int32_t cap;
-} AvantArrayBox;
-
-/* One sequential C traversal that projects a numeric field of every
- * element into a collector Array(Float64). NULL with status 1 when the
- * receiver is not an array or any element lacks a numeric field. */
-void *avant_json_f64s(void *nodep, const char *key) {
-  yyjson_val *arr = (yyjson_val *)nodep;
-  yyjson_arr_iter iter;
-  yyjson_val *el;
-  AvantArrayBox *out;
-  double *buf = NULL;
-  size_t n;
-  size_t i = 0;
-  set_status(0);
-  if (!arr || !key || !yyjson_is_arr(arr)) {
-    set_status(1);
-    return NULL;
-  }
-  n = yyjson_arr_size(arr);
-  /* RC1: the node (an interior address of its document's pool), the key
-   * and the fresh array are handles across the allocations. */
-  out = NULL;
-  AVANT_GC_SCOPE(3);
-  AVANT_GC_ROOT(0, &arr);
-  AVANT_GC_ROOT(1, &key);
-  AVANT_GC_ROOT(2, &out);
-  out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
-  avant_size_check((uint64_t)n, AVANT_SIZE_ARRAY);
-  if (n > 0) {
-    buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
-  }
-  avant_barrier(out);
-  out->buf = buf;
-  out->size = (int32_t)n;
-  out->cap = (int32_t)n;
-  iter = yyjson_arr_iter_with(arr);
-  while ((el = yyjson_arr_iter_next(&iter)) != NULL) {
-    yyjson_val *field = yyjson_is_obj(el) ? yyjson_obj_get(el, key) : NULL;
-    if (!field || !yyjson_is_num(field)) {
-      set_status(1);
-      return NULL;
-    }
-    buf[i] = yyjson_get_num(field);
-    i++;
-  }
-  return out;
 }
 
 avant_int avant_json_len(void *nodep) {
@@ -339,15 +324,6 @@ static avant_int node_int(yyjson_val *v) {
   return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
 
-static double node_f64(yyjson_val *v) {
-  if (!v || !yyjson_is_num(v)) {
-    set_status(1);
-    return 0.0;
-  }
-  set_status(0);
-  return yyjson_get_num(v);
-}
-
 static int32_t node_bool(yyjson_val *v) {
   if (!v || !yyjson_is_bool(v)) {
     set_status(1);
@@ -374,12 +350,22 @@ avant_int avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
 }
 
+/* A number's value, or NaN when the node is not a number: the reader
+ * refuses NaN and the infinities (flags 0), so a JSON number is never
+ * NaN, and Json.f64 reads the answer of one call. */
+static double node_f64_or_nan(yyjson_val *v) {
+  if (!v || !yyjson_is_num(v)) {
+    return __builtin_nan("");
+  }
+  return yyjson_get_num(v);
+}
+
 double avant_json_as_f64(void *nodep) {
-  return node_f64((yyjson_val *)nodep);
+  return node_f64_or_nan((yyjson_val *)nodep);
 }
 
 double avant_json_obj_f64(void *nodep, const char *key) {
-  return node_f64((yyjson_val *)avant_json_get(nodep, key));
+  return node_f64_or_nan((yyjson_val *)avant_json_get(nodep, key));
 }
 
 avant_int avant_json_as_bool(void *nodep) {
@@ -454,10 +440,16 @@ int64_t avant_json_error_offset(void) {
   return g_json_err_pos;
 }
 
-/* A JsonBuilder used against its contract:
- * what says how. Printed as a trap (stdout first, status 1). */
+/* A JsonBuilder used against its contract: what says how. A trap: inside
+ * a task or an HTTP handler it fails that task or request alone; anywhere
+ * else stdout is flushed first, then the message, status 1. */
 void avant_json_misuse(const char *what) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: %s\n", what);
-  exit(1);
+  /* The program's String as it is (this call never collects): its bytes
+   * by length, terminated in a buffer as long as a trap's text, then the
+   * trap path. */
+  char text[1024];
+  size_t n;
+  const char *d = avant_str_bytes(what, &n);
+  snprintf(text, sizeof text, "%.*s", (int)(n < sizeof text ? n : sizeof text - 1), d);
+  avant_trap_text(text);
 }

@@ -5,7 +5,7 @@ interface Show {
 }
 
 interface Eq(T) {
-  fn ==(other: T): Bool
+  fn equals(other: T): Bool
 }
 
 interface Enumerable(T) {
@@ -28,11 +28,16 @@ struct Vec: Show + Eq(Vec) {
     "vec"
   }
 
-  fn ==(other: Vec): Bool {
+  fn equals(other: Vec): Bool {
     if x == other.x {
       return y == other.y
     }
     false
+  }
+
+  fn hash(h: Hasher) {
+    h.add(x)
+    h.add(y)
   }
 }
 
@@ -97,15 +102,15 @@ fn both(v: T: Show + Eq(T)): String {
 }
 
 fn sum(b: E: Fold(Int)): Int {
-  b.fold(0) { |acc, x| acc + x }
+  b.fold(0, (acc, x) { acc + x })
 }
 
 fn word(b: E: Fold(String)): String {
-  b.fold("") { |acc, x| x }
+  b.fold("", (acc, x) { x })
 }
 
 fn touch(b: E: Enumerable(Int)): Int {
-  b.each { |x| nil }
+  b.each (x) { nil }
   1
 }
 

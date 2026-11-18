@@ -24,7 +24,7 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
   c.expect(code != 0, "${tag} exits non-zero")
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -56,6 +56,18 @@ fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   mod_fails(c, compiler, dir, "fseen", "fb.helper", "qualified call to a module not imported")
   write_av(dir, "fdup", "fn helper: Int { 1 }\nfn helper: Int { 2 }\nfn main {\n  puts(helper())\n}\n")
   mod_fails(c, compiler, dir, "fdup", "function helper is already defined", "one module defines a name twice")
+}
+
+// A project with one dependency as avant fetch leaves it, written by hand:
+// the manifest names it, the lockfile pins a commit, and deps/NAME is a
+// checkout at that commit (its .git/HEAD alone).
+fn fake_fetched(dir: String, project: String, name: String) {
+  sha = "58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+  git = "https://example.invalid/${name}.git"
+  mkdir_p("${dir}/deps/${name}/.git")
+  _ = file_write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
+  _ = file_write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
+  _ = file_write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
 }
 
 fn test_modules(c: Checks) {
@@ -90,7 +102,7 @@ fn test_modules(c: Checks) {
     c.expect(hide_code != 0, "private helper exits non-zero")
     c.expect(!file_exists(hide_bin), "private helper bin absent")
     if err = file_read(hide_log) {
-      c.expect(str_has(err, "unknown function hidden"), "private helper hidden")
+      c.expect(err.contains("unknown function hidden"), "private helper hidden")
     } else {
       c.expect(false, "private helper hidden")
     }
@@ -104,7 +116,7 @@ fn test_modules(c: Checks) {
     c.expect(cycle_code != 0, "cycle exits non-zero")
     c.expect(!file_exists(cycle_bin), "cycle bin absent")
     if err = file_read(cycle_log) {
-      c.expect(str_has(err, "import cycle"), "import cycle")
+      c.expect(err.contains("import cycle"), "import cycle")
     } else {
       c.expect(false, "import cycle")
     }
@@ -131,7 +143,7 @@ fn test_modules(c: Checks) {
     c.expect(bare_code != 0, "bare Box exits non-zero")
     c.expect(!file_exists(bare_bin), "bare Box bin absent")
     if err = file_read(bare_log) {
-      c.expect(str_has(err, "Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
+      c.expect(err.contains("Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
     } else {
       c.expect(false, "bare Box ambiguous")
     }
@@ -219,7 +231,7 @@ fn test_modules(c: Checks) {
 
     dep_app = "${dir}/depapp"
     mkdir_p("${dep_app}/deps/greeter/http")
-    _ = file_write("${dep_app}/avant.toml", "[package]\nname = \"depapp\"\nversion = \"0.1.0\"\n")
+    fake_fetched(dep_app, "depapp", "greeter")
     _ = file_write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
     _ = file_write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
     _ = file_write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
@@ -248,9 +260,9 @@ fn test_modules(c: Checks) {
     c.expect(sh_code != 0, "shadow exits non-zero")
     c.expect(!file_exists(sh_bin), "shadow bin absent")
     if err = file_read(sh_log) {
-      c.expect(str_has(err, "import vec is ambiguous"), "shadow names both")
-      c.expect(str_has(err, "nest/vec.av"), "shadow beside path")
-      c.expect(str_has(err, "/vec.av"), "shadow manifest path")
+      c.expect(err.contains("import vec is ambiguous"), "shadow names both")
+      c.expect(err.contains("nest/vec.av"), "shadow beside path")
+      c.expect(err.contains("/vec.av"), "shadow manifest path")
     } else {
       c.expect(false, "shadow names both")
     }
@@ -267,7 +279,7 @@ fn test_modules(c: Checks) {
     c.expect(cyc_code != 0, "cross-dir cycle exits non-zero")
     c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
     if err = file_read(cyc_log) {
-      c.expect(str_has(err, "import cycle"), "cross-dir cycle")
+      c.expect(err.contains("import cycle"), "cross-dir cycle")
     } else {
       c.expect(false, "cross-dir cycle")
     }
@@ -284,7 +296,7 @@ fn test_modules(c: Checks) {
     c.expect(tw_code != 0, "two spellings exits non-zero")
     c.expect(!file_exists(tw_bin), "two spellings bin absent")
     if err = file_read(tw_log) {
-      c.expect(str_has(err, "open the same file"), "two spellings")
+      c.expect(err.contains("open the same file"), "two spellings")
     } else {
       c.expect(false, "two spellings")
     }
@@ -323,9 +335,9 @@ fn test_modules(c: Checks) {
     c.expect(both_code != 0, "root and manifest exits non-zero")
     c.expect(!file_exists(both_bin), "root and manifest bin absent")
     if err = file_read(both_log) {
-      c.expect(str_has(err, "import vec is ambiguous"), "root and manifest")
-      c.expect(str_has(err, "src/vec.av"), "root path")
-      c.expect(str_has(err, "bothroot/vec.av"), "manifest path")
+      c.expect(err.contains("import vec is ambiguous"), "root and manifest")
+      c.expect(err.contains("src/vec.av"), "root path")
+      c.expect(err.contains("bothroot/vec.av"), "manifest path")
     } else {
       c.expect(false, "root and manifest")
     }
@@ -342,14 +354,14 @@ fn test_modules(c: Checks) {
     c.expect(spell_code != 0, "root two spellings exits non-zero")
     c.expect(!file_exists(spell_bin), "root two spellings bin absent")
     if err = file_read(spell_log) {
-      c.expect(str_has(err, "open the same file"), "root two spellings")
+      c.expect(err.contains("open the same file"), "root two spellings")
     } else {
       c.expect(false, "root two spellings")
     }
 
     seal = "${dir}/seal"
     mkdir_p("${seal}/deps/lib")
-    _ = file_write("${seal}/avant.toml", "[package]\nname = \"seal\"\nversion = \"0.1.0\"\n")
+    fake_fetched(seal, "seal", "lib")
     _ = file_write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
     _ = file_write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
     _ = file_write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
@@ -360,7 +372,7 @@ fn test_modules(c: Checks) {
     c.expect(seal_code != 0, "dep does not see consumer exits non-zero")
     c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
     if err = file_read(seal_log) {
-      c.expect(str_has(err, "cannot find hidden.av"), "dep does not see consumer")
+      c.expect(err.contains("cannot find hidden.av"), "dep does not see consumer")
     } else {
       c.expect(false, "dep does not see consumer")
     }
@@ -392,8 +404,8 @@ fn test_modules(c: Checks) {
     c.expect(member_code != 0, "keyword member exits non-zero")
     c.expect(!file_exists(member_bin), "keyword member bin absent")
     if err = file_read(member_log) {
-      c.expect(str_has(err, "no field for"), "keyword member is a name")
-      c.expect(!str_has(err, "expected a name"), "keyword member is not a parse error")
+      c.expect(err.contains("no field for"), "keyword member is a name")
+      c.expect(!err.contains("expected a name"), "keyword member is not a parse error")
     } else {
       c.expect(false, "keyword member is a name")
     }
@@ -406,7 +418,7 @@ fn test_modules(c: Checks) {
     c.expect(lead_code != 0, "leading keyword import exits non-zero")
     c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
     if err = file_read(lead_log) {
-      c.expect(str_has(err, "expected a name, found `spawn`"), "leading keyword import")
+      c.expect(err.contains("expected a name, found `spawn`"), "leading keyword import")
     } else {
       c.expect(false, "leading keyword import")
     }
@@ -419,7 +431,7 @@ fn test_modules(c: Checks) {
     c.expect(decl_code != 0, "keyword function name exits non-zero")
     c.expect(!file_exists(decl_bin), "keyword function name bin absent")
     if err = file_read(decl_log) {
-      c.expect(str_has(err, "expected function name"), "keyword function name")
+      c.expect(err.contains("expected function name"), "keyword function name")
     } else {
       c.expect(false, "keyword function name")
     }
@@ -432,7 +444,7 @@ fn test_modules(c: Checks) {
     c.expect(label_code != 0, "keyword field label exits non-zero")
     c.expect(!file_exists(label_bin), "keyword field label bin absent")
     if err = file_read(label_log) {
-      c.expect(str_has(err, "expected an expression, found `{`"), "keyword field label")
+      c.expect(err.contains("expected an expression, found `{`"), "keyword field label")
     } else {
       c.expect(false, "keyword field label")
     }
@@ -456,6 +468,8 @@ fn test_modules(c: Checks) {
     test_default_once(c, compiler, dir)
     test_generic_modules(c, compiler, dir)
     test_same_name_methods(c, compiler, dir)
+    test_same_name_derived(c, compiler, dir)
+    test_c_binding_twice(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -507,7 +521,7 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   c.expect(boot_code != 0, "a checkout's compiler/main.av is not exempt: exits non-zero")
   c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
   if err = file_read(boot_log) {
-    c.expect(str_has(err, "field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
+    c.expect(err.contains("field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")
   }
@@ -588,10 +602,34 @@ fn test_generic_modules(c: Checks, compiler: String, dir: String) {
 // parameter of such a type (`fn +(o: Item)`) was `unknown type Item`
 // (resolve_value_in_module looked the name up bare).
 fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
-  write_av(dir, "sna", "pub class Item {\n  pub v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n\n  pub fn label: String {\n    \"a\${v}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.v += n\n    v\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(v + o.v)\n  }\n\n  pub fn ==(o: Item): Bool {\n    v == o.v\n  }\n\n  pub fn self.zero: Item {\n    Item.new(0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far: Int {\n    x + 100\n  }\n\n  pub fn grow(k: Int) {\n    self.x += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-a\${i.v}\"\n}\n\npub fn make_a(v: Int): Item {\n  Item.new(v)\n}\n")
-  write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn ==(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
+  write_av(dir, "sna", "pub class Item {\n  pub v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n\n  pub fn label: String {\n    \"a\${v}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.v += n\n    v\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(v + o.v)\n  }\n\n  pub fn equals(o: Item): Bool {\n    v == o.v\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(v)\n  }\n\n  pub fn self.zero: Item {\n    Item.new(0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far: Int {\n    x + 100\n  }\n\n  pub fn grow(k: Int) {\n    self.x += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-a\${i.v}\"\n}\n\npub fn make_a(v: Int): Item {\n  Item.new(v)\n}\n")
+  write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn equals(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(name)\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
   write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label())\n  puts(b.label())\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext())\n  puts(b.ext())\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero().v)\n  puts(snb.Item.zero().name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label()} \${d.label()}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label())\n  }\n  bs.each { |i| puts(i.label()) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far()} \${q.far()}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far())\n}\n")
   mod_runs(c, compiler, dir, "snmain", "a1\nb-x\na1\nb-x\n6\n2\next-a6\next-bx\n16\nxy 10\ntrue\ntrue\n0\nzero\np\n4\na9 b-q\na6\na9\nb-x\nb-q\n101 6\n2 4\n35\n", "two modules declare a class and a struct of one name with methods of the same names")
+}
+
+// Two modules each declare a struct or class of one name, and each type
+// gets its own derived ==, hash, clone and order, its own initialize and
+// its own fields: before, a derived method joined the first type of that
+// name, so the other's == or clone was "no method", its key functions
+// were not written, its order was another's, its initialize and fields
+// were refused as if it had the first one's.
+fn test_same_name_derived(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "dta", "pub struct Box {\n  pub x: Int\n}\n\npub class Bag {\n  pub n: Int = 0\n  pub xs: Array(Int) = []\n\n  pub fn initialize(self.n) {\n  }\n}\n\npub struct Key {\n  pub x: Int\n}\n\npub struct V {\n  pub n: Int\n\n  pub fn compare(other: V): Int {\n    n - other.n\n  }\n}\n\npub struct Rec {\n  pub n: Int\n\n  pub fn size: Int {\n    n\n  }\n}\n")
+  write_av(dir, "dtb", "pub struct Box {\n  pub name: String\n  pub y: Int\n}\n\npub class Bag {\n  pub items: Array(String) = []\n  pub w: Int = 2\n}\n\npub struct Key {\n  pub x: Int\n\n  pub fn equals(other: Key): Bool {\n    true\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(0)\n  }\n}\n\npub struct V {\n  pub n: Int\n\n  pub fn compare(other: V): Int {\n    other.n - n\n  }\n}\n\npub struct Rec {\n  pub size: Int\n}\n\npub struct Outer {\n  pub inner: Key\n}\n")
+  write_av(dir, "dtmain", "import dta\nimport dtb\n\nfn main {\n  puts(\"\${dta.Box { x: 1 } == dta.Box { x: 1 }} \${dtb.Box { name: \"p\", y: 2 } == dtb.Box { name: \"q\", y: 2 }}\")\n  a = dta.Bag.new(3)\n  a.xs.push(5)\n  b = dtb.Bag.new()\n  b.items.push(\"t\")\n  a2 = a.clone()\n  b2 = b.clone()\n  b2.items.push(\"u\")\n  puts(\"\${a2.n} \${a2.xs.size} \${b2.w} \${b.items.size} \${b2.items.size}\")\n  ha = Hash(dta.Key, Int).new()\n  ha[dta.Key { x: 1 }] = 10\n  ha[dta.Key { x: 2 }] = 20\n  hb = Hash(dtb.Key, Int).new()\n  hb[dtb.Key { x: 1 }] = 10\n  hb[dtb.Key { x: 2 }] = 20\n  ho = Hash(dtb.Outer, Int).new()\n  ho[dtb.Outer { inner: dtb.Key { x: 1 } }] = 1\n  ho[dtb.Outer { inner: dtb.Key { x: 2 } }] = 2\n  puts(\"\${ha.size} \${hb.size} \${ho.size} \${dta.Key { x: 1 } == dta.Key { x: 2 }} \${dtb.Key { x: 1 } == dtb.Key { x: 2 }}\")\n  xs = [dta.V { n: 3 }, dta.V { n: 1 }, dta.V { n: 2 }]\n  ys = [dtb.V { n: 3 }, dtb.V { n: 1 }, dtb.V { n: 2 }]\n  puts(\"\${xs.sorted()[0].n} \${ys.sorted()[0].n} \${dta.V { n: 1 } < dta.V { n: 2 }} \${dtb.V { n: 1 } < dtb.V { n: 2 }}\")\n  puts(\"\${dta.Rec { n: 3 }.size()} \${dtb.Rec { size: 4 }.size}\")\n}\n")
+  mod_runs(c, compiler, dir, "dtmain", "true false\n3 1 2 1 2\n2 1 1 false true\n1 3 true false\n3 4\n", "two modules' types of one name each get their own derived methods")
+}
+
+// One C function bound twice with one signature: a program's own binding
+// beside std.sync's, and two modules' bindings; each call goes through its
+// own. Before, the second was refused as already bound.
+fn test_c_binding_twice(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == pool_size())\n}\n")
+  mod_runs(c, compiler, dir, "cbsync", "true\n", "a program binds a C function std.sync binds, with its signature")
+  write_av(dir, "cbother", "lib oc {\n  fun abs(n: Int32): Int32\n}\n\npub fn mag(n: Int): Int {\n  oc.abs(n.to_i32()).to_i()\n}\n")
+  write_av(dir, "cbmain", "// Two modules of the program bind one C function, each with the same\n// signature.\nimport cbother\n\nlib c {\n  fun abs(n: Int32): Int32\n}\n\nfn main {\n  puts(\"\${c.abs(-3)} \${cbother.mag(-4)}\")\n}\n")
+  mod_runs(c, compiler, dir, "cbmain", "3 4\n", "two modules bind one C function with one signature")
 }
 
 fn main: Int {

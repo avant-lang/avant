@@ -1,5 +1,6 @@
 import source
 import pipeline
+import loader
 
 lib cov_posix {
   fun isatty(fd: Int): Int
@@ -184,7 +185,10 @@ pub class CovReport {
         path = "/${name}"
       }
       if file_exists("${path}/.") {
-        walk_tree(path, excludes)
+        // a symbolic link to a directory is not followed (as the test walk)
+        if !path_is_link(path) {
+          walk_tree(path, excludes)
+        }
       } else {
         if str_ends(name, ".av") {
           rel = cov_rel(self.anchor, path)

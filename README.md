@@ -41,7 +41,7 @@ fn main {
     }
     items.push(item)
   }
-  totals = items.parallel { |item| item.total() }
+  totals = items.parallel (item) { item.total() }
   puts("${items.size} items, ${totals.sum()} cents")
 }
 ```
@@ -67,7 +67,7 @@ import std.http
 
 fn main {
   if server = Http.listen(8080) {
-    server.get("/") { |req| Response.text("hello") }
+    server.get("/", (req) { Response.text("hello") })
     server.serve()
   }
 }
@@ -99,7 +99,7 @@ avant compile hello.av             # build ./hello
 avant compile hello.av --release   # the optimized build: use it whenever you measure
 ```
 
-The three build modes are compared in [Build modes](#build-modes).
+The two build modes are compared in [Build modes](#build-modes).
 
 Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.md)); what is decided but not built is in [Not built yet](#not-built-yet) and beside each feature it limits.
 
@@ -150,15 +150,18 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
 - [Arrays](#arrays):
   - [creating arrays](#creating-arrays)
   - [indexing and bounds](#indexing-and-bounds)
+  - [slices](#slices)
   - [array operations](#array-operations)
   - [size limits](#size-limits)
 - [Hashes](#hashes):
   - [hash operations](#hash-operations)
   - [key and value types](#key-and-value-types)
+- [Sets](#sets)
 - [Structs and classes](#structs-and-classes):
   - [struct or class](#struct-or-class)
   - [structs](#structs)
   - [classes](#classes)
+  - [clone](#clone)
   - [field initialization](#field-initialization)
   - [methods and self](#methods-and-self)
   - [external methods](#external-methods)
@@ -178,9 +181,8 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [nil, error or trap](#nil-error-or-trap)
 - [Function values](#function-values):
   - [lambdas](#lambdas)
-  - [trailing blocks](#trailing-blocks)
   - [capture](#capture)
-  - [builtin blocks are loops](#builtin-blocks-are-loops)
+  - [lambdas given to builtins](#lambdas-given-to-builtins)
 - [Generics](#generics):
   - [generic functions](#generic-functions)
   - [generic types](#generic-types)
@@ -198,6 +200,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [updating and removing](#updating-and-removing)
   - [publishing a package](#publishing-a-package)
   - [package conflicts](#package-conflicts)
+  - [C in a package](#c-in-a-package)
   - [package limits](#package-limits)
 - [Concurrency](#concurrency):
   - [spawn](#spawn)
@@ -238,6 +241,8 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [std.http](#stdhttp)
   - [std.zlib](#stdzlib)
   - [std.base64](#stdbase64)
+  - [std.time](#stdtime)
+  - [std.random](#stdrandom)
 - [Testing](#testing):
   - [running tests](#running-tests)
   - [checks](#checks)
@@ -440,6 +445,7 @@ fn main {
 | `Bytes`, `Buf` | immutable bytes; a growable byte buffer | [Bytes and Buf](#bytes-and-buf) |
 | `Array(T)` | growable array | [Arrays](#arrays) |
 | `Hash(K, V)` | hash table | [Hashes](#hashes) |
+| `Set(T)` | a set of distinct values | [Sets](#sets) |
 | `T?` | `T` or `nil` | [Nil and unions](#nil-and-unions) |
 | `A \| B` | one of several types; with an `Error` member, a result that can fail | [Unions](#unions), [Errors](#errors) |
 | `type Ty = A \| B` | a name for a type, a union above all | [Type aliases](#type-aliases) |
@@ -478,14 +484,14 @@ From loosest to tightest binding; operators on one row associate left to right.
 `==` and `!=` compare two values of one type; different types, an integer and a `Float64` included, are a compile error: convert (`n.to_f() == x`, or `n == x.to_i()`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
 
 - Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
-- A struct compares its fields in order, each with its own `==`, unless it defines `fn ==`; one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
-- A class compares by identity (the same object) unless it defines `fn ==`.
+- A struct compares its fields in order, each with its own `==`, unless it defines `fn equals(other: T): Bool`, which `==` then calls (with its `fn hash`: [Key and value types](#key-and-value-types)); one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
+- A class compares by identity (the same object) unless it defines `fn equals`.
 - An array equals another when the sizes are equal and the elements are, in order.
 - An optional equals another when both are `nil` or both hold equal values; it is never compared with `nil`: open it ([Opening an optional](#opening-an-optional)).
 - A `Hash`, a function and a union of several types have no `==`; take a union apart with [`switch`](#unions).
 - `!=` is always `!(a == b)`.
 
-`<`, `<=`, `>` and `>=` order numbers and `String`s (byte by byte, a prefix first). A struct or a class that defines `fn <` gets `>`, `<=` and `>=` from it, and `sort`, `sorted`, `min` and `max` of its arrays use it.
+`<`, `<=`, `>` and `>=` order numbers and `String`s (byte by byte, a prefix first). A struct or a class that defines `fn compare(other: T): Int` (negative, zero or positive) gets `<`, `<=`, `>` and `>=` from it, and `sort`, `sorted`, `min` and `max` of its arrays use it, so its orders cannot disagree. `a.equals(b)` and `a.compare(b)` can be called as written too.
 
 ```avant
 struct Point {
@@ -497,8 +503,11 @@ struct Version {
   major: Int
   minor: Int
 
-  fn <(other: Version): Bool {
-    major < other.major || (major == other.major && minor < other.minor)
+  fn compare(other: Version): Int {
+    if major != other.major {
+      return major - other.major
+    }
+    minor - other.minor
   }
 }
 
@@ -680,11 +689,34 @@ fn main {
 }
 ```
 
+When `x` can be an error (`T | E`), the loop must read it: `while v = x { ... } else e { ... }` runs the `else` block once, when `x` gives no value, with the failure in `e` (the error, or `nil` at the end), and then the loop ends; a `break` in the body skips it. Without the `else`, such a loop is a compile error (`this while would end silently when the value is an error`), so an error never ends a loop as quietly as the end does. A loop over an optional (`T?`) needs no `else`: its only failure is `nil`.
+
+```avant
+fn total(path: String): Int | IoError {
+  r = file_open(path)?
+  n = 0
+  while line = r.read_line() {
+    n += line.size
+  } else e {
+    if err = e {
+      return err
+    }
+  }
+  n
+}
+
+fn main {
+  _ = file_write("t.txt", "ab\ncde\n")
+  puts(total("t.txt") ?? -1)     // => 5
+  puts(total("none.txt") ?? -1)  // => -1
+}
+```
+
 `break` leaves the nearest loop and `continue` starts its next iteration. `while true { ... }` is the endless loop.
 
 ### For
 
-`for` walks a range or an array.
+`for` walks a range, an array, a `Set`, the bytes of `Bytes`, a `Buf` or a string, or anything with a `next` method.
 
 ```avant
 fn main {
@@ -703,10 +735,89 @@ fn main {
 ```
 
 - **`..` excludes its end** (`for i in 1..n` never reaches `n`); **`..=` includes it** (`for i in 1..=n` ends with `n`, even the largest `Int`, without overflow).
-- The bounds are evaluated once. The loop variable is a new name, only inside the loop, unless a variable of that name exists outside: the loop then uses it and leaves its last value there. `break`, `continue` and `return` work as in `while`.
-- **The loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5`, `x += 1` and a struct element's field (`p.x = 1`) are compile errors. Store through an index (`xs[i] = v`, `xs[i].x = v`), or use `while` for a range that skips or repeats steps. A *class* element's field is assignable: `c.x = 1` changes the object.
-- A range is only a `for` form: it is not a value you can store.
+- The bounds are evaluated once. The loop variable is a new name, only inside the loop: a name that already exists there (a local, a parameter, an outer loop's variable) is a compile error, since the loop would otherwise assign it at every step and leave its last value behind; give the loop's variable a name of its own. Two loops one after the other may use the same name. `break`, `continue` and `return` work as in `while`.
+- **Over an array of structs the loop variable is the element itself**, in place: `p.x = 1`, `p.pos.x += 1` and a method that changes its receiver (`p.step()`) change the element in the array, as a *class* element's field changes its object. A copy is still a copy (`q = p`, an argument, `ys.push(p)`). While the loop runs, the array's size and order cannot change through its own name (`xs.push`, `pop`, `clear`, `reserve`, `sort` and `reverse` there are compile errors; collect the changes and apply them after the loop); a change through another name that removes the element stops the program at the variable's next use, as a bad index does. A method call on the variable (`p.step(b)`) that may reach the array freezes it for the call ([Structs](#structs)). `p = other` replaces the element in the array, as `xs[i] = other` does. The variable cannot be captured by a lambda or a task (copy it first: `q = p`). The parameter of `each`, `any` and `all` over an array of structs is the same place.
+- **Any other loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5` and `x += 1` are compile errors. Store through an index (`xs[i] = v`), or use `while` for a range that skips or repeats steps.
+- A walk over an array of plain values (numbers, strings, classes; `for`, `each`, `any`, `all`) reads each element when it reaches it, and reads the size again at each step: an element pushed during the walk is visited, and a `pop` or `clear` ends the walk sooner. A `sort` or `reverse` of the walked array through its own name inside the walk is a compile error (the walk would read some elements twice and miss others); sort before or after the loop.
+
+```avant
+struct Ball {
+  x: Int
+  dx: Int
+
+  fn step {
+    self.x += self.dx
+  }
+}
+
+fn main {
+  balls = [Ball { x: 0, dx: 1 }, Ball { x: 10, dx: -2 }]
+  for b in balls {
+    b.step()
+    b.dx *= 2
+  }
+  balls.each (b) { b.x += 100 }
+  puts("${balls[0].x} ${balls[1].x}")   // => 101 108
+  puts(balls[1].dx)                     // => -4
+}
+```
+
+- A range is only a `for` form: it is not a value you can store. There is no `...`: it is refused with a message naming `..` and `..=` (in Ruby and Crystal `...` excludes its end, so a port would otherwise be off by one).
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
+
+**More forms.** A position beside the element, a step, bytes, and any type with `next`:
+
+```avant
+class Countdown {
+  n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  pub fn next: Int? {
+    if self.n == 0 {
+      return nil
+    }
+    self.n -= 1
+    self.n + 1
+  }
+}
+
+fn main {
+  line = ""
+  for i, name in ["ada", "bob"] {
+    line = line + "${i}=${name};"
+  }
+  puts(line)                  // => 0=ada;1=bob;
+  steps = 0
+  for i in 0..10 by 4 {       // 0, 4, 8
+    steps += i
+  }
+  puts(steps)                 // => 12
+  sum = 0
+  for b in "hé".bytes {       // 104, 195, 169
+    sum += b
+  }
+  puts(sum)                   // => 468
+  down = ""
+  for v in Countdown.new(3) {
+    down = down + "${v}"
+  }
+  puts(down)                  // => 321
+  letters = 0
+  for w in " to  be ".fields() {
+    letters += w.size
+  }
+  puts(letters)               // => 4
+}
+```
+
+- **`for i, x in xs`** gives the position, then the element, over an `Array`, `Bytes`, a `Buf` or `s.bytes`. The position is the loop's own, as the variable is: it cannot be assigned, and a `continue` moves it. A range has one variable.
+- **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a positive integer literal. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. A step down is written with `while`.
+- **Bytes:** `for b in bytes`, `for b in buf` and `for b in s.bytes` give each byte as an `Int` (`s.bytes` walks the string's own bytes, with no copy). A bare `for c in s` is refused with the two walks it may mean: the bytes (`s.bytes`) or the characters (`s.chars()`).
+- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
+- **`for w in s.fields()`** scans the string and gives each field as `fields()` would, without building the array.
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
 
 ### Switch
@@ -871,7 +982,7 @@ fn main {
 
 ## Nil and unions
 
-`T?` is a `T` or `nil`. The compiler makes you open it before use, so there is no null pointer error at run time (except a C pointer, [`Ptr(T)`](#layouts-and-ptr)).
+`T?` is a `T` or `nil`. The compiler makes you open it before use, so there is no null pointer error at run time (except a C pointer, [`Ptr(T)`](#layouts-and-ptr), whose NULL traps with a message).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -1006,7 +1117,7 @@ fn main {
 
 ### What an optional costs
 
-`T?` of a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, `nil` the null pointer, wherever it is stored (`left: Node?` is 8 bytes). `(fn(Int): Int)?` is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per non-`nil` member.
+`T?` of a class, `String`, `Bytes`, `Array`, `Hash`, `Buf` or `Ptr(T)` is one pointer, `nil` the null pointer, wherever it is stored (`left: Node?` is 8 bytes). `(fn(Int): Int)?` is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per non-`nil` member.
 
 A `T?` that nothing assigned is `nil`: an optional field without a default reads as absent.
 
@@ -1037,6 +1148,8 @@ fn main {
 | `Int32` | 32-bit signed | −2,147,483,648 to 2,147,483,647 | dense storage (`Array(Int32)` takes 4 bytes per element, half an `Array(Int)`); C's `int` |
 | `UInt32` | 32-bit unsigned | 0 to 4,294,967,295 | dense storage; C's `unsigned int` |
 | `UInt64` | 64-bit unsigned | 0 to 18,446,744,073,709,551,615 | bit patterns, hashes, C's 64-bit unsigned values |
+
+Each type's bounds are `Int.max`, `Int.min`, `Int32.max`, `Int32.min`, `UInt32.max`, `UInt64.max` (and `UInt32.min`, `UInt64.min`, both 0), constants of that type: a test before an operation that would trap reads them (`if n > Int.max - k { ... }`).
 
 Use `Int32` only to store many: a 32-bit counter would trap at 2.1 billion. An index, a size and a `for` range are always `Int`: with an `Int32` index write `xs[i.to_i()]` (free). Five narrower names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) exist only at the C boundary ([C types](#c-types)).
 
@@ -1085,7 +1198,7 @@ Different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `
 | `UInt64` | `to_u64` | `wrap_u64` |
 | `Float64` | `to_f` (rounds to the nearest float) | |
 
-`to_*` gives the same number or traps (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`); `wrap_*` gives the two's-complement bits, for hashing or binary formats. A `Bool`'s `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true`, 0 for `false` (`alive += cell.to_i()`).
+`to_*` gives the same number or traps (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`); `wrap_*` gives the two's-complement bits, for hashing or binary formats. A float's own 64 bits are `x.to_bits()`, a `UInt64`, and `Float64.from_bits(u)` reads them back, the same number exactly (a binary format's float64; one bitcast, no instruction). A `Bool`'s `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true`, 0 for `false` (`alive += cell.to_i()`).
 
 ```avant
 fn main {
@@ -1108,26 +1221,35 @@ An operation gives the mathematically correct value, or traps when none exists.
 - `+`, `-`, `*` trap on overflow at the operands' width; `/` and `%` trap on division by zero. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap the same way.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`). `MIN % -1` is `0`; only `MIN / -1` overflows.
 - `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
-- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error.
+- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error. `x.try_shl(n)` and `x.try_shr(n)` return `nil` for such an amount instead (`T?`).
 - Integers have `abs` (not unsigned types) and `to_f`.
+- `x.count_ones()`, `x.leading_zeros()` and `x.trailing_zeros()` count bits of the value's own width (64 for `Int` and `UInt64`, 32 for `Int32` and `UInt32`; a negative value counts its two's-complement bits), as an `Int`; of zero, the leading and trailing zeros are the width. Each is one instruction where the CPU level has it (`popcnt` from `--cpu=v2`, the default; `lzcnt` and `tzcnt` from `--cpu=v3`), a short sequence otherwise.
 
 A check is a compare and a never-taken branch, dropped where the compiler proves it: a literal index into a literal, a loop variable under its bound, a loop whose index range is validated once on entry. What a trap prints: [Traps](#traps).
 
 ### Floats
 
-`Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i`, and the prelude has `sqrt(x)` and `exp(x)`. Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`.
+Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`. `Float64` has the math of C's library as methods, each the library's call (or its instruction) with nothing around it:
 
-The rest of C's math library is a `lib` block away, with no flag ([C interop](#c-interop)):
+| Method | Result |
+| --- | --- |
+| `x.abs()`, `x.sqrt()`, `x.exp()` | absolute value, square root, e to the power `x` |
+| `x.floor()`, `x.ceil()`, `x.trunc()`, `x.round()` | rounded down, up, toward zero, to the nearest (a half away from zero: `2.5.round()` is `3.0`) |
+| `x.pow(y)` | `x` to the power `y` |
+| `x.ln()`, `x.log2()`, `x.log10()` | the logarithm in base e, 2, 10 (`0.0.ln()` is `-inf`, a negative's is `nan`) |
+| `x.sin()`, `x.cos()`, `x.tan()` | in radians |
+| `y.atan2(x)` | the angle of the point (x, y), in −π..π |
+| `x.to_i()`, `x.to_bits()` | an `Int` toward zero ([Conversions](#conversions)), the 64 bits as a `UInt64` |
+
+`Float64.pi` and `Float64.e` are the constants. The prelude also has `sqrt(x)` and `exp(x)`. The rest of C's math library (`cbrt`, `hypot`, `asin`) is a `lib` block away, with no flag ([C interop](#c-interop)).
 
 ```avant
-lib m {
-  fun pow(x: Float64, y: Float64): Float64
-  fun log(x: Float64): Float64
-}
-
 fn main {
-  puts(m.pow(2.0, 10.0))   // => 1024.0
-  puts(m.log(1.0))         // => 0.0
+  puts(2.0.pow(10.0))              // => 1024.0
+  puts(Float64.e.ln())             // => 1.0
+  puts((Float64.pi / 2.0).sin())   // => 1.0
+  puts(1.0.atan2(1.0) * 4.0)       // => 3.141592653589793
+  puts((0.0 - 2.5).round())        // => -3.0
 }
 ```
 
@@ -1160,14 +1282,14 @@ fn main {
 
 ### String literals
 
-- `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
+- `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`. The expression may hold a string that interpolates in turn: `"total: ${"${n} items"}"`.
 - Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits; may make a string that is not UTF-8) and `\u{N}` (a code point, one to six hex digits, stored as UTF-8: `"caf\u{e9}"`). Any other escape is a compile error (no `\e`: write `\x1b`).
 - A raw string `r"..."` has no escapes and no interpolation: `r"C:\tmp"`.
 - A literal is one line: no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.
 
 ### Bytes, not characters
 
-`size` is the byte length ([Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. UTF-8 is checked only when you ask for characters: `s.chars()` returns one `String` per code point and traps on invalid UTF-8 (`avant runtime: String.chars needs valid UTF-8`); `String.from_utf8(bytes)` returns `nil` for it.
+`size` is the byte length ([Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. UTF-8 is checked only when you ask for characters: `s.chars()` returns one `String` per code point and `s.code_points()` each code point's number, and both trap on invalid UTF-8 (`avant runtime: String.chars needs valid UTF-8`); `String.from_utf8(bytes)` returns `nil` for it. `String.from_code_point(n)` is the UTF-8 of one code point; a number outside `0..0x10FFFF`, or a surrogate (`0xD800..0xDFFF`), traps.
 
 ```avant
 fn main {
@@ -1176,8 +1298,12 @@ fn main {
   puts(s[0])               // => 110
   puts(s.chars().size)       // => 2
   puts(s.chars()[1])         // => é
+  puts(s.code_points()[1])   // => 233
+  puts(String.from_code_point(8364))   // => €
 }
 ```
+
+A string knows its length (`size` is a read, never a scan), and a long slice shares its string's bytes instead of copying them: `str_slice(s, start, stop)` of 64 bytes or more that is at least a quarter of `s` keeps `s` alive as long as the slice lives; a shorter slice is a copy.
 
 ### String operations
 
@@ -1189,19 +1315,63 @@ fn main {
 | `a + b` | a new string |
 | `a == b`, `a != b` | equality by content |
 | `a < b`, `<=`, `>`, `>=` | byte order, a prefix first: the order `sort`, `min` and `max` use |
-| `s.split(sep)` | `Array(String)`, empty fields kept; an empty separator traps |
+| `s.split(sep)`, `s.split(sep, limit)` | `Array(String)`, empty fields kept; with a limit, at most `limit` fields, the last holding the rest (`"k=v=w".split("=", 2)` is `["k", "v=w"]`); an empty separator or a limit below 1 traps |
 | `s.fields()` | split on runs of whitespace, empty fields dropped |
 | `s.strip()`, `s.strip_left()`, `s.strip_right()` | whitespace trimmed |
+| `s.lines()` | `Array(String)`: the lines, each ended by `\n` or `\r\n` (the ending not kept); a final ending adds no empty line, so `"a\nb\n".lines()` and `"a\r\nb".lines()` are both `["a", "b"]` and `"".lines()` is `[]`; a `\r` alone ends no line |
 | `s.chars()` | `Array(String)`, one per code point |
-| `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf) |
+| `s.code_points()` | `Array(Int)`, each code point's number |
+| `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf); `for b in s.bytes` walks them without a copy |
 | `s.to_i()`, `s.to_u64()`, `s.to_f()` | [parsed numbers](#parsing-numbers), optional |
-| `str_slice(s, start, stop)` | the bytes `start` up to `stop`; traps unless `0 <= start <= stop <= size` |
+| `s[a..b]`, `s[a..]`, `s[..b]`, `s[a..=b]` | a [slice](#slices): the bytes `a` up to `b` (`..=` includes `b`), a new `String` |
+| `s.slice(a, b)`, `s.slice(a)`, `s.try_slice(...)` | the same slices as calls; `try_slice` gives `nil` where the slice would trap |
+| `s.is_empty()` | `s.size == 0` |
+| `s.contains(p)` | `Bool`: whether `p` occurs in `s` |
+| `s.index_of(p)`, `s.index_of(p, from)` | `Int?`: the first position of `p`, searching `s[from..]` (positions still counted from the start of `s`); a `from` outside `0..size` traps as that slice does |
+| `s.last_index_of(p)` | `Int?`: the last position of `p` |
+| `s.starts_with(p)`, `s.ends_with(p)` | `Bool` |
+| `s.count(p)` | how many times `p` occurs, without overlapping (`"aaaa".count("aa")` is 2); an empty `p` traps |
+| `s.replace(from, to)` | a new string with every `from`, left to right and without overlapping, replaced by `to`; an empty `from` traps |
+| `s.repeat(n)` | `n` copies of `s`; a negative `n` traps |
+| `s.pad_left(width)`, `s.pad_right(width)`, `s.pad_left(width, '0')` | `s` with spaces (or the byte given) added before or after it up to `width` bytes; `s` itself when it is that long already |
+| `s.delete_prefix(p)`, `s.delete_suffix(p)` | `s` without `p` at its start or its end (`"/users/".delete_suffix("/")` is `"/users"`); `s` unchanged when it does not start or end with `p` |
+| `s.to_ascii_lower()`, `s.to_ascii_upper()` | a string with the ASCII letters `A`–`Z` (or `a`–`z`) changed to the other case; every other byte, UTF-8 included, is kept, so the size never changes (`"Straße".to_ascii_upper()` is `"STRAßE"`) |
+| `s.eq_ignore_ascii_case(t)` | `Bool`: `s == t` with ASCII letters compared without their case (`"Content-Type".eq_ignore_ascii_case("content-type")`); `t` a `String`, `Bytes` or `Buf` |
+| `xs.join(sep)` | the strings of an `Array(String)` with `sep` between them |
+| `a += b` | `a = a + b`: a new string (to build a long text piece by piece, a [`Buf`](#bytes-and-buf) copies less) |
+| `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
 | `bytes_to_str(xs)` | a string from an `Array(Int)` of bytes |
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
+| `String.from_code_point(n)` | the UTF-8 of one code point; traps outside `0..0x10FFFF` and on a surrogate |
 
-`String` has no `contains`, `starts_with`, `index_of`, `replace`, `join` or case conversion yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) finds, replaces and splits.
+The pattern `p` of `contains`, `index_of`, `last_index_of`, `starts_with`, `ends_with` and `count` is a `String`, `Bytes`, `Buf` or one byte, an `Int` as `s[i]` gives (`'/'`, or its number; outside `0..255` it traps); the same methods search `Bytes` and `Buf`. A search reads the bytes in place, a slice's included, and allocates nothing; `index_of` with a start walks every match without slicing:
+
+```avant
+fn main {
+  path = "/api/v1/users/"
+  puts(path.contains("v1"))                    // => true
+  puts(path.index_of('/', 1) ?? -1)            // => 4
+  puts(path.last_index_of('/') ?? -1)          // => 13
+  puts(path.ends_with("/"))                    // => true
+  puts(path.count('/'))                        // => 4
+  puts(path.replace("/", "."))                 // => .api.v1.users.
+  puts(path.split("/", 3)[2])                  // => v1/users/
+  puts(["a", "b", "c"].join(", "))             // => a, b, c
+  puts("7".pad_left(3, '0'))                   // => 007
+  puts(path.delete_suffix("/"))                // => /api/v1/users
+  puts("Host".eq_ignore_ascii_case("HOST"))    // => true
+  puts("a\r\nb\n".lines().size)                // => 2
+  at = 0
+  while i = path.index_of('/', at) {
+    at = i + 1
+  }
+  puts(at)                                     // => 14
+}
+```
+
+Case conversion and its comparison change ASCII letters only (HTTP's header names and most identifiers are ASCII by their specifications); Avant has no Unicode case rule. [`std.regex`](#stdregex) matches patterns.
 
 ### Parsing numbers
 
@@ -1256,7 +1426,10 @@ fn main {
 | `Bytes` operation | Result |
 | --- | --- |
 | `b.size`, `b[i]`, `b.get(i)` | as for `String` |
-| `b.slice(start, stop)` | a new `Bytes`; traps unless `0 <= start <= stop <= size` |
+| `b[a..b]`, `b[a..]`, `b[..b]`, `b.slice(start, stop)`, `b.slice(start)`, `b.try_slice(...)` | a new `Bytes`, as a [slice](#slices) of a `String` |
+| `b.is_empty()` | `b.size == 0` |
+| `b.contains(p)`, `b.index_of(p)`, `b.index_of(p, from)`, `b.last_index_of(p)`, `b.starts_with(p)`, `b.ends_with(p)`, `b.count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte |
+| `b.eq_ignore_ascii_case(t)` | as for `String`, `t` a `String`, `Bytes` or `Buf` |
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
@@ -1264,11 +1437,13 @@ fn main {
 | `Buf` operation | Result |
 | --- | --- |
 | `Buf.new()`, `Buf.new(capacity)`, `buf_new()` | an empty buffer |
-| `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a string, `Bytes`, or one byte (`0..255`, else a trap) |
+| `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
 | `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
-| `starts_with(s)` | `Bool` |
+| `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
+| `buf.is_empty()` | `buf.size == 0` |
+| `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`, `starts_with(p)`, `ends_with(p)`, `count(p)`, `eq_ignore_ascii_case(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte (not for the comparison), read in place |
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
 
@@ -1288,7 +1463,7 @@ fn main {
   xs.sort()
   puts(xs[0])            // => 1
   puts(xs.sum())           // => 12
-  puts(xs.contains(5))   // => true
+  puts(xs.has(5))        // => true
 
   total = 0
   for x in xs {
@@ -1311,8 +1486,8 @@ fn main {
   c = Array(Float64).new(4)           // four elements, each 0.0
   d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  f = Array(Node).new(2) { |i| Node.new() }                  // two elements, each its own Node
-  g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
+  f = Array(Node).new(2, (i) { Node.new() })                  // two elements, each its own Node
+  g = Array(Array(Int)).new(3, (y) { Array(Int).new(4) })   // a grid of 3 rows of 4
   g[0][0] = 7
   puts(g[1][0])                       // => 0
   puts(a.size + b.size + c.size + d.size + e.size + f.size + g.size)   // => 17
@@ -1321,7 +1496,7 @@ fn main {
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
 - `Array(T).new(n, value)` makes `n` copies of `value`: a number, a `Bool`, a `String`, `Bytes`, a struct of those, or `nil` for any `T?`. A `T` that is or holds a mutable object (a class, an `Array`, a `Hash`, a `Buf`, a struct or optional holding one) is a compile error, since every element would be that one object.
-- `Array(T).new(n) { |i| ... }` runs the block once per index, `0` to `n - 1` in order, its value the element: the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out), for a grid's separate rows, and for one shared object on purpose (`Array(Node).new(n) { |i| shared }`). `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors.
+- `Array(T).new(n, (i) { ... })` runs the block once per index, `0` to `n - 1` in order, its value the element: the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out), for a grid's separate rows, and for one shared object on purpose (`Array(Node).new(n, (i) { shared })`). `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1339,7 +1514,26 @@ fn main {
 }
 ```
 
-There are no negative indexes and no slices of arrays yet.
+There are no negative indexes: `xs[-1]` is an index outside the array and traps; `xs.last()` reads the last element (`T?`).
+
+### Slices
+
+`xs[a..b]` is a copy of the elements `a` up to `b`, excluded; `xs[a..=b]` includes `b`, `xs[a..]` runs to the end and `xs[..b]` starts at `0` (`xs[..]` is a whole copy). The same forms work on `String`, `Bytes`, `Buf` and `Array`, and the slice has the receiver's type: a new `Bytes`, `Buf` or `Array(T)` holding a copy, which a change to either one never shows in the other, or a `String` (immutable, so a long slice shares its string's bytes as `str_slice` does, [Strings](#strings)). `xs.slice(a, b)` and `xs.slice(a)` are the same slices written as calls.
+
+```avant
+fn main {
+  xs = [5, 3, 8, 1, 9]
+  puts(xs[1..3].size)                  // => 2
+  puts(xs[3..][0])                     // => 1
+  puts(xs[..2][1])                     // => 3
+  puts(xs[1..=3].size)                 // => 3
+  word = "hello world"
+  puts(word[6..])                      // => world
+  puts(word.try_slice(4, 99) ?? "none")  // => none
+}
+```
+
+A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of range (size 3)`); `try_slice(a, b)` and `try_slice(a)` return `nil` instead, as `get` does for an index.
 
 ### Array operations
 
@@ -1348,31 +1542,46 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.size` | number of elements |
 | `xs[i]`, `xs[i] = v`, `xs.get(i)` | read (trapping), write, read (`T?`) |
 | `xs.push(v)` | append; the storage grows as needed |
+| `xs.insert(i, v)` | put `v` at position `i`, the elements from `i` on moving up one; traps unless `0 <= i <= size` |
+| `xs.delete_at(i)`, `xs.try_delete_at(i)` | remove the element at `i` and return it, the rest moving down one; `delete_at` traps as `xs[i]` does, `try_delete_at` returns `nil` |
+| `xs.concat(ys)`, `a + b` | append `ys`'s elements in place; a new array of `a`'s elements then `b`'s |
+| `xs.shuffle(rng)`, `xs.shuffled(rng)` | a random order, with a [`Random`](#stdrandom) passed in |
+| `xs.first()`, `xs.last()` | the first or last element as `T?`: `nil` on an empty array |
+| `xs.is_empty()` | `xs.size == 0` |
+| `xs[a..b]`, `xs[a..]`, `xs[..b]`, `xs.slice(...)`, `xs.try_slice(...)`, `xs.dup()` | a new array: a [slice](#slices), or the whole array |
 | `xs.pop()` | remove and return the last element, as `T?`: `nil` on an empty array (`while v = stack.pop() { ... }`); `xs.pop().expect("why")` where the array cannot be empty. The emptied slot is cleared, so the array keeps nothing alive |
 | `xs.clear()` | remove every element |
 | `xs.reserve(n)` | make room for `n` elements ahead of time |
-| `xs.fill(v)` | set every element (integer and `Bool` arrays) |
-| `xs.each { \|x\| ... }`, `for x in xs` | walk the elements |
-| `xs.sort()`, `xs.sort { \|a, b\| a < b }` | sort in place: by the element's order, or by a block that says whether `a` comes first |
-| `xs.sorted()`, `xs.sorted { \|a, b\| ... }` | the same, as a new array |
-| `xs.reverse()` | reverse in place |
-| `xs.contains(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
+| `xs.fill(v)` | set every element to `v`; a `v` that is or holds a mutable object (a class, an `Array`, a `Hash`, a `Buf`) is refused, as for `Array(T).new(n, value)` |
+| `xs.each (x) { ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
+| `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
+| `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
+| `xs.reverse()`, `xs.reversed()` | reverse in place; the same as a new array |
+| `xs.has(v)`, `xs.index_of(v)`, `xs.index_of(v, from)`, `xs.last_index_of(v)`, `xs.unique()` | `Bool`; `Int?`, the first position (from `from` on, which outside `0..size` traps as `xs[from..]` does) or the last; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused; `unique` is a new array of each value's first occurrence, in order |
+| `xs.find (x) { ... }`, `xs.index_of (x) { ... }` | the first element the lambda says `true` for (`T?`), or its position (`Int?`); the walk stops there |
+| `xs.min_by (x) { key }`, `xs.max_by (x) { key }` | the first element of the smallest or largest key (`T?`), the key a number, `String` or `Bytes`, computed once per element |
+| `xs.delete_if (x) { ... }` | remove the elements the lambda says `true` for, in place, keeping the others in order |
 | `xs.min()`, `xs.max()` | `T?`: `nil` for an empty array |
 | `xs.sum()` | the total (numeric arrays); traps on overflow |
-| `xs.any { \|x\| ... }`, `xs.all { \|x\| ... }` | `Bool`, stopping at the first answer |
-| `xs.parallel { \|x\| ... }` | a new array, computed [in parallel](#parallel) |
+| `xs.any (x) { ... }`, `xs.all (x) { ... }` | `Bool`, stopping at the first answer |
+| `xs.parallel (x) { ... }` | a new array, computed [in parallel](#parallel) |
 
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
-- No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Trailing blocks](#trailing-blocks)).
-- The blocks of `each`, `any`, `all`, `sort` and `parallel` are inlined loops, not function values ([Builtin blocks are loops](#builtin-blocks-are-loops)).
+- `xs.join(sep)` joins an `Array(String)` ([String operations](#string-operations)).
+- No `map`, `select` or `reduce` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
+- `sort` and `sorted` are stable: elements neither of which comes before the other keep their order (with a lambda, one that says whether `a` comes strictly first, `a.x < b.x`, never `<=`).
+- Those builtins (but `parallel`) take a function too, by its name or as a variable holding one: `xs.each(show)`, `xs.any(is_big)`, `xs.sort(by_age)` run the same loop with one call of it per element; a lambda written there is inlined instead.
+- One spelling each: `delete_if` (no `retain`), `unique` (no in-place twin), `delete_at` (no `remove`).
+- The lambdas given to `each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).
+- The parameters of a comparator (`sort`, `sorted`) and of a `parallel` body are copies of the elements: writing one, or calling a method on it that changes its receiver, is a compile error (a comparator only compares; a `parallel` body returns the new element). A block given to a function of your own is a function value: its parameters are copies, as any function's are.
 
 ```avant
 fn main {
   words = ["pear", "fig", "banana"]
-  by_length = words.sorted { |a, b| a.size < b.size }
+  by_length = words.sorted (a, b) { a.size < b.size }
   puts(by_length[0])                          // => fig
   puts(words.index_of("fig") ?? -1)           // => 1
-  puts(words.any { |w| w.size > 5 })          // => true
+  puts(words.any (w) { w.size > 5 })          // => true
   puts(words.max() ?? "")                       // => pear
 }
 ```
@@ -1387,9 +1596,7 @@ A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147
 
 ```avant
 fn main {
-  stock = Hash(String, Int).new()
-  stock["tea"] = 12
-  stock["milk"] = 3
+  stock = ["tea": 12, "milk": 3]     // Hash(String, Int)
 
   if n = stock["tea"] {
     puts(n)                          // => 12
@@ -1397,7 +1604,7 @@ fn main {
   puts(stock["cake"] ?? 0)           // => 0
   stock.inc("milk")
   stock.inc("milk", 10)
-  puts(stock.get_or("milk", 0))      // => 14
+  puts(stock["milk"] ?? 0)           // => 14
   puts(stock.size)                   // => 2
 }
 ```
@@ -1406,16 +1613,17 @@ fn main {
 
 | Operation | What it does |
 | --- | --- |
-| `Hash(K, V).new()` | an empty hash (there is no hash literal) |
+| `["tea": 12, "milk": 3]` | a hash of these entries, set in order (a repeated key keeps its last value); its types are the first entry's, or the declared type's |
+| `Hash(K, V).new()`, `[:]` | an empty hash; `[:]` takes its type from a declaration or a parameter (`h: Hash(String, Int) = [:]`) |
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
-| `h.get_or(k, default)` | the value, or `default` |
-| `h.has_key(k)` | `Bool` |
+| `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |
+| `h.has(k)` | `Bool`: whether `k` is a key |
 | `h.delete(k)` | remove the key; returns the value it held, or `nil` |
 | `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
 | `h.size`, `h.clear()` | number of keys; remove all |
 | `h.keys()`, `h.values()` | arrays, in unspecified order |
-| `h.each { \|k, v\| ... }` | walk every key with its value |
+| `h.each (k, v) { ... }` | walk every key with its value |
 
 ```avant
 fn main {
@@ -1434,15 +1642,28 @@ fn main {
 ```
 
 - **Iteration order is unspecified** (stable for one program); sort the keys when order matters. Insertion order is decided, not built.
-- A key the block of `each` deletes before the walk reaches it is not visited.
+- **Changing a hash during its walk:** assigning an existing key's value, deleting a key (the one being visited or another) and `clear()` are allowed, and a key deleted before the walk reaches it is not visited. Adding a key, through the walked name or any other, would be missed by the walk, so it stops the program after that step (`avant runtime: a key was added to a Hash during its walk, …`); collect the new entries and add them after the walk.
 - Without building the key, `h.inc_slice(s, start, stop)` and `h.get_slice(s, start, stop)` look up a slice of `s`, and `h.get_concat(a, b)` looks up `a + b`.
 
 ### Key and value types
 
-A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum or a `String`; a value any of those or a `Float64`. Both are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
+A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum, a `String`, or a struct whose fields are all of those (or such structs); a value any of those, a `Float64`, a class, an `Array`, a `Hash`, `Bytes`, a `Buf` or any struct. Numbers are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
 
 ```avant
 enum Suit { clubs, hearts }
+
+struct Cell {
+  x: Int
+  y: Int
+}
+
+class Room {
+  pub name: String
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+}
 
 fn main {
   seen = Hash(Int32, Int32).new()
@@ -1452,15 +1673,93 @@ fn main {
   puts(seen[7.to_i32()] ?? 0.to_i32())        // => 3
   names = Hash(Int, String).new()
   names[404] = "not found"
-  puts(names.get_or(500, "unknown"))      // => unknown
+  puts(names[500] ?? "unknown")           // => unknown
   score = Hash(Suit, Float64).new()
   score[Suit.hearts] = 2.5
   puts(score[Suit.hearts] ?? 0.0)         // => 2.5
+  walls = Hash(Cell, Bool).new()
+  walls[Cell { x: 1, y: 2 }] = true
+  puts(walls.has(Cell { x: 1, y: 2 })) // => true
+  rooms = Hash(String, Room).new()
+  rooms["hall"] = Room.new("Hall")
+  if r = rooms["hall"] {
+    puts(r.name)                          // => Hall
+  }
 }
 ```
 
-- A `Float64` key is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
-- Struct keys and class, array, hash or struct values are not built yet ([Not built yet](#not-built-yet)); map the key to an index into an array instead.
+- A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes.
+- A struct that defines its own equality (`fn equals`) defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `equals` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `equals` and no `hash`, or `hash` and no `equals`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing; it exists only as that parameter (it is not made, stored, returned or captured).
+- A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
+- A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `equals` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
+- A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
+- A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
+- A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
+
+```avant
+struct Ticket {
+  id: Int
+  note: String
+
+  fn equals(other: Ticket): Bool {
+    id == other.id
+  }
+
+  fn hash(h: Hasher) {
+    h.add(id)
+  }
+}
+
+fn main {
+  open = Set(Ticket).new()
+  open.add(Ticket { id: 7, note: "printer" })
+  puts(open.has(Ticket { id: 7, note: "" }))       // => true
+  puts(open.add(Ticket { id: 7, note: "again" }))  // => false
+}
+```
+
+## Sets
+
+`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `equals` and no hash is refused with the reason.
+
+```avant
+fn main {
+  seen = Set(String).new()
+  for w in "the cat and the hat".split(" ") {
+    if !seen.add(w) {
+      puts("again: ${w}")        // => again: the
+    }
+  }
+  puts(seen.size)                // => 4
+  puts(seen.has("cat"))          // => true
+  puts(seen.delete("cat"))       // => true
+  words = seen.values()
+  words.sort()
+  puts(words[0])                 // => and
+
+  primes: Set(Int) = [2, 3, 5, 7, 5]
+  total = 0
+  for p in primes {
+    total += p
+  }
+  puts(total)                    // => 17
+}
+```
+
+| Operation | What it does |
+| --- | --- |
+| `Set(T).new()`, `[]` | an empty set; `[]` and an array literal make a set where the type says `Set(T)` (`s: Set(Int) = [1, 2, 3]`, a `Set` parameter, a result) |
+| `s.add(v)` | put `v` in; `true` when it was not there |
+| `s.has(v)` | `Bool`: whether `v` is in the set |
+| `s.delete(v)` | take `v` out; `true` when it was there |
+| `s.size`, `s.clear()` | number of elements; remove all |
+| `s.values()` | the elements as an array, in unspecified order |
+| `s.each (v) { ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts); an element added during the walk stops the program after that step, as in a hash's walk |
+
+- A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
+- **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
+- An array literal passed to a `Set` parameter is that set (`count([1, 2, 2])` with `fn count(s: Set(Int))`); where an overload takes an `Array` in that place, the literal is the array.
+- Not built yet: `==` on sets, and union, intersection and difference (a loop over `for` does them).
 
 ## Structs and classes
 
@@ -1516,7 +1815,7 @@ When in doubt, use a struct: it allocates nothing, and no other holder can chang
 
 A struct literal names every field without a default, in any order; a copy is independent of the original.
 
-A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. `xs[i].x = v` changes an array element in place; `q = xs[i]` and `for p in xs` copy it (assigning `p` or its field is a compile error: [For](#for)).
+A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. While a method that changes its receiver runs on an array's element, and the call may reach that array (an argument, a lambda or the receiver's own fields may lead to it), the array is frozen: a change of its size or order through any path (`push`, even with room, `pop`, `clear`, `reserve`, `sort`, `reverse`, `delete_if`, `insert`, `delete_at`, `concat`, `shuffle`) stops the program, naming the method call (`avant runtime: push on an array while Pos.grow, called on one of its elements, runs: …`), since the method's receiver is the element's place in the buffer. Element stores and reads through other paths, and reassigning the field or the variable that holds the array, stay allowed (the old array keeps the write). To change the array inside such a method, copy the element, call the method on the copy and store it back (`p = b.ps[i]; p.grow(b); b.ps[i] = p`). Cost: none for a call that cannot reach the array; otherwise two atomic operations a call. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
 
 ```avant
 struct Vec {
@@ -1613,6 +1912,37 @@ fn main {
 
 `Type { fields }` builds a struct only; a class is always built with `.new()`.
 
+### Clone
+
+`x.clone()` is a deep copy: a new object whose fields are copies, so a change to one side is never seen on the other.
+
+```avant
+class Cart {
+  owner: String
+  items: Array(String) = []
+  counts: Hash(String, Int) = Hash(String, Int).new()
+
+  fn initialize(self.owner) {
+  }
+}
+
+fn main {
+  a = Cart.new("ada")
+  a.items.push("tea")
+  b = a.clone()
+  b.items.push("milk")
+  b.counts["tea"] = 2
+  puts("${a.items.size} ${b.items.size} ${a.counts.size}")   // => 1 2 0
+}
+```
+
+- Every class and struct has it, derived from its fields: a class field is cloned in turn, an `Array`, `Hash` or `Set` is copied at every level (its class elements cloned), a struct is copied with its class fields cloned, an optional is cloned by its value. `initialize` does not run: the copy's fields are the original's, copied.
+- What cannot change is shared, since a copy would read the same: numbers, `Bool`, enums, `String`, `Bytes`. A `Channel` or a `Mutex` field is shared too, as a task shares one: the copy talks to the same channel and locks the same value.
+- `clone` exists on arrays, hashes, sets and optionals too (`grid.clone()`), and on every other value, where it is the value itself.
+- Refused at compile time, naming the field: a `fn` field (a function may capture mutable state the copy would share), a `Ptr` (C memory), a `JoinHandle`, a `Buf`, and a union of several types holding something to copy (`Int | Box`; an optional `Box?` is cloned).
+- A type cannot define its own `clone`: a clone is always this deep copy.
+- The copy follows the type, recursively, as a recursive function would: an object reached twice is copied twice, a chain is copied one call deeper per link (a linked list of 100,000 nodes runs out of stack in a `--debug` build, as any recursion that deep does), and a cycle never ends. Copy such structures with a loop of your own.
+
 ### Field initialization
 
 No class field is ever read unset (a struct has no `initialize`: [Structs](#structs)). Each field gets, in order:
@@ -1637,7 +1967,7 @@ A method is a `fn` in the type's body; `self` is its receiver.
 
 ### External methods
 
-A method may be declared outside the type, as a function with a receiver parameter, under the body's rules with the receiver's name for `self` (`p.x = ...`; an ambiguous bare call asks for `p.name(...)`). A lambda in it cannot capture the receiver (copy it into a local). A builtin type's receiver (`String`, `Bytes`, `Buf`, an integer type, `Float64`, `Bool`) is always named.
+A method may be declared outside the type, as a function with a receiver parameter, under the body's rules with the receiver's name for `self` (`p.x = ...`; an ambiguous bare call asks for `p.name(...)`). A lambda in it cannot capture the receiver (copy it into a local). A builtin type's receiver (`String`, `Bytes`, `Buf`, an integer type, `Float64`, `Bool`, an `Array`, a `Hash`, a `Set`) is always named.
 
 <!-- check: run pre=point_decl -->
 ```avant
@@ -1658,7 +1988,38 @@ struct Point {
 }
 -->
 
-So a module adds methods to a type it does not own: an enum, and the builtin `String`, `Bytes`, `Buf`, `Int`, `Int32`, `UInt32`, `UInt64`, `Float64` and `Bool` (the standard library's `bytes.compress` is one; `fn (n: Int) clamp(lo: Int, hi: Int): Int` is called `n.clamp(0, 10)`). `Array` and `Hash` take none yet.
+So a module adds methods to a type it does not own: an enum, and the builtin `String`, `Bytes`, `Buf`, `Int`, `Int32`, `UInt32`, `UInt64`, `Float64` and `Bool` (the standard library's `bytes.compress` is one; `fn (n: Int) clamp(lo: Int, hi: Int): Int` is called `n.clamp(0, 10)`), and `Array`, `Hash` and `Set`, on one element type or on all of them:
+
+```avant
+fn (xs: Array(T)) second: T? {
+  xs.get(1)
+}
+
+fn (xs: Array(Int)) total: Int {
+  t = 0
+  for x in xs {
+    t += x
+  }
+  t
+}
+
+fn (h: Hash(String, V)) has_all(ks: Array(String)): Bool {
+  for k in ks {
+    if !h.has(k) {
+      return false
+    }
+  }
+  true
+}
+
+fn main {
+  puts([7, 8].second() ?? 0)                   // => 8
+  puts([1, 2, 3].total())                      // => 6
+  puts(["a": 1, "b": 2].has_all(["a", "b"]))   // => true
+}
+```
+
+- A container's method is declared on its receiver's type: `Array(Int)` is one element type (another method of the same name may serve `Array(String)`), `Array(T)` every one, the type parameters taken from the receiver at each call. A call on a receiver no declaration fits names the types the method is declared on; a generic and a specific declaration of one name are refused as declared twice.
 
 - A builtin type keeps its own methods and fields: `fn (s: String) to_s`, `fn (b: Bytes) size` or `fn (n: Int) abs` is refused where declared.
 - An external method of a builtin type is seen like a function (in its module, and in importers when `pub`); a `pub` one of a program's type is seen wherever the type is.
@@ -1666,7 +2027,7 @@ So a module adds methods to a type it does not own: an enum, and the builtin `St
 
 ### Type-level functions
 
-`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `Json.parse`, `Regex.compile`).
+`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `Json.parse`, `Regex.compile`). It may share a method's name when their parameters differ, as two methods may ([Overloads and defaults](#overloads-and-defaults)): `Box.make()` calls the type-level function and `b.make(2)` the method; with the same parameters the second is refused (`method Box.make is already defined`).
 
 ```avant
 struct Money {
@@ -1689,7 +2050,7 @@ fn main {
 
 ### Overloads and defaults
 
-Functions or methods may share a name when their arity or argument types differ (the result type alone does not overload). Defaults are trailing, filled in at the call site.
+Functions or methods may share a name when their arity or argument types differ (the result type alone does not overload); so may a type's [type-level function](#type-level-functions) and its method. Defaults are trailing, filled in at the call site.
 
 ```avant
 fn show(n: Int): String {
@@ -1726,7 +2087,7 @@ fn main {
 
 ### Operator methods
 
-An operator is a method named by it: `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `&`, `|`, `^`, `<<`, `>>`, `==`, `<`, `<=`, `>`, `>=` (one parameter, the right operand); `fn -` with no parameter (`-x`); `fn []`, taking the index or several (`g[x, y]`), reads `c[i]`, and `fn []=`, taking the index, then the value, writes `c[i] = v`. `!`, `&&`, `||` and `~` cannot be defined; `!=` is always `!(a == b)`; defining `<` gives `>`, `<=` and `>=` ([Equality and order](#equality-and-order)); a struct without `fn ==` compares its fields.
+An operator is a method named by it: `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `&`, `|`, `^`, `<<`, `>>` (one parameter, the right operand); `fn -` with no parameter (`-x`); `fn []`, taking the index or several (`g[x, y]`), reads `c[i]`, and `fn []=`, taking the index, then the value, writes `c[i] = v`. `!`, `&&`, `||` and `~` cannot be defined; equality and order are the named methods `fn equals(other: T): Bool` and `fn compare(other: T): Int`, which `==`, `!=` (always `!(a == b)`), `<`, `<=`, `>` and `>=` call ([Equality and order](#equality-and-order)); a struct without `fn equals` compares its fields. A method declared `fn ==` or `fn <` is refused with the one to write.
 
 `at += delta` is `at = at + delta`, and `g[i] += 1` reads with `[]` and writes with `[]=`; the place is read twice, so it must be a name, a field, or an element at a name or a literal (`xs[i] += d`, not `xs[next()] += d`).
 
@@ -1739,8 +2100,13 @@ struct Vec2 {
     Vec2 { x: x + other.x, y: y + other.y }
   }
 
-  fn ==(other: Vec2): Bool {
+  fn equals(other: Vec2): Bool {
     x == other.x && y == other.y
+  }
+
+  fn hash(h: Hasher) {
+    h.add(x)
+    h.add(y)
   }
 }
 
@@ -1857,7 +2223,7 @@ fn main {
 error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 ```
 
-- `?` returns from a lambda, is refused in a `spawn` or `parallel` block, and in `Mutex.with` returns from the function, releasing the lock.
+- `?` returns from a lambda whose result type holds the failure (`(): Int | ParseError { ... }`); it is refused in a `spawn` block and in a lambda given to a builtin (`each`, `parallel`, `Mutex.with`, ...), where it has nowhere to return the failure: a `for` loop's `?` returns from the function.
 - These forms are compile errors on a union with no failure (`Int | String`) or only failures (`IoError | ParseError`).
 - An optional error (`ParseError?`) is a `T?`: if-assign and `??` give the error when not `nil`; `?` is refused.
 
@@ -2111,13 +2477,21 @@ The second row has no position so that hot loops stay fast.
 | `+`, `-`, `*`, `abs`, `sum`, `inc` overflowing | `&+`, `&-`, `&*` to wrap |
 | `/`, `%` by zero | test the divisor |
 | `to_i`, `to_i32`, `to_u32`, `to_u64` out of range | `wrap_i`, `wrap_i32`, `wrap_u32`, `wrap_u64` |
-| a shift amount outside the width | |
-| a slice with `start > stop` or outside the value | |
+| a shift amount outside the width | `x.try_shl(n)`, `x.try_shr(n)`, which return `T?` |
+| a slice with `start > stop` or outside the value | `try_slice`, which returns `T?` |
 | a byte outside `0..255` | `n & 255` |
 | `chars` on invalid UTF-8 | `String.from_utf8`, which returns `String?` |
 | growing past a [size limit](#size-limits) | |
 
-**A trap ends the whole process** (except in a spawned task: [When a task traps](#when-a-task-traps)): one bad index in an `std.http` handler closes every connection, so run servers under a supervisor (systemd's `Restart=`, a container restart policy) and read request data with `.get(i)`, `??` and the optional parsers. A trap that ends only its request, and a pre-forked server mode, are decided, not built.
+**A trap ends the whole process**, except in a spawned task ([When a task traps](#when-a-task-traps)) and in an `std.http` handler, where it fails only its request ([HTTP server](#http-server)). The exceptions keep their own limits (a trap inside a C callback, and the runtime's own stops, still end the process), so run servers under a supervisor too (systemd's `Restart=`, a container restart policy). A pre-forked server mode is decided, not built.
+
+**A stack overflow stops the program** like a trap: calls nested deeper than their thread's stack holds (a recursion without an end, a derived `clone()` of a very long list) print one line after what the program printed, naming the innermost function of the program and the thread, and exit with status 1:
+
+```text
+avant runtime: stack overflow in depth on the main thread: the calls nest too deep for its 8 MiB stack
+```
+
+A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), for the main thread and the runtime's own threads alike. The program's output comes first unless the overflow happened inside the C library itself (which may be writing that output). In a task (`... in a task: the calls nest too deep for a pool worker's 8 MiB stack`) and in an HTTP handler it ends the whole program too, not only the task or the request: a stack cannot be given back safely at any instruction. Each thread the runtime knows gets a small signal stack of its own when it starts, so this costs nothing per call; a C thread gets one at its first callback that allocates (or at its first callback in a program that spawns or serves HTTP), and before that its overflow is still a bare crash. Any other crash (a C function writing through a bad pointer) is unchanged.
 
 **A failed write to standard output stops the program** like a trap (`avant runtime: cannot write to standard output: No space left on device` on a full disk or `/dev/full`, status 1), checked at every `puts`. A closed pipe (`prog | head`) kills it by `SIGPIPE` (status 141 in a shell), reset to the default before `main` even if the parent ignored or blocked it (a CI runner, a shell's `trap '' PIPE`).
 
@@ -2133,7 +2507,7 @@ In the library, `h[k]` and `"42".to_i` return optionals, `file_read` and `Json.p
 
 ## Function values
 
-A function value has the type `fn(T): U`; a lambda is `{ |x| ... }`; a block after a call is its last argument.
+A function value has the type `fn(T): U`; a lambda is a function without a name, `(x) { ... }`, and is passed like any other argument.
 
 ```avant
 fn apply(xs: Array(Int), f: fn(Int): Int): Array(Int) {
@@ -2150,16 +2524,13 @@ fn double(n: Int): Int {
 
 fn main {
   a = apply([1, 2, 3], double)                 // a named function
-  b = apply([1, 2, 3], { |n| n * n })          // a lambda
-  c = apply([1, 2, 3]) { |n| n + 100 }         // a trailing block
+  b = apply([1, 2, 3], (n) { n * n })          // a lambda
   puts(a[2])    // => 6
   puts(b[2])    // => 9
-  puts(c[2])    // => 103
 }
 ```
 
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
-- A function name, bare or qualified, followed by a block is a call with that block as its only argument (`twice { |n| n + 1 }` is `twice() { |n| n + 1 }`; so is `util.twice { |n| n + 1 }`). The block starts on the call's line (a lambda on the next line is a value of its own); in an `if`, `while` or `switch` head, only a block starting with its parameters (`{ |n|`) is the call's.
 - A bare function name in a value position is that function (`f: fn(Int): Int = double`); another module's is qualified, as at a call (`f = util.double`). When a name means several functions (overloads, or two imported modules' of one name), the expected `fn` type or the module's name picks one.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
 - An optional function value is `(fn(Int): Int)?` (`fn(Int): Int?` returns an `Int?`), opened like any optional (`if f = cb { f(1) }`, `cb ?? double`), no larger than a function value (`nil` is a null code word).
@@ -2167,34 +2538,37 @@ fn main {
 
 ### Lambdas
 
-`{ |x| x + 1 }` is a lambda; its last expression is its result, the result type expected or inferred, including a final `if`/`else` whose branches end in values (`apply(2) { |x| if x > 1 { x * 10 } else { 0 } }`; branches ending in statements keep it a statement). A parameter type is written in the pipes (`{ |a: Int, b: Int| a * 10 + b }`) unless the expected `fn` type gives it; one left unknown is an error.
-
-A lambda with no parameters is `{ || 1 }`.
+`(x) { x + 1 }` is a lambda: a function's parameters and body without `fn` and a name. Its last expression is its result, the result type expected or inferred, including a final `if`/`else` whose branches end in values. A parameter's type, and the lambda's result, are written as in a function (`(a: Int, b: Int): Int { a * 10 + b }`, `(v: Int | String) { ... }`) unless the expected `fn` type gives them; a parameter left unknown is an error. `() { 7 }` takes nothing.
 
 ```avant
 fn main {
-  add: fn(Int, Int): Int = { |a, b| a + b }
-  typed = { |a: Int, b: Int| a * 10 + b }
-  seven = { || 7 }
+  add: fn(Int, Int): Int = (a, b) { a + b }
+  typed = (a: Int, b: Int): Int { a * 10 + b }
+  seven = () { 7 }
   puts(add(1, 2))       // => 3
   puts(typed(4, 2))     // => 42
   puts(seven())         // => 7
 }
 ```
 
-### Trailing blocks
+- `return` returns from the lambda; when the result is inferred, every `return` and the end give one type (`return` with nothing beside an `Int` end is an error that names both: write the result type, as `(n: Int): Int? { ... }`).
+- A postfix `?` in a lambda returns its failure from the lambda, so the result type must hold it: `(): Int | ParseError { parse_age(s)? }`; in a lambda whose result is inferred it is refused with that hint.
+- `break` and `continue` in a lambda have no loop of the lambda's to leave: a compile error, unless inside a loop of its own body.
+- **When the lambda is a call's only argument**, the call's own parentheses may be dropped: `xs.each (x) { puts(x) }` is `xs.each((x) { puts(x) })`, `users.map (u) { u.name }`, `t.group () { ... }`. Not directly in the head of an `if`, `while`, `for` or `switch`, where the `{` begins the statement's body: there, write `if xs.any((x) { x > 3 }) { ... }`. A call with another argument writes the lambda among them: `fold(xs, 0, (acc, x) { acc + x })`.
+- An operator or a method after the call applies to its result: `twice (x) { x - 5 }.abs()`, `count (x) { x > 2 } > 1`.
+- The braces with pipes, `{ |x| ... }`, are the older spelling, still accepted in this release with their old meaning (a builtin's block in pipes is a loop body whose `return` leaves the function); the next release refuses them. `avant format --lambdas FILE...` rewrites them: a block whose body leaves its function with `return`, `break`, `continue` or `?` becomes a `for`.
 
-A block after a call fills a last `fn` parameter the written arguments leave out; an operator after the block applies to the call (`first(xs) { |x| x > 2 } ?? 0`). Your own `map`:
+Your own `map`:
 
 ```avant
 fn map(xs: Array(T), f: fn(T): U): Array(U) {
   ys: Array(U) = []
-  xs.each { |x| ys.push(f(x)) }
+  xs.each (x) { ys.push(f(x)) }
   ys
 }
 
 fn main {
-  lengths = map(["a", "bb", "ccc"]) { |s| s.size }
+  lengths = map(["a", "bb", "ccc"], (s) { s.size })
   puts(lengths[2])    // => 3
 }
 ```
@@ -2206,7 +2580,7 @@ A lambda captures the variables it uses by reference, in a cell both sides share
 ```avant
 fn counter(start: Int): fn(): Int {
   n = start
-  { ||
+  () {
     n += 1
     n
   }
@@ -2218,22 +2592,23 @@ fn main {
   puts(next())     // => 12
 
   total = 0
-  add = { |k: Int| total += k }
+  add = (k: Int) { total += k }
   add(5)
   add(6)
   puts(total)      // => 11
 }
 ```
 
-- Lambdas made in `for i in 0..3` share the one loop variable and all read 3 afterwards; to keep each value, capture a copy (`k = i`): a name first assigned in a loop body is new at each iteration. A per-iteration loop variable is decided, not built.
+- A lambda made in a `for` loop gets that iteration's variable: lambdas made in `for i in 0..3` read 0, 1 and 2 (a new cell each iteration, made only when a lambda captures the variable). A name first assigned in a loop body is new at each iteration too.
 - A lambda in a method may use `self` and its fields and methods bare; it captures the receiver by value: a class's reference (later changes to the object are seen) or a struct's copy (a write through `self` is an error).
+- A parameter's default may be a lambda that reads the parameters before it; one that assigns to them is refused (it would change a copy no one else sees).
 
 ```avant
 class Scale {
   k: Int = 2
 
   fn by: fn(Int): Int {
-    { |n| n * k }
+    (n) { n * k }
   }
 }
 
@@ -2242,53 +2617,58 @@ fn main {
   f = s.by()
   s.k = 10
   puts(f(4))    // => 40
+  fs: Array(fn(): Int) = []
+  for i in 0..3 {
+    fs.push(() { i })
+  }
+  puts((fs[0])() + (fs[2])())   // => 2
 }
 ```
 
-### Builtin blocks are loops
+### Lambdas given to builtins
 
-The builtins' blocks (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are inlined loops, not function values:
+`each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort`, `sorted`, `parallel`, `Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
-| a builtin's block (`xs.each { ... }`) | leaves the enclosing function | leaves the loop |
-| a lambda, a trailing block of your own function | returns from the lambda | a compile error |
+| a lambda (`xs.each (x) { ... }`, your own function's) | returns from the lambda: the next element | a compile error |
+| a `for` loop | leaves the enclosing function | leaves the loop |
+
+The parameters of a lambda given to a builtin are new names, as a `for` variable is: one named like a variable that already exists there (`x = 1`, then `xs.each (x) { ... }`) is a compile error, since the compiler inlines the lambda as a loop of the function around it. The parameters of any other lambda are a function's, and may take any name.
 
 ```avant
 fn first_big(xs: Array(Int)): Int {
-  found = -1
-  xs.each { |x|
+  for x in xs {
     if x > 10 {
-      found = x
-      break                  // leaves the each
+      return x                 // leaves first_big
     }
   }
-  found
+  -1
 }
 
-fn report(xs: Array(Int)) {
-  xs.each { |x|
+fn positives(xs: Array(Int)): Int {
+  sum = 0
+  xs.each (x) {
     if x < 0 {
-      puts("negative: ${x}")
-      return                 // leaves report
+      return                   // skips this element
     }
+    sum += x
   }
-  puts("all good")
+  sum
 }
 
 fn main {
   puts(first_big([3, 12, 40]))   // => 12
-  report([1, -2, 3])             // => negative: -2
-  report([1, 2])                 // => all good
+  puts(positives([1, -2, 3]))    // => 4
 }
 ```
 
-`return x` there is checked against the enclosing function's result type. A block whose value is used (`any`, `all`, `sort`, `Array(T).new(n) { ... }`) may end with a value-giving `if`/`else`:
+A lambda whose value is used (`any`, `all`, `sort`, `Array(T).new(n, (i) { ... })`) may end with a value-giving `if`/`else`; for `parallel` and `with`, whose value is the lambda's last expression, a `return` needs the lambda's result type written (`xs.parallel((x): Int { ... })`):
 
 ```avant
 fn main {
   xs = [3, 1, 2]
-  xs.sort { |a, b|
+  xs.sort (a, b) {
     if a % 2 == b % 2 {
       a < b
     } else {
@@ -2434,18 +2814,23 @@ A struct, a class, or a `Ptr` to a C layout opts in by name, never by merely hav
 
 - The bound is written where the parameter is: after a parameter's type (`v: T: Show`), inside another type (`xs: Array(T: Ranked)`), or on a generic type's parameters (`class Top(T: Ranked)`). After a union it bounds the last member: `r: T | E: Error`.
 - `E: Error` takes a type marked `Error`, and settles a union's split: `fn failure(r: T | E: Error): E?` on an `Int | ParseError` takes `E` as `ParseError` and `T` as `Int`.
+- A bound by an interface that declares `fn equals(other: T): Bool` (`Eq(T)` below) or `fn compare(other: T): Int` (an order, say `interface Ordered(T)`) lets the body write `a == b`, or `a < b`, `<=`, `>` and `>=`: each type's copy calls its own `equals` (or its derived one) or `compare`.
 
 <!-- check: run -->
 ```avant
 interface Eq(T) {
-  fn ==(other: T): Bool
+  fn equals(other: T): Bool
 }
 
 struct Id: Eq(Id) {
   n: Int
 
-  fn ==(other: Id): Bool {
+  fn equals(other: Id): Bool {
     n == other.n
+  }
+
+  fn hash(h: Hasher) {
+    h.add(n)
   }
 }
 
@@ -2591,6 +2976,19 @@ name = "greeter"
 version = "1.0.0"
 -->
 
+<!-- check: hidden project=pkg file=avant.lock
+version = 1
+
+[[package]]
+name = "greeter"
+source = "git+https://github.com/example/greeter.git#58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+rev = "v1.0.0"
+-->
+
+<!-- check: hidden project=pkg file=deps/greeter/.git/HEAD
+58a9ab1a2db9803a031edf34adb9e16c74f9d126
+-->
+
 ```sh
 avant fetch          # clone the dependencies into deps/, write avant.lock
 avant run main.av    # no extra flags: imports find deps/ on their own
@@ -2618,7 +3016,7 @@ The manifest is for fetching only: a dependency is source compiled with your pro
 
 ### The manifest
 
-`avant.toml` sits beside your root file: `[package]` names the project; each `[dependencies]` entry has a `git` URL (anything `git clone` reads, a local path included) and a `rev` (a full commit SHA, a tag or a branch; a SHA or tag is reproducible). A dependency may also be its own section:
+`avant.toml` sits beside your root file: `[package]` names the project; each `[dependencies]` entry has a `git` URL (anything `git clone` reads; a local path is read from the manifest's own directory, so `../greeter` is the same repository wherever you run `avant fetch`) and a `rev` (a full commit SHA, a tag or a branch; a SHA or tag is reproducible). A dependency's name is the directory it gets under `deps/`: letters, digits, `_`, `-` and `.`, not starting with `.`. A dependency may also be its own section:
 
 ```toml
 [dependencies.greeter]
@@ -2626,11 +3024,11 @@ git = "https://github.com/example/greeter.git"
 rev = "v1.0.0"
 ```
 
-A dependency with no `git`, a duplicate, an unknown key, or a bare version string (`greeter = "1.0"`: no registry resolves it) is an error naming the file and line.
+A dependency with no `git`, a duplicate, an unknown key, or a bare version string (`greeter = "1.0"`: no registry resolves it) is an error naming the file and line. A list may span lines up to its closing `]`. Two more sections say what C a package links: `[c]` and `[link]` ([C in a package](#c-in-a-package)).
 
 ### Fetch and lock
 
-`avant fetch` (or `avant fetch path/to/project`) clones each dependency and its own dependencies into `deps/` at the pinned commits, writes `avant.lock`, and prints one line per dependency:
+`avant fetch` (or `avant fetch path/to/project`) clones each dependency and its own dependencies into `deps/`, checks each out at one commit (a detached `HEAD`), writes `avant.lock`, and prints one line per dependency:
 
 ```text
 fetched greeter 58a9ab1a2db9803a031edf34adb9e16c74f9d126
@@ -2654,16 +3052,20 @@ version = 1
 [[package]]
 name = "greeter"
 source = "git+https://github.com/example/greeter.git#58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+rev = "v1.0.0"
 ```
 
 - **Commit** `avant.toml` and `avant.lock`, **not** `deps/`: a fresh clone builds with `avant fetch`, then `avant run main.av`.
-- A plain `avant fetch` takes the lockfile's commits, even if a branch or tag moved.
+- A plain `avant fetch` keeps the lockfile's commit while a dependency's `git` and `rev` are the ones it was fetched with, even if a branch or tag moved; a changed `rev` is resolved again. A commit already in the checkout is not fetched from the network.
+- A rev names the remote's branch first, then a tag, then anything else git resolves (`HEAD` is the remote's default branch).
+- `deps/` holds only what the lockfile names: fetch removes every other checkout there, saying so (`removed deps/old: no dependency names it any more`). A checkout with its own changes (modified, staged or untracked files) is never moved, replaced or removed: fetch stops, or keeps it and says so.
+- A checkout cloned from another source than the manifest's (a patched clone, below) is cloned again from the new one.
 - If any dependency cannot be cloned or checked out, fetch prints git's output, exits non-zero and writes no lockfile.
-- Fetching needs `git` (looked for in `/usr/bin`, `/usr/local/bin`, then `/bin`); compiling works offline.
+- Fetching needs `git`, looked up on `PATH`; compiling works offline.
 
 ### Importing a dependency
 
-A dependency's module is imported by its path from the checkout's root, with no package prefix: `greeter.av` is `import greeter`, `http/server.av` is `import http.server`.
+A dependency's module is imported by its path from the checkout's root, with no package prefix: `greeter.av` is `import greeter`, `text/loud.av` is `import text.loud`.
 
 A dependency's file imports from its own checkout and the other fetched dependencies, never your program; visibility is as for your files. A module not found in a project with a manifest says what to run:
 
@@ -2671,16 +3073,27 @@ A dependency's file imports from its own checkout and the other fetched dependen
 error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: avant fetch .)
 ```
 
+**`deps/` is checked, never trusted as found.** Every compile reads `avant.toml`, `avant.lock` and each checkout's `HEAD`, offline, and refuses a project they do not agree on, each time naming the fix (`run: avant fetch .`):
+
+| When | The compile says |
+| --- | --- |
+| a dependency is in `avant.toml` and not in `avant.lock`, or no `avant.lock` exists | `avant.toml needs greeter, which avant.lock does not pin` |
+| its `rev` or `git` changed since the fetch | `avant.toml asks for greeter at v2.0.0, avant.lock was fetched at v1.0.0` |
+| `avant.lock` pins a package no manifest needs any more | `avant.lock pins greeter, which avant.toml no longer needs` |
+| a checkout is missing, or is at another commit | `./deps/greeter is at 3f2c…, avant.lock pins 58a9…` |
+
+A directory of `deps/` that the lockfile does not name is not a dependency: its modules are not found (the message names it). Without an `avant.toml` a project has no dependencies.
+
 ### Updating and removing
 
 | To | Do |
 | --- | --- |
-| move one package to a chosen version | change its `rev` in `avant.toml` to the new tag or commit, then `avant fetch` |
-| move every branch and tag pin to its current commit | `avant fetch --update` (deletes the checkouts, clones again, rewrites the lockfile) |
-| remove a package | delete its entry from `avant.toml`, delete `deps/NAME`, then `avant fetch` |
-| patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` (a checkout fetched from another source is cloned again) |
+| move one package to a chosen version | change its `rev` in `avant.toml` to the new tag or commit, then `avant fetch` (until then the compile refuses the project) |
+| move every branch and tag pin to its current commit | `avant fetch --update` (resolves every rev again, updating each checkout in place, and rewrites the lockfile) |
+| remove a package | delete its entry from `avant.toml`, then `avant fetch` (it removes `deps/NAME`) |
+| patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` |
 
-Commit the new `avant.lock`. A removed entry's checkout left in `deps/` is still found by the compiler.
+Commit the new `avant.lock`.
 
 ### Publishing a package
 
@@ -2710,9 +3123,45 @@ Each clash is reported, never silently resolved.
 - **One dependency name reaches two commits** (your pin and a dependency's): fetch stops with `avant fetch: dependency greeter resolves to two different commits (...)`; align your pin and fetch again.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 
+### C in a package
+
+A package that wraps a C library says what it links once, in its own `avant.toml`; a program that uses it links that C only when the root project opts in.
+
+```toml
+# deps/redis/avant.toml: the package's own manifest
+[package]
+name = "redis"
+version = "0.2.0"
+
+[c]
+sources = [                    # C files the package carries, compiled for "source"
+  "c/valkey/src/valkey.c",
+  "c/valkey/src/net.c",
+]
+include = ["c/valkey/include"] # -I for those sources
+flags = ["-DNDEBUG"]           # -D, -U, -W, -f, -O and -std= flags only
+libs = []                      # system libraries linked either way (-lNAME)
+system = ["valkey"]            # linked instead of the sources for "system"
+```
+
+```toml
+# avant.toml: the root project
+[dependencies]
+redis = { git = "https://github.com/example/redis.git", rev = "v0.2.0" }
+
+[link]
+redis = "source"     # or "system": link the system's libvalkey instead
+```
+
+- **Nothing links unasked.** A program that imports a module of a package with a `[c]` section and has no `[link]` choice for it does not compile: `the dependency redis links C code (2 C sources; the system's valkey instead of its sources), and nothing links unless this project opts in: add [link] with redis = "source" ... or redis = "system" ...`. `avant fetch` says it too (`note: redis links C code`). A dependency the program does not import needs no choice. `[link]` is read from the root project's manifest only, and applies to dependencies at any depth.
+- **`"source"`** compiles the package's `sources` with its `include` and `flags` (`-O2` and `-std=c11` unless the flags choose) and links them with its `libs`; **`"system"`** links its `system` libraries and its `libs` instead. A choice the package cannot serve (`"source"` with no sources, `"system"` with sources and no `system`) is an error that names the other.
+- **The compiled objects are cached** under `AVANT_CACHE_DIR`, else `$XDG_CACHE_HOME/avant`, else `~/.cache/avant`, keyed by the C compiler (its path and `--version`), the flags and the contents of the sources and of the headers in their directories and the include directories: another version or another compiler compiles again, the same one links the cached objects.
+- Paths are the package's own (relative, no `..`); a library is a name as `-l` takes it (`z` for zlib).
+- Your own project's `[c]` needs no `[link]`: its sources and libraries are compiled and linked into every program of the project, instead of `--cc` and `--lib` on each command.
+
 ### Package limits
 
-No registry, no version ranges or solving, no per-package build step, one version per dependency name.
+No registry, no version ranges or solving, no build script (a package's C is the sources its manifest lists), one version per dependency name.
 
 ## Concurrency
 
@@ -2726,7 +3175,7 @@ fn fib(n: Int): Int {
 
 fn main {
   h = spawn { fib(27) }                           // one task, on the pool
-  fibs = [20, 21, 22, 23].parallel { |n| fib(n) } // one task per element
+  fibs = [20, 21, 22, 23].parallel (n) { fib(n) } // one task per element
   puts(h.join() ?? 0)  // => 196418
   puts(fibs[3])      // => 28657
 }
@@ -2734,7 +3183,7 @@ fn main {
 
 ### Spawn
 
-`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once. `.join` waits and gives an `Int | TaskError`: the block's value (an `Int` for now) or the trap that ended the task ([When a task traps](#when-a-task-traps)), read like any failure (`??`, `?`, an if-assign, `else e`). Handles are ordinary values: an array of them waits for many.
+`spawn { ... }` runs the block as a task and returns a `JoinHandle(T)` at once, `T` the block's value: any type, `Void` for a block that ends with a statement or a call that gives nothing. `.join` waits and gives a `T | TaskError`: the block's value or the trap that ended the task ([When a task traps](#when-a-task-traps)), read like any failure (`??`, `?`, an if-assign, `else e`); a second join gives the same. Handles are ordinary values: an array of them waits for many.
 
 ```avant
 fn work(id: Int): Int {
@@ -2755,13 +3204,36 @@ fn main {
 }
 ```
 
-- A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
-- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
-- `.join` or `.parallel` inside a pool worker is refused: a compile error when written in the block; reached through a call, a trap (`.parallel called from a pool worker: …`) that ends the task. A nested `spawn` from a worker is allowed.
+A `?` in the block ends the task with the failure, as it returns one from a function: the block's value is then `T | E` (`T?` for a `nil`), and the join gives `T | E | TaskError`.
+
+```avant
+fn parse_port(s: String): Int? {
+  n = s.to_i()?
+  if n < 1 || n > 65535 {
+    return nil
+  }
+  n
+}
+
+fn main {
+  h = spawn { parse_port("8080")? + 1 }
+  puts(h.join() ?? 0)                         // => 8081
+  bad = spawn { parse_port("http")? + 1 }
+  puts(bad.join() ?? 0)                       // => 0
+  name = spawn { "task ${1 + 1}" }
+  puts(name.join() ?? "")                     // => task 2
+}
+```
+
+- A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable. Its value goes back by the join whatever its type: the task made it or captured it, and nothing else holds it once the join returns.
+- **A task completes when its block and every task it spawned have ended.** A task spawned inside a task, or inside a `.parallel` body, counts in it: the worker goes back to the pool when the block ends, and the join returns once the last of them has ended. So a join guarantees that every array the task captured, directly or through the tasks it spawned, is thawed; a value received through a channel does not.
+- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve`, `delete_if`, `insert`, `delete_at`, `concat`, `shuffle` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
+- A captured `Hash` (and a `Set`) follows the same rule: shared for reading and frozen until the task ends, at every level of a hash of arrays or an array of hashes. A store (`h[k] = v`), `delete`, `clear`, `inc` or a `Set`'s `add` through the captured name is a compile error; through another path it stops the program, naming the operation (`a store`, `delete` or `clear`): `avant runtime: a store on a hash a running task reads: …`. Cost: one test per runtime call that changes a hash, in every program; the count takes padding the hash already had, so a hash is no larger.
+- `.join` and `.parallel` work inside a task, written in the block or reached through a call: a joined task that no worker has taken yet runs on the joining worker, as do the `.parallel` bodies still queued, and the caller waits for the rest giving its place in the pool back, as a task waiting on a channel does ([The thread pool](#the-thread-pool)). So a recursive split (spawn one half, compute the other, join) needs no more threads than the pool's count. A task that joins a task waiting on a channel only it would send to still waits for good, as anywhere.
 
 ### When a task traps
 
-A trap in a spawned block (an index out of bounds, an overflow, a division by zero, an `expect` on `nil`, a change to a frozen array, …) ends that task; the program and the pool go on. The trap is printed to standard error when it happens, joined or not (`avant runtime: index 7 out of bounds …`); the task's stack is dropped without unwinding (the collector frees what it left), and `join` gives a `TaskError`: `what` is the trap's text, `site` its `FILE:LINE:COL` (empty when the trap names its function instead), `"${e}"` prints both.
+A trap in a spawned block (an index out of bounds, an overflow, a division by zero, an `expect` on `nil`, a change to a frozen array or hash, …) ends that task; the program and the pool go on. The trap is printed to standard error when it happens, joined or not (`avant runtime: index 7 out of bounds …`); the task's stack is dropped without unwinding (the collector frees what it left), and `join` gives a `TaskError`: `what` is the trap's text, `site` its `FILE:LINE:COL` (empty when the trap names its function instead), `"${e}"` prints both.
 
 ```avant
 fn main {
@@ -2779,21 +3251,23 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with { |x| … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
+- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with (x) { … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
 - Each `Channel` the block captured is closed, which wakes a task waiting on it in `recv` or `send`.
-- Each `Array` the block captured is thawed, as at the task's normal end.
+- Each `Array` and `Hash` the block captured is thawed, as at the task's normal end.
 
-These traps still end the program: one in a `.parallel` body, inside a C callback, on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks).
+A trap in a `.parallel` body ends that body (it is printed when it happens, and what the body held is given back as above); the other bodies run to their end, and then the `.parallel` traps in its caller, naming how many bodies trapped and the first one's trap: `avant runtime: .parallel: 2 of 8 bodies trapped; the first: index 9 out of bounds …`. In a task that ends the task, whose join gives it; on the main thread it ends the program.
+
+These traps still end the program: inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), the runtime's own stops (the heap limit, the collector's checks), and a [stack overflow](#traps).
 
 ### Parallel
 
-`items.parallel { |item| ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool.
+`items.parallel (item) { ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool; inside a task it runs the bodies still queued itself ([Spawn](#spawn)). A `?` in the body makes that element the failure, as in a `spawn` block: the result is an `Array(T | E)`.
 
 ```avant
 fn main {
   words = ["a", "bb", "ccc"]
   suffix = "!"
-  loud = words.parallel { |w| "${w}${suffix}" }
+  loud = words.parallel (w) { "${w}${suffix}" }
   puts(loud[2])      // => ccc!
 }
 ```
@@ -2809,26 +3283,25 @@ import std.sync
 
 fn main {
   hits = Mutex(Int).new(0)
-  handles: Array(JoinHandle(Int)) = []
+  handles: Array(JoinHandle(Void)) = []
   for i in 0..4 {
     handles.push(spawn {
       for j in 0..1000 {
-        hits.with { |n| n += 1 }
+        hits.with (n) { n += 1 }
       }
-      0                          // a spawn block ends with an Int, for now
     })
   }
   for h in handles {
     _ = h.join()
   }
-  puts(hits.with { |n| n })    // => 4000
+  puts(hits.with (n) { n })    // => 4000
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the block's last expression. `return`, `break`, `continue` and `?` leave it as any block, and every way out releases the lock.
+- `Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); `break`, `continue` and a `?` have nowhere to go in it; every way out releases the lock.
 - **Leaving early keeps the changes made so far** (only a trap poisons), unchecked by the compiler: leave only where the guarded value is whole, after the update (`n += 1`, then `return`) or before it (`if q.size == 0 { return nil }`, then the change).
 - **A poisoned mutex heals** ([When a task traps](#when-a-task-traps)) by one of three operations, each under the lock:
-  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda that captures nothing (`recover: { || Stats.new() }`); a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
+  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda written there (`recover: () { Stats.new() }`), whose captures are plain values (a number, `Bool`, `String`, an enum, or a struct, optional or union of those), copied when the mutex is made: `recover: () { Stats.new(size) }` rebuilds with `size` as it was at the call, whatever is assigned to `size` later, and a captured class, `Array`, `Hash`, `fn`, `Channel` or `Mutex`, or a function value from a variable, is refused, since the rebuild runs on whichever task meets the poison; a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
   - `m.recover(value)` replaces the value and clears the poison; it takes `value` as `Mutex(T).new(value)` does (a new value, or a local variable it consumes).
   - `m.clear_poison()` keeps the value as the trapped task left it: for a value whose every state is valid.
 
@@ -2842,28 +3315,27 @@ fn fresh: Array(Int) {
 fn main {
   counts = Mutex(Array(Int)).new([0, 0, 0], recover: fresh)
   h = spawn {
-    counts.with { |c|
+    counts.with (c) {
       c[0] += 1
       c[7] += 1                          // traps: the task ends, the mutex is poisoned
     }
-    0
   }
   _ = h.join()
   puts(counts.poisoned())                  // => true
-  total = counts.with { |c| c.sum() }      // fresh rebuilds the value first
+  total = counts.with (c) { c.sum() }      // fresh rebuilds the value first
   puts(total)                            // => 0
   puts(counts.poisoned())                  // => false
 }
 ```
 
-- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each { |it| sizes.push(it.n) }`).
+- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
 - **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
-  - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push` or `fill`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
+  - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push`, `insert`, `fill` or `concat`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
   - `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods;
   - `initialize` is not read: its object is new, and a constructor's arguments are checked at the call;
   - the error names the mutex, class, method and store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`.
 - **Nothing from outside comes in.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or literal whose parts are new or plain), already reached from the guarded value, or plain.
-- **`Mutex(T).new(v)` consumes `v`** when `T` is not plain: pass a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`) or a local variable, unusable after the call by source order, not paths (a use in the other branch of an `if` is refused too); a field, an element, a parameter or a call's result is refused. Before the call, the local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), holds only new values, and the call is not in a loop the variable was declared outside of.
+- **`Mutex(T).new(v)` consumes `v`** when `T` is not plain: pass a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`) or a local variable, unusable after the call by source order, not paths (a use in the other branch of an `if`, or after a `return` that follows the call, is refused too: declare the value in the branch that gives it to the mutex); a field, an element, a parameter or a call's result is refused. Before the call, the local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), holds only new values, and no other name holds a reference reached from it, even one no longer used (`inner = b.inner` is refused: write `b.inner.n += 1`); the call is not in a loop or a block (another mutex's `with` among them) the variable was declared outside of (declare it inside, or pass `Box.new()`).
 
 A channel hands values from one task to another:
 
@@ -2877,10 +3349,9 @@ fn main {
       jobs.send(i * i)
     }
     jobs.close()
-    0
   }
   total = 0
-  while v = jobs.recv() {               // nil once the channel is closed and empty
+  for v in jobs {                       // until the channel is closed and empty
     total += v
   }
   _ = producer.join()
@@ -2888,7 +3359,7 @@ fn main {
 }
 ```
 
-- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty (so `while v = ch.recv() { ... }` drains it); `close` closes.
+- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty, so `for v in ch { ... }` receives until then; `close` closes.
 - A `send` on a closed channel returns `false` at once, buffered or not, full or not; a waiting send returns `false` when the channel closes, its value not received. Values sent before the close stay to be drained. A program that closes only after its last send can ignore the result (`ch.send(v)` as a statement).
 - A sent value follows the `spawn` capture rule ([What may cross a task](#what-may-cross-a-task)), except that an `Array` is copied at every level, so each side owns its own. `T` may be any type: a channel can carry channels (a reply channel per request) or mutexes.
 - A `Channel` or `Mutex` holds no memory outside the object: make as many as you like.
@@ -2913,16 +3384,37 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
 | an `Array` whose elements may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` copies it |
+| a `Hash` or `Set` whose keys are plain values (the rows above but an `Array`) and whose values may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` refuses it, and an `Array` holding one (a send copies arrays only) |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
-| a class instance, a `Hash`, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects) |
+| a class instance, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` or `Hash` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects) |
 
 A mutable object reaches another task only inside a `Mutex`, or as the results of `.parallel`.
 
 ### The thread pool
 
-The pool runs at most one task at once per CPU the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), counted when the pool starts; further tasks queue. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number and is removed before `argv()` sees it (it is to become `--avant-threads=N`: [Not built yet](#not-built-yet)). `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at most `N` tasks at once, its size; further tasks queue. `N` is the number of CPUs the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), unless one of these sets it:
 
-A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--threads 2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
+- `--avant-threads=N` on **your program's** command line, `N` from 1 to 1,024. The runtime takes it out before `argv()` sees it; a bare `--avant-threads` or a bad value stops the program before `main` with one line on standard error and status 1 (`avant runtime: --avant-threads=0: the thread pool's size is --avant-threads=N, N from 1 to 1024`). Every other argument, `--threads` included, is the program's. After a literal `--` nothing is taken.
+- `set_pool_size(n)` from `std.sync`, for a program with its own option (a `--threads`, a config file); `pool_size()` reads the size.
+
+<!-- check: run args=--threads,2 -->
+```avant
+import std.sync
+
+fn main {
+  args = argv()
+  if args.size >= 3 && args[1] == "--threads" {
+    set_pool_size(args[2].to_i() ?? 1)
+  }
+  puts(pool_size())                        // => 2
+  squares = [1, 2, 3, 4].parallel (x) { x * x }
+  puts(squares[3])                         // => 16
+}
+```
+
+The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `Http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
+
+A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--avant-threads=2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
 
 ## Memory
 
@@ -3039,10 +3531,27 @@ fn main {
 
 A `lib NAME { ... }` block holds `fun` declarations (`fun` for a C function, `fn` for an Avant one), called through the lib's name (`c.abs`). Hand-written and generated bindings ([avant bind](#avant-bind)) share the grammar; there is no `extern`.
 
-- A `String` argument is passed as a `char *`.
+- A `String` argument is passed as a `char *` to its bytes, terminated: a long slice that ends its string's bytes is passed in place, any other slice as a copy for the call.
+- A string C gives the program (a `String` result, a `String` field of C memory or of a struct C returns, a callback's `String` argument) is copied on the way in: C may change or free its memory afterwards.
 - A `String?` result is a `char *` that may be NULL, read as `nil` (passing `nil` passes NULL); a `String` result that is NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
-- A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`, a tag and a payload where C has one word) is a compile error there.
+- A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, `Ptr(T)?` (the nullable C pointer, [Layouts and Ptr](#layouts-and-ptr)), and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, a tag and a payload where C has one word) is a compile error there.
+- An `Array` (or a `Hash`, a `Buf`) passed to C is the value itself, not a copy: C may change it, except an array or a hash a running task reads ([What may cross a task](#what-may-cross-a-task)), which C must leave as it is; the runtime's own C functions that write an array or a hash trap on such a value, as Avant code does.
+- One C function may be bound in several `lib` blocks (a program's own beside a library module's, such as `std.sync`'s) when each declares the same signature; each call goes through its own binding. Another signature is a compile error naming the first binding (`C function avant_chosen_threads is already bound as pool_rt.avant_chosen_threads(): Int in std.sync; a second binding of it must declare the same signature, not (): Int32`).
+- The runtime's own C functions (`avant_c_str`, `avant_alloc_slow`, every entry the compiler calls) are reserved: a `fun` of that name is a compile error (`C function avant_c_str is reserved: ...`).
+- A C function that answers through a pointer (`int *out`, `natsMsg **msg`) takes `&x`, the address of a local: C writes it during the call, and afterwards `x` holds what C wrote (`msg: Ptr(Msg)? = nil`, then `nats.natsMsg_Create(&msg, ...)`). `x` is a local whose type is the parameter's pointee (`Int32` for `Ptr(Int32)`, `Ptr(Msg)?` for `Ptr(Ptr(Msg)?)`; a narrow pointee such as `Ptr(UInt8)` takes an `Int`, range-checked on the way in); `&x` is only a `fun` argument, never a field, an element or a value, so C never holds the address of anything the collector moves.
 - C++ is reached only through `extern "C"` functions.
+
+```avant
+lib m {
+  fun frexp(x: Float64, exp: Ptr(Int32)): Float64
+}
+
+fn main {
+  e: Int32 = 0
+  f = m.frexp(48.0, &e)
+  puts("${f} ${e}")     // => 0.75 6
+}
+```
 
 ### C types
 
@@ -3060,9 +3569,9 @@ Every C scalar type has an exact name at the boundary.
 | `unsigned char`, `uint8_t`; `unsigned short`, `uint16_t` | `UInt8`; `UInt16` | `Int` |
 | `float` | `Float32` | `Float64` |
 | `char *` | `String` or `String?` | the same |
-| a pointer | `Ptr(Layout)` or `Ptr(Void)` | the same |
+| a pointer | `Ptr(Layout)`, `Ptr(Void)`, or a pointer to a scalar or a pointer (`int *` is `Ptr(Int32)`, `uint8_t *` is `Ptr(UInt8)`, `T **` is `Ptr(Ptr(T)?)`); `Ptr(T)?` where C may give NULL | the same |
 
-The five narrow names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) are written only in a `fun` signature and a C layout's field. A value from C converts exactly. A value to C keeps its value or traps (`avant runtime: 256 out of range for the C type UInt8 (0..255)`); a `Float64` rounds to the nearest `Float32`.
+The five narrow names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) are written only in a `fun` signature, a C layout's field and a `Ptr`'s type (`Ptr(UInt8)` anywhere). A value from C converts exactly. A value to C keeps its value or traps (`avant runtime: 256 out of range for the C type UInt8 (0..255)`); a `Float64` rounds to the nearest `Float32`.
 
 <!-- check: fragment needs a C library of its own; the tested twin is tests/fixtures/ffi/cscalars.av -->
 ```avant
@@ -3090,7 +3599,7 @@ fn (p: Ptr(Pair)) sum: Int32 {
 }
 
 fn main {
-  p = c.malloc(8)
+  p = c.malloc(Pair.size)
   p.a = 40
   p.b = 2
   puts(p.sum())     // => 42
@@ -3098,9 +3607,108 @@ fn main {
 }
 ```
 
-`Ptr(T)` is for a layout `T`, `Ptr(Void)` for a pointer you only pass around; a `Ptr` of anything else (`Ptr(Int)`) has no fields and takes no methods. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof`: you state the size passed to `malloc`.
+`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around or convert with `.as(T)`; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. `Pair.size` is the layout's C size (`sizeof(Pair)`), known when compiling, so `c.malloc(Pair.size)` replaces a size counted by hand; it takes the integer type its place wants, as a literal does.
 
-A `Ptr` can be NULL (an unchecked `malloc`) and Avant has no test for it: a field read or written through a NULL `Ptr` is a segmentation fault, with no Avant message and unflushed output lost, so check in C before handing the pointer over (`Ptr(T)?` is refused, above). A `String` field that C left NULL (or `release` made null) reads as `""`.
+`p[i]` reads element `i` of the C array a `Ptr` points to (`p[0]` its one value): `Ptr(UInt8)`, `Ptr(Int32)`, `Ptr(Ptr(Reply)?)` and the rest; `p[i] = v` writes it. A narrow element reads as its Avant type and is range-checked when written, as a layout's field. C gave no length, so nothing checks `i`: the count comes from C (`elements`, `len`) and stays your code's to respect. A NULL `p` traps.
+
+```avant
+lib c {
+  fun calloc(n: Int, size: Int): Ptr(Int32)
+  fun free(p: Ptr(Int32))
+}
+
+fn main {
+  xs = c.calloc(3, 4)       // C's int[3]
+  for i in 0..3 {
+    xs[i] = (i * 10).to_i32()
+  }
+  xs[2] += 1
+  puts(xs[1] + xs[2])       // => 31
+  c.free(xs)
+}
+```
+
+A field `message: Int8[504]` is C's `char message[504]` (C's order, `T[N]`: `T` a C scalar, a `Ptr` or a layout, `N` an integer literal or a module constant written as one): it takes C's room and alignment, so the fields after it sit where C puts them. It is no value: `e.message[i]` reads or writes one element (checked against `N`), `e.message.size` is `N`, and an `Int8` or `UInt8` array's `e.message.to_s()` is its text up to the first NUL (at most `N` bytes).
+
+```avant
+lib c {
+  struct Err {
+    code: Int32
+    tag: UInt8[4]
+    next: Int32
+  }
+  fun calloc(n: Int, size: Int): Ptr(Err)
+}
+
+fn main {
+  e = c.calloc(1, Err.size)
+  e.tag[0] = 111
+  e.tag[1] = 107
+  e.next = 7
+  puts("${e.tag.to_s()} ${e.tag.size} ${Err.size}")   // => ok 4 12
+}
+```
+
+`Ptr(T)?` is the nullable pointer: one word, `nil` is C's NULL, in a `fun` result or parameter, a layout's field, and anywhere in Avant code. Declare it where C may give NULL (a failed `malloc`, the end of a list) and test it as any optional:
+
+```avant
+lib c {
+  struct Node {
+    v: Int32
+    next: Ptr(Node)?
+  }
+  fun calloc(n: Int, size: Int): Ptr(Node)?
+}
+
+fn length(head: Ptr(Node)?): Int {
+  n = 0
+  cur = head
+  while node = cur {
+    n += 1
+    cur = node.next
+  }
+  n
+}
+
+fn main {
+  if a = c.calloc(1, Node.size), b = c.calloc(1, Node.size) {
+    a.next = b
+    puts(length(a))         // => 2
+  }
+  puts(length(c.calloc(1, 1 << 62)))   // => 0
+}
+```
+
+`v.as(T)` reads a `Ptr(Void)` as a `Ptr(T)` (C's cast of a `void *`; `T` any type a `Ptr` points to, `v.as(Ptr(Node)?)` for an array of pointers), and any `Ptr` passes as a `Ptr(Void)`, as C converts to `void *`: one `malloc` serves every layout.
+
+```avant
+lib c {
+  struct Pair {
+    a: Int32
+    b: Int32
+  }
+  struct Node {
+    v: Int32
+    next: Ptr(Node)?
+  }
+  fun malloc(size: Int): Ptr(Void)?
+  fun free(p: Ptr(Void))
+}
+
+fn main {
+  if v = c.malloc(Pair.size), w = c.malloc(Node.size) {
+    p = v.as(Pair)
+    n = w.as(Node)
+    p.a = 2
+    n.v = 40
+    puts(p.a + n.v)     // => 42
+    c.free(p)
+    c.free(n)
+  }
+}
+```
+
+A plain `Ptr(T)` can still hold NULL when C gives one: a field read or written through it traps, naming the layout and the field, after the program's output is flushed (`avant runtime: the field a read or written through a NULL Ptr(Pair) (...) at app.av:7:8`); inside a task or an HTTP handler it fails that task or request alone. A `String?` field reads a NULL as `nil` and stores `nil` as NULL; a plain `String` field that holds NULL (C left it unset, or `release` made it null) traps when read, naming the field (`avant runtime: the C field Holder.name is NULL (declare it String? to read NULL as nil)`).
 
 ### Strings in C memory
 
@@ -3108,7 +3716,7 @@ The collector moves objects, so a heap value handed to C must stay put while C c
 
 - **For a call**, nothing is needed: arguments stay put while the C function runs.
 - **For a bounded span longer than a call**, `pin(value) { ... }` keeps it put for the block and unpins it on every way out; pins are counted, so nested pins compose.
-- **Stored into a C field** (`h.name = s`), a `String` stays pinned until `release` says C is done with that field; overwriting the field keeps the old value pinned too.
+- **Stored into a C field** (`h.name = s`), a `String` stays pinned until `release` says C is done with that field; overwriting the field keeps the old value pinned too. A slice that shares its string's bytes is stored as a copy of its own.
 
 <!-- check: fragment needs C functions of its own; the tested twin is tests/fixtures/ffi/release.av -->
 ```avant
@@ -3140,6 +3748,25 @@ fn main {
 - `release` is a statement taking a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout; anything else is a compile error.
 - **Forgetting a release costs memory, never correctness** (the value stays pinned until exit). **Releasing too early is a dangling C pointer**: the next collection may move or free the value under C. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
 
+A C buffer with a length (a `char *str` with its `size_t len`, a document's bytes, a message's payload) is copied out with `Bytes.from_c(p, n)`, or `String.from_c(p, n)`: `n` bytes at `p` (any `Ptr`, or a `Ptr(T)?`) into a new value, NUL bytes kept; a `String` result or field stops at its first NUL. A negative `n`, or a NULL `p` with `n` above 0, traps. As Go's `C.GoBytes` and `C.GoStringN`, it is a copy: C may free its buffer afterwards.
+
+```avant
+lib c {
+  fun calloc(n: Int, size: Int): Ptr(UInt8)
+  fun free(p: Ptr(UInt8))
+}
+
+fn main {
+  p = c.calloc(4, 1)
+  p[0] = 104
+  p[2] = 105
+  b = Bytes.from_c(p, 4)
+  c.free(p)
+  puts(b.size)     // => 4
+  puts(b[2])       // => 105
+}
+```
+
 ### Callbacks
 
 A `fun` parameter of an Avant `fn` type declares a C callback: pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments.
@@ -3170,15 +3797,18 @@ fn main {
 }
 ```
 
-A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile. A callback's parameters and result use the everyday types (`Int32`, `Float64`, `Bool`, `Ptr`), not the five narrow names.
+A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile. A callback's type may use the five narrow names (`fn(UInt8, Float32): Int16`): the Avant function takes and returns their Avant types (`fn(Int, Float64): Int`), each argument converts exactly on the way in, and the result is checked on the way out (out of range traps; a `Float64` rounds to the nearest `Float32`), as for a `fun`'s own parameters.
 
 ### Linking C code
 
 ```sh
 avant compile app.av --lib z            # link a system library: -lz
+avant compile app.av --lib build/libvalkey.a   # link a library file (a path, or a name ending .a or .so)
 avant compile app.av --cc helper.c      # compile and link a C file (or link a .o)
 avant run app.av --lib z
 ```
+
+A project's own C, and the C a package wraps, can be named once in `avant.toml` instead ([C in a package](#c-in-a-package)).
 
 The C and math libraries need no flag; the standard library's C libraries (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are compiled into the runtime shipped with `avant`.
 
@@ -3206,7 +3836,9 @@ lib add {
 
 - Each C scalar type maps to its exact name ([C types](#c-types)); a type with no Avant name (`long double`) fails the bind with a message.
 - A `char *` result is bound as `String?` (C returns NULL for "absent" or "failed"), a `char *` parameter as `String`.
-- A named four-byte C enum becomes an `enum` in the `lib` block, used by the functions and layout fields of that type: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). It is stored as C's `int`, and every value C gives (a result, a field, a callback's argument) is checked: a non-member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped, named in a comment; an anonymous enum, a value outside `Int32`, a constant that is not a valid Avant member name, or two constants equal after lower-casing leave the enum out with a comment, its functions taking `Int32`.
+- Any other pointer is bound as `Ptr` of its pointee: `int *` as `Ptr(Int32)`, `unsigned char *` as `Ptr(UInt8)`, a pointer to a pointer as `Ptr(Ptr(T)?)` (`char **` is `Ptr(Ptr(Int8)?)`, `void **` is `Ptr(Ptr(Void)?)`), in a function and in a layout's field.
+- A named four-byte C enum becomes an `enum` in the `lib` block, used by the functions and layout fields of that type: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). It is stored as C's `int`, and every value C gives (a result, a field, a callback's argument) is checked: a non-member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped, named in a comment; a value outside `Int32`, a constant that is not a valid Avant member name, or two constants equal after lower-casing leave the enum out with a comment, its functions taking `Int32`.
+- An anonymous enum (`enum { FLAG_A = 1, FLAG_B = 2 };`, how C spells constants) becomes [module constants](#constants) after the `lib` block, lower-cased, with C's values (`pub const flag_a = 1`); a name that is no Avant name, or one an earlier constant took after lower-casing, is left out with a comment.
 - `--lib NAME` names the block. It needs libclang 20 (`sudo apt install libclang1-20`); a release ships the `avant-bind` helper beside `avant`.
 
 ## Macros
@@ -3262,13 +3894,13 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 ## Builtins
 
-The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Bytes and Buf](#bytes-and-buf)) and these free functions:
+The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Sets](#sets), [Bytes and Buf](#bytes-and-buf)) and these free functions:
 
 | Area | Names |
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `file_size`, `file_delete`, `dir_list`, `dir_walk`, `dir_exists`, `dir_make` |
-| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output` |
+| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output`, `process_output_into` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
@@ -3307,20 +3939,18 @@ fn main {
 | `read_line()` | — | `String \| IoError \| Nil`: the next line of standard input without its newline (or a `\r` before it), an unterminated last line included | `nil` at the end; an `IoError` if the read fails | when stdout is a terminal, `read_line` flushes it first, so a `print` prompt shows |
 | `file_read("/dev/stdin")` | — | `String \| IoError` | as [`file_read`](#files-and-directories) | reads all of standard input |
 
-`while line = read_line() { ... }` stops at either; a guard tells them apart (the failure is `nil` at the end).
+`while line = read_line() { ... } else e { ... }` walks the lines; the `else` runs once at the end, with `e` the `IoError` or `nil` ([While](#while)).
 
 ```avant
 fn main {
   count = 0
-  while true {
-    line = read_line() else e {
-      if err = e {
-        eputs("cannot read: ${err}")
-        exit(1)
-      }
-      break
-    }
+  while line = read_line() {
     count += line.size
+  } else e {
+    if err = e {
+      eputs("cannot read: ${err}")
+      exit(1)
+    }
   }
   puts(count)                         // => 0
 }
@@ -3339,6 +3969,7 @@ Every `path` is a `String`.
 | `file_open(path)` | `path` | `FileReader \| IoError`: the file, to read line by line | an `IoError` | `file_open` never holds the whole file |
 | `r.read_line()` | — | `String \| IoError \| Nil` | as [`read_line`](#input) | a `FileReader`'s `r.read_line()` is [`read_line`](#input) on its file |
 | `r.close()` | — | — | — | closes the file; it also closes at the end, or on an error; a reader dropped earlier keeps it open until the program ends |
+| `r.scoped((f) { ... })` | a lambda taking the reader | — | — | runs the lambda with the reader, then closes the file, however much the lambda read: the way to stop early without keeping the descriptor (the collector closes nothing) |
 | `file_size(path)` | `path` | `Int \| IoError`: its size in bytes | an `IoError` | |
 | `file_delete(path)` | `path` | `Void \| IoError`: nothing when the file is removed | an `IoError`; a directory is an error | |
 | `file_exists(path)` | `path` | `Bool`: a file or a directory is there | — | |
@@ -3359,7 +3990,7 @@ fn main {
   puts(copy("missing.txt", "copy.txt") ?? -1)     // => -1
   puts(file_exists("copy.txt"))                   // => true
   names = dir_list(".") ?? []
-  puts(names.contains("copy.txt"))                // => true
+  puts(names.has("copy.txt"))                     // => true
 }
 ```
 
@@ -3370,6 +4001,10 @@ fn longest(path: String): Int | IoError {
   while line = r.read_line() {
     if line.size > best {
       best = line.size
+    }
+  } else e {
+    if err = e {
+      return err
     }
   }
   best
@@ -3420,6 +4055,7 @@ A `program` is a `String` and `args` an `Array(String)`; a program name without 
 | `process_run(program, args)` | `program`, `args` | `Int \| ProcessError`: its exit status | a `ProcessError` (below) | runs the program and waits; `process_run`'s child shares the program's stdin, stdout and stderr |
 | `process_run_out(program, args, out)` | `program`, `args`, `out: String` | the same | the same, with `output` when the output file could not be opened | the same, with stdout and stderr written to the file `out` |
 | `process_output(program, args, input)` | `program`, `args`, `input: String` (`""` when left out) | `ProcessOutput \| ProcessError`: its `status`, `stdout` and `stderr` | a `ProcessError` | runs the program with `input` on its stdin, then end of input, waits, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error) |
+| `process_output_into(program, args, out, err, input)` | `program`, `args`, `out: Buf`, `err: Buf`, `input` (`""` when left out) | `Int \| ProcessError`: its exit status | a `ProcessError` | `process_output` into the caller's buffers: the child's stdout is appended to `out` and its stderr to `err`, so a loop that runs many programs reuses two `Buf`s instead of making two strings each time |
 
 ```avant
 fn main {
@@ -3458,7 +4094,7 @@ fn main {
 }
 ```
 
-No time-of-day call or `sleep` yet; bind C's `usleep` (`lib c { fun usleep(us: UInt32): Int32 }`).
+The time of day, RFC 3339 text and `sleep_ms` are [std.time](#stdtime)'s.
 
 ## Standard library
 
@@ -3470,7 +4106,10 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.regex`](#stdregex) | `Regex.compile`, `Match` values, replace and split | PCRE2, and re2c scanners for literal patterns |
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
-| [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64` | the aklomp Base64 codec |
+| [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
+| [`std.time`](#stdtime) | `Time.now()`, `t.iso()`, `Time.parse_iso(s)`, `sleep_ms(ms)` | the system clock |
+| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `Random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
+| `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
@@ -3492,7 +4131,7 @@ fn main {
     }
   }
 
-  out = Json.obj()
+  out = Json.object()
   out.set("ok", true)
   out.set("count", 2)
   out.key("tags").arr().add("x").add("y").end()
@@ -3505,23 +4144,23 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none) | |
-| `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member, an element | `nil` when there is none | |
+| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none) | |
+| `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
-| `iter`, then `next` on it | — | each element in turn (`Json?`) | `nil` after the last | `while v = it.next { ... }` |
+| `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { for e in it { ... } }` |
+| `arr(key)`, then `next` on it | `key: String` | `JsonIter?`: the elements of the member `key` | `nil` when there is no such member or it is not an array | `it = doc.arr("numbers") ?? return bad_request()` |
 | `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
-| `f64s(key)` | `key: String` | `Array(Float64)?`: the numeric member `key` of every element of an array of objects | `nil` otherwise | |
 | `text` | — | `String`: the value written back as JSON text | — | |
-| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document |
+| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document, and a `JsonBuilder` writes it back (`b.value(v)`); an object's members are in `members`, a `Hash` by name (a repeated name keeps its first value), and their names in `keys`, in the document's order |
 
 **Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Json.obj`, `Json.arr` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open |
+| `Json.object`, `Json.array` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open (not `obj` and `arr`: those read a parsed value) |
 | `JsonBuilder.into(buf)` | `buf: Buf` | a `JsonBuilder` | — | starts one that writes into your `Buf` |
 | `set(name, v)`, `set_null(name)` | `name: String`, `v` (below) | the builder | — | a member of the open object |
 | `add(v)`, `null` | `v` (below) | the builder | — | an element of the open array |
@@ -3529,7 +4168,7 @@ fn main {
 | `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in the order of its `keys`). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 
@@ -3554,20 +4193,24 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Regex.compile(pattern, caseless = false)` | `pattern: String`, `caseless: Bool` | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`) | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
-| `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none | |
+| `Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, an `Int?`, `nil` for a failed match; `e.kind` is `RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
+| `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none; a limit reached traps | |
+| `re.try_find(text, from = 0)` | `text: String`, `from: Int` | `Match? \| RegexError`: `find`'s answer, or why there is none | a limit reached is a `RegexError` (`Regex.try_find: match limit exceeded (PCRE2 error -47)`; `e.kind`: `match_limit`, `depth_limit`, `heap_limit`, `memory` or `failed`) | for a pattern or a text from outside |
 | `m.start`, `m.end` | — | `Int`: the match's bounds, in bytes | — | a `Match` is a value: there are no global match cursors |
 | `m.group(i)`, `m.group("name")` | `i: Int`, or a group's name | `String?`: a group's text | `nil` when it did not take part | |
 | `m.span(i)`, `m.group_count()` | `i: Int` | a group's bounds (`Span?` with `lo` and `hi`); the number of groups | — | |
-| `re.count(text)` | `text: String` | `Int`: the number of non-overlapping matches | — | |
-| `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last | |
-| `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | — | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
-| `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | — | |
-| `re.close()`, `re.is_closed()`, `re.scoped { \|r\| ... }` | a block for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
+| `re.count(text)` | `text: String` | `Int`: the number of non-overlapping matches | a limit reached traps | |
+| `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last; a limit reached traps | `for m in re.matches(text) { ... }` |
+| `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | a limit reached traps | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
+| `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | a limit reached traps | |
+| `re.try_count(text)`, `re.try_replace(text, repl)`, `re.try_replace_into(buf, text, repl)`, `re.try_split(text)`, `re.try_matches(text)` | as their plain twins | `Int \| RegexError`, `String \| RegexError`, `RegexError?`, `Array(String) \| RegexError`; `try_matches`'s `next` is `Match? \| RegexError` | a limit reached is a `RegexError`, as from `try_find` (`Regex.try_split: match limit exceeded (PCRE2 error -47)`) | `try_replace_into` leaves its `Buf` as it was on an error; a walk ends after its error: `while m = it.next() { ... } else e { ... }` |
+| `re.close()`, `re.is_closed()`, `re.scoped (r) { ... }` | a lambda for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
 
-**After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern).
+**After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A `Regex` that is dropped without `close` keeps its compiled pattern until the program ends (the collector runs no finalizer), but not its place in the cache: compiling new patterns stays cached.
 
-**At PCRE2's limits a match traps, never "no match"**: past the match limit (ten million backtracking steps), or the depth or memory limit, the program ends with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`). The limits cannot be set and the failure is not a value: bound an outside pattern or text (length, shape) before matching. Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it, memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
+**Limits.** Each `Regex` has its own, set at `compile` (`Regex.compile(p, match_limit: 100000, heap_limit: 1 << 20)`): `match_limit` bounds the backtracking steps of one match (the default, ten million, is reached in about 40 ms by `(a+)+$` on the JIT), `depth_limit` the interpreter's backtracking depth, and `heap_limit` the bytes one deep match may take (256 MiB by default: the JIT's larger stack and the interpreter's frames). Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it within `heap_limit`. A limit past what PCRE2 holds (32 bits; `heap_limit` in KiB) is the largest it holds. A literal pattern on re2c's scanner never backtracks; its `count` runs on PCRE2 and keeps the limits. A pattern may have any number of groups PCRE2 accepts.
+
+**At a limit a match is never "no match"**: `find`, `count`, `replace`, `split` and `matches` trap with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`), and their `try_` twins (`try_find`, `try_count`, `try_replace`, `try_replace_into`, `try_split`, `try_matches`) return a `RegexError`. Server code, and any code that matches a pattern or a text from outside, sets the limits and uses the `try_` forms: one request must not end the program.
 
 **Two engines.** re2c compiles a string-literal pattern with at most one capture group and no named groups to a native scanner. Any other pattern runs on PCRE2's JIT; a literal one (with a literal `caseless`, if given) gets a note on stderr, so `avant run`'s stdout stays the program's. Both ship inside the release. Without a `re2c` binary literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary. PCRE2 backtracks: adversarial patterns and texts can be catastrophic.
 
@@ -3580,17 +4223,16 @@ import std.http
 
 fn main {
   if server = Http.listen(0) {                 // port 0: the OS picks a free port
-    server.get("/hello") { |req|
+    server.get("/hello", (req) {
       server.close()                             // this example answers once, then stops
       Response.text("hello ${req.query ?? "nobody"}")
-    }
+    })
     port = server.port()
     client = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/hello?ada") {
         puts(resp.status)                               // => 200
         puts(String.from_utf8(resp.body) ?? "")         // => hello ada
       }
-      0                                        // a spawn block ends with an Int, for now
     }
     server.serve()
     _ = client.join()
@@ -3608,15 +4250,15 @@ import std.http
 
 fn main {
   if server = Http.listen(8080, "0.0.0.0") {
-    server.get("/") { |req|
+    server.get("/", (req) {
       Response.text("hello")
-    }
-    server.post("/echo") { |req|
+    })
+    server.post("/echo", (req) {
       Response.bytes(req.body).header("X-Echo", "1")
-    }
-    server.route("OPTIONS", "/") { |req|
+    })
+    server.route("OPTIONS", "/", (req) {
       Response.text("", 204)
-    }
+    })
     server.serve()
   }
 }
@@ -3626,13 +4268,13 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
 | `server.port()` | — | `Int`: the bound port | — | |
-| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler block | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
-| a handler, `{ \|req\| ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
-| `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 100 to 599 traps when written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`) | the only ways to build one; the server sets `Content-Length` and `Connection` |
+| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler, a lambda | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
+| a handler, `(req) { ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
+| `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers` and `resp.headers` |
 | `serve` | — | — | — | runs until `close` |
-| `close` | — | — | — | stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits (no finalizer) |
+| `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
 
 **Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed:
 
@@ -3642,10 +4284,37 @@ fn main {
 | a chunked request body | 411 |
 | a malformed request; more than one `Content-Length` value (two lines, or a list in one, even agreeing); an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port) | 400 |
 
+**Limits** are on by default and set like routes, before `serve` (one set while serving traps: `avant runtime: Server.head_timeout called while the server is serving: set every limit before serve`); each setter returns the `Server`, 0 turns its limit off, and a negative value traps:
+
+| Limit | Default | When it is passed |
+| --- | --- | --- |
+| `head_timeout(ms)`: the time a request head may take from its first byte | 10000 ms | 408, closed |
+| `min_rate(bytes_per_second, grace_ms = 5000)`: the rate a request body must arrive at, and an answer the client reads must leave at, over each `grace_ms` from when it began to wait | 240 bytes a second over 5000 ms | a body: 408, closed; an answer: the connection is closed |
+| `body_budget(bytes)`: what the bodies of all requests waiting for theirs may hold together (each its `Content-Length`; a body that arrives with its head holds none) | 268435456 (256 MiB) | 503, closed |
+| `memory_ceiling(bytes)`: the process's resident memory, read about once a second | 90% of the container's memory limit (cgroup); off when there is none | new requests: 503, closed |
+| `max_connections(n)`: the open connections | 10000, at most the file-descriptor limit less 64 and 8 a loop | the loop's longest idle connection is closed; with none idle, the new one |
+| `shutdown_timeout(ms)`: how long `close` waits for what it left to finish (an answer being sent, a WebSocket's closing handshake) | 30000 ms | those connections are closed and `serve` returns |
+
+<!-- check: compile -->
+```avant
+import std.http
+
+fn main {
+  if opened = Http.listen(8080) {
+    server = opened.head_timeout(5000).min_rate(1000, 2000).max_connections(50000)
+    server.get("/", (req) {
+      Response.text("hello")
+    })
+    server.serve()
+  }
+}
+```
+
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
-- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out; WebSocket connections never time out.
-- **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
+- **What a handler captures is checked as a task's** ([What may cross a task](#what-may-cross-a-task)), since every loop thread runs the same handlers at once: a number, `Bool`, `String`, `Bytes`, enum, struct of those, `Channel`, `Mutex` or the `Server` itself may be captured, and an `Array` or `Hash` of those; a class or a function value may not (keep what handlers change in a `Mutex`), the handler cannot assign a captured variable, and a captured `Array` or `Hash` is frozen from the handler's registration on (a change through its name is a compile error, through any other path a trap that fails the request). A handler is a lambda written at the call or a named function; a function value from a variable is refused, since what it captures was not checked.
+- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
+- **A trap in a handler fails its request, not the server**: it is printed to standard error when it happens (`avant runtime: index 7 out of bounds …`), the handler's stack is dropped without unwinding, and the request is answered 500 (the connection kept or closed as any answer's would be); the next request is served. A trap in a WebSocket handler closes that connection with 1011. What the handler held is given back as for a [task that traps](#when-a-task-traps): a `Mutex` it held in `with` is poisoned, its `pin` blocks and `gc.hold`s end. A trap inside a C callback the handler made, and the runtime's own stops, still end the program.
 
 #### HTTP client
 
@@ -3679,7 +4348,7 @@ fn main {
 | the response has more than one `Content-Length` value (even identical) or a non-number | `invalid HTTP response body from …` |
 | `timeout_ms` passed, whatever had arrived | `request to 127.0.0.1:8080 timed out` |
 
-- The client sets `Content-Length` and `Connection`, skipping a caller's.
+- The client sets `Content-Length` and `Connection`, skipping a caller's. It sends one `Host`: the URL's, or the caller's in its place (to reach a virtual host by address).
 - A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped.
 - `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Zero or less means the default, 10000.
 
@@ -3693,12 +4362,12 @@ import std.http
 
 fn main {
   if server = Http.listen(8080) {
-    server.websocket("/echo") { |conn, msg|
+    server.websocket("/echo", (conn, msg) {
       conn.send_message(msg)                   // echo, text or binary
-    }
-    server.websocket_close("/echo") { |conn, code, reason|
+    })
+    server.websocket_close("/echo", (conn, code, reason) {
       puts("closed with ${code}")
-    }
+    })
     server.serve()
   }
 }
@@ -3706,8 +4375,8 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `websocket(path) { \|conn, msg\| ... }` | `path: String`, a block | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
-| `websocket_open(path) { \|conn\| ... }`, `websocket_close(path) { \|conn, code, reason\| ... }` | `path: String`, a block | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
+| `websocket(path, (conn, msg) { ... })` | `path: String`, a lambda | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
+| `websocket_open(path, (conn) { ... })`, `websocket_close(path, (conn, code, reason) { ... })` | `path: String`, a lambda | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
 | `msg.text()`, `msg.is_text` | — | `String?`: the text, `nil` for a binary message or bytes that are not valid UTF-8; `Bool` | — | a text message |
 | `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
 | `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole |
@@ -3772,6 +4441,8 @@ fn main {
   if raw = enc.bytes.from_base64() {
     puts(String.from_utf8(raw) ?? "")          // => avant
   }
+  token = "{\"alg\":\"HS256\"}".bytes.to_base64_url()
+  puts(token)                                  // => eyJhbGciOiJIUzI1NiJ9
 }
 ```
 
@@ -3780,6 +4451,73 @@ fn main {
 | `to_base64` | — | a `String` | — | encoding never fails |
 | `from_base64` | — | `Bytes \| Base64Error` | a `Base64Error` on malformed input | |
 | `to_base64_into(buf)`, `from_base64_into(buf)` | `buf: Buf` | `Base64Error?` | as above | the `Buf` twins |
+| `to_base64_url`, `from_base64_url`, and their `_into(buf)` twins | as above | as above | as above, and a `+` or `/` | the URL-safe alphabet without padding (`-` and `_` for `+` and `/`, no `=`), as JWT and URL tokens write it; the decoder takes the text with or without its padding |
+
+### std.time
+
+A `Time` is a point in time: `sec`, the seconds since 1970-01-01T00:00:00Z (UTC, negative before it), and `nsec`, the nanoseconds within that second. `Time.now()` reads the wall clock. Two times compare with `==`, `<` and the others and sort in order; `t.iso()` writes the RFC 3339 text in UTC and `Time.parse_iso(text)` reads it back, any offset taken into account. An interval is measured with the prelude's monotonic `now_ms()` and `now_us()`, since the wall clock can be set back.
+
+```avant
+import std.time
+
+fn main {
+  t = Time { sec: 1794994200, nsec: 0 }
+  puts(t.iso())                                         // => 2026-11-18T09:30:00Z
+  if u = Time.parse_iso("2026-11-18T10:30:00.25+01:00") {
+    puts(u.iso())                                       // => 2026-11-18T09:30:00.25Z
+    puts(t < u)                                         // => true
+  }
+  bad = Time.parse_iso("2026-02-30T00:00:00Z") ?? t
+  puts(bad == t)                                        // => true
+  start = now_ms()
+  sleep_ms(20)
+  puts(now_ms() - start >= 20)                          // => true
+  puts(Time.now().sec > 1700000000)                     // => true
+}
+```
+
+| Call | Result |
+| --- | --- |
+| `Time.now()` | the wall clock, now (`clock_gettime`'s `CLOCK_REALTIME`) |
+| `Time { sec: s, nsec: n }` | the time `s` seconds and `n` nanoseconds after the epoch (`n` in 0 to 999,999,999) |
+| `t.iso()` | `2026-11-18T09:30:00Z`: the date and time in UTC, with the fraction of a second when `nsec` is not 0 (up to nine digits, without the zeros that end them) |
+| `Time.parse_iso(text)` | `Time?`: RFC 3339's `YYYY-MM-DDTHH:MM:SS`, a fraction of a second (more than nine digits are cut), then `Z` or an offset `+HH:MM` or `-HH:MM` (`t` and `z` in lower case too); `nil` for any other text or a field out of its range (April 31, a second 60) |
+| `a < b`, `a == b`, `xs.sort()` | seconds first, then nanoseconds |
+| `sleep_ms(ms)` | waits `ms` milliseconds (other tasks run meanwhile); a negative `ms` traps |
+
+Time zones and calendar arithmetic are not in `std.time` yet.
+
+### std.random
+
+A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `Random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
+
+```avant
+import std.random
+
+fn main {
+  rng = Random.new(42)
+  deck = [1, 2, 3, 4, 5]
+  deck.shuffle(rng)
+  puts(deck.size)                    // => 5
+  again = [1, 2, 3, 4, 5].shuffled(Random.new(42))
+  puts(again == deck)                // => true
+  puts(rng.int(6) < 6)               // => true
+  die = rng.int(1, 7)
+  puts(die >= 1 && die <= 6)         // => true
+  puts(Random.bytes(16).size)        // => 16
+}
+```
+
+| Call | Result |
+| --- | --- |
+| `Random.new(seed)` | a generator; `seed` is any `Int` |
+| `Random.new()` | a generator seeded from the system's entropy (`getrandom`) |
+| `rng.int(n)` | an `Int` in `0..n`, each value equally likely; traps unless `n > 0` |
+| `rng.int(lo, hi)` | an `Int` in `lo..hi` (`hi` excluded), each value equally likely; traps unless `lo < hi` |
+| `rng.float()` | a `Float64` in `[0, 1)` |
+| `rng.u64()` | the next 64 random bits |
+| `xs.shuffle(rng)`, `xs.shuffled(rng)` | the array in a random order, in place or as a new array (Fisher–Yates) |
+| `Random.bytes(n)` | `n` bytes of the system's entropy, from no generator |
 
 ## Testing
 
@@ -3904,7 +4642,7 @@ fn main: Int {
 }
 ```
 
-`run_golden` and `rejects` compile a program, so they need `AVANT_COMPILER` set to the compiler under test; `check` alone does not.
+`run_golden` and `rejects` compile a program, so they need `AVANT_COMPILER` set to the compiler under test; `check` alone does not. Under `avant test` it is set for you: to the value you exported, else to the path of the `avant` running the tests.
 
 ### Serial and parallel tests
 
@@ -3916,12 +4654,12 @@ import std.testing
 
 fn main: Int {
   t = Test.new()
-  t.test("adds") {
+  t.test("adds", () {
     t.check(1 + 2 == 3, "1+2")
-  }
-  t.parallel("other") {
+  })
+  t.parallel("other", () {
     t.check(true, "other")
-  }
+  })
   t.finish()
 }
 ```
@@ -3996,11 +4734,11 @@ avant format src --write        # rewrite every file that changes
 avant format . --check          # CI: list files that would change, exit 1 if any
 ```
 
-- A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped).
+- A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped, and a symbolic link to a directory is not followed).
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
 - The formatter works on tokens (no parsing, typechecking or imports), so it formats a file that does not compile yet; it is never part of a build.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
-- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1.
+- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1. It writes the files itself, so `--write` beside it changes nothing; `--check` is refused.
 
 ## Command line
 
@@ -4033,7 +4771,7 @@ avant format . --check
 | --- | --- |
 | `--debug`, `--release` | the [build mode](#build-modes) (`--final` is another spelling of `--release`) |
 | `--cpu=LEVEL` | the x86-64 level of the generated code: `baseline`, `v2`, `v3`, `v4` or `native` |
-| `--lib NAME` | link a system library ([Linking C code](#linking-c-code)); `--lib=NAME` is the same |
+| `--lib NAME` | link a system library, or `--lib PATH` a library file ([Linking C code](#linking-c-code)); `--lib=NAME` is the same |
 | `--cc FILE.c` | compile and link a C file, or link a `.o` |
 | `--keep-tmp` | keep the command's [temporary files](#temporary-files) and print where |
 
@@ -4041,16 +4779,17 @@ Options may sit before or after the file, up to `--`.
 
 ### Build modes
 
-| | `--debug` | (no flag on `compile`) | `--release` |
-| --- | --- | --- | --- |
-| Chosen by default for | `avant run`, `avant test` | `avant compile` | nothing: ask for it |
-| Optimization | none (LLVM `-O0`, its fast instruction selector) | a short pass list | full (`-O3`) |
-| Compiles | fastest | fast | slowest |
-| Use it for | the edit-and-run loop | a binary to keep around | **anything you measure, and anything you ship** |
+| | `--debug` | `--release` |
+| --- | --- | --- |
+| Chosen by default for | `avant run`, `avant test` | `avant compile` |
+| Optimization | none (LLVM `-O0`, its fast instruction selector) | full (`-O3`) |
+| Compiles | fastest | about 1.5 times `--debug` on a small program, three and a half times on a very large one |
+| Use it for | the edit-and-run loop | **anything you keep, measure or ship** |
 
-- **Time a program only with `--release`** (`avant run` builds at `-O0`); the [Benchmarks](#benchmarks) use `--release --cpu=v3`.
+- **Time a program only with `--release`** (`avant run` builds at `-O0`; `avant compile` builds `--release`); the [Benchmarks](#benchmarks) use `--release --cpu=v3`.
 - An explicit flag wins over the verb's default; no environment variable selects the mode.
-- The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in all three.
+- Every option that takes a value takes it either way: `--cpu=v3` or `--cpu v3`, `--jobs=4` or `--jobs 4`.
+- The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in both.
 - `--cpu`: `compile` targets `v2` by default (every x86-64 processor of the last decade); `run` and `test`, the machine's highest level. `--cpu=v3` (AVX2) is for recent hardware only; `native` is this machine exactly.
 
 ### Program arguments
@@ -4072,7 +4811,7 @@ fn main: Int {
 avant run prog.av -- hello
 ```
 
-`avant run` exits with the program's own status: what `main` returned, 128 + N when signal N killed the program, 127 when it could not be started. `--threads N` among a program's arguments sets its [thread pool](#the-thread-pool) and is not passed on.
+`avant run` exits with the program's own status: what `main` returned, 128 + N when signal N killed the program, 127 when it could not be started. `--avant-threads=N` among a program's arguments sets its [thread pool](#the-thread-pool)'s size and is not passed on; every other argument is.
 
 ### Compile errors
 
@@ -4118,7 +4857,7 @@ Run-time failures are [traps](#traps).
 | --- | --- |
 | `TMPDIR` | where the private temporary directory is created |
 | `AVANT_KEEP_TMP=1` | a program keeps its temporary directory (`--keep-tmp` sets it for the processes a command starts) |
-| `AVANT_COMPILER` | the compiler that `run_golden` and `rejects` use in tests ([Golden files](#golden-files)) |
+| `AVANT_COMPILER` | the compiler that `run_golden` and `rejects` use in tests ([Golden files](#golden-files)); `avant test` passes a value you exported to the tests as it is, and its own path when there is none |
 | `AVANT_ROOT` | another place to find the runtime and the standard library, instead of beside the `avant` binary |
 | `AVANT_RE2C` | another `re2c` binary for regex literals |
 | `AVANT_HEAP_MAX_MB`, `AVANT_GC_STATS`, ... | the collector, read by your program ([Collector settings](#collector-settings)) |
@@ -4141,15 +4880,15 @@ Where Avant differs on purpose:
 | truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
-| strings of characters | strings of bytes; `.chars` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
+| strings of characters | strings of bytes; `.chars` or `.code_points()` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
 | a missing hash key that raises, or reads as zero | `h[k]` is `V?` ([Hashes](#hashes)) | absence is handled where it happens |
 | hashes that remember insertion order | iteration order is unspecified, for now | |
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
-| `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
+| `return` inside a lambda returning from the lambda | the same, also in a lambda a builtin inlines (`xs.each (x) { ... }`); `for` is the loop that leaves the function early ([Lambdas given to builtins](#lambdas-given-to-builtins)) | one meaning of `return` |
 | a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery |
-| one optimized build (Go) | three modes: time programs only with `--release` ([Build modes](#build-modes)) | a fast edit-and-run loop |
+| one optimized build (Go) | two modes: `--debug` for the edit-and-run loop, `--release` for the rest, and only it is timed ([Build modes](#build-modes)) | a fast edit-and-run loop |
 | a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
 
@@ -4169,15 +4908,11 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | Missing | Status | Today |
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| `Hash` with struct keys, or with class, array, hash or struct values; insertion order | decided | [key and value types](#key-and-value-types): a hash from the key to an index into an array; sort the keys |
-| `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
-| `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
+| `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
+| `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
-| A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
-| A `spawn` result other than `Int`; `for v in ch` over a channel | decided | end the block with an `Int`; `while v = ch.recv() { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
-| The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap in an `std.http` handler that ends only its request; a pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |

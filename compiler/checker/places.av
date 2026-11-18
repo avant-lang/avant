@@ -1,0 +1,735 @@
+// The element as a place.
+//
+// A `for` loop's variable over an Array of structs, and the parameter of
+// an inlined block over one (`each`, `any`, `all`), is the element
+// itself: `p.x = 1` and `p.move(2)` change the element in the array, as
+// they would change a class element's object, and `p = q` stores the
+// whole element (as `xs[i] = q`). Each use of the name is
+// written, here, as an index of two hidden names: the walked array (held
+// once before the loop, so a later assignment to the array's variable
+// does not move the walk) and the loop's counter. The index keeps its
+// bounds check: a change of the array's size through another name than
+// the walked one meets it at the place's next use, so the place never
+// reads past the elements. A growth through another name does not
+// move a use that reads or writes the place (each use reads the buffer
+// again); a method that changes its receiver gets the element's address
+// once for the whole call, so while it runs the array is frozen when
+// the call may reach it (mir/lower_agg.av held_method_call): a change of
+// its size or order through any path then traps.
+//
+// What the place refuses, with what works instead:
+// - the walked array's size or order changed through its own name inside
+//   the walk (`xs.push(v)`, `xs.pop()`, `xs.sort()` in `for p in xs`):
+//   the place would then name another element, or none;
+// - the place captured by a lambda or a task: the lambda would outlive
+//   the step, and a task would share the element unguarded;
+// - the variable named like one that already exists (every `for`
+//   refuses it: refuse_for_outer_name);
+//
+// The parameters of the blocks that are not walks (a comparator's, a
+// Hash walk's, a `.parallel` body's) are copies: a write to one would be
+// lost, so it is refused, and so is a call of a method that changes its
+// receiver on one (checked once every method is, as receiver_writes.av
+// reads them).
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import typed_ir
+import checker.names
+import checker
+import checker.receiver
+import checker.facts
+import receiver_writes
+
+pub fn (checker_self: Checker) clear_places {
+  checker_self.place_roots = Hash(String, String).new()
+  checker_self.place_names = []
+  checker_self.place_scopes = []
+  checker_self.place_arrs = []
+  checker_self.place_idxs = []
+  checker_self.place_walked = []
+  checker_self.place_lams = []
+  checker_self.place_tasks = []
+}
+
+// The walked array as written, for the refusal of a change through its
+// own name: `xs`, `self.items` (a bare field is `self.` and its name),
+// `a.b.c`; "" for any other expression.
+pub fn (checker_self: Checker) walked_text(e: Expr): String {
+  if e.kind == ex_name() {
+    if e.implicit_field {
+      return "self.${e.ident}"
+    }
+    return e.ident
+  }
+  if e.kind == ex_field() && !e.method_call {
+    if o = e.object {
+      head = checker_self.walked_text(o)
+      if head.size > 0 {
+        return "${head}.${e.ident}"
+      }
+    }
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) add_place(name: String, arr: String, idx: String, walked: String) {
+  checker_self.place_names.push(name)
+  checker_self.place_scopes.push(checker_self.lookup_index(name))
+  checker_self.place_arrs.push(arr)
+  checker_self.place_idxs.push(idx)
+  checker_self.place_walked.push(walked)
+  checker_self.place_lams.push(checker_self.lam_exprs.size)
+  checker_self.place_tasks.push(checker_self.in_task)
+}
+
+pub fn (checker_self: Checker) end_places(saved: Int) {
+  while checker_self.place_names.size > saved {
+    checker_self.place_names.pop()
+    checker_self.place_scopes.pop()
+    checker_self.place_arrs.pop()
+    checker_self.place_idxs.pop()
+    checker_self.place_walked.pop()
+    checker_self.place_lams.pop()
+    checker_self.place_tasks.pop()
+  }
+}
+
+// A `for` loop's variable is the loop's own: it exists from the loop's
+// first step to its end, and a name that already exists here (a local,
+// a parameter, an outer loop's variable) is refused. Reusing one would
+// make the loop assign that variable at each step and leave its last
+// value there (and an inner loop of the same name would move the outer
+// loop's counter); Avant has no shadowing for a loop to fall back on (a
+// declaration of an existing name is refused too). A field's name is
+// refused by the loop's store, which names `self.field`.
+pub fn (checker_self: Checker) refuse_for_outer_name(stmt: Stmt) {
+  name = ""
+  if stmt.for_kind == 1 && stmt.pre.size > 0 {
+    if t = stmt.pre[0].target {
+      name = t.ident
+    }
+  }
+  if stmt.for_kind == 2 && stmt.body.size > 0 && (stmt.body[0].for_kind == 4 || stmt.body[0].for_kind == 5) {
+    if t = stmt.body[0].target {
+      name = t.ident
+    }
+    if stmt.pre.size > 1 {
+      // `for i, x in xs`: the position is the loop's own too.
+      if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+        checker_self.refuse_for_name(stmt, pi.ident)
+      }
+    }
+  }
+  if stmt.for_kind == 8 && stmt.body.size > 0 {
+    // A walk over next, checked again (a copy of the tree).
+    name = stmt.body[0].bind
+  }
+  if stmt.for_kind == 9 && stmt.body.size > 4 {
+    // A walk over fields, checked again.
+    if t9 = stmt.body[4].target {
+      name = t9.ident
+    }
+  }
+  if name.size == 0 {
+    return
+  }
+  checker_self.refuse_for_name(stmt, name)
+}
+
+pub fn (checker_self: Checker) refuse_for_name(stmt: Stmt, name: String) {
+  if old = checker_self.lookup(name) {
+    checker_self.fail(stmt.loc, "for ${name} in ...: ${name} already names a variable here; a loop's variable is the loop's own and ends with the loop (reusing ${name} would assign it at every step and leave the last value there): give the loop's variable a name of its own")
+  }
+}
+
+// A builtin block's parameters (`each`, `any`, `all`, a comparator, a
+// Hash's or a Set's `each`, `Array(T).new(n) { |i| }`, `Mutex.with`,
+// `.parallel`) are the block's own, as a `for` variable is the loop's: a
+// name that already exists here is refused (an inlined block's parameter
+// would otherwise be that variable, assigned at every step and left with
+// the last value).
+pub fn (checker_self: Checker) refuse_block_param_outer(b: Block, what: String) {
+  for name in b.params {
+    if old = checker_self.lookup(name) {
+      checker_self.fail(b.loc, "|${name}|: ${name} already names a variable here; a parameter of ${what}'s block is the block's own and ends with it (reusing ${name} would assign it at every step and leave the last value there): give the parameter a name of its own")
+    }
+  }
+}
+
+// A `for` over an Array of structs (the parser's loop of for_kind 2: the
+// array's and the counter's stores in pre, the element's store first in
+// the body): once the array is checked, its variable becomes the place.
+pub fn (checker_self: Checker) begin_for_place(stmt: Stmt) {
+  if stmt.body.size == 0 || stmt.pre.size < 2 {
+    return
+  }
+  setup = stmt.body[0]
+  if setup.for_kind != 4 && setup.for_kind != 5 {
+    return
+  }
+  if t = setup.target, pa = stmt.pre[0].target, pi = stmt.pre[1].target, at = checker_self.lookup(pa.ident), at.is_array() {
+    if inner = at.inner, inner.is_struct() {
+      if old = checker_self.lookup(t.ident) {
+        // Refused already (refuse_for_outer_name).
+        return
+      }
+      setup.for_kind = 5
+      checker_self.bind(t.ident, inner)
+      checker_self.note_for_var(t.ident, 4)
+      walked = ""
+      if v = stmt.pre[0].value {
+        walked = checker_self.walked_text(v)
+        checker_self.note_place_root(pa.ident, v)
+      }
+      checker_self.add_place(t.ident, pa.ident, pi.ident, walked)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) note_place_root(hidden: String, walked: Expr) {
+  root = checker_self.expr_root_name(walked)
+  if root.size > 0 {
+    checker_self.place_roots[hidden] = root
+  }
+}
+
+// An inlined block's parameter over an Array of structs: the hidden
+// names of the walked array and the counter (kept on the block, so a
+// copy of the tree checks the same names), bound with the parameter in
+// the scope the caller pushed.
+pub fn (checker_self: Checker) begin_block_place(b: Block, recv: Expr, array: Ty, elem: Ty) {
+  if b.place_arr.size == 0 {
+    checker_self.place_count += 1
+    b.place_arr = "__place${checker_self.place_count}_xs"
+    b.place_idx = "__place${checker_self.place_count}_i"
+  }
+  checker_self.bind(b.place_arr, array)
+  checker_self.note_place_root(b.place_arr, recv)
+  checker_self.bind(b.place_idx, checker_self.t_int())
+  checker_self.bind(b.params[0], elem)
+  checker_self.note_for_var(b.params[0], 6)
+  checker_self.add_place(b.params[0], b.place_arr, b.place_idx, checker_self.walked_text(recv))
+}
+
+// The parameter of `each`, `any` or `all` on an Array, in the scope the
+// caller pushed: the place over an Array of structs, else a copy that
+// cannot be assigned.
+pub fn (checker_self: Checker) bind_walk_param(expr: Expr, b: Block, array: Ty, elem: Ty) {
+  checker_self.refuse_block_param_outer(b, expr.callee)
+  if elem.is_struct() {
+    if recv = expr.receiver {
+      checker_self.begin_block_place(b, recv, array, elem)
+      return
+    }
+  }
+  checker_self.bind(b.params[0], elem)
+  checker_self.note_for_var(b.params[0], 6)
+  if recv = expr.receiver {
+    checker_self.walk_texts.push(checker_self.walked_text(recv))
+  }
+}
+
+// A `for` over an Array whose element is not a place (begin_for_place
+// left the element's store as a copy): its array, as written.
+pub fn (checker_self: Checker) begin_plain_walk(stmt: Stmt) {
+  if stmt.body.size == 0 || stmt.body[0].for_kind != 4 {
+    return
+  }
+  if v = stmt.pre[0].value {
+    checker_self.walk_texts.push(checker_self.walked_text(v))
+  }
+}
+
+pub fn (checker_self: Checker) end_plain_walks(saved: Int) {
+  while checker_self.walk_texts.size > saved {
+    checker_self.walk_texts.pop()
+  }
+}
+
+pub fn (checker_self: Checker) end_for_vars(saved: Int) {
+  while checker_self.for_names.size > saved {
+    checker_self.for_names.pop()
+    checker_self.for_scopes.pop()
+    checker_self.for_kinds.pop()
+  }
+}
+
+// A use of a place's name: refused inside a lambda or a task the walk
+// does not hold; else written as the index of the walk and checked as
+// one. nil when the name is not a place here.
+pub fn (checker_self: Checker) place_use(expr: Expr, has_want: Bool, want: Ty): Ty? {
+  i = checker_self.place_at(expr.ident)
+  if i < 0 {
+    return nil
+  }
+  name = expr.ident
+  if checker_self.lam_exprs.size > checker_self.place_lams[i] {
+    checker_self.fail(expr.loc, "a lambda cannot capture ${name}: ${name} is an element of the walked array, in place, and the lambda could outlive the step; copy it first (q = ${name}) and capture the copy")
+    return checker_self.lookup(name)
+  }
+  if checker_self.in_task > checker_self.place_tasks[i] {
+    checker_self.fail(expr.loc, "a task cannot capture ${name}: ${name} is an element of the walked array, in place; copy it first (q = ${name}) and capture the copy")
+    return checker_self.lookup(name)
+  }
+  arr = Expr.new(ex_name(), expr.loc)
+  arr.ident = checker_self.place_arrs[i]
+  ix = Expr.new(ex_name(), expr.loc)
+  ix.ident = checker_self.place_idxs[i]
+  expr.kind = ex_index()
+  expr.ident = ""
+  expr.left = arr
+  expr.right = ix
+  got = checker_self.check_index(expr)
+  // The bounds check stays (the file's comment): the walk's own test
+  // does not cover a step that changed the size through another name.
+  expr.proven = false
+  got
+}
+
+// A change of the walked array's size or order through its own name,
+// inside the walk: refused. True when it failed.
+pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool {
+  if checker_self.place_names.size == 0 && checker_self.walk_texts.size == 0 {
+    return false
+  }
+  c = expr.callee
+  if expr.kind == ex_field() {
+    c = expr.ident
+  }
+  if !(c == "push" || c == "pop" || c == "clear" || c == "reserve" || c == "sort" || c == "reverse" || c == "delete_if" || c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "concat" || c == "shuffle") {
+    return false
+  }
+  text = checker_self.walked_text(recv)
+  if text.size == 0 {
+    return false
+  }
+  // A walk over plain values reads each element by its position when it
+  // gets there: a growth or a shrink moves no element the walk has yet
+  // to read (it reads the size again), but a sort or a reverse would
+  // make it read some elements twice and miss others.
+  if c == "sort" || c == "reverse" || c == "delete_if" || c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "shuffle" {
+    for w in checker_self.walk_texts {
+      if w == text {
+        checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: the walk reads the elements by their positions, so it would read some twice and miss others; ${c} it before or after the loop")
+        return true
+      }
+    }
+  }
+  i = checker_self.place_names.size - 1
+  while i >= 0 {
+    if checker_self.place_walked[i] == text {
+      p = checker_self.place_names[i]
+      checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: ${p} is an element of ${text}, in place, and a change of its size or order would move it; collect the changes and apply them after the loop, or walk an index (i = 0, while i < ${text}.size)")
+      return true
+    }
+    i -= 1
+  }
+  false
+}
+
+// A struct method called on a parameter that is a copy (kinds 7, 8, 9 of
+// the for variables): noted, refused once every method is checked when
+// it changes its receiver.
+pub fn (checker_self: Checker) note_copy_call(expr: Expr, recv: Expr) {
+  if checker_self.for_names.size == 0 || recv.kind != ex_name() {
+    return
+  }
+  k = checker_self.for_var_kind(recv.ident)
+  if k < 7 {
+    return
+  }
+  if rt = recv.ty, rt.is_struct(), expr.resolved.size > 0 {
+    checker_self.copy_calls.push(expr)
+    checker_self.copy_call_names.push(recv.ident)
+    checker_self.copy_call_kinds.push(k)
+  }
+}
+
+pub fn (checker_self: Checker) check_copy_calls {
+  if checker_self.copy_calls.size == 0 || checker_self.any_err() {
+    return
+  }
+  rw = ReceiverWrites.new()
+  for ms in checker_self.methods {
+    rw.add(ms.node)
+  }
+  for f in checker_self.pending {
+    rw.add(f)
+  }
+  i = 0
+  while i < checker_self.copy_calls.size {
+    e = checker_self.copy_calls[i]
+    if rw.writes(e.resolved) {
+      name = e.callee
+      if e.kind == ex_field() {
+        name = e.ident
+      }
+      checker_self.fail(e.loc, "this call changes a copy: ${name} changes its receiver, and ${copy_param_what(checker_self.copy_call_names[i], checker_self.copy_call_kinds[i])}")
+      return
+    }
+    i += 1
+  }
+}
+
+// What a `for` walks, once its operand is checked (the parser's loop of
+// for_kind 2: the operand held in a hidden name, a hidden counter or the
+// program's position, the element's store first in the body):
+// - an Array (and a Set, as its values: set_for_operand), Bytes and a
+//   Buf by their positions, the loop the parser made;
+// - `s.bytes` walks the string's own bytes, by its positions, with no
+//   copy into a Bytes;
+// - a struct or class with a method `next` returning T? (a cursor such
+//   as std.json's JsonIter or std.regex's MatchIter), and std.sync's
+//   Channel by `recv`: the loop becomes the one written by hand,
+//   `while v = it.next { ... }`, with the operand held once before it
+//   (a class in a local the body does not assign is called by its
+//   name).
+//   Avant has no interface values, so the call is direct: the same code
+//   as the hand-written loop.
+// Anything else is refused after this by for_operand_problem.
+// Returns why the operand cannot be walked, or "" (also after the
+// operand's own error, which is the loop's: the cascade rule).
+pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
+  pre0 = stmt.pre[0]
+  if pt = pre0.target, pty = checker_self.lookup(pt.ident) {
+    if checker_self.name_failed(pt.ident) {
+      return ""
+    }
+    if pty.is_bytes() {
+      if v = pre0.value, src = string_of_bytes(v) {
+        if st = src.ty {
+          pre0.value = src
+          pt.ty = st
+          checker_self.bind(pt.ident, st)
+        }
+      }
+      return ""
+    }
+    if stmt.pre.size < 2 || stmt.body.size < 2 {
+      return ""
+    }
+    pos = ""
+    if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+      pos = pi.ident
+    }
+    if pty.is_array() && pos.size == 0 {
+      if v = pre0.value, src = string_of_fields(v) {
+        checker_self.for_fields(stmt, src)
+      }
+      return ""
+    }
+    if pty.is_array() || pty.is_buf() {
+      return ""
+    }
+    if pty.is_string() {
+      return "for needs a range (a..b), an Array or a type with a method next: T?, got String: a String is walked by its bytes (for b in s.bytes) or by its characters (for c in s.chars())"
+    }
+    if pos.size > 0 {
+      return "for ${pos}, ... in: a position is counted over an Array, Bytes, a Buf or s.bytes, got ${pty.show()}; count it beside the loop (${pos} = 0 before it, ${pos} += 1 at the end of the body)"
+    }
+    method = ""
+    if checker_self.is_sync_ty(pty, "Channel") {
+      method = "recv"
+    } else if pty.is_agg() && checker_self.user_op(pty, "next") {
+      method = "next"
+    }
+    if method.size == 0 {
+      if pty.is_agg() {
+        return "for needs a range (a..b), an Array or a type with a method next: T?, got ${pty.show()}, which has no method next"
+      }
+      return "for needs a range (a..b), an Array or a type with a method next: T?, got ${pty.show()}"
+    }
+    if el = stmt.body[0].target, pi2 = stmt.pre[1].target {
+      inner: Array(Stmt) = []
+      for bi in 1..stmt.body.size - 1 {
+        inner.push(stmt.body[bi])
+      }
+      at = stmt.loc
+      if v1 = pre0.value {
+        // The call's position is the walked value's (a trap inside next
+        // names it).
+        at = v1.loc
+      }
+      call = Expr.new(ex_call(), at)
+      call.callee = method
+      recv = Expr.new(ex_name(), at)
+      recv.ident = pt.ident
+      held = true
+      if v0 = pre0.value, v0.kind == ex_name() && pty.is_class() {
+        if lv = checker_self.lookup(v0.ident) {
+          assigned: Array(String) = []
+          for bs in inner {
+            checker_self.cap_collect_assigned_stmt(bs, assigned)
+          }
+          if !assigned.contains(v0.ident) {
+            // A class value in a local the body does not assign: called
+            // by its own name, as the loop written by hand does, with no
+            // copy held (a struct is copied, as `it = e` copies it).
+            recv.ident = v0.ident
+            held = false
+          }
+        }
+      }
+      call.receiver = recv
+      step = Stmt.new(st_if(), stmt.loc)
+      step.bind = el.ident
+      step.cond = call
+      step.then_body = for_unadvance(inner, pi2.ident)
+      step.else_body.push(Stmt.new(st_break(), stmt.loc))
+      step.for_kind = 7
+      yes = Expr.new(ex_bool(), stmt.loc)
+      yes.bool_val = true
+      stmt.cond = yes
+      body: Array(Stmt) = []
+      body.push(step)
+      stmt.body = body
+      stmt.pre.pop()
+      if !held {
+        stmt.pre.pop()
+      }
+      stmt.for_kind = 8
+    }
+  }
+  ""
+}
+
+// `s.fields()` on a String: the string, else nil.
+pub fn string_of_fields(v: Expr): Expr? {
+  if v.kind == ex_call() && v.callee == "fields" && v.args.size == 0 {
+    if r = v.receiver, rt = r.ty, rt.is_string() {
+      return r
+    }
+  }
+  nil
+}
+
+// `for w in s.fields()` scans the string in place, as s.fields() does
+// (runs of space, tab, newline and carriage return separate the fields,
+// none is empty), and gives each field as str_slice gives it, with no
+// array of them:
+//   while i < s.size { c = s[i]; if c is no space { break }; i += 1 }
+//   if i >= s.size { break }
+//   st = i
+//   while i < s.size { c = s[i]; if c is a space { break }; i += 1 }
+//   w = str_slice(s, st, i)
+// The counter is the loop's scanning position, so a `continue` goes
+// straight to the next field.
+pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
+  loc = stmt.loc
+  pre0 = stmt.pre[0]
+  if pt = pre0.target, pi = stmt.pre[1].target, st0 = src.ty {
+    xs = pt.ident
+    ix = pi.ident
+    base = str_slice(xs, 0, xs.size - 2)
+    cn = "${base}c"
+    sn = "${base}st"
+    pre0.value = src
+    pt.ty = st0
+    checker_self.bind(xs, st0)
+    el = stmt.body[0]
+    inner: Array(Stmt) = []
+    for bi in 1..stmt.body.size - 1 {
+      inner.push(stmt.body[bi])
+    }
+    body: Array(Stmt) = []
+    body.push(fw_scan(loc, xs, ix, cn, false))
+    stop = Stmt.new(st_if(), loc)
+    stop.cond = fw_bin(loc, tk_greater_eq(), fw_name(loc, ix), fw_size(loc, xs))
+    stop.then_body.push(Stmt.new(st_break(), loc))
+    body.push(stop)
+    body.push(fw_assign(loc, sn, fw_name(loc, ix)))
+    body.push(fw_scan(loc, xs, ix, cn, true))
+    cut = Expr.new(ex_call(), loc)
+    cut.callee = "str_slice"
+    cut.args.push(fw_name(loc, xs))
+    cut.args.push(fw_name(loc, sn))
+    cut.args.push(fw_name(loc, ix))
+    el.value = cut
+    body.push(el)
+    for x in for_unadvance(inner, ix) {
+      body.push(x)
+    }
+    yes = Expr.new(ex_bool(), loc)
+    yes.bool_val = true
+    stmt.cond = yes
+    stmt.body = body
+    stmt.for_kind = 9
+  }
+}
+
+pub fn fw_name(loc: Location, n: String): Expr {
+  e = Expr.new(ex_name(), loc)
+  e.ident = n
+  e
+}
+
+pub fn fw_int(loc: Location, k: UInt64): Expr {
+  e = Expr.new(ex_int(), loc)
+  e.int_bits = k
+  e
+}
+
+pub fn fw_bin(loc: Location, op: Int, l: Expr, r: Expr): Expr {
+  e = Expr.new(ex_binary(), loc)
+  e.op = op
+  e.left = l
+  e.right = r
+  e
+}
+
+pub fn fw_size(loc: Location, xs: String): Expr {
+  e = Expr.new(ex_field(), loc)
+  e.object = fw_name(loc, xs)
+  e.ident = "size"
+  e
+}
+
+// A store of the loop's own (for_kind 3: the program cannot assign it).
+pub fn fw_assign(loc: Location, n: String, v: Expr): Stmt {
+  s = Stmt.new(st_assign(), loc)
+  s.target = fw_name(loc, n)
+  s.value = v
+  s.op = tk_eq()
+  s.for_kind = 3
+  s
+}
+
+// One run of the scan: past the spaces (space false) or past a field's
+// bytes (space true), stopping at the end.
+pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): Stmt {
+  w = Stmt.new(st_while(), loc)
+  w.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), fw_size(loc, xs))
+  at = Expr.new(ex_index(), loc)
+  at.left = fw_name(loc, xs)
+  at.right = fw_name(loc, ix)
+  w.body.push(fw_assign(loc, cn, at))
+  test: Expr? = nil
+  for b in [32u64, 9u64, 10u64, 13u64] {
+    op = tk_not_eq()
+    join = tk_amp_amp()
+    if space {
+      op = tk_eq_eq()
+      join = tk_pipe_pipe()
+    }
+    one = fw_bin(loc, op, fw_name(loc, cn), fw_int(loc, b))
+    if t = test {
+      test = fw_bin(loc, join, t, one)
+    } else {
+      test = one
+    }
+  }
+  stop = Stmt.new(st_if(), loc)
+  stop.cond = test
+  stop.then_body.push(Stmt.new(st_break(), loc))
+  w.body.push(stop)
+  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1u64))))
+  w
+}
+
+// `s.bytes` (or `s.bytes()`) on a String: the string, else nil.
+pub fn string_of_bytes(v: Expr): Expr? {
+  if v.kind == ex_field() && v.ident == "bytes" {
+    if o = v.object, ot = o.ty, ot.is_string() {
+      return o
+    }
+  }
+  if v.kind == ex_call() && v.callee == "bytes" && v.args.size == 0 {
+    if r = v.receiver, rt = r.ty, rt.is_string() {
+      return r
+    }
+  }
+  nil
+}
+
+// The counter's steps the parser put before each `continue` of a
+// for loop's body (Parser.for_advance), taken out again: a loop over
+// `next` has no counter, and its `continue` goes to the next call.
+pub fn for_unadvance(body: Array(Stmt), counter: String): Array(Stmt) {
+  out: Array(Stmt) = []
+  for s in body {
+    if s.kind == st_assign() && s.step && s.for_kind == 3 {
+      if t = s.target, t.ident == counter {
+        continue
+      }
+    }
+    if s.kind == st_if() {
+      s.then_body = for_unadvance(s.then_body, counter)
+      s.else_body = for_unadvance(s.else_body, counter)
+      for el in s.pre {
+        for_unadvance_opt(el.cond, counter)
+      }
+    }
+    if s.kind == st_pin() || s.kind == st_hold() {
+      s.body = for_unadvance(s.body, counter)
+    }
+    if s.kind != st_while() {
+      for_unadvance_opt(s.expr, counter)
+      for_unadvance_opt(s.value, counter)
+      for_unadvance_opt(s.target, counter)
+      for_unadvance_opt(s.cond, counter)
+    }
+    out.push(s)
+  }
+  out
+}
+
+pub fn for_unadvance_opt(e: Expr?, counter: String) {
+  if x = e {
+    for_unadvance_expr(x, counter)
+  }
+}
+
+pub fn for_unadvance_expr(e: Expr, counter: String) {
+  if e.kind == ex_lambda() {
+    return
+  }
+  if e.kind == ex_switch() {
+    for ci in 0..e.cases.size {
+      e.cases[ci].body = for_unadvance(e.cases[ci].body, counter)
+    }
+    e.else_body = for_unadvance(e.else_body, counter)
+  }
+  for_unadvance_opt(e.left, counter)
+  for_unadvance_opt(e.right, counter)
+  for_unadvance_opt(e.object, counter)
+  for_unadvance_opt(e.cond, counter)
+  for_unadvance_opt(e.receiver, counter)
+  for_unadvance_opt(e.inner, counter)
+  for a in e.args {
+    for_unadvance_expr(a, counter)
+  }
+  for x in e.elems {
+    for_unadvance_expr(x, counter)
+  }
+  for f in e.field_exprs {
+    for_unadvance_expr(f, counter)
+  }
+  if e.callee == "with" || e.callee == "try_with" {
+    if b = e.block {
+      b.body = for_unadvance(b.body, counter)
+    }
+  }
+}
+
+// `for i, x in xs`: the position, noted as the loop's counter by its
+// store, is named as the position in the messages.
+pub fn (checker_self: Checker) note_for_position(stmt: Stmt) {
+  if stmt.for_kind != 2 || stmt.pre.size < 2 {
+    return
+  }
+  if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+    i = checker_self.for_names.size - 1
+    while i >= 0 {
+      if checker_self.for_names[i] == pi.ident {
+        checker_self.for_kinds[i] = 10
+        return
+      }
+      i -= 1
+    }
+  }
+}

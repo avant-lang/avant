@@ -143,20 +143,45 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
+/* A key added to a Hash, or an element to a Set, during its own walk
+ * (h.each, s.each): the walk visits the keys it started with, so the new
+ * one would be missed. what: 0 a Hash, 1 a Set. */
+void avant_trap_walk_at(int32_t what, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  if (what == 1) {
+    trap_out("an element was added to a Set during its walk, which would miss it: collect the new elements and add them after the walk");
+  } else {
+    trap_out("a key was added to a Hash during its walk, which would miss it: collect the new entries and add them after the walk");
+  }
+  trap_tail();
+}
+
 /* A change to an Array a running task reads (avant_rt.h,
  * AVANT_ARRAY_FROZEN): op names the operation
  * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
- * growth, pop, fill, sort, reverse, reserve) print no site; generated
- * code's (an element store, clear, a sort with a block) call the _at
+ * growth, pop, fill, sort, reverse, reserve, insert, concat) print no
+ * site; generated code's (an element store, clear, a sort with a block,
+ * delete_if, delete_at, shuffle, a fill of other elements) call the _at
  * form. */
 static const char *frozen_op(int32_t op) {
-  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store"};
-  return op >= 0 && op <= 7 ? names[op] : "a change";
+  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if", "insert", "delete_at", "concat", "shuffle"};
+  return op >= 0 && op <= 12 ? names[op] : "a change";
 }
 
 void avant_trap_frozen(int32_t op) {
   trap_head();
-  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", frozen_op(op));
+  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
+  trap_tail();
+}
+
+/* A change to an array while a method call changes one of its elements
+ * (avant_array.c, the freeze of a method call): the call's name and
+ * site; the trap is told at the call. */
+void avant_trap_frozen_call(int32_t op, const char *name, const char *site) {
+  g_trap_loc = site;
+  trap_head();
+  trap_out("%s on an array while %s, called on one of its elements, runs: the method changes its receiver, so the array's size and order cannot change until it returns; copy the element, call the method on the copy and store it back", frozen_op(op), name ? name : "a method");
   trap_tail();
 }
 
@@ -165,11 +190,18 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
   avant_trap_frozen(op);
 }
 
+void avant_trap_frozen_hash(int32_t op) {
+  static const char *names[] = {"a store", "delete", "clear"};
+  trap_head();
+  trap_out("%s on a hash a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the hash", op >= 0 && op <= 2 ? names[op] : "a change");
+  trap_tail();
+}
+
 /* `m.with { }` on a mutex a task held when it trapped: the value may be half-changed, so the block does not run
  * on it. */
 void avant_trap_poisoned(void) {
   trap_head();
-  trap_out("Mutex.with on a poisoned mutex: a task trapped while it held this mutex, so its value may be half-changed");
+  trap_out("Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
   trap_tail();
 }
 
@@ -260,6 +292,13 @@ void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
   trap_tail();
 }
 
+/* xs.insert(i, v) at a position outside 0..size. */
+void avant_trap_insert(avant_int index, avant_int size) {
+  trap_head();
+  trap_out("insert at %lld out of range (size %lld)", (long long)index, (long long)size);
+  trap_tail();
+}
+
 /* A fixed-point precision outside 0..64 (fmt_float and
  * push_fmt_f used to clamp it to 0..16 silently). */
 void avant_trap_precision(avant_int prec) {
@@ -269,7 +308,7 @@ void avant_trap_precision(avant_int prec) {
 }
 
 /* A negative count where a size is meant. what names the
- * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
+ * operation: 0 Array(T).new's size, 1 repeat_byte's count, 2 repeat's. */
 /* A size or capacity past its ceiling (avant_rt.h,
  * AVANT_SIZE_MAX): kind is AVANT_SIZE_STRING, _BUF, _ARRAY or _HASH. */
 void avant_trap_size(int32_t kind) {
@@ -291,9 +330,9 @@ void avant_trap_size_at(int32_t kind, int32_t site) {
 }
 
 void avant_trap_negative(avant_int n, int32_t what) {
-  static const char *names[] = {"Array size", "repeat_byte count"};
+  static const char *names[] = {"Array size", "repeat_byte count", "repeat count"};
   trap_head();
-  trap_out("%s %lld is negative", names[what == 1 ? 1 : 0], (long long)n);
+  trap_out("%s %lld is negative", names[what >= 0 && what <= 2 ? what : 0], (long long)n);
   trap_tail();
 }
 
@@ -481,7 +520,13 @@ void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
 void avant_trap_expect_at(const char *why, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  trap_out("%s", why ? why : "");
+  {
+    /* The program's text: its bytes by length (a view has no
+     * terminator of its own). */
+    size_t n;
+    const char *d = avant_str_bytes(why, &n);
+    trap_out("%.*s", (int)n, d);
+  }
   trap_tail();
 }
 

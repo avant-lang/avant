@@ -51,8 +51,20 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
       if (c == "sort" || c == "sorted") && bl.params.size == 2 {
         return lw.arr_sort_block(e, recv, bl, c == "sorted")
       }
+      if (c == "find" || c == "index_of") && bl.params.size == 1 {
+        return lw.arr_find(e, recv, bl, c == "index_of")
+      }
+      if (c == "min_by" || c == "max_by") && bl.params.size == 1 {
+        return lw.arr_min_by(e, recv, bl, c == "max_by")
+      }
+      if c == "delete_if" && bl.params.size == 1 {
+        return lw.arr_delete_if(e, recv, bl)
+      }
     }
     if rt.is_hash() && c == "each" && e.args.size == 0 && bl.params.size == 2 {
+      return lw.hash_each(e, recv, rt, bl)
+    }
+    if rt.is_set() && c == "each" && e.args.size == 0 && bl.params.size == 1 {
       return lw.hash_each(e, recv, rt, bl)
     }
   }
@@ -88,6 +100,24 @@ pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
   b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
   lw.tmp(lw.elem_of(aty), b.rv_use(b.copy(b.index(b.deref(b.pl(d)), b.copy_local(i)))))
+}
+
+// The parameter of `each`, `any` or `all` at index _i of the array in
+// _h: the element's copy, or, when the element is a place (the block's
+// place names, checker/places.av), the walked array and the counter
+// bound to the hidden names its uses index.
+pub fn (lw: MirLower) block_param(bl: Block, recv: Expr, h: Int, aty: Int, i: Int) {
+  b = lw.lw_b
+  if bl.place_arr.size > 0 {
+    if rt = recv.ty {
+      lw.bind_name(bl.place_arr, rt, aty, b.copy_local(h), bl.loc, true)
+      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
+      lw.bind_name(bl.place_idx, ty_int(), mt_int(), ix, bl.loc, true)
+      return
+    }
+  }
+  v = lw.block_elem(h, aty, i)
+  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
 }
 
 // Stores v at index _i of the array in _h (emit_arr_store), behind the
@@ -126,6 +156,12 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
 // e there, as in the old back end).
 pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   b = lw.lw_b
+  if bl.paren && bl.returns {
+    if v = lw.lam_value(bl, ty_bool(), mt_bool(), cont, exit) {
+      return v
+    }
+    return b.c_bool(false)
+  }
   if bl.body.size == 0 {
     lw.refuse(bl.loc, "an empty value block")
     return b.c_bool(false)
@@ -209,6 +245,28 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     lw.refuse(bl.loc, "an empty value block")
     return zero
   }
+  if bl.paren && bl.returns {
+    // A lambda whose `return` gives the element: its value from the
+    // result slot.
+    if v = lw.lam_value(bl, want, et, step, exit) {
+      lw.at(e.loc)
+      if rc {
+        b.barrier(d)
+      }
+      b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
+    }
+    if lw.failed() {
+      return zero
+    }
+    lw.goto_if_open(step, e.loc)
+    b.at(step)
+    lw.at(e.loc)
+    b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1)))
+    b.goto(head)
+    b.at(exit)
+    lw.at(e.loc)
+    return lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
+  }
   first: Array(Stmt) = []
   j = 0
   while j < bl.body.size - 1 {
@@ -273,9 +331,8 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   b.at(head)
   lw.block_test(h, i, body, exit)
   b.at(body)
-  v = lw.block_elem(h, aty, i)
-  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
-  lw.block_body(bl.body, step, exit)
+  lw.block_param(bl, recv, h, aty, i)
+  lw.walk_body(bl, step, exit)
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
@@ -311,8 +368,7 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   b.at(head)
   lw.block_test(h, i, body, exit)
   b.at(body)
-  v = lw.block_elem(h, aty, i)
-  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+  lw.block_param(bl, recv, h, aty, i)
   p = lw.block_value(bl, step, exit)
   if lw.failed() {
     return zero
@@ -424,7 +480,11 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
 // `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
 // hash once, its keys as an array, then for each key the value read back
 // through the hash (a checked lookup: a key the body deleted is skipped),
-// both bound, the body.
+// both bound, the body (a Set's: its element only). A key added during
+// the walk (through any name) would be missed: the hash's count of added
+// keys is read before the first step and again after each, and a change
+// traps (avant_trap_walk). Deleting and assigning an existing key's value
+// stay defined.
 pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -448,6 +508,7 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     return zero
   }
   lw.at(e.loc)
+  adds0 = lw.hash_adds(h)
   keys = b.temp(aty)
   b.call(keys, "avant_hash_keys", lw.one(b.copy_local(h)))
   i = b.temp(mt_i32())
@@ -465,19 +526,433 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   lw.bind_name(bl.params[0], kt, kty, b.copy_local(kl), bl.loc, true)
   lw.at(e.loc)
   fl = lw.found_local()
-  raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty)
+  raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty, e.loc)
   // A key the body deleted earlier in the walk is skipped: before, it
   // was visited with an invented value (the zero).
   hit = b.block()
   b.branch(lw.found_is(fl), hit, step)
   b.at(hit)
-  val = lw.tmp(vty, b.rv_use(raw))
-  lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
-  lw.block_body(bl.body, step, exit)
+  // A Set's walk binds the element only (its Bool is nobody's).
+  if bl.params.size > 1 {
+    val = lw.tmp(vty, b.rv_use(raw))
+    lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
+  }
+  lw.walk_body(bl, step, exit)
   lw.goto_if_open(step, e.loc)
+  b.at(step)
+  lw.at(e.loc)
+  what = 0
+  if bl.params.size == 1 {
+    what = 1
+  }
+  lw.walk_added_trap(h, adds0, what, e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  zero
+}
+
+// The trap of a key added to the hash in _h during its walk: its count of
+// added keys read again and compared with the walk's start (_adds0); what
+// is 0 for a Hash, 1 for a Set (avant_trap_walk_at's words).
+pub fn (lw: MirLower) walk_added_trap(h: Int, adds0: Int, what: Int, loc: Location) {
+  b = lw.lw_b
+  adds = lw.hash_adds(h)
+  added = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(adds), b.copy_local(adds0)))
+  ok = lw.trap_open(added, true)
+  lw.trap_close(ok, "avant_trap_walk", lw.one(b.c_i32(what)), loc)
+}
+
+// The count of keys added to the hash in _h (AvantHash.adds, field 9 of
+// %Hash), into a new local.
+pub fn (lw: MirLower) hash_adds(h: Int): Int {
+  b = lw.lw_b
+  a = b.temp(mt_u32())
+  b.assign(b.pl(a), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 9))))
+  a
+}
+
+// ---- lambdas in parentheses inlined as loops
+
+// A builtin's lambda written in parentheses (`xs.each((x) { ... })`,
+// Block.paren) is lowered in place, as the block in pipes it replaces;
+// when a `return` in it ends a run of its body (Block.returns), that
+// `return` goes on at end, its value into slot (-1: none, a walk's body),
+// after the pins opened inside the body are closed (lower_stmt.av
+// lower_return; lam_return).
+pub fn (lw: MirLower) lam_open(end: Int, slot: Int, want: Ty) {
+  lw.lw_lam_ends.push(end)
+  lw.lw_lam_slots.push(slot)
+  lw.lw_lam_tys.push(want)
+  lw.lw_lam_pins.push(lw.lw_ffi.pins.size)
+}
+
+pub fn (lw: MirLower) lam_close {
+  lw.lw_lam_ends.pop()
+  lw.lw_lam_slots.pop()
+  lw.lw_lam_tys.pop()
+  lw.lw_lam_pins.pop()
+}
+
+pub fn (lw: MirLower) lam_return(st: Stmt) {
+  b = lw.lw_b
+  top = lw.lw_lam_ends.size - 1
+  slot = lw.lw_lam_slots[top]
+  if e = st.expr {
+    if slot >= 0 {
+      v = lw.lower_coerced(e, b.func.locals[slot].ty, lw.lw_lam_tys[top])
+      if lw.failed() {
+        return
+      }
+      lw.at(st.loc)
+      b.assign(b.pl(slot), b.rv_use(v))
+    } else {
+      lw.lower_expr(e)
+      if lw.failed() {
+        return
+      }
+    }
+  }
+  lw.at(st.loc)
+  i = lw.lw_ffi.pins.size - 1
+  while i >= lw.lw_lam_pins[top] {
+    lw.unpin(lw.lw_ffi.pins[i])
+    i -= 1
+  }
+  b.goto(lw.lw_lam_ends[top])
+}
+
+// The body of an inlined walk (`each`) with `break` to exit and `next`
+// to cont; a lambda whose `return` ends its run goes on at cont.
+pub fn (lw: MirLower) walk_body(bl: Block, cont: Int, exit: Int) {
+  if bl.paren && bl.returns {
+    lw.lam_open(cont, -1, ty_void())
+    lw.block_body(bl.body, cont, exit)
+    lw.lam_close()
+    return
+  }
+  lw.block_body(bl.body, cont, exit)
+}
+
+// The value of such a lambda's body (`any`, a comparator, the building
+// lambda of `Array(T).new`, `with`, `parallel`): every statement, the
+// last one's value into a slot as each `return`'s, then the slot where
+// the runs join; nil for a body without a value (want Void).
+pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: Int): MOperand? {
+  b = lw.lw_b
+  slot = -1
+  if !want.is_void() {
+    slot = b.temp(mty)
+  }
+  end = b.block()
+  lw.lam_open(end, slot, want)
+  if bl.body.size > 0 {
+    head: Array(Stmt) = []
+    j = 0
+    while j < bl.body.size - 1 {
+      head.push(bl.body[j])
+      j += 1
+    }
+    lw.lam_stmts(head, cont, exit)
+    if !lw.failed() && lw.open_now() {
+      last = bl.body[bl.body.size - 1]
+      if x = last.expr, last.kind == st_expr() && slot >= 0 {
+        v = lw.lower_coerced(x, mty, want)
+        if !lw.failed() {
+          lw.at(x.loc)
+          b.assign(b.pl(slot), b.rv_use(v))
+        }
+      } else {
+        tail: Array(Stmt) = [last]
+        lw.lam_stmts(tail, cont, exit)
+      }
+    }
+  }
+  lw.lam_close()
+  if lw.failed() {
+    return nil
+  }
+  lw.goto_if_open(end, bl.loc)
+  b.at(end)
+  if slot >= 0 {
+    return b.copy_local(slot)
+  }
+  nil
+}
+
+// Statements of such a body: in a walk, with its loop's targets (cont
+// below zero: a body run in place once, `with`, a task's).
+pub fn (lw: MirLower) lam_stmts(stmts: Array(Stmt), cont: Int, exit: Int) {
+  if cont < 0 {
+    lw.lower_stmts(stmts)
+    return
+  }
+  lw.block_body(stmts, cont, exit)
+}
+
+// The value of a lambda an array verb inlines (find, index_of, min_by,
+// max_by, delete_if), of type want: the lambda's own result slot when a
+// `return` in it ends its run, else its last expression.
+pub fn (lw: MirLower) verb_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: Int): MOperand {
+  b = lw.lw_b
+  if bl.returns {
+    if v = lw.lam_value(bl, want, mty, cont, exit) {
+      return v
+    }
+    return b.c_i32(0)
+  }
+  head: Array(Stmt) = []
+  i = 0
+  while i < bl.body.size - 1 {
+    head.push(bl.body[i])
+    i += 1
+  }
+  lw.block_body(head, cont, exit)
+  if lw.failed() || !lw.open_now() || bl.body.size == 0 {
+    return b.c_i32(0)
+  }
+  last = bl.body[bl.body.size - 1]
+  if x = last.expr {
+    v = lw.lower_coerced(x, mty, want)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(x.loc)
+    return lw.tmp(mty, b.rv_use(v))
+  }
+  lw.refuse(last.loc, "a lambda that does not end with a value")
+  b.c_i32(0)
+}
+
+// d = nil, for the optional type t (MIR type wty).
+pub fn (lw: MirLower) assign_nil(d: Int, t: Ty, wty: Int) {
+  b = lw.lw_b
+  if r = mir_opt_word(t) {
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
+  } else {
+    b.assign(b.pl(d), b.rv_union_nil(b.types.layout_of(wty), t.tag_of(ty_nil())))
+  }
+}
+
+// `xs.find((x) { p })` and `xs.index_of((x) { p })`: a loop over the
+// elements as `any`'s, which stops at the first element p holds for;
+// the element (find) or its position (index_of), nil when none does.
+pub fn (lw: MirLower) arr_find(e: Expr, recv: Expr, bl: Block, want_index: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  t = ty_int()
+  if et0 = e.ty {
+    t = et0
+  } else {
+    lw.refuse(e.loc, "an untyped find")
+    return zero
+  }
+  wty = lw.ty_at(t, e.loc, "a value")
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  d = b.temp(wty)
+  lw.assign_nil(d, t, wty)
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  p = lw.verb_value(bl, ty_bool(), mt_bool(), step, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    hit = b.block()
+    b.branch(p, hit, step)
+    b.at(hit)
+    if want_index {
+      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
+      b.assign(b.pl(d), b.rv_use(lw.coerce(ix, ty_int(), t, e.loc)))
+    } else {
+      v = lw.block_elem(h, aty, i)
+      b.assign(b.pl(d), b.rv_use(lw.coerce(v, lw.elem_ty_of(recv), t, e.loc)))
+    }
+    b.goto(exit)
+  }
   b.at(step)
   lw.at(e.loc)
   lw.block_step(i, head)
   b.at(exit)
+  b.copy_local(d)
+}
+
+// `xs.min_by((x) { key })`, `xs.max_by(...)`: one pass, the key computed
+// once per element; the first element of the smallest (largest) key by
+// <, nil for an empty array. The element is kept when taken, so a lambda
+// that changes the array cannot make the result read past its end.
+pub fn (lw: MirLower) arr_min_by(e: Expr, recv: Expr, bl: Block, is_max: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  t = ty_int()
+  if et0 = e.ty {
+    t = et0
+  } else {
+    lw.refuse(e.loc, "an untyped min_by")
+    return zero
+  }
+  kt = ty_int()
+  if k0 = bl.key_ty {
+    kt = k0
+  } else {
+    lw.refuse(e.loc, "a min_by key without a type")
+    return zero
+  }
+  wty = lw.ty_at(t, e.loc, "a value")
+  kty = lw.ty_at(kt, e.loc, "a key")
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  // The best element so far, as the result (nil until the first).
+  d = b.temp(wty)
+  lw.assign_nil(d, t, wty)
+  best = b.temp(kty)
+  // Written before the loop (the first element takes it): a number's
+  // zero, or the empty string.
+  if kt.is_string() || kt.is_bytes() {
+    b.assign(b.pl(best), b.rv_use(b.str_const("")))
+  } else if kt.is_float() {
+    b.assign(b.pl(best), b.rv_use(b.c_f64(0, "0.0")))
+  } else {
+    b.assign(b.pl(best), b.rv_use(b.c_int(kty, 0)))
+  }
+  at = b.temp(mt_i32())
+  b.assign(b.pl(at), b.rv_use(b.c_i32(-1)))
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  k = lw.verb_value(bl, kt, kty, step, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    kh = lw.hold(k, kty)
+    take = b.block()
+    cmp = b.block()
+    first = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(at), b.c_i32(0)))
+    b.branch(first, take, cmp)
+    b.at(cmp)
+    lhs = b.copy_local(kh)
+    rhs = b.copy_local(best)
+    if is_max {
+      lhs = b.copy_local(best)
+      rhs = b.copy_local(kh)
+    }
+    better = b.c_bool(false)
+    if kt.is_string() || kt.is_bytes() {
+      args: Array(MOperand) = []
+      args.push(lhs)
+      args.push(rhs)
+      q = lw.call_to(mt_i32(), "avant_str_cmp", args)
+      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), q, b.c_i32(0)))
+    } else {
+      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), lhs, rhs))
+    }
+    b.branch(better, take, step)
+    b.at(take)
+    b.assign(b.pl(best), b.rv_use(b.copy_local(kh)))
+    b.assign(b.pl(at), b.rv_use(b.copy_local(i)))
+    v = lw.block_elem(h, aty, i)
+    b.assign(b.pl(d), b.rv_use(lw.coerce(v, lw.elem_ty_of(recv), t, e.loc)))
+    b.goto(step)
+  }
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  b.copy_local(d)
+}
+
+// `xs.delete_if((x) { p })`: one pass in place, each element p does not
+// hold for moved down to the next kept position; the references past
+// the new size cleared, then the size set.
+pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  lw.frozen_check(h, mir_frozen_delete_if(), e.loc)
+  w = b.temp(mt_i32())
+  b.assign(b.pl(w), b.rv_use(b.c_i32(0)))
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  keep = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  p = lw.verb_value(bl, ty_bool(), mt_bool(), keep, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    b.branch(p, step, keep)
+  }
+  b.at(keep)
+  lw.at(e.loc)
+  v = lw.block_elem(h, aty, i)
+  lw.block_store(h, aty, w, v)
+  b.assign(b.pl(w), b.rv_bin(mop_add(), b.copy_local(w), b.c_i32(1)))
+  b.goto(step)
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  et = lw.elem_of(aty)
+  if b.types.ref_carrying(et) {
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+    lo = lw.tmp(mt_int(), b.rv_cast(b.copy_local(w), mt_int()))
+    hi = lw.tmp(mt_int(), b.rv_cast(n, mt_int()))
+    four = lw.two(b.copy_local(h), lo)
+    four.push(hi)
+    four.push(lw.elem_size(aty))
+    b.call(-1, "avant_array_zero_range", four)
+  }
+  b.assign(b.field(b.deref(b.pl(h)), 1), b.rv_use(b.copy_local(w)))
   zero
 }

@@ -138,6 +138,9 @@ pub fn (checker_self: Checker) subst_ty(ty: Ty, keys: Array(String), vals: Array
   }
   if ty.is_hash() {
     if k = ty.key, v = ty.val {
+      if ty.is_set() {
+        return ty_set(checker_self.subst_ty(k, keys, vals), v)
+      }
       return ty_hash(checker_self.subst_ty(k, keys, vals), checker_self.subst_ty(v, keys, vals))
     }
   }
@@ -320,11 +323,11 @@ pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
 // integer parameter's (fit_call_arg types it once the function is
 // chosen).
 pub fn (checker_self: Checker) early_arg_fits(arg: Expr, got: Ty, pty: Ty): Bool {
-  if ty_assignable(got, pty) {
+  if ty_assignable(got, pty) || checker_self.lit_set_fits(got, pty) {
     return true
   }
   if checker_self.is_empty_array_ty(got) {
-    return pty.is_array() && !type.ty_has_var(pty)
+    return checker_self.empty_fits(got, pty) && !type.ty_has_var(pty)
   }
   arg.kind == ex_int() && pty.is_integer()
 }
@@ -382,8 +385,8 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
   }
   cands: Array(FuncSig) = []
   saw_generic = false
-  for i in 1..checker_self.functions.size {
-    sig = checker_self.functions[i]
+  for i2 in 1..checker_self.functions.size {
+    sig = checker_self.functions[i2]
     if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
       if checker_self.deferred_unifies(sig, deferred, ctypes, expr.args) {
         cands.push(sig)
@@ -404,8 +407,8 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
       // "the block does not fit NAME"). One function: which argument and
       // what it takes; several: each signature.
       fits: Array(FuncSig) = []
-      for i in 1..checker_self.functions.size {
-        sig = checker_self.functions[i]
+      for ix in 1..checker_self.functions.size {
+        sig = checker_self.functions[ix]
         if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
           fits.push(sig)
         }
@@ -771,6 +774,10 @@ pub fn (checker_self: Checker) check_lambda_free(expr: Expr): Ty {
       i += 1
     }
     ret = ty_var("__fnret")
+    if rt = b.ret_type {
+      ret = checker_self.resolve_in_module(rt)
+      checker_self.pull_resolve()
+    }
     want = ty_fn(params, ret)
     return checker_self.check_lambda_against(expr, want)
   }
@@ -790,7 +797,7 @@ pub fn (checker_self: Checker) pop_lambda {
   checker_self.lam_scopes.pop()
 }
 
-pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
+pub fn (checker_self: Checker) note_capture(name: String, ty: Ty, loc: Location) {
   nlam = checker_self.lam_exprs.size
   if nlam == 0 {
     return
@@ -817,6 +824,10 @@ pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
       captured = true
     }
   }
+  if captured && ty.is_hasher() {
+    checker_self.fail(loc, "a lambda cannot capture the Hasher ${name}: the runtime gives it to the hash method for the call only; add the values to it in the method itself")
+    return
+  }
   if captured {
     checker_self.mark_box(name, idx)
   }
@@ -841,6 +852,7 @@ pub fn (checker_self: Checker) mark_box(name: String, idx: Int) {
 
 pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
   if b = expr.block {
+    checker_self.note_inline(b, "fn")
     if b.params.size != want.members.size {
       has = checker_self.count_word(b.params.size, "parameter")
       checker_self.fail(expr.loc, "the lambda has ${has} where ${want.show()} takes ${checker_self.args_word(want.members.size)}")
@@ -884,6 +896,17 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     if r = want.inner {
       ret = r
     }
+    // A written result type (`(x: Int): Int { ... }`) is the lambda's;
+    // where a fn type is expected it must be that type's result.
+    if rt = b.ret_type {
+      got_ret = checker_self.resolve_in_module(rt)
+      checker_self.pull_resolve()
+      if !ret.is_var() && !got_ret.same_as(ret) {
+        checker_self.fail(rt.loc, "the lambda's result is ${got_ret.show()}, expected ${ret.show()}")
+        return checker_self.t_int()
+      }
+      ret = got_ret
+    }
     // A `Void | E` result: the end of the body is the success, as in a
     // function (checker.av check_function).
     if ret.is_union() && ret.includes_void() && checker_self.fallthrough(b.body) {
@@ -902,21 +925,68 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     saved_body = checker_self.try_body
     checker_self.try_in = ""
     checker_self.try_body = "the lambda"
+    // Its own function: no builtin's inlined body around it.
+    saved_what = checker_self.inline_what
+    saved_target = checker_self.inline_target
+    checker_self.inline_what = ""
+    checker_self.inline_target = nil
+    saved_infer = checker_self.lambda_infer
     if ret.is_var() {
       checker_self.try_in = "a lambda whose result type is inferred"
     }
+    // The body runs when the lambda is called, any time later: no fact
+    // of the code around it holds there (a captured name may have
+    // changed, a captured array shrunk).
+    outer_facts = checker_self.facts
+    checker_self.facts = FlowFacts.new()
+    checker_self.facts.reach_memo = outer_facts.reach_memo
+    for lw in outer_facts.lam_written {
+      checker_self.facts.lam_written.push(lw)
+    }
     if ret.is_var() {
-      saved_infer = checker_self.lambda_infer
       saved_ty = checker_self.inferred_ret
+      saved_seen = checker_self.inferred_seen
+      saved_at = checker_self.inferred_at
+      saved_tail = checker_self.inferred_tail
       checker_self.lambda_infer = true
       checker_self.inferred_ret = checker_self.t_void()
+      checker_self.inferred_seen = false
+      checker_self.inferred_at = ""
+      checker_self.inferred_tail = false
       checker_self.check_body(b.body, checker_self.t_void(), true)
       result_ret = checker_self.inferred_ret
-      checker_self.lambda_infer = saved_infer
+      // A result given by `return` while the end gives none: the end
+      // would leave the lambda without its value.
+      if !checker_self.has_err() && !result_ret.is_void() && !checker_self.inferred_tail && checker_self.fallthrough(b.body) {
+        last_loc = b.loc
+        if b.body.size > 0 {
+          last_loc = b.body[b.body.size - 1].loc
+        }
+        checker_self.fail(last_loc, "this lambda ends without a value and ${checker_self.inferred_at}: every return and its end give one result; end it with a value or write the result type")
+      }
       checker_self.inferred_ret = saved_ty
+      checker_self.inferred_seen = saved_seen
+      checker_self.inferred_at = saved_at
+      checker_self.inferred_tail = saved_tail
     } else {
+      checker_self.lambda_infer = false
       checker_self.check_body(b.body, ret, true)
     }
+    checker_self.facts = outer_facts
+    assigned: Array(String) = []
+    for st in b.body {
+      checker_self.cap_collect_assigned_stmt(st, assigned)
+    }
+    written: Array(String) = []
+    for cap_name in expr.cap_names {
+      if assigned.contains(cap_name) {
+        written.push(cap_name)
+      }
+    }
+    checker_self.lambda_writes(written)
+    checker_self.lambda_infer = saved_infer
+    checker_self.inline_what = saved_what
+    checker_self.inline_target = saved_target
     checker_self.return_type = saved_ret
     checker_self.entry_void = saved_entry
     checker_self.try_in = saved_try
@@ -1517,7 +1587,7 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
       if method_note.size > 0 {
         checker_self.witness_note = method_note
       } else {
-        checker_self.witness_note = "${concrete.show()} does not implement ${label}: missing ${method.name}"
+        checker_self.witness_note = "${concrete.show()} does not implement ${label}: missing ${protocol_shown(method.name)}"
       }
       return 0
     }
@@ -1645,5 +1715,286 @@ pub fn (checker_self: Checker) check_bound_uses {
     }
     checker_self.current_module = saved
   }
+  checker_self.check_hash_key_uses()
   checker_self.in_bounds = false
+}
+
+// The checker state a lambda a builtin inlines changes, restored after
+// it (inline_leave).
+pub class InlineSave {
+  pub ret: Ty
+  pub loops: Int = 0
+  pub build: Int = 0
+  pub try_in: String = ""
+  pub try_body: String = ""
+  pub entry_void: Bool = false
+  pub infer: Bool = false
+  pub what: String = ""
+  pub target: Block? = nil
+
+  fn initialize(ret: Ty) {
+    self.ret = ret
+  }
+}
+
+// A lambda written in parentheses that a builtin inlines as a loop
+// (`xs.each((x) { ... })`, `xs.any (x) { x > 2 }`, `m.with((v) { ... })`)
+// is a function of its own, as a lambda given to any function is:
+// `return` ends this run of its body with the lambda's result res,
+// `break` and `continue` have no loop of the lambda's to leave, and a
+// postfix `?` has nowhere to return its failure (each refused with the
+// way to write it as a `for`). The compiler still lowers it in place,
+// as a plain loop. The braces with pipes keep their older meaning, a
+// loop body that `return` leaves.
+pub fn (checker_self: Checker) inline_enter(b: Block, what: String, res: Ty): InlineSave {
+  s = InlineSave.new(checker_self.return_type)
+  s.loops = checker_self.loop_depth
+  s.build = checker_self.in_build
+  s.try_in = checker_self.try_in
+  s.try_body = checker_self.try_body
+  s.entry_void = checker_self.entry_void
+  s.infer = checker_self.lambda_infer
+  s.what = checker_self.inline_what
+  s.target = checker_self.inline_target
+  checker_self.return_type = res
+  checker_self.loop_depth = 0
+  checker_self.in_build = 0
+  checker_self.try_in = "a lambda given to ${what}"
+  checker_self.try_body = "the lambda"
+  checker_self.entry_void = false
+  checker_self.lambda_infer = false
+  checker_self.inline_what = what
+  checker_self.inline_target = b
+  s
+}
+
+pub fn (checker_self: Checker) inline_leave(s: InlineSave) {
+  checker_self.return_type = s.ret
+  checker_self.loop_depth = s.loops
+  checker_self.in_build = s.build
+  checker_self.try_in = s.try_in
+  checker_self.try_body = s.try_body
+  checker_self.entry_void = s.entry_void
+  checker_self.lambda_infer = s.infer
+  checker_self.inline_what = s.what
+  checker_self.inline_target = s.target
+}
+
+// Whether the builtin a lambda is given to walks elements, so the way
+// out of a refused `break`, `continue` or `?` is a `for`.
+pub fn (checker_self: Checker) inline_walks(what: String): Bool {
+  what != "with" && what != "try_with" && what != "Array(T).new"
+}
+
+// The builtins of an Array, a Hash, a Set and a Mutex that take a
+// function and inline it: a lambda written as their argument
+// (`xs.each((x) { ... })`, or the shorthand `xs.each (x) { ... }`)
+// becomes the call's block, which the builtin's own check and the
+// lowering already know; its Block.paren keeps its meaning.
+pub fn (checker_self: Checker) absorb_lambda_arg(expr: Expr, object: Ty) {
+  if _ = expr.block {
+    return
+  }
+  if expr.args.size == 0 || expr.field_names.size > 0 {
+    return
+  }
+  c = expr.callee
+  takes = false
+  if object.is_array() {
+    takes = c == "each" || c == "any" || c == "all" || c == "sort" || c == "sorted" || c == "parallel" || c == "find" || c == "index_of" || c == "min_by" || c == "max_by" || c == "delete_if"
+  } else if object.is_hash() || object.is_set() {
+    takes = c == "each"
+  } else {
+    takes = c == "with" || c == "try_with"
+  }
+  if !takes {
+    return
+  }
+  last = expr.args[expr.args.size - 1]
+  if last.kind == ex_name() && object.is_array() && c != "parallel" {
+    // A function value or a function's name (`xs.each(show)`): the
+    // same loop, its body one call of the function per element.
+    if fb = checker_self.fn_arg_block(expr, last, c) {
+      expr.block = fb
+      expr.args.pop()
+    }
+    return
+  }
+  if last.kind != ex_lambda() {
+    return
+  }
+  if lb = last.block, lb.paren {
+    expr.block = lb
+    expr.args.pop()
+  }
+}
+
+// The lambda `(a) { f(a) }` (two parameters for a comparator) standing
+// for the function named f given to the array builtin c, when f is a
+// variable of a function type or, with no variable of that name, a
+// declared function; nil otherwise (`xs.index_of(v)` keeps its value).
+// The parameters are hidden names of their own, so the lambda reuses
+// no name of the function around it.
+pub fn (checker_self: Checker) fn_arg_block(expr: Expr, f: Expr, c: String): Block? {
+  if expr.args.size != 1 {
+    return nil
+  }
+  if t = checker_self.lookup(f.ident) {
+    if !t.is_fn() {
+      return nil
+    }
+  } else if checker_self.fn_indices_named(f.ident).size == 0 {
+    return nil
+  }
+  n = 1
+  if c == "sort" || c == "sorted" {
+    n = 2
+  }
+  b = Block.new(f.loc)
+  b.paren = true
+  call = Expr.new(ex_call(), f.loc)
+  call.callee = f.ident
+  for k in 0..n {
+    p = "__avant_arg_${f.loc.line()}_${f.loc.column()}_${k}"
+    b.params.push(p)
+    a = Expr.new(ex_name(), f.loc)
+    a.ident = p
+    call.args.push(a)
+  }
+  b.body.push(stmt_expr(f.loc, call))
+  b
+}
+
+// The body of an inlined walk (`each`): a loop body for a block in
+// pipes, checked as the code around it (its `return` leaves the
+// function); a lambda of its own in parentheses (inline_enter).
+pub fn (checker_self: Checker) check_walk_body(b: Block, what: String) {
+  if b.paren {
+    s = checker_self.inline_enter(b, what, checker_self.t_void())
+    checker_self.check_body(b.body, checker_self.t_void(), false)
+    checker_self.inline_leave(s)
+    return
+  }
+  checker_self.check_body(b.body, checker_self.return_type, false)
+}
+
+// The value of an inlined block (`any`, `all`, the comparators): for a
+// lambda in parentheses, a `return` in it gives that value, res.
+pub fn (checker_self: Checker) check_walk_value(b: Block, what: String, res: Ty): Ty {
+  if b.paren {
+    s = checker_self.inline_enter(b, what, res)
+    bt = checker_self.check_block_value(b)
+    checker_self.inline_leave(s)
+    return bt
+  }
+  checker_self.check_block_value(b)
+}
+
+// The result a lambda in parentheses inlined by a builtin whose value is
+// its last expression (`parallel`, `with`) declares, or a type variable
+// when it writes none: a `return` with a value is then refused, asking
+// for the result type (check_stmt).
+pub fn (checker_self: Checker) inline_result(b: Block): Ty {
+  if rt = b.ret_type {
+    got = checker_self.resolve_in_module(rt)
+    checker_self.pull_resolve()
+    return got
+  }
+  ty_var("__inline")
+}
+
+// A parameter's default that assigns to an earlier parameter (`f: fn():
+// Int = () { a = a + 1; a }`): the name it assigns, or "". A default is
+// an expression that reads; the assignment would change a copy only the
+// default sees (neither the caller's variable nor the callee's
+// parameter), so it is refused. A lambda's own parameter of that name
+// hides it.
+pub fn (checker_self: Checker) default_assigns(e: Expr, names: Array(String)): String {
+  if names.size == 0 {
+    return ""
+  }
+  inner = names
+  if b = e.block {
+    if b.params.size > 0 {
+      kept: Array(String) = []
+      for n in names {
+        hidden = false
+        for p in b.params {
+          if p == n {
+            hidden = true
+          }
+        }
+        if !hidden {
+          kept.push(n)
+        }
+      }
+      inner = kept
+    }
+    got = checker_self.default_assigns_stmts(b.body, inner)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for x in [e.left, e.right, e.object, e.cond, e.receiver, e.inner, e.size_expr] {
+    if y = x {
+      got = checker_self.default_assigns(y, names)
+      if got.size > 0 {
+        return got
+      }
+    }
+  }
+  for a in e.args {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for a in e.elems {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for a in e.field_exprs {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for c in e.cases {
+    got = checker_self.default_assigns_stmts(c.body, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  checker_self.default_assigns_stmts(e.else_body, names)
+}
+
+pub fn (checker_self: Checker) default_assigns_stmts(body: Array(Stmt), names: Array(String)): String {
+  for st in body {
+    if st.kind == st_assign() {
+      if t = st.target, t.kind == ex_name() {
+        for n in names {
+          if n == t.ident {
+            return n
+          }
+        }
+      }
+    }
+    for x in [st.expr, st.value, st.target, st.cond] {
+      if y = x {
+        got = checker_self.default_assigns(y, names)
+        if got.size > 0 {
+          return got
+        }
+      }
+    }
+    for part in [st.then_body, st.else_body, st.body, st.pre] {
+      got = checker_self.default_assigns_stmts(part, names)
+      if got.size > 0 {
+        return got
+      }
+    }
+  }
+  ""
 }

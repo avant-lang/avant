@@ -1,0 +1,55 @@
+// The standard library's own traps (a JsonBuilder misused, a Regex limit
+// below 1, a Regex used after close) end the task that meets them, as a
+// trap in the program's own code does: the join gives a TaskError and the
+// program goes on. Before, each printed and ended the process. The
+// argument names the case; without one it is json. Run by
+// tests/cases/test_tasks.av.
+
+import std.json
+import std.regex
+
+fn show(h: JoinHandle(Int)) {
+  v = h.join() else e {
+    puts("trapped: ${e.what}")
+    return
+  }
+  puts("value: ${v}")
+}
+
+fn main {
+  a = argv()
+  kind = "json"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  puts("before")
+  if kind == "json" {
+    show(spawn {
+      b = JsonBuilder.new()
+      _ = b.end()
+      1
+    })
+  } else if kind == "regex-limit" {
+    show(spawn {
+      n = 0
+      if re = Regex.compile("a+", false, 0) {
+        n = re.count("aaa")
+      }
+      n
+    })
+  } else if kind == "regex-closed" {
+    show(spawn {
+      n = 0
+      if re = Regex.compile("a+") {
+        re.close()
+        n = re.count("aaa")
+      }
+      n
+    })
+  } else if kind == "main" {
+    // Outside a task the trap ends the program, after its output.
+    b = JsonBuilder.new()
+    _ = b.key("k")
+  }
+  puts("after")
+}

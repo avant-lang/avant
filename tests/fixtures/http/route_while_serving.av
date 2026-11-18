@@ -4,12 +4,15 @@ import std.http
 // the handler of GET /add, on a loop thread while the server's other
 // loop serves, registers one more route with the method its argument
 // names (get, post, put, delete, patch, route, websocket,
-// websocket_open, websocket_close). The route method traps: one line on
+// websocket_open, websocket_close), or sets a limit (head_timeout,
+// min_rate). The route or limit method traps: one line on
 // stderr, status 1, and the request is never answered. Without the trap
 // the route is added, the request answered, and the program prints
 // "answered 200" and ends with status 0. Run by
 // tests/cases/test_std_http_safety.av once per method; without an
-// argument (the run goldens) the method is get.
+// argument (the run goldens) the method is get. The kinds
+// limit-negative and rate-negative set a negative limit before serving,
+// which traps there.
 fn main: Int {
   a = argv()
   kind = "get"
@@ -18,32 +21,41 @@ fn main: Int {
   }
   if opened = Http.listen(0, "127.0.0.1", 1048576, 2) {
     server = opened
-    server.get("/add") { |req|
+    if kind == "limit-negative" {
+      _ = server.head_timeout(-1)
+    } else if kind == "rate-negative" {
+      _ = server.min_rate(240, -5)
+    }
+    server.get("/add", (req) {
       if kind == "get" {
-        server.get("/x") { |r| Response.text("x") }
+        server.get("/x", (r) { Response.text("x") })
       } else if kind == "post" {
-        server.post("/x") { |r| Response.text("x") }
+        server.post("/x", (r) { Response.text("x") })
       } else if kind == "put" {
-        server.put("/x") { |r| Response.text("x") }
+        server.put("/x", (r) { Response.text("x") })
       } else if kind == "delete" {
-        server.delete("/x") { |r| Response.text("x") }
+        server.delete("/x", (r) { Response.text("x") })
       } else if kind == "patch" {
-        server.patch("/x") { |r| Response.text("x") }
+        server.patch("/x", (r) { Response.text("x") })
       } else if kind == "route" {
-        server.route("OPTIONS", "/x") { |r| Response.text("x") }
+        server.route("OPTIONS", "/x", (r) { Response.text("x") })
       } else if kind == "websocket" {
-        server.websocket("/w") { |conn, msg| }
+        server.websocket("/w", (conn, msg) { })
       } else if kind == "websocket_open" {
-        server.websocket_open("/w") { |conn| }
+        server.websocket_open("/w", (conn) { })
       } else if kind == "websocket_close" {
-        server.websocket_close("/w") { |conn, code, reason| }
+        server.websocket_close("/w", (conn, code, reason) { })
+      } else if kind == "head_timeout" {
+        _ = server.head_timeout(5000)
+      } else if kind == "min_rate" {
+        _ = server.min_rate(100, 1000)
       }
       Response.text("added")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     client = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/add", true, 5000) {

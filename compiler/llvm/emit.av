@@ -45,7 +45,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   body = e.out.to_s()
   e.out = buf_new()
   ll_type_maps(e)
-  if e.used_frame_global {
+  if e.used_frame_helpers {
     ll_gc_frame_helpers(e)
   }
   if e.used_alloc_slow {
@@ -60,18 +60,41 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str("\n")
   ll_layouts(e, out)
   if m.strs.size > 0 {
-    for i in 0..m.strs.size {
-      s = m.strs[i]
-      out.push_str("@str.${i} = private constant [${s.size + 1} x i8] c\"${mir_escape(s)}\\00\", align 1\n")
+    for i2 in 0..m.strs.size {
+      s = m.strs[i2]
+      // A literal is a static string object: the runtime's header (its
+      // size the bytes and the terminator, the string tag, no heap flag)
+      // and then the bytes, so its length is a header read like every
+      // heap string's; the value is the address of the bytes.
+      out.push_str("@str.${i2} = private constant { i64, [${s.size + 1} x i8] } { i64 ${ll_str_header(s.size)}, [${s.size + 1} x i8] c\"${mir_escape(s)}\\00\" }, align 8\n")
     }
     out.push_str("\n")
+  }
+  if e.frame_maps.size > 0 {
+    // The frame records' maps too wide for an inline desc
+    // (ll_gc_frame_layout).
+    for t in e.frame_maps {
+      out.push_str(t)
+      out.push_str("\n")
+    }
+    out.push_str("\n")
+  }
+  if ll_has_main(m) {
+    // The program's promise to the runtime: every string it makes or
+    // takes from C carries its length in its header (the runtime's weak
+    // default, 0, is the previous compiler's code, which reads a C
+    // string's length by its terminator).
+    out.push_str("@avant_str_headered = constant i32 1, align 4\n\n")
+  }
+  if e.used_str_nil {
+    out.push_str("@str.nil = private constant { i64, [1 x i8] } { i64 ${ll_str_header(0)}, [1 x i8] zeroinitializer }, align 8\n\n")
   }
   if e.tlocs.size > 0 {
     // The trap sites: their texts, and the table the runtime reads through
     // its weak reference, indexed by a trap's last argument.
-    for i in 0..e.tlocs.size {
-      t = e.tlocs[i]
-      out.push_str("@tl.${i} = private unnamed_addr constant [${t.size + 1} x i8] c\"${mir_escape(t)}\\00\", align 1\n")
+    for ix in 0..e.tlocs.size {
+      t = e.tlocs[ix]
+      out.push_str("@tl.${ix} = private unnamed_addr constant [${t.size + 1} x i8] c\"${mir_escape(t)}\\00\", align 1\n")
     }
     out.push_str("@__avant_trap_sites = constant [${e.tlocs.size} x ptr] [")
     for j in 0..e.tlocs.size {
@@ -85,10 +108,6 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   if e.used_alloc_globals {
     out.push_str(ll_alloc_globals(m.shared))
     out.push_str("\n")
-  }
-  if e.used_heap_globals {
-    out.push_str("@avant_gc_heap_lo = external global i64\n")
-    out.push_str("@avant_gc_heap_len = external global i64\n\n")
   }
   if e.used_poll_global {
     out.push_str("@avant_gc_requested = external global i32\n\n")
@@ -122,8 +141,17 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
 // the element type (E5).
 fn ll_layouts(e: LlEmit, out: Buf) {
   n = 0
+  // C's arrays (`T name[N]`) first: an array type is no struct, so a
+  // struct that holds one may not name it before its definition.
   for l in e.ts.layouts {
-    if l.kind != mlk_elems() {
+    if l.kind == mlk_carray() {
+      out.push_str("${ll_type_name(l.name)} = type [${l.fields.size} x ${e.llt(l.fields[0])}]\n")
+      n += 1
+    }
+  }
+  for l in e.ts.layouts {
+    if l.kind == mlk_carray() {
+    } else if l.kind != mlk_elems() {
       out.push_str("${ll_type_name(l.name)} = type {")
       for j in 0..l.fields.size {
         if j > 0 {
@@ -158,8 +186,9 @@ fn ll_declarations(e: LlEmit, out: Buf) {
   scratch = MTypes.new()
   for name in names {
     if x = e.m.ext(name) {
-      // A libm row called as its intrinsic (ll_call) needs no declaration.
-      if ll_math_intrinsic(e.ts, x).size == 0 {
+      // A libm row called as its intrinsic (ll_call), and a bit operation
+      // written as an instruction, need no declaration.
+      if ll_math_intrinsic(e.ts, x).size == 0 && !str_starts(name, "avant_bits_") {
         if ll_cabi_needed(e.ts, x.sig) {
           out.push_str(ll_cabi_declare(e.ts, name, x.sig))
         } else {
@@ -315,19 +344,24 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   e.out.push_str(") #0 {\nalloca:\n")
   e.label = "alloca"
+  // The frame record first: a slot local's address is in it.
+  ll_gc_frame_layout(e, f)
+  if e.frame_words >= 0 {
+    e.line("%gcf = alloca ${ll_gc_frame_type(e)}, align ${e.frame_align}")
+  }
   for i in 0..f.locals.size {
     if f.valid_local(i) {
       ty = f.locals[i].ty
-      e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
+      // A slot local has no alloca: its address is its place in the
+      // record, computed where it is used (local_addr).
+      if e.frame_words < 0 || e.frame_at[i] < 0 {
+        e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
+      }
     }
-  }
-  e.frame_words = ll_gc_frame_words(e, f)
-  if e.frame_words >= 0 {
-    e.line("%gcf = alloca ${ll_gc_frame_type(e.frame_words)}, align 8")
   }
   i = 1
   while i <= f.nparams {
-    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
+    e.store(f.locals[i].ty, "%a${i}", e.local_addr(i), e.slot_vol(i))
     i += 1
   }
   e.line("br label %bb0")
@@ -445,15 +479,31 @@ fn ll_call(e: LlEmit, st: MStmt) {
       return
     }
     intr = ll_math_intrinsic(e.ts, x)
+    bits = ""
+    if intr.size == 0 {
+      bits = ll_bits_op(e, x.name, st.args)
+    }
     if intr.size > 0 {
       // The libm row as its LLVM intrinsic (no errno, so LLVM may
       // vectorize and fold it; a NaN where libm gives one).
-      e.need_intrinsic("declare double @${intr}(double)")
+      if s.params.size == 2 {
+        e.need_intrinsic("declare double @${intr}(double, double)")
+      } else {
+        e.need_intrinsic("declare double @${intr}(double)")
+      }
       result = ll_emit_call(e, false, "double", "@${intr}", ll_args(e, st.args, s.params, true))
+    } else if bits.size > 0 {
+      result = bits
     } else if x.alloc {
       result = ll_alloc(e, x.name, st.args, st.fresh)
-    } else if x.name == "avant_c_str" && e.inline_fast {
-      result = ll_c_str(e, st.args)
+    } else if x.name == "avant_str_size" && e.inline_fast {
+      result = ll_str_size(e, st.args)
+    } else if x.name == "avant_str_data" && e.inline_fast {
+      result = ll_str_data(e, st.args)
+    } else if x.name == "avant_str_view_test" && e.inline_fast {
+      result = ll_str_view_test(e, st.args)
+    } else if (x.name == "avant_str_flat" || x.name == "avant_str_c_arg") && e.inline_fast {
+      result = ll_str_unview(e, x.name, st.args)
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)
@@ -476,35 +526,83 @@ fn ll_call(e: LlEmit, st: MStmt) {
   }
   if st.dest >= 0 {
     d = st.dest
-    e.store(e.f.locals[d].ty, result, e.local_name(d), e.slot_vol(d))
+    e.store(e.f.locals[d].ty, result, e.local_addr(d), e.slot_vol(d))
   }
 }
 
-// The LLVM intrinsic of a libm external, or "": Float64's abs, floor,
-// sqrt and exp (mir/runtime.av's libm rows), when the external is
-// `double (double)`, are llvm.fabs, llvm.floor, llvm.sqrt and llvm.exp
-// (llvm.exp is lowered to libm's exp, and folded only for constants, with
+// The LLVM intrinsic of a libm external, or "": Float64's math methods
+// (mir/runtime.av's libm rows), when the external is `double (double)`
+// or `double (double, double)`, are llvm.fabs, llvm.floor and the others
+// of the same name (fabs, floor, ceil, trunc, round and sqrt become
+// instructions; exp, the logarithms, the trigonometric functions, pow and
+// atan2 are lowered to libm's call, and folded only for constants, with
 // the host's libm). They give the same bits as libm on every input (sqrt
 // of a negative or a NaN is a NaN either way; Avant never reads errno,
 // the one difference).
 fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   s = ts.sigs[x.sig]
-  if s.params.size != 1 || s.params[0] != mt_f64() || s.ret != mt_f64() || s.varargs {
+  if s.params.size < 1 || s.params.size > 2 || s.ret != mt_f64() || s.varargs {
     return ""
   }
-  if x.name == "sqrt" {
-    return "llvm.sqrt.f64"
+  for p in s.params {
+    if p != mt_f64() {
+      return ""
+    }
   }
-  if x.name == "fabs" {
-    return "llvm.fabs.f64"
+  n = x.name
+  if s.params.size == 2 {
+    if n == "pow" || n == "atan2" {
+      return "llvm.${n}.f64"
+    }
+    return ""
   }
-  if x.name == "floor" {
-    return "llvm.floor.f64"
-  }
-  if x.name == "exp" {
-    return "llvm.exp.f64"
+  if n == "sqrt" || n == "fabs" || n == "floor" || n == "ceil" || n == "trunc" || n == "round" || n == "exp" || n == "sin" || n == "cos" || n == "tan" || n == "log" || n == "log2" || n == "log10" {
+    return "llvm.${n}.f64"
   }
   ""
+}
+
+// The bit operations the lowering calls by name (mir/runtime.av's
+// avant_bits_ rows), each one LLVM operation and no function: a bit
+// count (llvm.ctpop, llvm.ctlz, llvm.cttz, defined at zero: the width)
+// or a bitcast between a Float64 and a UInt64. "" for another name.
+fn ll_bits_op(e: LlEmit, name: String, args: Array(MOperand)): String {
+  if !str_starts(name, "avant_bits_") || args.size != 1 {
+    return ""
+  }
+  x = e.value(args[0])
+  if name == "avant_bits_f64_to_u64" {
+    t = e.tmp()
+    e.line("${t} = bitcast double ${x} to i64")
+    return t
+  }
+  if name == "avant_bits_u64_to_f64" {
+    t2 = e.tmp()
+    e.line("${t2} = bitcast i64 ${x} to double")
+    return t2
+  }
+  w = "i64"
+  if str_ends(name, "_i32") {
+    w = "i32"
+  }
+  op = ""
+  for o in ["ctpop", "ctlz", "cttz"] {
+    if str_starts(name, "avant_bits_${o}_") {
+      op = o
+    }
+  }
+  if op.size == 0 {
+    return ""
+  }
+  t3 = e.tmp()
+  if op == "ctpop" {
+    e.need_intrinsic("declare ${w} @llvm.ctpop.${w}(${w})")
+    e.line("${t3} = call ${w} @llvm.ctpop.${w}(${w} ${x})")
+  } else {
+    e.need_intrinsic("declare ${w} @llvm.${op}.${w}(${w}, i1)")
+    e.line("${t3} = call ${w} @llvm.${op}.${w}(${w} ${x}, i1 false)")
+  }
+  t3
 }
 
 fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: String): String {
@@ -609,8 +707,18 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   ", !llvm.loop !${e.loop_md_n}"
 }
 
-// The metadata: !0 the loops' unroll hint, !1 to !7 the alias tags
-// (ll_tbaa_nodes), then one node per cold loop.
+// Whether the module defines the program's entry, `main`.
+fn ll_has_main(m: MModule): Bool {
+  for f in m.funcs {
+    if f.symbol == "main" {
+      return true
+    }
+  }
+  false
+}
+
+// The metadata: !0 the loops' unroll hint, !1 to !14 the alias tags and
+// the load facts (ll_tbaa_nodes), then one node per cold loop.
 fn ll_loop_md(e: LlEmit, out: Buf) {
   first = ll_tbaa_last() + 1
   if e.loop_md_n < first && !e.used_tbaa {
@@ -656,7 +764,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   } else if k == mtk_return() {
     if e.f.has_ret() {
       ty = e.f.locals[0].ty
-      x = e.load(ty, e.local_name(0), e.slot_vol(0))
+      x = e.load(ty, e.local_addr(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
     } else {
       e.line("ret void")

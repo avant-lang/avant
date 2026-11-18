@@ -30,7 +30,23 @@ static inline int32_t arr_cap_word(AvantArray *a) {
   return __atomic_load_n(&a->cap, __ATOMIC_RELAXED);
 }
 
+/* A change to a frozen array traps, naming the method call of this
+ * thread that froze it, else as a task's freeze (arr_frozen_trap). */
+static __attribute__((noreturn, cold, noinline)) void arr_frozen_trap(void *arr, int32_t op);
+
 #define ARR_FROZEN_TRAP(a, op)                                   \
+  do {                                                           \
+    if (__builtin_expect(arr_cap_word(a) < 0, 0)) {              \
+      arr_frozen_trap((a), (op));                                \
+    }                                                            \
+  } while (0)
+
+/* The same for the runtime's own element stores and fills, which are of
+ * arrays of numbers: no method call freezes one (only an array of
+ * structs holds a method's receiver), so only a task's freeze can meet
+ * them, and the trap is the task's (the shorter call keeps the hot
+ * loops around it, avant_bwt_inverse's, as they were). */
+#define ARR_FROZEN_TRAP_NUM(a, op)                               \
   do {                                                           \
     if (__builtin_expect(arr_cap_word(a) < 0, 0)) {              \
       avant_trap_frozen(op);                                     \
@@ -122,6 +138,111 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
       n = c - 1;
     }
   } while (!__atomic_compare_exchange_n(&a->cap, &c, n, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+}
+
+/* The freeze of a method call on an element. A call of a method that
+ * changes its struct receiver, an element of an array, freezes that
+ * array for the call when the call may reach it (the compiler decides:
+ * compiler/mir/lower_agg.av held_method_call): the receiver is the
+ * element's address, so a growth that moved the buffer, or a removal or
+ * reorder, would leave the method writing an old buffer, a slot past the
+ * size or another element. The freeze is the task's (one more count in
+ * the cap word), so every change of the size or order traps as for a
+ * task; an element store or a fill does not (they change values, not
+ * places), which avant_array_frozen tells by this thread's holds.
+ *
+ * The holds are a stack per thread, innermost last: each names the
+ * caller's frame slot that holds the array (a collection that moves the
+ * array rewrites the slot), the element size the last thaw needs, and
+ * the call's name and site for the trap's text. A trap that ends a task
+ * or an HTTP handler thaws the holds the code below its recovery point
+ * took (avant_array_hold_drop, from avant_task_trapped, while those
+ * frames are still intact). */
+typedef struct ArrHold {
+  void **slot;
+  uint64_t elem_size;
+  const char *name;
+  const char *site;
+} ArrHold;
+
+static __thread ArrHold *g_arr_holds;
+static __thread int g_arr_hold_n;
+static __thread int g_arr_hold_cap;
+
+void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site) {
+  if (g_arr_hold_n == g_arr_hold_cap) {
+    int cap = g_arr_hold_cap ? g_arr_hold_cap * 2 : 16;
+    ArrHold *h = (ArrHold *)realloc(g_arr_holds, (size_t)cap * sizeof(ArrHold));
+    if (!h) {
+      fflush(stdout);
+      fputs("avant runtime: out of memory for a method call's freeze\n", stderr);
+      exit(1);
+    }
+    g_arr_holds = h;
+    g_arr_hold_cap = cap;
+  }
+  g_arr_holds[g_arr_hold_n].slot = slot;
+  g_arr_holds[g_arr_hold_n].elem_size = elem_size;
+  g_arr_holds[g_arr_hold_n].name = name;
+  g_arr_holds[g_arr_hold_n].site = site;
+  g_arr_hold_n++;
+  avant_array_freeze(*slot, 1);
+}
+
+void avant_array_unhold(void **slot) {
+  ArrHold *h;
+  if (g_arr_hold_n <= 0 || g_arr_holds[g_arr_hold_n - 1].slot != slot) {
+    fflush(stdout);
+    fputs("avant runtime: internal error: a method call's thaw that is not the innermost freeze\n", stderr);
+    abort();
+  }
+  h = &g_arr_holds[--g_arr_hold_n];
+  avant_array_thaw(*h->slot, 1, h->elem_size);
+}
+
+__attribute__((visibility("hidden"))) int avant_array_hold_depth(void) {
+  return g_arr_hold_n;
+}
+
+__attribute__((visibility("hidden"))) void avant_array_hold_drop(int n) {
+  while (g_arr_hold_n > n) {
+    ArrHold *h = &g_arr_holds[--g_arr_hold_n];
+    avant_array_thaw(*h->slot, 1, h->elem_size);
+  }
+}
+
+/* A change (op, AVANT_FROZEN_*) to the frozen array arr, from generated
+ * code. An element store or a fill passes when this thread's method
+ * calls hold every count of the freeze; anything else traps, naming the
+ * innermost method call of this thread that froze arr, else as a task's
+ * freeze. */
+void avant_array_frozen(void *arr, int32_t op) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t c = arr_cap_word(a);
+  int32_t mine = 0;
+  int i;
+  if (c >= 0) {
+    return;
+  }
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    if (*g_arr_holds[i].slot == arr) {
+      mine++;
+    }
+  }
+  if ((op == AVANT_FROZEN_STORE || op == AVANT_FROZEN_FILL) && mine == (c & 0x7fffffff)) {
+    return;
+  }
+  arr_frozen_trap(arr, op);
+}
+
+static void arr_frozen_trap(void *arr, int32_t op) {
+  int i;
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    if (*g_arr_holds[i].slot == arr) {
+      avant_trap_frozen_call(op, g_arr_holds[i].name, g_arr_holds[i].site);
+    }
+  }
+  avant_trap_frozen(op);
 }
 
 /* min_cap is checked against the ceiling here, before anything is
@@ -653,10 +774,12 @@ static int cmp_f64(const void *a, const void *b) {
 }
 
 static int str_cmp_raw(const char *a, const char *b) {
-  size_t na = avant_str_n(a);
-  size_t nb = avant_str_n(b);
+  size_t na;
+  size_t nb;
+  a = avant_str_bytes(a, &na);
+  b = avant_str_bytes(b, &nb);
   size_t n = na < nb ? na : nb;
-  int c = n ? memcmp(a ? a : "", b ? b : "", n) : 0;
+  int c = n ? memcmp(a, b, n) : 0;
   if (c != 0) {
     return c;
   }
@@ -853,6 +976,129 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   return r;
 }
 
+/* xs[start..stop], xs.slice(start, stop): a new array holding a copy of
+ * the elements start up to stop; traps unless 0 <= start <= stop <= size,
+ * as a String's slice does. */
+void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  AvantArray *r = NULL;
+  avant_int n = a ? a->size : 0;
+  if (start < 0 || stop < start || stop > n) {
+    avant_trap_slice(start, stop, n);
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &r);
+  r = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  if (stop > start) {
+    int32_t len = (int32_t)(stop - start);
+    void *nbuf = avant_alloc((uint64_t)len * elem_size, buf_type_id);
+    /* a->buf is read after the allocation (RC2). */
+    memcpy(nbuf, (char *)a->buf + (size_t)start * (size_t)elem_size, (size_t)len * (size_t)elem_size);
+    if (buf_type_id != AVANT_TYPE_BYTES) {
+      avant_barrier(nbuf);
+    }
+    avant_barrier(r);
+    r->buf = nbuf;
+    r->size = len;
+    r->cap = len;
+  }
+  return r;
+}
+
+/* The slots lo up to hi of a pointer-carrying buffer, each barriered
+ * before a move puts a reference there (RC5, as a push barriers its
+ * slot). */
+static void arr_barrier_slots(AvantArray *a, avant_int lo, avant_int hi, uint64_t elem_size, uint32_t buf_type_id) {
+  if (buf_type_id == AVANT_TYPE_BYTES || !a->buf) {
+    return;
+  }
+  for (avant_int k = lo; k < hi; k++) {
+    avant_barrier_slot_young(a->buf, (uint8_t *)a->buf + (size_t)k * (size_t)elem_size);
+  }
+}
+
+/* xs.insert(i, v): room for one element at i, the elements from i on
+ * moved up one; the slot at i is returned for the caller's store, as
+ * avant_array_push_slot's is. Traps unless 0 <= i <= size. */
+void *avant_array_insert_slot(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  avant_int n = a ? a->size : 0;
+  if (i < 0 || i > n) {
+    avant_trap_insert(i, n);
+  }
+  if (!a) {
+    return NULL;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_INSERT);
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &a);
+  (void)avant_array_push_slot(a, elem_size, buf_type_id);
+  /* a->buf is read after the push's growth (RC2). */
+  uint8_t *at = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+  if (n > i) {
+    /* References move to other words of the buffer (RC5). */
+    avant_gc_overwrite(a->buf);
+    arr_barrier_slots(a, i + 1, n + 1, elem_size, buf_type_id);
+    memmove(at + elem_size, at, (size_t)(n - i) * (size_t)elem_size);
+  }
+  if (buf_type_id != AVANT_TYPE_BYTES) {
+    avant_barrier_slot_young(a->buf, at);
+  }
+  return at;
+}
+
+/* xs.delete_at(i), after the caller read the element at i (its bounds
+ * checked there): the elements after i moved down one, the last slot
+ * cleared so it keeps nothing alive, the size one less. */
+void avant_array_delete_at(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || i < 0 || i >= a->size) {
+    return;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_DELETE_AT);
+  avant_int n = a->size;
+  uint8_t *at = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+  /* References are removed and move to other words of the buffer (RC5). */
+  avant_gc_overwrite(a->buf);
+  if (n - 1 > i) {
+    arr_barrier_slots(a, i, n - 1, elem_size, buf_type_id);
+    memmove(at, at + elem_size, (size_t)(n - 1 - i) * (size_t)elem_size);
+  }
+  memset((uint8_t *)a->buf + (size_t)(n - 1) * (size_t)elem_size, 0, (size_t)elem_size);
+  a->size = (int32_t)(n - 1);
+}
+
+/* xs.concat(ys): ys's elements appended to xs, in order (ys may be xs:
+ * its size is read first, its buffer after the growth). A frozen xs
+ * traps also when ys is empty, as every other change does. */
+void avant_array_concat(void *dst, void *src, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)dst;
+  AvantArray *b = (AvantArray *)src;
+  if (!a) {
+    return;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_CONCAT);
+  if (!b || b->size <= 0) {
+    return;
+  }
+  avant_int m = b->size;
+  avant_int n = a->size;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &b);
+  if (n + m > a->cap) {
+    array_grow(a, n + m, elem_size, buf_type_id);
+  }
+  /* Both buffers are read after the growth (RC2); a bulk copy barriers
+   * the buffer first (RC5). */
+  if (buf_type_id != AVANT_TYPE_BYTES) {
+    avant_barrier(a->buf);
+  }
+  memcpy((uint8_t *)a->buf + (size_t)n * (size_t)elem_size, b->buf, (size_t)m * (size_t)elem_size);
+  a->size = (int32_t)(n + m);
+}
+
 int32_t avant_array_contains_i32(void *arr, int32_t v) { return avant_array_index_i32(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_i64(void *arr, int64_t v) { return avant_array_index_i64(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_u64(void *arr, uint64_t v) { return avant_array_index_u64(arr, v) >= 0 ? 1 : 0; }
@@ -985,7 +1231,7 @@ const char *avant_array_min_str(void *arr, int32_t *found) {
   int32_t i;
   const char *best;
   if (found) { *found = 0; }
-  if (!a || !a->buf || a->size <= 0) { return ""; }
+  if (!a || !a->buf || a->size <= 0) { return AVANT_STR_EMPTY; }
   best = ((char **)a->buf)[0];
   for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) < 0) { best = v; } }
   if (found) { *found = 1; }
@@ -1059,7 +1305,7 @@ const char *avant_array_max_str(void *arr, int32_t *found) {
   int32_t i;
   const char *best;
   if (found) { *found = 0; }
-  if (!a || !a->buf || a->size <= 0) { return ""; }
+  if (!a || !a->buf || a->size <= 0) { return AVANT_STR_EMPTY; }
   best = ((char **)a->buf)[0];
   for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) > 0) { best = v; } }
   if (found) { *found = 1; }
@@ -1118,7 +1364,7 @@ double avant_array_sum_f64(void *arr) {
 void avant_array_fill_u8(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1132,7 +1378,7 @@ void avant_array_fill_i64(void *arr, int64_t v) {
   int32_t i;
   int64_t *p;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1171,7 +1417,7 @@ void avant_array_fill_i32(void *arr, int32_t v) {
   int32_t i;
   int32_t *p;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1227,6 +1473,8 @@ static avant_int *bwt_ix(void *arr, int32_t need) {
   if (!a || !a->buf || a->size < need || need < 0) {
     return NULL;
   }
+  /* The array is written: one a running task reads cannot change. */
+  ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_STORE);
   return (avant_int *)a->buf;
 }
 
@@ -1235,6 +1483,8 @@ static int32_t *bwt_i32(void *arr, int32_t need) {
   if (!a || !a->buf || a->size < need || need < 0) {
     return NULL;
   }
+  /* The array is written: one a running task reads cannot change. */
+  ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_STORE);
   return (int32_t *)a->buf;
 }
 

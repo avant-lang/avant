@@ -2,7 +2,6 @@ module calls
 file 0 "calls.av"
 
 layout %calls.Holder = class { 0 name: ref str, 1 cell: ptr, 2 n: i64 }  size 24 align 8 id 1
-layout %(Nil|Ptr(Void)) = union { 0 tag: i32, 1 m0: ptr }  size 16 align 8
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %calls.Pair = struct { 0 tag: ref str, 1 cell: ptr }  size 16 align 8
@@ -32,6 +31,7 @@ const str.16 = "h"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %calls.Holder stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
@@ -45,7 +45,8 @@ extern avant_puts_f64(f64) -> void never
 extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_puts_u64(u64) -> void never
-extern avant_str_cat_i32(ref str, i64) -> ref str collects
+extern avant_str_c_arg(ref str) -> ref str collects
+extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
@@ -67,30 +68,26 @@ extern ffi_static_str() -> ref str collects
 extern ffi_str_at(ref str, i32) -> i32 collects
 extern ffi_strlen(ref str) -> i32 collects
 
-fn av.calls/pick(_1: %(Nil|Ptr(Void))) -> i64 frame @calls.av:45:1 {
+fn av.calls/pick(_1: ptr) -> i64 frame @calls.av:45:1 {
   let _0: i64
-  let _1 (p): %(Nil|Ptr(Void))
-  let _2: i32
-  let _3: bool
-  let _4: ptr
-  let _5 (q): ptr slot
-  let _6: i32
-  let _7: i64
+  let _1 (p): ptr
+  let _2: bool
+  let _3 (q): ptr slot
+  let _4: i32
+  let _5: i64
 
 bb0:
-  _5 = zero   @45:1
+  _3 = zero   @45:1
   gc.enter   @45:1
-  gc.roots _5   @45:1
-  _2 = copy _1.0   @46:3
-  _3 = ne copy _2, const i32 0   @46:3
-  branch copy _3, bb1, bb2   @46:3
+  gc.roots _3   @45:1
+  _2 = ne copy _1, const ptr null   @46:3
+  branch copy _2, bb1, bb2   @46:3
 
 bb1:
-  _4 = copy _1.1   @46:3
-  _5 = copy _4   @46:3
-  _6 = call ffi_cell_get(copy _5) collects   @47:16
-  _7 = cast copy _6 to i64   @47:31
-  _0 = copy _7   @47:5
+  _3 = copy _1   @46:3
+  _4 = call ffi_cell_get(copy _3) collects   @47:16
+  _5 = cast copy _4 to i64   @47:31
+  _0 = copy _5   @47:5
   gc.leave   @47:5
   return   @47:5
 
@@ -204,55 +201,55 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @calls.av:71:1 {
   let _24: ref str slot
   let _25: ref str
   let _26 (word): ref str slot
-  let _27: i32
-  let _28: i64
-  let _29: ref str slot
-  let _30: i32
-  let _31: i64
-  let _32: ref str slot
-  let _33: bool
-  let _34: ref str
-  let _35: ref str slot
-  let _36: bool
-  let _37: ref str
-  let _38 (cs): ref str
-  let _39 (data): ref str slot
-  let _40: i64
-  let _41: i64
-  let _42: bool
-  let _43: bool
+  let _27: ref str slot
+  let _28: i32
+  let _29: i64
+  let _30: ref str slot
+  let _31: i32
+  let _32: i64
+  let _33: ref str slot
+  let _34: bool
+  let _35: ref str
+  let _36: ref str slot
+  let _37: bool
+  let _38: ref str
+  let _39 (cs): ref str
+  let _40 (data): ref str slot
+  let _41: ref str slot
+  let _42: i64
+  let _43: i64
   let _44: bool
   let _45: bool
-  let _46: i32
-  let _47: i32
-  let _48: i64
+  let _46: bool
+  let _47: bool
+  let _48: i32
   let _49: i32
   let _50: i64
-  let _51 (sum): i64
-  let _52 (i): i64
-  let _53: bool
-  let _54: ref str slot
-  let _55: ref str slot
-  let _56: i32
-  let _57: i64
-  let _58: i64
-  let _59: i64
-  let _60: ptr
-  let _61 (p): ptr slot
-  let _62: i32
+  let _51: ref str slot
+  let _52: i32
+  let _53: i64
+  let _54 (sum): i64
+  let _55 (i): i64
+  let _56: bool
+  let _57: ref str slot
+  let _58: ref str slot
+  let _59: ref str slot
+  let _60: i32
+  let _61: i64
+  let _62: i64
   let _63: i64
-  let _64: ref %calls.Holder
-  let _65 (h): ref %calls.Holder slot
-  let _66: ptr
-  let _67 (q): ptr slot
-  let _68: ref str
-  let _69: %calls.Pair
-  let _70 (pr): %calls.Pair slot
-  let _71: i64
-  let _72: ptr slot
-  let _73: i32
-  let _74: i64
-  let _75: ref str
+  let _64: ptr
+  let _65 (p): ptr slot
+  let _66: i32
+  let _67: i64
+  let _68: ref %calls.Holder
+  let _69 (h): ref %calls.Holder slot
+  let _70: ptr
+  let _71 (q): ptr slot
+  let _72: ref str
+  let _73: %calls.Pair
+  let _74 (pr): %calls.Pair slot
+  let _75: i64
   let _76: ptr slot
   let _77: i32
   let _78: i64
@@ -260,77 +257,83 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @calls.av:71:1 {
   let _80: ptr slot
   let _81: i32
   let _82: i64
-  let _83: ref %Array(calls.Holder)
-  let _84 (holders): ref %Array(calls.Holder) slot
-  let _85 (k): i64
-  let _86: bool
-  let _87: ref str slot
-  let _88: ref %calls.Holder slot
-  let _89: i64
-  let _90: i64
-  let _91: i32
-  let _92: i64
-  let _93: ref %elems(calls.Holder)
-  let _94: ref %calls.Holder
-  let _95: ptr slot
-  let _96: i32
-  let _97: i64
-  let _98: i32
-  let _99: i64
-  let _100: ref %elems(calls.Holder)
-  let _101: ref %calls.Holder
-  let _102: i64
+  let _83: ref str
+  let _84: ptr slot
+  let _85: i32
+  let _86: i64
+  let _87: ref %Array(calls.Holder)
+  let _88 (holders): ref %Array(calls.Holder) slot
+  let _89 (k): i64
+  let _90: bool
+  let _91: ref str slot
+  let _92: ref %calls.Holder slot
+  let _93: i64
+  let _94: i64
+  let _95: i32
+  let _96: i64
+  let _97: ref %elems(calls.Holder)
+  let _98: ref %calls.Holder
+  let _99: ptr slot
+  let _100: i32
+  let _101: i64
+  let _102: i32
   let _103: i64
-  let _104: i32
-  let _105: i64
-  let _106: ref %elems(calls.Holder)
-  let _107: ref %calls.Holder
-  let _108: ref str
-  let _109: ref %Array(Ptr(Void))
-  let _110 (cells): ref %Array(Ptr(Void)) slot
-  let _111: addr ptr
-  let _112: addr ptr
-  let _113: i32
-  let _114: i64
-  let _115: ref %elems(Ptr(Void))
-  let _116: ptr slot
+  let _104: ref %elems(calls.Holder)
+  let _105: ref %calls.Holder
+  let _106: i64
+  let _107: i64
+  let _108: i32
+  let _109: i64
+  let _110: ref %elems(calls.Holder)
+  let _111: ref %calls.Holder
+  let _112: ref str
+  let _113: ref %Array(Ptr(Void))
+  let _114 (cells): ref %Array(Ptr(Void)) slot
+  let _115: addr ptr
+  let _116: addr ptr
   let _117: i32
   let _118: i64
-  let _119: i32
-  let _120: i64
-  let _121: ref %elems(Ptr(Void))
-  let _122: ptr
-  let _123: %(Nil|Ptr(Void))
-  let _124 (some): %(Nil|Ptr(Void))
-  let _125: i64
-  let _126: %(Nil|Ptr(Void))
-  let _127 (none): %(Nil|Ptr(Void))
+  let _119: ref %elems(Ptr(Void))
+  let _120: ptr slot
+  let _121: i32
+  let _122: i64
+  let _123: i32
+  let _124: i64
+  let _125: ref %elems(Ptr(Void))
+  let _126: ptr
+  let _127 (some): ptr
   let _128: i64
+  let _129 (none): ptr
+  let _130: i64
 
 bb0:
   _24 = zero   @71:1
   _26 = zero   @71:1
-  _29 = zero   @71:1
-  _32 = zero   @71:1
-  _35 = zero   @71:1
-  _39 = zero   @71:1
-  _54 = zero   @71:1
-  _55 = zero   @71:1
-  _61 = zero   @71:1
+  _27 = zero   @71:1
+  _30 = zero   @71:1
+  _33 = zero   @71:1
+  _36 = zero   @71:1
+  _40 = zero   @71:1
+  _41 = zero   @71:1
+  _51 = zero   @71:1
+  _57 = zero   @71:1
+  _58 = zero   @71:1
+  _59 = zero   @71:1
   _65 = zero   @71:1
-  _67 = zero   @71:1
-  _70 = zero   @71:1
-  _72 = zero   @71:1
+  _69 = zero   @71:1
+  _71 = zero   @71:1
+  _74 = zero   @71:1
   _76 = zero   @71:1
   _80 = zero   @71:1
   _84 = zero   @71:1
-  _87 = zero   @71:1
   _88 = zero   @71:1
-  _95 = zero   @71:1
-  _110 = zero   @71:1
-  _116 = zero   @71:1
+  _91 = zero   @71:1
+  _92 = zero   @71:1
+  _99 = zero   @71:1
+  _114 = zero   @71:1
+  _120 = zero   @71:1
   gc.enter   @71:1
-  gc.roots _2, _24, _26, _29, _32, _35, _39, _54, _55, _61, _65, _67, _70, _72, _76, _80, _84, _87, _88, _95, _110, _116   @71:1
+  gc.roots _2, _24, _26, _27, _30, _33, _36, _40, _41, _51, _57, _58, _59, _65, _69, _71, _74, _76, _80, _84, _88, _91, _92, _99, _114, _120   @71:1
   call __avant_type_maps() nocollect   @71:1
   call avant_io_init_argv(copy _1, copy _2) collects   @71:1
   _3 = call ffi_add_i32(const i32 40, const i32 2) collects   @72:11
@@ -379,183 +382,185 @@ bb3:
   _24 = call avant_str_concat(const str.5, const str.6) collects   @90:18
   _25 = call avant_str_concat(copy _24, const str.7) collects   @90:24
   _26 = copy _25   @90:8
-  _27 = call ffi_strlen(copy _26) collects   @91:11
-  _28 = cast copy _27 to i64   @91:3
-  call avant_puts_i64(copy _28) nocollect   @91:3
-  _29 = const str.8   @92:23
-  _30 = call ffi_strlen(copy _29) collects   @92:11
-  _31 = cast copy _30 to i64   @92:3
-  call avant_puts_i64(copy _31) nocollect   @92:3
-  _32 = call ffi_static_str() collects   @93:11
-  _33 = eq copy _32, const ref str null   @93:11
-  branch copy _33, bb4, bb5   @93:11
+  _27 = call avant_str_c_arg(copy _26) collects   @90:8
+  _28 = call ffi_strlen(copy _27) collects   @91:11
+  _29 = cast copy _28 to i64   @91:3
+  call avant_puts_i64(copy _29) nocollect   @91:3
+  _30 = call avant_str_c_arg(const str.8) collects   @91:3
+  _31 = call ffi_strlen(copy _30) collects   @92:11
+  _32 = cast copy _31 to i64   @92:3
+  call avant_puts_i64(copy _32) nocollect   @92:3
+  _33 = call ffi_static_str() collects   @93:11
+  _34 = eq copy _33, const ref str null   @93:11
+  branch copy _34, bb4, bb5   @93:11
 
 bb4:
   call avant_trap_c_null(const str.9) nocollect   @93:11
   unreachable   @93:11
 
 bb5:
-  _34 = call avant_c_str(copy _32) collects   @93:11
-  call avant_puts_str(copy _34) nocollect   @93:3
-  _35 = call ffi_static_str() collects   @94:11
-  _36 = eq copy _35, const ref str null   @94:11
-  branch copy _36, bb6, bb7   @94:11
+  _35 = call avant_c_str(copy _33) collects   @93:11
+  call avant_puts_str(copy _35) nocollect   @93:3
+  _36 = call ffi_static_str() collects   @94:11
+  _37 = eq copy _36, const ref str null   @94:11
+  branch copy _37, bb6, bb7   @94:11
 
 bb6:
   call avant_trap_c_null(const str.9) nocollect   @94:11
   unreachable   @94:11
 
 bb7:
-  _37 = call avant_c_str(copy _35) collects   @94:11
-  _38 = copy _37   @94:6
-  call avant_puts_str(copy _38) nocollect   @95:3
-  _39 = const str.10   @96:8
-  _40 = call avant_str_size(copy _39) nocollect   @97:36
-  _41 = copy _40   @97:41
-  _42 = ge copy _41, const i64 0   @97:41
-  _43 = ge copy _41, const i64 -2147483648   @97:41
-  _44 = le copy _41, const i64 2147483647   @97:41
-  _45 = and copy _43, copy _44   @97:41
-  branch copy _45, bb9, bb8   @97:41
+  _38 = call avant_c_str(copy _36) collects   @94:11
+  _39 = copy _38   @94:6
+  call avant_puts_str(copy _39) nocollect   @95:3
+  _40 = const str.10   @96:8
+  _41 = call avant_str_c_arg(copy _40) collects   @96:8
+  _42 = call avant_str_size(copy _40) nocollect   @97:36
+  _43 = copy _42   @97:41
+  _44 = ge copy _43, const i64 0   @97:41
+  _45 = ge copy _43, const i64 -2147483648   @97:41
+  _46 = le copy _43, const i64 2147483647   @97:41
+  _47 = and copy _45, copy _46   @97:41
+  branch copy _47, bb9, bb8   @97:41
 
 bb8:
-  call avant_trap_convert(copy _41, const i32 17) nocollect   @97:41
+  call avant_trap_convert(copy _43, const i32 17) nocollect   @97:41
   unreachable   @97:41
 
 bb9:
-  _46 = cast copy _41 to i32   @97:41
-  _47 = call ffi_bytes_sum(copy _39, copy _46) collects   @97:11
-  _48 = cast copy _47 to i64   @97:3
-  call avant_puts_i64(copy _48) nocollect   @97:3
-  _49 = call ffi_str_at(copy _26, const i32 6) collects   @98:11
-  _50 = cast copy _49 to i64   @98:3
-  call avant_puts_i64(copy _50) nocollect   @98:3
-  _51 = const i64 0   @102:7
-  _52 = const i64 0   @103:5
+  _48 = cast copy _43 to i32   @97:41
+  _49 = call ffi_bytes_sum(copy _41, copy _48) collects   @97:11
+  _50 = cast copy _49 to i64   @97:3
+  call avant_puts_i64(copy _50) nocollect   @97:3
+  _51 = call avant_str_c_arg(copy _26) collects   @97:3
+  _52 = call ffi_str_at(copy _51, const i32 6) collects   @98:11
+  _53 = cast copy _52 to i64   @98:3
+  call avant_puts_i64(copy _53) nocollect   @98:3
+  _54 = const i64 0   @102:7
+  _55 = const i64 0   @103:5
   goto bb10   @104:3
 
 bb10:
-  _53 = lt copy _52, const i64 3000   @104:11
-  branch copy _53, bb11, bb12   @104:3
+  _56 = lt copy _55, const i64 3000   @104:11
+  branch copy _56, bb11, bb12   @104:3
 
 bb11:
-  _54 = call avant_str_cat_i32(const str.11, copy _52) collects   @105:32
-  _55 = call avant_str_concat(copy _54, const str.12) collects   @105:41
-  _56 = call ffi_strlen(copy _55) collects   @105:20
-  _57 = cast copy _56 to i64   @105:51
-  _58 = add.chk copy _51, copy _57   @105:15
-  _51 = copy _58   @105:9
-  _59 = add copy _52, const i64 1   @106:11
-  _52 = copy _59   @106:7
+  _57 = call avant_str_cat_int(const str.11, copy _55) collects   @105:32
+  _58 = call avant_str_concat(copy _57, const str.12) collects   @105:41
+  _59 = call avant_str_c_arg(copy _58) collects   @105:41
+  _60 = call ffi_strlen(copy _59) collects   @105:20
+  _61 = cast copy _60 to i64   @105:51
+  _62 = add.chk copy _54, copy _61   @105:15
+  _54 = copy _62   @105:9
+  _63 = add copy _55, const i64 1   @106:11
+  _55 = copy _63   @106:7
   goto bb10   @104:3
 
 bb12:
-  call avant_puts_i64(copy _51) nocollect   @108:3
-  _60 = call ffi_cell_new(const i32 77) collects   @110:10
-  _61 = copy _60   @110:5
-  _62 = call ffi_cell_get(copy _61) collects   @111:11
-  _63 = cast copy _62 to i64   @111:3
-  call avant_puts_i64(copy _63) nocollect   @111:3
-  _64 = call avant_alloc(const u64 24, const u32 1) collects fresh   @112:13
-  call av.calls/Holder.initialize(copy _64, const str.13, copy _61, const i64 3) nocollect   @112:13
-  _65 = copy _64   @112:5
-  _66 = call ffi_cell_new(const i32 88) collects   @113:10
-  _67 = copy _66   @113:5
-  _68 = call avant_str_concat(const str.14, const str.15) collects   @114:27
-  _69 = struct %calls.Pair (copy _68, copy _67)   @114:8
-  _70 = copy _69   @114:6
-  _71 = call av.calls/churn(const i64 20000) collects   @115:8
-  call avant_puts_i64(copy _71) nocollect   @115:3
-  _72 = copy (*_65).1   @116:26
-  _73 = call ffi_cell_get(copy _72) collects   @116:11
-  _74 = cast copy _73 to i64   @116:3
-  call avant_puts_i64(copy _74) nocollect   @116:3
-  _75 = copy (*_65).0   @117:9
-  call avant_puts_str(copy _75) nocollect   @117:3
-  _76 = copy _70.1   @118:27
-  _77 = call ffi_cell_get(copy _76) collects   @118:11
-  _78 = cast copy _77 to i64   @118:3
-  call avant_puts_i64(copy _78) nocollect   @118:3
-  _79 = copy _70.0   @119:10
-  call avant_puts_str(copy _79) nocollect   @119:3
-  (*_65).1 = copy _67   @120:10
-  _80 = copy (*_65).1   @121:26
-  _81 = call ffi_cell_get(copy _80) collects   @121:11
-  _82 = cast copy _81 to i64   @121:3
-  call avant_puts_i64(copy _82) nocollect   @121:3
-  _83 = call avant_alloc(const u64 16, const u32 1022) collects   @122:28
-  _84 = copy _83   @122:3
-  _85 = const i64 0   @123:5
+  call avant_puts_i64(copy _54) nocollect   @108:3
+  _64 = call ffi_cell_new(const i32 77) collects   @110:10
+  _65 = copy _64   @110:5
+  _66 = call ffi_cell_get(copy _65) collects   @111:11
+  _67 = cast copy _66 to i64   @111:3
+  call avant_puts_i64(copy _67) nocollect   @111:3
+  _68 = call avant_alloc(const u64 24, const u32 1) collects fresh   @112:13
+  call av.calls/Holder.initialize(copy _68, const str.13, copy _65, const i64 3) nocollect   @112:13
+  _69 = copy _68   @112:5
+  _70 = call ffi_cell_new(const i32 88) collects   @113:10
+  _71 = copy _70   @113:5
+  _72 = call avant_str_concat(const str.14, const str.15) collects   @114:27
+  _73 = struct %calls.Pair (copy _72, copy _71)   @114:8
+  _74 = copy _73   @114:6
+  _75 = call av.calls/churn(const i64 20000) collects   @115:8
+  call avant_puts_i64(copy _75) nocollect   @115:3
+  _76 = copy (*_69).1   @116:26
+  _77 = call ffi_cell_get(copy _76) collects   @116:11
+  _78 = cast copy _77 to i64   @116:3
+  call avant_puts_i64(copy _78) nocollect   @116:3
+  _79 = copy (*_69).0   @117:9
+  call avant_puts_str(copy _79) nocollect   @117:3
+  _80 = copy _74.1   @118:27
+  _81 = call ffi_cell_get(copy _80) collects   @118:11
+  _82 = cast copy _81 to i64   @118:3
+  call avant_puts_i64(copy _82) nocollect   @118:3
+  _83 = copy _74.0   @119:10
+  call avant_puts_str(copy _83) nocollect   @119:3
+  (*_69).1 = copy _71   @120:10
+  _84 = copy (*_69).1   @121:26
+  _85 = call ffi_cell_get(copy _84) collects   @121:11
+  _86 = cast copy _85 to i64   @121:3
+  call avant_puts_i64(copy _86) nocollect   @121:3
+  _87 = call avant_alloc(const u64 16, const u32 1022) collects   @122:28
+  _88 = copy _87   @122:3
+  _89 = const i64 0   @123:5
   goto bb13   @124:3
 
 bb13:
-  _86 = lt copy _85, const i64 50   @124:11
-  branch copy _86, bb14, bb15   @124:3
+  _90 = lt copy _89, const i64 50   @124:11
+  branch copy _90, bb14, bb15   @124:3
 
 bb14:
-  _87 = call avant_str_cat_i32(const str.16, copy _85) collects   @125:29
-  _88 = call avant_alloc(const u64 24, const u32 1) collects fresh   @125:24
-  call av.calls/Holder.initialize(copy _88, copy _87, copy _61, copy _85) nocollect   @125:24
-  call avant_array_push_ptr(copy _84, copy _88, const u32 65535) collects   @125:12
-  _89 = add copy _85, const i64 1   @126:11
-  _85 = copy _89   @126:7
+  _91 = call avant_str_cat_int(const str.16, copy _89) collects   @125:29
+  _92 = call avant_alloc(const u64 24, const u32 1) collects fresh   @125:24
+  call av.calls/Holder.initialize(copy _92, copy _91, copy _65, copy _89) nocollect   @125:24
+  call avant_array_push_ptr(copy _88, copy _92, const u32 65535) collects   @125:12
+  _93 = add copy _89, const i64 1   @126:11
+  _89 = copy _93   @126:7
   goto bb13   @124:3
 
 bb15:
-  _90 = call av.calls/churn(const i64 20000) collects   @128:8
-  call avant_puts_i64(copy _90) nocollect   @128:3
-  _91 = copy (*_84).1   @129:32
-  _92 = cast copy _91 to i64   @129:32
-  check.bounds const i64 49, copy _92   @129:32
-  _93 = copy (*_84).0   @129:32
-  _94 = copy (*_93)[const i64 49]   @129:32
-  _95 = copy (*_94).1   @129:36
-  _96 = call ffi_cell_get(copy _95) collects   @129:11
-  _97 = cast copy _96 to i64   @129:42
-  _98 = copy (*_84).1   @129:59
-  _99 = cast copy _98 to i64   @129:59
-  check.bounds const i64 49, copy _99   @129:59
-  _100 = copy (*_84).0   @129:59
-  _101 = copy (*_100)[const i64 49]   @129:59
-  _102 = copy (*_101).2   @129:63
-  _103 = add.chk copy _97, copy _102   @129:50
-  call avant_puts_i64(copy _103) nocollect   @129:3
-  _104 = copy (*_84).1   @130:15
-  _105 = cast copy _104 to i64   @130:15
-  check.bounds const i64 7, copy _105   @130:15
-  _106 = copy (*_84).0   @130:15
-  _107 = copy (*_106)[const i64 7]   @130:15
-  _108 = copy (*_107).0   @130:18
-  call avant_puts_str(copy _108) nocollect   @130:3
-  _109 = call avant_alloc(const u64 16, const u32 1022) collects   @131:29
-  _110 = copy _109   @131:3
-  _111 = call avant_array_push_slot(copy _110, const u64 8, const u32 0) collects   @132:8
-  (*_111) = copy _61   @132:8
-  _112 = call avant_array_push_slot(copy _110, const u64 8, const u32 0) collects   @133:8
-  (*_112) = copy _67   @133:8
-  _113 = copy (*_110).1   @134:30
-  _114 = cast copy _113 to i64   @134:30
-  check.bounds const i64 1, copy _114   @134:30
-  _115 = copy (*_110).0   @134:30
-  _116 = copy (*_115)[const i64 1]   @134:30
-  _117 = call ffi_cell_get(copy _116) collects   @134:11
-  _118 = cast copy _117 to i64   @134:3
-  call avant_puts_i64(copy _118) nocollect   @134:3
-  _119 = copy (*_110).1   @135:27
-  _120 = cast copy _119 to i64   @135:27
-  check.bounds const i64 0, copy _120   @135:27
-  _121 = copy (*_110).0   @135:27
-  _122 = copy (*_121)[const i64 0]   @135:27
-  _123 = union %(Nil|Ptr(Void)) tag 1 (copy _122)   @135:27
-  _124 = copy _123   @135:3
-  _125 = call av.calls/pick(copy _124) collects   @136:8
-  call avant_puts_i64(copy _125) nocollect   @136:3
-  _126 = union %(Nil|Ptr(Void)) tag 0   @137:22
-  _127 = copy _126   @137:3
-  _128 = call av.calls/pick(copy _127) collects   @138:8
-  call avant_puts_i64(copy _128) nocollect   @138:3
-  call ffi_cell_free(copy _61) collects   @139:6
-  call ffi_cell_free(copy _67) collects   @140:6
+  _94 = call av.calls/churn(const i64 20000) collects   @128:8
+  call avant_puts_i64(copy _94) nocollect   @128:3
+  _95 = copy (*_88).1   @129:32
+  _96 = cast copy _95 to i64   @129:32
+  check.bounds const i64 49, copy _96   @129:32
+  _97 = copy (*_88).0   @129:32
+  _98 = copy (*_97)[const i64 49]   @129:32
+  _99 = copy (*_98).1   @129:36
+  _100 = call ffi_cell_get(copy _99) collects   @129:11
+  _101 = cast copy _100 to i64   @129:42
+  _102 = copy (*_88).1   @129:59
+  _103 = cast copy _102 to i64   @129:59
+  check.bounds const i64 49, copy _103   @129:59
+  _104 = copy (*_88).0   @129:59
+  _105 = copy (*_104)[const i64 49]   @129:59
+  _106 = copy (*_105).2   @129:63
+  _107 = add.chk copy _101, copy _106   @129:50
+  call avant_puts_i64(copy _107) nocollect   @129:3
+  _108 = copy (*_88).1   @130:15
+  _109 = cast copy _108 to i64   @130:15
+  check.bounds const i64 7, copy _109   @130:15
+  _110 = copy (*_88).0   @130:15
+  _111 = copy (*_110)[const i64 7]   @130:15
+  _112 = copy (*_111).0   @130:18
+  call avant_puts_str(copy _112) nocollect   @130:3
+  _113 = call avant_alloc(const u64 16, const u32 1022) collects   @131:29
+  _114 = copy _113   @131:3
+  _115 = call avant_array_push_slot(copy _114, const u64 8, const u32 0) collects   @132:8
+  (*_115) = copy _65   @132:8
+  _116 = call avant_array_push_slot(copy _114, const u64 8, const u32 0) collects   @133:8
+  (*_116) = copy _71   @133:8
+  _117 = copy (*_114).1   @134:30
+  _118 = cast copy _117 to i64   @134:30
+  check.bounds const i64 1, copy _118   @134:30
+  _119 = copy (*_114).0   @134:30
+  _120 = copy (*_119)[const i64 1]   @134:30
+  _121 = call ffi_cell_get(copy _120) collects   @134:11
+  _122 = cast copy _121 to i64   @134:3
+  call avant_puts_i64(copy _122) nocollect   @134:3
+  _123 = copy (*_114).1   @135:27
+  _124 = cast copy _123 to i64   @135:27
+  check.bounds const i64 0, copy _124   @135:27
+  _125 = copy (*_114).0   @135:27
+  _126 = copy (*_125)[const i64 0]   @135:27
+  _127 = copy _126   @135:3
+  _128 = call av.calls/pick(copy _127) collects   @136:8
+  call avant_puts_i64(copy _128) nocollect   @136:3
+  _129 = const ptr null   @137:3
+  _130 = call av.calls/pick(copy _129) collects   @138:8
+  call avant_puts_i64(copy _130) nocollect   @138:3
+  call ffi_cell_free(copy _65) collects   @139:6
+  call ffi_cell_free(copy _71) collects   @140:6
   _0 = const i32 0   @71:1
   gc.leave   @71:1
   return   @71:1

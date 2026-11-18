@@ -1,0 +1,30 @@
+// A code point as a number: `s.code_points()` gives each code point of a
+// String (or Bytes) in order as an `Array(Int)`, and
+// `String.from_code_point(n)` makes the UTF-8 of one. They round-trip.
+// tests/fixtures/strings/code_point_bad.av and code_points_bad.av trap.
+
+fn main {
+  s = "n\u{e9}\u{20ac}\u{1f600}"
+  cps = s.code_points()
+  puts(cps.size)
+  for c in cps {
+    puts(c)
+  }
+  e = String.from_code_point(233)
+  puts("${e} ${e.size}")
+  r = ""
+  for c in cps {
+    r = r + String.from_code_point(c)
+  }
+  puts(r == s)
+  puts("A".code_points()[0])
+  puts("".code_points().size)
+  puts(s.bytes.code_points().size)
+  puts(String.from_code_point(0x10ffff).size)
+  puts(String.from_code_point(0).size)
+  // A long text's code points, read through a view of it.
+  long = "\u{e9}" + repeat_byte(97, 100) + "\u{20ac}"
+  tail = str_slice(long, 2, long.size)
+  tcp = tail.code_points()
+  puts("${tcp.size} ${tcp[0]} ${tcp[tcp.size - 1]}")
+}

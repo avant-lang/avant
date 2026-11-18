@@ -125,6 +125,9 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
       if at.is_array() || at.is_buf() {
         return lw.lower_seq_index(e)
       }
+      if at.is_ptr() || at.is_carray() {
+        return lw.lower_ptr_index_read(e)
+      }
       if at.is_hash() {
         ka: Array(Expr) = []
         ka.push(ix)
@@ -134,6 +137,9 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   }
   if k == ex_array() {
     return lw.lower_array_lit(e)
+  }
+  if k == ex_hash_lit() {
+    return lw.lower_hash_lit(e)
   }
   if k == ex_array_new() {
     return lw.lower_array_new(e)

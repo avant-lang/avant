@@ -1,0 +1,121 @@
+// std.random: a seeded generator of pseudo-random numbers, and the
+// system's entropy.
+//
+// A program makes a `Random` and passes it where randomness is used
+// (`xs.shuffle(rng)`), so a test can fix the seed and the order; nothing
+// is random behind a program's back. `Random.new(seed)` gives the same
+// sequence for the same seed; `Random.new()` is seeded from the system's
+// entropy, a different sequence each run. The generator is xoshiro256**
+// (a 256-bit state, the four words of a seed filled by SplitMix64), fast
+// and statistically strong; it is not for secrets: its sequence follows
+// from its state. `Random.bytes(n)` gives n bytes of the system's
+// entropy (getrandom), for keys, tokens and ids.
+
+lib random_os {
+  fun avant_os_entropy_u64: UInt64
+  fun avant_os_entropy_bytes(n: Int): Bytes
+}
+
+pub class Random {
+  s0: UInt64 = 0u64
+  s1: UInt64 = 0u64
+  s2: UInt64 = 0u64
+  s3: UInt64 = 0u64
+
+  // `Random.new(seed)`: the four words from the seed through SplitMix64,
+  // as xoshiro's authors seed it, never all zero. `Random.new()`: the
+  // four words from the system's entropy.
+  fn initialize(seed: Int? = nil) {
+    if n = seed {
+      z = n.wrap_u64()
+      z = z &+ 11400714819323198485u64
+      self.s0 = mix(z)
+      z = z &+ 11400714819323198485u64
+      self.s1 = mix(z)
+      z = z &+ 11400714819323198485u64
+      self.s2 = mix(z)
+      z = z &+ 11400714819323198485u64
+      self.s3 = mix(z)
+      return
+    }
+    self.s0 = random_os.avant_os_entropy_u64()
+    self.s1 = random_os.avant_os_entropy_u64()
+    self.s2 = random_os.avant_os_entropy_u64()
+    self.s3 = random_os.avant_os_entropy_u64()
+    if (self.s0 | self.s1 | self.s2 | self.s3) == 0u64 {
+      self.s0 = 1u64
+    }
+  }
+
+  // The next 64 random bits.
+  pub fn u64: UInt64 {
+    x = self.s1
+    r = rotl(x &* 5u64, 7) &* 9u64
+    t = x << 17
+    self.s2 = self.s2 ^ self.s0
+    self.s3 = self.s3 ^ x
+    self.s1 = x ^ self.s2
+    self.s0 = self.s0 ^ self.s3
+    self.s2 = self.s2 ^ t
+    self.s3 = rotl(self.s3, 45)
+    r
+  }
+
+  // An Int in 0..n (0 up to n - 1), each equally likely; n must be
+  // positive.
+  pub fn int(n: Int): Int {
+    if n <= 0 {
+      none: Int? = nil
+      return none.expect("Random.int(n) needs n > 0, got ${n}")
+    }
+    below(n.wrap_u64()).wrap_i()
+  }
+
+  // An Int in lo..hi (lo up to hi - 1), each equally likely; lo must be
+  // below hi.
+  pub fn int(lo: Int, hi: Int): Int {
+    if lo >= hi {
+      none: Int? = nil
+      return none.expect("Random.int(lo, hi) needs lo < hi, got ${lo} and ${hi}")
+    }
+    lo &+ below(hi.wrap_u64() &- lo.wrap_u64()).wrap_i()
+  }
+
+  // A Float64 in [0, 1), 53 random bits.
+  pub fn float: Float64 {
+    (u64() >> 11).to_f() / 9007199254740992.0
+  }
+
+  // n bytes of the system's entropy (getrandom): unpredictable, for
+  // keys, tokens and ids, from no generator. n must be 0 or more.
+  pub fn self.bytes(n: Int): Bytes {
+    if n < 0 || n > 2147483647 {
+      none: Bytes? = nil
+      return none.expect("Random.bytes(n) needs n in 0..2147483647, got ${n}")
+    }
+    random_os.avant_os_entropy_bytes(n)
+  }
+
+  // A UInt64 below bound (positive), each equally likely: draws below
+  // the threshold would make the low results likelier, so they are
+  // drawn again.
+  fn below(bound: UInt64): UInt64 {
+    threshold = (~bound &+ 1u64) % bound
+    r = u64()
+    while r < threshold {
+      r = u64()
+    }
+    r % bound
+  }
+}
+
+fn mix(x: UInt64): UInt64 {
+  z = (x ^ (x >> 30)) &* 13787848793156543929u64
+  z = (z ^ (z >> 27)) &* 10723151780598845931u64
+  z ^ (z >> 31)
+}
+
+fn rotl(x: UInt64, k: Int): UInt64 {
+  (x << k) | (x >> (64 - k))
+}
+

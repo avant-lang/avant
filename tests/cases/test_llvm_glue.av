@@ -52,11 +52,7 @@ fn link_args(root: String, obj: String, bin: String): Array(String) {
   a.push("cc")
   a.push(obj)
   objs = runtime_objects(root)
-  i = 0
-  while i < objs.size {
-    a.push(objs[i])
-    i += 1
-  }
+  a.concat(objs)
   a.push("-pthread")
   a.push("-lm")
   a.push("-o")
@@ -140,8 +136,8 @@ fn test_bad_module(c: Checks, compiler: String, root: String, dir: String, name:
   c.eq_int(code, 1, "${name}.ll: exit 1, not a crash")
   c.eq_str(log_text(out), "", "${name}.ll: nothing on stdout")
   e = log_text(err)
-  c.expect(str_has(e, "LLVM ${status} failed for ${ll}"), "${name}.ll: stderr names the ${status} failure")
-  c.expect(str_has(e, detail), "${name}.ll: stderr carries LLVM's message")
+  c.expect(e.contains("LLVM ${status} failed for ${ll}"), "${name}.ll: stderr names the ${status} failure")
+  c.expect(e.contains(detail), "${name}.ll: stderr carries LLVM's message")
   c.expect(!file_exists(obj), "${name}.ll: no object written")
 }
 

@@ -1,0 +1,133 @@
+// A frame record holds its function's root words in place: { prev, desc }
+// and the slot locals themselves after it. desc maps the root words of
+// up to 62 words inline (a local of type M holds a root word after an
+// integer); a record of more words names a constant map (a local of type
+// W is 64 words, 32 of them root words). Each is held across a call that
+// allocates and collects, then read back: under the stress mode and the
+// checked mode every word must still name its string. Built with
+// `--cc tests/fixtures/ffi/ffi.c`. FRAME_PART selects: `values` (the
+// default), `leave` (C calls avant_gc_leave inside an Avant function's
+// record: the runtime stops the program with its message) and `bottom`
+// (a record linked inline with no frame below it: under
+// AVANT_GC_VERIFY=1 the checked mode stops the program at the next
+// collection).
+
+import std.gc
+
+lib fl {
+  fun fl_leave: Int
+  fun fl_inline_bottom: Int
+}
+
+struct M {
+  n: Int
+  s: String
+}
+
+struct Q {
+  a: M
+  b: M
+  c: M
+  d: M
+}
+
+struct W {
+  a: Q
+  b: Q
+  c: Q
+  d: Q
+  e: Q
+  f: Q
+  g: Q
+  h: Q
+}
+
+class Junk {
+  next: Junk?
+  v: Int = 0
+}
+
+fn m_of(k: Int): M {
+  M { n: k, s: "m${k}" }
+}
+
+fn q_of(k: Int): Q {
+  Q { a: m_of(k), b: m_of(k + 1), c: m_of(k + 2), d: m_of(k + 3) }
+}
+
+fn w_of(k: Int): W {
+  W { a: q_of(k), b: q_of(k + 4), c: q_of(k + 8), d: q_of(k + 12), e: q_of(k + 16), f: q_of(k + 20), g: q_of(k + 24), h: q_of(k + 28) }
+}
+
+// Allocates enough to collect, young and full, keeping nothing.
+fn churn(n: Int): Int {
+  head: Junk? = nil
+  i = 0
+  while i < n {
+    j = Junk.new()
+    j.v = i
+    j.next = head
+    head = j
+    if i % 1000 == 0 {
+      head = nil
+    }
+    i += 1
+  }
+  n
+}
+
+fn m_ok(m: M, k: Int): Bool {
+  m.n == k && m.s == "m${k}"
+}
+
+fn q_ok(q: Q, k: Int): Bool {
+  m_ok(q.a, k) && m_ok(q.b, k + 1) && m_ok(q.c, k + 2) && m_ok(q.d, k + 3)
+}
+
+fn w_ok(w: W, k: Int): Bool {
+  q_ok(w.a, k) && q_ok(w.b, k + 4) && q_ok(w.c, k + 8) && q_ok(w.d, k + 12) && q_ok(w.e, k + 16) && q_ok(w.f, k + 20) && q_ok(w.g, k + 24) && q_ok(w.h, k + 28)
+}
+
+// Two locals in the record: an inline map (m) or, with w, a constant map.
+fn hold_m(k: Int): Bool {
+  m = m_of(k)
+  churn(20000)
+  ok = m_ok(m, k)
+  gc.collect()
+  ok && m_ok(m, k)
+}
+
+fn hold_w(k: Int): Bool {
+  w = w_of(k)
+  m = m_of(k + 100)
+  churn(20000)
+  ok = w_ok(w, k) && m_ok(m, k + 100)
+  gc.collect()
+  ok && w_ok(w, k) && m_ok(m, k + 100)
+}
+
+fn main {
+  part = env_get("FRAME_PART") ?? "values"
+  if part == "leave" {
+    m = m_of(1)
+    fl.fl_leave()
+    puts("leave: returned ${m.n}")
+    return
+  }
+  if part == "bottom" {
+    m = m_of(2)
+    fl.fl_inline_bottom()
+    puts("bottom: returned ${m_ok(m, 2)}")
+    return
+  }
+  good = 0
+  for r in 0..20 {
+    if hold_m(r * 7) {
+      good += 1
+    }
+    if hold_w(r * 11) {
+      good += 1
+    }
+  }
+  puts("values: ${good} of 40 held")
+}

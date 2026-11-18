@@ -1,0 +1,105 @@
+import harness
+import std.random
+
+// std.random: the seeded generator's sequence (xoshiro256** seeded by
+// SplitMix64, checked against the reference algorithm's values), its
+// ranges, a generator seeded from the system's entropy, and
+// Random.bytes.
+fn test_std_random(c: Checks) {
+  c.suite("tests/cases/test_std_random.av")
+  r = Random.new(42)
+  c.expect(r.u64() == 1546998764402558742u64, "seed 42: the first value")
+  c.expect(r.u64() == 6990951692964543102u64, "seed 42: the second value")
+  c.expect(r.u64() == 12544586762248559009u64, "seed 42: the third value")
+  m = Random.new(-1)
+  c.expect(m.u64() == 10328197420357168392u64, "seed -1: the first value")
+  c.expect(m.u64() == 14156678507024973869u64, "seed -1: the second value")
+  a = Random.new(7)
+  b = Random.new(7)
+  same = true
+  for i in 0..100 {
+    if a.u64() != b.u64() {
+      same = false
+    }
+  }
+  c.expect(same, "one seed, one sequence")
+  c.expect(Random.new(1).u64() != Random.new(2).u64(), "two seeds, two sequences")
+  g = Random.new(5)
+  counts = [0, 0, 0, 0, 0, 0]
+  inside = true
+  for i in 0..60000 {
+    v = g.int(6)
+    if v < 0 || v >= 6 {
+      inside = false
+    } else {
+      counts[v] += 1
+    }
+  }
+  c.expect(inside, "int(6) stays in 0..6")
+  c.expect((counts.min() ?? 0) > 9500 && (counts.max() ?? 0) < 10500, "int(6) is even")
+  span = true
+  low = false
+  high = false
+  for i in 0..20000 {
+    v = g.int(-3, 4)
+    if v < -3 || v >= 4 {
+      span = false
+    }
+    if v == -3 {
+      low = true
+    }
+    if v == 3 {
+      high = true
+    }
+  }
+  c.expect(span && low && high, "int(-3, 4) gives -3 up to 3")
+  wide = true
+  for i in 0..1000 {
+    v = g.int(Int.min, Int.max)
+    if v == Int.max {
+      wide = false
+    }
+  }
+  c.expect(wide, "int(Int.min, Int.max) stays below Int.max")
+  c.eq_int(g.int(9, 10), 9, "int(lo, lo + 1) is lo")
+  c.eq_int(g.int(1), 0, "int(1) is 0")
+  fl = true
+  sum = 0.0
+  for i in 0..10000 {
+    f = g.float()
+    if f < 0.0 || f >= 1.0 {
+      fl = false
+    }
+    sum += f
+  }
+  c.expect(fl, "float() stays in [0, 1)")
+  c.expect(sum > 4800.0 && sum < 5200.0, "float() averages a half")
+  e1 = Random.new()
+  e2 = Random.new()
+  c.expect(e1.u64() != e2.u64(), "Random.new() is seeded from the system's entropy")
+  deck = [1, 2, 3, 4, 5, 6, 7, 8]
+  deck.shuffle(Random.new(42))
+  c.expect(deck == [1, 2, 3, 4, 5, 6, 7, 8].shuffled(Random.new(42)), "shuffle follows the seed")
+  c.eq_int(deck.sum(), 36, "shuffle keeps the elements")
+  k1 = Random.bytes(16)
+  k2 = Random.bytes(16)
+  c.eq_int(k1.size, 16, "Random.bytes(16) gives 16 bytes")
+  c.expect(k1 != k2, "Random.bytes gives new bytes each call")
+  c.eq_int(Random.bytes(0).size, 0, "Random.bytes(0) is empty")
+  big = Random.bytes(100000)
+  seen = Array(Int).new(256, 0)
+  for i in 0..big.size {
+    seen[big[i]] += 1
+  }
+  c.expect((seen.min() ?? 0) > 250, "Random.bytes covers every byte value")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_random(c)
+  c.finish()
+}

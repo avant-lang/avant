@@ -14,8 +14,8 @@ fn test_safepoints(c: Checks) {
     cc = compile_av(compiler, src, bin, clog)
     c.eq_int(cc, 0, "compile nursery churn")
     if clogt = file_read(clog) {
-      c.expect(!str_has(clogt, "DT_TEXTREL"), "compile has no TEXTREL warning")
-      c.expect(!str_has(clogt, "llvm_stackmaps"), "compile has no stackmap reloc warning")
+      c.expect(!clogt.contains("DT_TEXTREL"), "compile has no TEXTREL warning")
+      c.expect(!clogt.contains("llvm_stackmaps"), "compile has no stackmap reloc warning")
     } else {
       c.expect(true, "compile has no TEXTREL warning")
       c.expect(true, "compile has no stackmap reloc warning")
@@ -42,11 +42,11 @@ fn test_safepoints(c: Checks) {
       scode = process_run_out("/usr/bin/env", st, slog) ?? -1
       c.eq_int(scode, 0, "churn with gc stats")
       if stats = file_read(slog) {
-        c.expect(str_has(stats, "young="), "gc stats printed")
-        c.expect(!str_has(stats, "young=0 full"), "copying nursery ran")
+        c.expect(stats.contains("young="), "gc stats printed")
+        c.expect(!stats.contains("young=0 full"), "copying nursery ran")
         // Candidate E copies survivors, candidate S promotes them in
         // place: either way the young collections kept some.
-        c.expect(!str_has(stats, "copied=0 live") || !str_has(stats, "prom_inplace=0 "), "young survivors copied or promoted in place")
+        c.expect(!stats.contains("copied=0 live") || !stats.contains("prom_inplace=0 "), "young survivors copied or promoted in place")
       } else {
         c.expect(false, "read gc stats")
       }
@@ -102,8 +102,8 @@ fn test_safepoints(c: Checks) {
       if ir2 = file_read(bdump) {
         // The tree that used the bump constructor and nursery_reclaim,
         // with ordinary allocation (both removed).
-        c.expect(!str_has(ir2, "#bump") && !str_has(ir2, "avant_bump_alloc") && !str_has(ir2, "nursery_reclaim"), "no bump constructor or nursery reclaim")
-        c.expect(str_has(ir2, "call av.bump/Node.new("), "the tree allocates with Node.new")
+        c.expect(!ir2.contains("#bump") && !ir2.contains("avant_bump_alloc") && !ir2.contains("nursery_reclaim"), "no bump constructor or nursery reclaim")
+        c.expect(ir2.contains("call av.bump/Node.new("), "the tree allocates with Node.new")
       } else {
         c.expect(false, "read bump dump")
       }

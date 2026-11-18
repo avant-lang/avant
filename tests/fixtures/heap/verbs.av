@@ -1,0 +1,230 @@
+// The array verbs: has, first, last, is_empty, reversed, find, index_of
+// with a function, min_by, max_by, delete_if, unique, fill of any
+// element type; is_empty on every collection; insert, delete_at,
+// try_delete_at, concat and a + b; a function given to the builtins by
+// its name or as a value; shuffle with a seeded Random; try_shl, try_shr.
+
+import std.random
+
+struct P {
+  x: Int
+  name: String
+}
+
+class Box {
+  pub n: Int = 0
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+}
+
+fn lookups {
+  xs = [5, 3, 8, 1, 9, 2]
+  e: Array(Int) = []
+  puts("first ${xs.first() ?? -1} ${xs.last() ?? -1} ${e.first() ?? -1} ${e.last() ?? -1}")
+  puts("has ${xs.has(8)} ${xs.has(4)} ${["a", "b"].has("b")}")
+  puts("find ${xs.find((x) { x > 5 }) ?? -1} ${xs.find((x) { x > 50 }) ?? -1} ${xs.index_of((x) { x > 5 }) ?? -1} ${xs.index_of((x) { x < 0 }) ?? -1} ${xs.index_of(9) ?? -1}")
+  r = xs.reversed()
+  puts("reversed ${r[0]} ${r[5]} ${xs[0]}")
+  ps = [P { x: 1, name: "a" }, P { x: 2, name: "b" }, P { x: 3, name: "c" }]
+  hit = ps.find (p) { p.x >= 2 }
+  if q = hit {
+    puts("struct ${q.name} ${ps.index_of (p) { p.name == "c" } ?? -1}")
+  }
+  bs = [Box.new(4), Box.new(7)]
+  big = bs.find((b) { b.n > 5 }) ?? Box.new(0)
+  big.n += 1
+  puts("class ${bs[1].n}")
+  early = xs.find((x) {
+    if x == 3 {
+      return true
+    }
+    false
+  })
+  puts("return ${early ?? -1}")
+}
+
+fn orders {
+  xs = [5, 3, 8, 1, 9, 2]
+  puts("by ${xs.min_by((x) { (x - 4).abs() }) ?? -1} ${xs.max_by (x) { -x } ?? -1}")
+  ws = ["pear", "fig", "banana", "kiwi"]
+  puts("words ${ws.max_by((w) { w.size }) ?? ""} ${ws.min_by((w) { w }) ?? ""} ${ws.min_by((w) { w.size }) ?? ""}")
+  fs = [2.5, 0.5, 1.5]
+  puts("floats ${fs.min_by((f) { f }) ?? 0.0} ${fs.max_by((f) { f * 2.0 }) ?? 0.0}")
+  e: Array(String) = []
+  puts("empty ${e.min_by((w) { w.size }) ?? "none"}")
+  ps = [P { x: 3, name: "c" }, P { x: 1, name: "a" }, P { x: 1, name: "b" }]
+  lo = ps.min_by((p) { p.x }) ?? ps[0]
+  puts("ties ${lo.name}")
+  pairs = [P { x: 2, name: "b2" }, P { x: 1, name: "a1" }, P { x: 2, name: "a2" }, P { x: 1, name: "b1" }]
+  pairs.sort((a, b) { a.x < b.x })
+  puts("stable ${pairs[0].name} ${pairs[1].name} ${pairs[2].name} ${pairs[3].name}")
+}
+
+fn removals {
+  ws = ["pear", "fig", "banana", "kiwi"]
+  ws.delete_if((w) { w.size == 4 })
+  puts("delete ${ws.size} ${ws[0]} ${ws[1]}")
+  ns = [1, 2, 3, 4, 5, 6, 7, 8]
+  ns.delete_if (n) { n % 2 == 0 }
+  puts("odd ${ns.size} ${ns[3]}")
+  ns.delete_if((n) { true })
+  puts("all ${ns.size} ${ns.is_empty()}")
+  bs: Array(Box) = []
+  i = 0
+  while i < 1000 {
+    bs.push(Box.new(i))
+    i += 1
+  }
+  bs.delete_if((b) { b.n % 3 != 0 })
+  junk = 0
+  k = 0
+  while k < 20000 {
+    junk += "${k}".size
+    k += 1
+  }
+  bs.push(Box.new(-1))
+  puts("boxes ${bs.size} ${bs[1].n} ${bs[333].n} ${bs[334].n} ${junk}")
+  u = [3, 1, 3, 2, 1].unique()
+  puts("unique ${u.size} ${u[0]} ${u[1]} ${u[2]} ${["b", "a", "b"].unique().size} ${[1.5, 2.5, 1.5].unique().size}")
+  pu = [P { x: 1, name: "a" }, P { x: 1, name: "a" }, P { x: 2, name: "a" }].unique()
+  puts("unique structs ${pu.size}")
+}
+
+fn fills {
+  fl = [1.0, 2.0]
+  fl.fill(0.5)
+  ss = ["a", "b", "c"]
+  ss.fill("z")
+  ps = [P { x: 1, name: "a" }, P { x: 2, name: "b" }]
+  ps.fill(P { x: 9, name: "n" })
+  os: Array(Int?) = [1, 2]
+  os.fill(nil)
+  puts("fill ${fl[1]} ${ss[2]} ${ps[1].x}${ps[0].name} ${os[0] ?? -1}")
+}
+
+fn empties {
+  h = ["a": 1]
+  st: Set(Int) = []
+  b = Buf.new()
+  e: Array(Int) = []
+  puts("is_empty ${h.is_empty()} ${st.is_empty()} ${b.is_empty()} ${"".is_empty()} ${"x".is_empty()} ${"".bytes.is_empty()} ${e.is_empty()} ${[1].is_empty()}")
+}
+
+fn show(x: Int) {
+  puts("item ${x}")
+}
+
+fn is_big(x: Int): Bool {
+  x > 4
+}
+
+fn before(a: P, b: P): Bool {
+  a.x < b.x
+}
+
+fn functions {
+  xs = [5, 3, 8, 1]
+  xs.each(show)
+  small: fn(Int): Bool = (x) { x < 3 }
+  puts("fns ${xs.any(is_big)} ${xs.all(is_big)} ${xs.find(is_big) ?? -1} ${xs.index_of(small) ?? -1} ${xs.index_of(8) ?? -1}")
+  ps = [P { x: 2, name: "b" }, P { x: 1, name: "a" }, P { x: 2, name: "c" }]
+  ps.sort(before)
+  qs = ps.sorted(before)
+  puts("sorted ${ps[0].name}${ps[1].name}${ps[2].name} ${qs[2].name}")
+  ns = [1, 2, 3, 4, 5, 6]
+  ns.delete_if(is_big)
+  puts("deleted ${ns.size}")
+}
+
+fn positions {
+  xs = [1, 2, 3]
+  xs.insert(0, 0)
+  xs.insert(4, 4)
+  xs.insert(2, 9)
+  puts("insert ${xs.size} ${xs[0]} ${xs[2]} ${xs[3]} ${xs[5]}")
+  d = xs.delete_at(2)
+  puts("delete_at ${d} ${xs.size} ${xs[2]} ${xs.try_delete_at(5) ?? -1} ${xs.try_delete_at(-1) ?? -1} ${xs.try_delete_at(4) ?? -1} ${xs.size}")
+  bs: Array(Box) = []
+  i = 0
+  while i < 300 {
+    bs.insert(bs.size / 2, Box.new(i))
+    i += 1
+  }
+  junk = 0
+  k = 0
+  while k < 20000 {
+    junk += "${k}".size
+    k += 1
+  }
+  gone = bs.delete_at(0)
+  puts("boxes ${bs.size} ${bs[0].n} ${bs[149].n} ${bs[298].n} ${gone.n} ${junk}")
+  ps = [P { x: 1, name: "a" }]
+  ps.insert(0, P { x: 2, name: "b" })
+  ps.insert(2, P { x: 3, name: "c" })
+  q = ps.delete_at(1)
+  puts("structs ${ps[0].name}${ps[1].name} ${q.name}")
+}
+
+fn joins {
+  a = [1, 2]
+  b = [3]
+  c = a + b
+  a.concat(b)
+  a.concat([4, 5])
+  a.concat(a)
+  puts("concat ${c.size} ${c[2]} ${a.size} ${a[9]} ${b.size}")
+  ws = ["x"] + ["y", "z"]
+  puts("strings ${ws.size} ${ws[2]}")
+  big: Array(Box) = []
+  r = 0
+  while r < 50 {
+    row = [Box.new(r), Box.new(r + 1000)]
+    big.concat(row)
+    junk = "${r}${r}"
+    r += 1
+  }
+  all = big + big
+  puts("boxes ${big.size} ${big[99].n} ${all.size} ${all[100].n}")
+}
+
+fn shuffles {
+  a = [1, 2, 3, 4, 5, 6, 7, 8]
+  a.shuffle(Random.new(7))
+  b = [1, 2, 3, 4, 5, 6, 7, 8].shuffled(Random.new(7))
+  total = 0
+  for v in a {
+    total += v
+  }
+  rng = Random.new(1)
+  counts = [0, 0, 0]
+  n = 0
+  while n < 3000 {
+    counts[rng.int(3)] += 1
+    n += 1
+  }
+  even = counts[0] > 900 && counts[1] > 900 && counts[2] > 900
+  f = rng.float()
+  puts("shuffle ${a == b} ${total} ${a.size} ${even} ${f >= 0.0 && f < 1.0}")
+}
+
+fn shifts {
+  x = 1
+  y: Int32 = 256
+  u: UInt64 = 1u64
+  puts("shifts ${x.try_shl(3) ?? -1} ${x.try_shl(64) ?? -1} ${x.try_shr(-1) ?? -1} ${y.try_shr(4) ?? 0} ${y.try_shl(32) ?? 0} ${u.try_shl(63) ?? 0u64}")
+}
+
+fn main {
+  functions()
+  positions()
+  joins()
+  shuffles()
+  shifts()
+  lookups()
+  orders()
+  removals()
+  fills()
+  empties()
+}

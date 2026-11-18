@@ -5,6 +5,11 @@ lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
 }
 
+// The suite's view of the regex cache's table (not a library call).
+lib recache {
+  fun avant_regex_cache_holds(pat: String, flags: Int): Int
+}
+
 fn set_env(name: String, value: String) {
   one: Int32 = 1
   _ = c.setenv(name, value, one)
@@ -62,17 +67,17 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
   cstdout = file_read(cout) ?? ""
   if err = file_read(clog) {
     if compile_has.size > 0 {
-      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has} on stderr")
+      c.expect(err.contains(compile_has), "${tag} compile says ${compile_has} on stderr")
     }
     if compile_lacks.size > 0 {
-      c.expect(!str_has(err, compile_lacks) && !str_has(cstdout, compile_lacks), "${tag} compile lacks ${compile_lacks}")
+      c.expect(!err.contains(compile_lacks) && !cstdout.contains(compile_lacks), "${tag} compile lacks ${compile_lacks}")
     }
   } else {
     if compile_has.size > 0 {
       c.expect(false, "${tag} compile log")
     }
   }
-  c.expect(!str_has(cstdout, "re2c:"), "${tag} compile prints no re2c note on stdout")
+  c.expect(!cstdout.contains("re2c:"), "${tag} compile prints no re2c note on stdout")
   chmod_x(bin)
   run_code = run_av_bin(bin, rlog)
   c.eq_int(run_code, 0, "run ${tag}")
@@ -85,7 +90,7 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
   c.eq_int(acode, 0, "avant run ${tag}")
   c.eq_str(file_read(aout) ?? "", out, "${tag}: avant run's stdout is the program's output only")
   if compile_has.size > 0 {
-    c.expect(str_has(file_read(aerr) ?? "", compile_has), "${tag}: avant run says ${compile_has} on stderr")
+    c.expect((file_read(aerr) ?? "").contains(compile_has), "${tag}: avant run says ${compile_has} on stderr")
   }
 }
 
@@ -114,6 +119,220 @@ fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
   }
   c.expect(false, "compile ${label}")
   must_compile(c, "a+", false, "fallback")
+}
+
+fn count_of(r: Int | RegexError): String {
+  switch r {
+    case n: Int { "count ${n}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn text_of(r: String | RegexError): String {
+  switch r {
+    case t: String { "text ${t}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn parts_of(r: Array(String) | RegexError): String {
+  switch r {
+    case ps: Array(String) {
+      out = "parts"
+      for i in 0..ps.size {
+        if i == 0 {
+          out = out + " " + ps[i]
+        } else {
+          out = out + "|" + ps[i]
+        }
+      }
+      out
+    }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn walk_of(it: TryMatchIter): String {
+  got = ""
+  while m = it.next() {
+    got = got + " ${m.start}..${m.end}"
+  } else e {
+    if err = e {
+      got = got + " error ${err.kind}: ${err.message}"
+    } else {
+      got = got + " end"
+    }
+  }
+  got
+}
+
+// The try_ twins of count, replace, replace_into, split and matches give
+// a match that reaches a limit as a RegexError, as try_find does; the
+// plain ones trap. `(a+)+b` finds "ab" at once and backtracks past a
+// match limit of 1000 on twenty a's followed by a c (a b later in the
+// text, so PCRE2's required-character check does not end the match
+// first).
+fn regex_try_forms(c: Checks) {
+  pat = "(a+)+"
+  pat = pat + "b"
+  re = Regex.compile(pat, match_limit: 1000) ?? return c.expect(false, "compile the try_ pattern")
+  ok = "ab-ab-x"
+  bad = "ab-ab-" + repeated("a", 20, "c b")
+  limit = "error match_limit: Regex.try_"
+  c.eq_str(count_of(re.try_count(ok)), "count 2", "try_count counts")
+  c.eq_str(count_of(re.try_count("")), "count 0", "try_count of no match is 0")
+  c.eq_str(count_of(re.try_count(bad)), "${limit}count: match limit exceeded (PCRE2 error -47)", "try_count at the limit is a RegexError")
+  c.eq_str(text_of(re.try_replace(ok, "<$1>")), "text <a>-<a>-x", "try_replace replaces")
+  c.eq_str(text_of(re.try_replace(bad, "<$1>")), "${limit}replace: match limit exceeded (PCRE2 error -47)", "try_replace at the limit is a RegexError")
+  dst = Buf.new()
+  dst.push_str("kept:")
+  if err = re.try_replace_into(dst, bad, "<$1>") {
+    c.eq_str("${err.kind}", "match_limit", "try_replace_into at the limit is a RegexError")
+  } else {
+    c.expect(false, "try_replace_into at the limit is a RegexError")
+  }
+  c.eq_str(dst.to_s(), "kept:", "and leaves its Buf as it was")
+  if err = re.try_replace_into(dst, ok, "_") {
+    c.expect(false, "try_replace_into appends: ${err}")
+  }
+  c.eq_str(dst.to_s(), "kept:_-_-x", "try_replace_into appends")
+  c.eq_str(parts_of(re.try_split(ok)), "parts |-|-x", "try_split splits")
+  c.eq_str(parts_of(re.try_split(bad)), "${limit}split: match limit exceeded (PCRE2 error -47)", "try_split at the limit is a RegexError")
+  c.eq_str(walk_of(re.try_matches(ok)), " 0..2 3..5 end", "try_matches walks")
+  c.eq_str(walk_of(re.try_matches(bad)), " 0..2 3..5 error match_limit: Regex.try_matches: match limit exceeded (PCRE2 error -47)", "try_matches gives the matches before the failure, then the RegexError")
+  it = re.try_matches(bad)
+  _ = walk_of(it)
+  c.eq_str(kind_of(it.next()), "nil", "a walk ends after its RegexError")
+  c.eq_str(kind_of(re.try_find(bad, 6)), "error ${RegexErrorKind.match_limit.to_i()}", "try_find keeps its own name")
+  c.eq_str(message_of(re.try_find(bad, 6)), "Regex.try_find: match limit exceeded (PCRE2 error -47)", "try_find's message")
+  re.close()
+}
+
+// Patterns held by Regex values that are never closed (a dropped Regex
+// is not closed for the program) no longer keep the cache from others:
+// with its 128 entries all held, a new pattern takes the place of the
+// least recently used held one, which lives on outside the table. It used
+// to be compiled uncached, and so compiled again at every compile.
+fn regex_cache_held(c: Checks) {
+  held: Array(Regex) = []
+  for i in 0..128 {
+    if r = Regex.compile("held${i}y+") {
+      held.push(r)
+    }
+  }
+  c.eq_int(held.size, 128, "128 patterns held")
+  c.eq_int(recache.avant_regex_cache_holds("held127y+", 0), 1, "the table holds the last held pattern")
+  fresh = must_compile(c, "fresh-after-held+", false, "a pattern after 128 held")
+  c.eq_int(recache.avant_regex_cache_holds("fresh-after-held+", 0), 1, "a new pattern is cached although every entry is held")
+  c.eq_int(recache.avant_regex_cache_holds("held0y+", 0), 0, "the least recently used held pattern left the table")
+  if m = held[0].find("zheld0yyy") {
+    c.eq_int(m.end, 9, "and still matches for the Regex holding it")
+  } else {
+    c.expect(false, "and still matches for the Regex holding it")
+  }
+  fresh.close()
+  c.eq_int(recache.avant_regex_cache_holds("fresh-after-held+", 0), 1, "a closed cached pattern stays for the next compile")
+  for r in held {
+    r.close()
+  }
+}
+
+fn kind_of(r: Match? | RegexError): String {
+  switch r {
+    case m: Match {
+      return "match ${m.start}..${m.end}"
+    }
+    case e: RegexError {
+      return "error ${e.kind.to_i()}"
+    }
+    else {
+      return "nil"
+    }
+  }
+}
+
+fn message_of(r: Match? | RegexError): String {
+  switch r {
+    case e: RegexError {
+      return e.message
+    }
+    else {
+      return ""
+    }
+  }
+}
+
+// A match's failure is a value from try_find, and each Regex has its own
+// limits. find, count, replace, split and matches trap at a limit (the
+// child program below); try_find gives a RegexError whose kind is the
+// limit reached, so a pattern or a text from outside need not end the
+// program. There was no limit to set and no value to get: every failure
+// was a trap.
+fn regex_limits(c: Checks) {
+  bt_pat = "(a+)+"
+  bt_pat = bt_pat + "$"
+  bt = must_compile(c, bt_pat, false, "backtracking")
+  wild = repeated("a", 40, "b aaa")
+  c.eq_str(kind_of(bt.try_find(wild)), "error ${RegexErrorKind.match_limit.to_i()}", "try_find past the match limit is a RegexError of kind match_limit")
+  c.eq_str(message_of(bt.try_find(wild)), "Regex.try_find: match limit exceeded (PCRE2 error -47)", "its message names the operation and PCRE2's reason")
+  c.eq_str(kind_of(bt.try_find("xaay")), "nil", "try_find without a match is nil")
+  c.eq_str(kind_of(bt.try_find("baa")), "match 1..3", "try_find with a match is the Match")
+  c.eq_str(kind_of(bt.try_find("baa", 2)), "match 2..3", "try_find from an offset")
+  // Twelve a's and a b take a few thousand steps: within the default
+  // limit, past a limit of 1000 set on another compile of the pattern.
+  short = repeated("a", 12, "b")
+  c.eq_str(kind_of(bt.try_find(short)), "nil", "within the default match limit: no match")
+  if tight = Regex.compile(bt_pat, match_limit: 1000) {
+    c.eq_str(kind_of(tight.try_find(short)), "error ${RegexErrorKind.match_limit.to_i()}", "a match_limit of the Regex's own is reached")
+    c.eq_str(kind_of(tight.try_find("baa")), "match 1..3", "and a short match is still found under it")
+    tight.close()
+  } else {
+    c.expect(false, "compile with match_limit")
+  }
+  c.eq_str(kind_of(bt.try_find(short)), "nil", "the default compile of the same pattern keeps its own limit")
+  bt.close()
+
+  deep_pat = "((a)|(b))*"
+  deep_pat = deep_pat + "c"
+  deep_text = repeated("ab", 20000, "c")
+  if small = Regex.compile(deep_pat, heap_limit: 262144) {
+    c.eq_str(kind_of(small.try_find(deep_text)), "error ${RegexErrorKind.heap_limit.to_i()}", "a deep match past heap_limit (256 KiB) is a RegexError of kind heap_limit")
+    c.eq_str(kind_of(small.try_find(repeated("ab", 200, "c"))), "match 0..401", "a shallow one is found under it")
+    small.close()
+  } else {
+    c.expect(false, "compile with heap_limit")
+  }
+  if shallow = Regex.compile(deep_pat, depth_limit: 1000) {
+    // The depth limit binds the interpreter: the JIT's stack is made
+    // small here (the suite's internal variable) so the match reaches it.
+    set_env("AVANT_RE_JIT_STACK_KB", "32")
+    c.eq_str(kind_of(shallow.try_find(deep_text)), "error ${RegexErrorKind.depth_limit.to_i()}", "past depth_limit on the interpreter: a RegexError of kind depth_limit")
+    set_env("AVANT_RE_JIT_STACK_KB", "")
+    c.eq_str(kind_of(shallow.try_find(deep_text)), "match 0..40001", "the JIT's larger stack answers it")
+    shallow.close()
+  } else {
+    c.expect(false, "compile with depth_limit")
+  }
+  dflt = must_compile(c, deep_pat, false, "deep default")
+  c.eq_str(kind_of(dflt.try_find(deep_text)), "match 0..40001", "the default limits answer the deep match")
+  dflt.close()
+
+  // Limits past PCRE2's 32-bit fields are its largest.
+  if huge = Regex.compile("x+", match_limit: 1 << 40, depth_limit: 1 << 40, heap_limit: 1 << 60) {
+    c.eq_str(kind_of(huge.try_find("axx")), "match 1..3", "limits past 32 bits are the largest")
+    huge.close()
+  } else {
+    c.expect(false, "compile with huge limits")
+  }
+
+  switch Regex.compile("(open") {
+    case e: RegexError {
+      c.expect(e.kind == RegexErrorKind.pattern, "a pattern that does not compile is of kind pattern")
+    }
+    case Regex {
+      c.expect(false, "a pattern that does not compile is of kind pattern")
+    }
+  }
 }
 
 fn test_std_regex(c: Checks) {
@@ -245,7 +464,7 @@ fn test_std_regex(c: Checks) {
   iter_re = must_compile(c, "a+", false, "iterator")
   total = 0
   iter = iter_re.matches("aa ba aaa")
-  while m = iter.next() {
+  for m in iter {
     total = total + (m.end - m.start)
   }
   c.eq_int(total, 6, "iterator total length")
@@ -327,6 +546,10 @@ fn test_std_regex(c: Checks) {
   set_env("AVANT_RE_JIT_STACK_KB", "")
   deep.close()
 
+  regex_limits(c)
+  regex_try_forms(c)
+  regex_cache_held(c)
+
   // Groups past the 63rd are read: the span pairs were capped at 64, so
   // they read as "did not take part".
   many = must_compile(c, repeated("(x)", 70, ""), false, "seventy groups")
@@ -347,7 +570,7 @@ fn test_std_regex(c: Checks) {
 
   scoped_len = 0
   if re = Regex.compile("q+") {
-    re.scoped { |r|
+    re.scoped (r) {
       if m = r.find("aqq") {
         scoped_len = m.end
       }
@@ -367,10 +590,10 @@ fn test_std_regex(c: Checks) {
     // Every use through a copy of a closed Regex traps, whichever
     // copy was closed and wherever the copy lives (a parameter, an array,
     // a MatchIter, a Match's named groups and its groups past the third).
-    // "uncached" fills the 128-entry cache with patterns in use first,
-    // so the pattern is freed by close itself: that run used to end in a
-    // segmentation fault.
-    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close()\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close()\n      puts(\"closed \${copy.is_closed()}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close()\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close()\n      puts(\"closed \${xs[0].is_closed()}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next() {\n        puts(m.end)\n      }\n      copy.close()\n      if m = it.next() {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close()\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
+    // "uncached" then fills the 128-entry cache with patterns in use, so
+    // the pattern leaves the cache's table and is freed by close itself:
+    // that run used to end in a segmentation fault.
+    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close()\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"uncached\" {\n      for i in 0..128 {\n        if r = Regex.compile(\"h\${i}x+\") {\n          held.push(r)\n        }\n      }\n    }\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close()\n      puts(\"closed \${copy.is_closed()}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close()\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close()\n      puts(\"closed \${xs[0].is_closed()}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next() {\n        puts(m.end)\n      }\n      copy.close()\n      if m = it.next() {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close()\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
     csrc = "${scratch()}/regex-${stamp}-copies.av"
     cbin = "${scratch()}/regex-${stamp}-copies.bin"
     _ = file_write(csrc, copies)
@@ -405,6 +628,22 @@ fn test_std_regex(c: Checks) {
     regex_trap_run(c, lbin, stamp, "limit-replace", one_arg("replace"), "start\n", "avant runtime: Regex.replace: ${said}")
     regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: Regex.split: ${said}")
     regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: Regex.matches: ${said}")
+
+    // A limit below 1 is a program error: compile traps, naming it.
+    bad = "import std.regex\n\nfn main {\n  mode = argv()[1]\n  puts(\"start\")\n  if mode == \"match\" {\n    _ = Regex.compile(\"a+\", match_limit: 0)\n  }\n  if mode == \"depth\" {\n    _ = Regex.compile(\"a+\", depth_limit: -3)\n  }\n  if mode == \"heap\" {\n    _ = Regex.compile(\"a+\", false, 10, 10, 0)\n  }\n}\n"
+    bsrc = "${scratch()}/regex-${stamp}-badlimits.av"
+    bbin = "${scratch()}/regex-${stamp}-badlimits.bin"
+    _ = file_write(bsrc, bad)
+    c.eq_int(compile_av(compiler, bsrc, bbin, "${scratch()}/regex-${stamp}-badlimits.log"), 0, "compile bad limits")
+    chmod_x(bbin)
+    regex_trap_run(c, bbin, stamp, "bad-match-limit", one_arg("match"), "start\n", "avant runtime: Regex.compile: match_limit must be at least 1 (got 0)")
+    regex_trap_run(c, bbin, stamp, "bad-depth-limit", one_arg("depth"), "start\n", "avant runtime: Regex.compile: depth_limit must be at least 1 (got -3)")
+    regex_trap_run(c, bbin, stamp, "bad-heap-limit", one_arg("heap"), "start\n", "avant runtime: Regex.compile: heap_limit must be at least 1 (got 0)")
+
+    // A literal pattern with limits, named or not, is still re2c's
+    // scanner (no note that it stays on PCRE2), and runs as without them.
+    lit_limits = "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\", match_limit: 1000) {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    puts(re.count(\"aa b aaa\"))\n    re.close()\n  }\n  if re = Regex.compile(\"b+\", true, 100, 100, 4096) {\n    puts(re.count(\"aBb b\"))\n    re.close()\n  }\n}\n"
+    regex_child(c, compiler, stamp, "regex-literal-limits", lit_limits, "", "stays on PCRE2", "2\n4\n2\n2\n")
   }
 }
 

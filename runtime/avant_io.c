@@ -68,45 +68,46 @@ static char *cstr_dup(const char *s) {
   return p;
 }
 
-/* The program flag --threads: the generated startup calls
- * this before anything can start the pool or the HTTP server, so
- * scanning here records the override in time, and removing the flag
- * from the array means the program's own argv() never sees it. Both
- * spellings are one implementation; scanning stops at a literal "--".
- * A malformed value dies loudly. */
+/* The runtime's one program flag, --avant-threads=N (the thread pool's
+ * size, 1 to AVANT_POOL_SIZE_MAX): the generated startup calls this
+ * before anything can start the pool or the HTTP server, so scanning
+ * here records the size in time, and removing the flag from the array
+ * means the program's own argv() never sees it. Every other argument,
+ * --threads included, is the program's; scanning stops at a literal
+ * "--". A bare --avant-threads or a bad value stops the program at
+ * startup: one line, status 1. */
+static void avant_threads_bad(const char *a) {
+  fprintf(stderr, "avant runtime: %s: the thread pool's size is --avant-threads=N, N from 1 to %d\n", a,
+          AVANT_POOL_SIZE_MAX);
+  exit(1);
+}
+
 static void scan_threads_flag(void) {
   int32_t i;
   int32_t w = 1;
   for (i = 1; i < g_argc; i++) {
     const char *a = g_argv[i] ? g_argv[i] : "";
-    const char *val = NULL;
-    int consumed = 0;
     if (strcmp(a, "--") == 0) {
       for (; i < g_argc; i++) {
         g_argv[w++] = g_argv[i];
       }
       break;
     }
-    if (strcmp(a, "--threads") == 0) {
-      if (i + 1 >= g_argc) {
-        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        exit(1);
-      }
-      val = g_argv[i + 1];
-      consumed = 2;
-    } else if (strncmp(a, "--threads=", 10) == 0) {
-      val = a + 10;
-      consumed = 1;
+    if (strcmp(a, "--avant-threads") == 0) {
+      avant_threads_bad(a);
     }
-    if (val) {
+    if (strncmp(a, "--avant-threads=", 16) == 0) {
+      const char *val = a + 16;
       char *end = NULL;
-      unsigned long long v = strtoull(val, &end, 10);
-      if (end == val || *end != '\0' || v < 1 || v > 1073741824ull) {
-        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        exit(1);
+      unsigned long long v;
+      if (*val < '0' || *val > '9') {
+        avant_threads_bad(a);
+      }
+      v = strtoull(val, &end, 10);
+      if (*end != '\0' || v < 1 || v > (unsigned long long)AVANT_POOL_SIZE_MAX) {
+        avant_threads_bad(a);
       }
       avant_set_flag_threads((long)v);
-      i += consumed - 1;
       continue;
     }
     g_argv[w++] = g_argv[i];
@@ -313,7 +314,10 @@ avant_int avant_sys_write(const char *path, const char *body) {
  * with a newline, after what the program wrote to stdout; the result, 1,
  * is the exit status the generated main returns. */
 avant_int avant_main_fail(const char *text) {
-  size_t n = text ? avant_str_n(text) : 0;
+  /* A `fun` of the program's own entry lib: the text arrives as C reads a
+   * String (terminated; the bytes of a slice in place), so its length is
+   * its terminator's. */
+  size_t n = text ? strlen(text) : 0;
   fflush(stdout);
   if (n) {
     fwrite(text, 1, n, stderr);
@@ -348,7 +352,9 @@ static void out_bytes(const char *p, size_t n, int32_t how) {
 }
 
 void avant_out_str(const char *s, int32_t how) {
-  out_bytes(s ? s : "", s ? avant_str_n(s) : 0, how);
+  size_t n;
+  s = avant_str_bytes(s, &n);
+  out_bytes(s, n, how);
 }
 
 void avant_out_i64(int64_t v, int32_t how) {
@@ -457,8 +463,14 @@ static char **build_argv(const char *path, void *args) {
     return NULL;
   }
   for (i = 0; i < extra_n; i++) {
-    const char *s = extra_buf && extra_buf[i] ? extra_buf[i] : "";
-    argv[i + 1] = cstr_dup(s);
+    /* An element is an Avant String (a view's bytes are its base's). */
+    size_t n = 0;
+    const char *s = avant_str_bytes(extra_buf ? extra_buf[i] : NULL, &n);
+    argv[i + 1] = (char *)malloc(n + 1);
+    if (argv[i + 1]) {
+      memcpy(argv[i + 1], s, n);
+      argv[i + 1][n] = 0;
+    }
     if (!argv[i + 1]) {
       free_argv(argv);
       return NULL;
@@ -840,10 +852,10 @@ avant_int avant_fs_mkdir_p(const char *path) {
 
 /* cp: copies src to dst byte for byte, with src's permission bits, through
  * a temporary beside dst renamed into place, so dst is never half
- * written (a gate keeps the fixed point's next compiler this way). It uses
- * stdio, not read()/write(): an Avant program's own fn read or fn write is
- * a global symbol of the same name and would replace libc's for every
- * caller in the process. */
+ * written (a gate keeps the fixed point's next compiler this way). It
+ * copies through stdio with a 64 KB buffer. (An Avant program's own
+ * fn read or fn write cannot replace libc's: Avant functions are emitted
+ * internal, under an av. prefix.) */
 avant_int avant_fs_copy(const char *src, const char *dst) {
   char tmp[4096];
   char buf[65536];
@@ -939,6 +951,8 @@ char *avant_env_get(const char *name, int32_t *ok) {
   if (!name) {
     return NULL;
   }
+  /* A terminated name (avant_file_exists). */
+  name = avant_str_flat(name);
   const char *s = getenv(name);
   if (!s) {
     return NULL;
@@ -951,10 +965,14 @@ char *avant_env_get(const char *name, int32_t *ok) {
   return heap;
 }
 
+/* gc-lint: holds nothing (the flat copy is its first call; only it is read after). */
 int32_t avant_file_exists(const char *path) {
   if (!path) {
     return 0;
   }
+  /* A terminated path: a view's bytes are copied first (it allocates;
+   * nothing else is held). */
+  path = avant_str_flat(path);
   return access(path, F_OK) == 0 ? 1 : 0;
 }
 
@@ -1370,6 +1388,16 @@ __attribute__((constructor)) static void avant_io_start(void) {
   atexit(out_check_at_exit);
 }
 
+/* The private directory's cleanup on a crash, from a fault handler that
+ * ends the process itself (avant_stack.c): the same work as tmp_on_signal
+ * before its re-raise. */
+void avant_tmp_on_crash(void) {
+  if (g_tmp_ready && getpid() == g_tmp_owner) {
+    tmp_stop_children();
+  }
+  tmp_finish();
+}
+
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
   if (g_tmp_ready && getpid() == g_tmp_owner) {
@@ -1451,7 +1479,8 @@ static void tmp_create(void) {
   /* A crash removes the directory too: the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no
-   * stack left (a stack overflow) cannot run the handler. */
+   * stack left (a stack overflow) runs the stack's own handler instead,
+   * which cleans up too (avant_stack.c, on the thread's signal stack). */
   tmp_catch(SIGSEGV);
   tmp_catch(SIGBUS);
   tmp_catch(SIGFPE);

@@ -350,7 +350,7 @@ pub class MExtern {
   }
 }
 
-// A type-map registration. layout -1 is a fixed map (1022, 1021,
+// A type-map registration. layout -1 is a fixed map (1022, 1021, 1020,
 // 1023): its name and its one chunk of bits are given.
 pub class MTypeMap {
   pub id: Int = 0
@@ -367,6 +367,10 @@ pub class MTypeMap {
 pub class MModule {
   pub name: String = ""
   pub shared: Bool = false
+  // Some call freezes the Array holding its receiver (Expr.elem_hold):
+  // the generated `clear` and sort with a block then test the freeze in
+  // a program that does not spawn too.
+  pub elem_holds: Bool = false
   pub files: Array(String) = []
   pub types: MTypes
   pub strs: Array(String)
@@ -395,6 +399,9 @@ pub class MModule {
     add_fixed_map(1022, "Array(*)", 1u64)
     add_fixed_map(1021, "Buf", 1u64)
     add_fixed_map(1023, "Hash", 7u64)
+    // The runtime's string view (runtime/avant_rt.h, AvantStrView): its
+    // first word, the base string, is the one reference.
+    add_fixed_map(1020, "String view", 1u64)
   }
 
   fn add_fixed_map(id: Int, name: String, bits: UInt64) {

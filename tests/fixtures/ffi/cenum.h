@@ -2,6 +2,7 @@
 typedef enum { RED, GREEN = 5, BLUE } color_t;
 enum http_method { HTTP_GET, HTTP_HEAD, HTTP_POST, HTTP_ALIAS = 1 };
 enum { FLAG_A = 1, FLAG_B = 2 };
+enum { FLAG_C = 4, flag_a = 9, LIMIT = 4000000000u };
 enum big { BIG_ONE = 1, BIG_HUGE = 3000000000u };
 enum clash { CL_A, cl_a };
 enum word { WORD_A, IF };

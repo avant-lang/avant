@@ -1,0 +1,271 @@
+import harness
+import std.sync
+
+// A task's value of any type, `?` in a spawn block, structured
+// completion (a task's join waits for every task it spawned), joins and
+// .parallel inside tasks, and a .parallel whose bodies trap.
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+class Node {
+  pub v: Int = 0
+  pub kids: Array(Int) = []
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+class Bad: Error {
+  pub n: Int = 0
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  pub fn message: String {
+    "bad ${n}"
+  }
+}
+
+fn check(n: Int): Int | Bad {
+  if n > 2 {
+    return Bad.new(n)
+  }
+  n * 10
+}
+
+fn half(n: Int): Int? {
+  if n % 2 == 1 {
+    return nil
+  }
+  n / 2
+}
+
+fn fib(n: Int): Int {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+fn pfib(n: Int): Int {
+  if n < 12 {
+    return fib(n)
+  }
+  h = spawn { pfib(n - 1) }
+  b = pfib(n - 2)
+  a = h.join() ?? -1000000
+  a + b
+}
+
+fn psum(xs: Array(Int), depth: Int): Int {
+  if depth == 0 {
+    return xs.sum()
+  }
+  parts = [0, 1].parallel (k) { psum(xs, depth - 1) + k }
+  parts[0] + parts[1]
+}
+
+fn void_ok(h: JoinHandle(Void)): Bool {
+  h.join() else e {
+    return false
+  }
+  true
+}
+
+fn value_cases(c: Checks) {
+  n = 3
+  hs = spawn { "a${n}" }
+  c.eq_str(hs.join() ?? "", "a3", "a String value")
+
+  hn = spawn {
+    node = Node.new(n)
+    node.kids.push(7)
+    node
+  }
+  if node = hn.join() {
+    c.eq_int(node.v + node.kids[0], 10, "a class value")
+  } else {
+    c.expect(false, "a class value")
+  }
+
+  ha = spawn { [n, n + 1, n + 2] }
+  if xs = ha.join() {
+    c.eq_int(xs.sum(), 12, "an Array value")
+  } else {
+    c.expect(false, "an Array value")
+  }
+
+  hp = spawn { Point { x: n, y: 4 } }
+  if p = hp.join() {
+    c.eq_int(p.x * p.y, 12, "a struct value")
+  } else {
+    c.expect(false, "a struct value")
+  }
+
+  hf = spawn { n.to_f() / 2.0 }
+  c.expect((hf.join() ?? 0.0) == 1.5, "a Float64 value")
+
+  hb = spawn { n > 2 }
+  c.expect(hb.join() ?? false, "a Bool value")
+
+  // A second join gives the same value.
+  c.eq_str(hs.join() ?? "", "a3", "a second join")
+
+  // A dropped handle: the task still runs to its end.
+  m = Mutex(Int).new(0)
+  for i in 0..8 {
+    _ = spawn { m.with (x) { x += 1 } }
+  }
+  hv = spawn {
+    m.with (x) { x += 100 }
+  }
+  c.expect(void_ok(hv), "a Void value: the join")
+  c.expect(m.with (x) { x } >= 100, "a Void value")
+}
+
+fn try_cases(c: Checks) {
+  h1 = spawn { check(1)? + 1 }
+  c.eq_int(h1.join() ?? -1, 11, "? with a success")
+  h2 = spawn { check(5)? + 1 }
+  c.eq_int(h2.join() ?? -1, -1, "? with a failure")
+  got = ""
+  if v = h2.join() {
+    got = "value ${v}"
+  } else e {
+    got = "${e}"
+  }
+  c.eq_str(got, "bad 5", "? gives the failure to the join")
+
+  h3 = spawn { half(5)? * 3 }
+  c.eq_int(h3.join() ?? -1, -1, "? with nil")
+  h4 = spawn { half(8)? * 3 }
+  c.eq_int(h4.join() ?? -1, 12, "? with a value")
+
+  // ? in a .parallel body: that element is the failure.
+  rs = [1, 5, 2].parallel (k) { check(k)? + 1 }
+  c.eq_int(rs[0] ?? -1, 11, ".parallel ? 0")
+  c.eq_int(rs[1] ?? -1, -1, ".parallel ? 1")
+  c.eq_int(rs[2] ?? -1, 21, ".parallel ? 2")
+  ws = ["2", "x", "4"].parallel (w) { w.to_i()? * 2 }
+  c.eq_int((ws[0] ?? -1) + (ws[1] ?? -1) + (ws[2] ?? -1), 11, ".parallel ? with nil")
+
+  // ? inside a Mutex's with, in a spawn block: the lock is released.
+  m = Mutex(Int).new(5)
+  h5 = spawn {
+    m.with { |x|
+      x += check(7)?
+      x
+    }
+  }
+  c.eq_int(h5.join() ?? -1, -1, "? leaves with")
+  c.eq_int(m.with (x) { x }, 5, "the mutex is free and unchanged")
+}
+
+fn structured_cases(c: Checks) {
+  // A task spawns a task over the array it captured and returns without
+  // joining it: the outer task's join waits for the inner one, so the
+  // array is thawed when the join returns and the inner task's send is
+  // done.
+  for round in 0..20 {
+    xs = [1, 2, 3]
+    done = Channel(Int).new(1)
+    h = spawn {
+      inner = spawn {
+        t = 0
+        for i in 0..200000 {
+          t += xs[i % 3]
+        }
+        done.send(t)
+        0
+      }
+      xs.size
+    }
+    c.eq_int(h.join() ?? -1, 3, "outer value ${round}")
+    xs.push(4)
+    c.eq_int(xs.size, 4, "the array is thawed at the join ${round}")
+    c.eq_int(done.recv() ?? -1, 399999, "the inner task ended before the join ${round}")
+  }
+
+  // Joins and .parallel inside tasks (a joined task no worker took runs
+  // on the joining worker).
+  hf = spawn { pfib(20) }
+  c.eq_int(hf.join() ?? -1, 6765, "nested joins")
+  c.eq_int(psum([1, 2, 3], 3), 55, "nested .parallel from the main thread")
+  hs = spawn { psum([1, 2, 3], 3) }
+  c.eq_int(hs.join() ?? -1, 55, "nested .parallel inside a task")
+  hj = spawn {
+    k = spawn { 41 }
+    (k.join() ?? 0) + 1
+  }
+  c.eq_int(hj.join() ?? -1, 42, "a join written in a spawn block")
+}
+
+fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
+  root = avant_test_root()
+  bin = "${scratch()}/task-results-nested-${stamp}.bin"
+  code = compile_av(compiler, "${root}/tests/fixtures/threads/nested_join.av", bin, "${scratch()}/task-results-nested-${stamp}.clog")
+  c.eq_int(code, 0, "the nested-join fixture compiles")
+  for n in [1, 2] {
+    log = "${scratch()}/task-results-nested-${stamp}-${n}.log"
+    args: Array(String) = []
+    args.push("-c")
+    args.push("timeout -k 5 60 ${bin} --avant-threads=${n} 2> ${log}.err")
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    c.eq_int(status, 0, "nested joins with ${n} pool threads: status")
+    c.eq_str(file_read(log) ?? "", "17711\n55\n111\n", "nested joins with ${n} pool threads: output")
+  }
+
+  pbin = "${scratch()}/task-results-ptraps-${stamp}.bin"
+  code2 = compile_av(compiler, "${root}/tests/fixtures/threads/parallel_traps.av", pbin, "${scratch()}/task-results-ptraps-${stamp}.clog")
+  c.eq_int(code2, 0, "the parallel-traps fixture compiles")
+  for kind in ["main", "task"] {
+    log = "${scratch()}/task-results-ptraps-${stamp}-${kind}.log"
+    elog = "${log}.err"
+    args: Array(String) = []
+    args.push("-c")
+    if kind == "task" {
+      args.push("timeout -k 5 60 ${pbin} task 2> ${elog}")
+    } else {
+      args.push("timeout -k 5 60 ${pbin} 2> ${elog}")
+    }
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    out = file_read(log) ?? ""
+    err = file_read(elog) ?? ""
+    if kind == "main" {
+      c.eq_int(status, 1, ".parallel traps on the main thread: status 1")
+      c.eq_str(out, "", ".parallel traps on the main thread: nothing after it")
+      c.expect(err.contains("avant runtime: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the body's trap is told: ${err}")
+      c.expect(err.contains("avant runtime: .parallel: 1 of 6 bodies trapped; the first: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the .parallel's trap: ${err}")
+    } else {
+      c.eq_int(status, 0, ".parallel traps in a task: the program goes on")
+      c.expect(out.contains("task: .parallel: 3 of 6 bodies trapped; the first: index "), ".parallel traps in a task: the join gives it: ${out}")
+      c.expect(out.contains("after\n"), ".parallel traps in a task: after")
+      c.eq_int(count_lines(err), 4, ".parallel traps in a task: three bodies' traps and the task's: ${err}")
+    }
+  }
+}
+
+fn test_task_results(c: Checks) {
+  c.suite("tests/cases/test_task_results.av")
+  value_cases(c)
+  try_cases(c)
+  structured_cases(c)
+  if compiler = env_get("AVANT_COMPILER") {
+    fixture_cases(c, compiler, now_ms())
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_task_results(c)
+  c.finish()
+}

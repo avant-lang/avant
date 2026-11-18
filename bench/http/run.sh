@@ -41,7 +41,7 @@
 #          B without pipelining (depth 1 at 900 connections)
 #    HTTP_BENCH_DURATION overrides the seconds of the measured load;
 #    HTTP_BENCH_THREADS forces a server thread count under any method
-#    (C's default is 4). Thread control per row: avant `--threads N`,
+#    (C's default is 4). Thread control per row: avant `--avant-threads=N`,
 #    h2o and hyper and valk an argument, go and fasthttp GOMAXPROCS,
 #    crystal CRYSTAL_WORKERS; the Rust standard-library row has none
 #    (a thread per connection) and is bounded by the pinning alone.
@@ -366,12 +366,12 @@ server_cmd() {
   case "$1" in
     avant)
       printf '%s\n' env AVANT_GC_STATS=1 "$BUILD/avant_server"
-      if [ -n "$2" ]; then printf '%s\n' --threads "$2"; fi ;;
+      if [ -n "$2" ]; then printf '%s\n' "--avant-threads=$2"; fi ;;
     avant-nosigpipe)
       # The same binary, started with SIGPIPE ignored (an ignored
       # signal stays ignored across exec): see the header.
       printf '%s\n' env --ignore-signal=PIPE AVANT_GC_STATS=1 "$BUILD/avant_server"
-      if [ -n "$2" ]; then printf '%s\n' --threads "$2"; fi ;;
+      if [ -n "$2" ]; then printf '%s\n' "--avant-threads=$2"; fi ;;
     h2o)
       printf '%s\n' "$BUILD/h2o_server" "$HPORT"
       if [ -n "$2" ]; then printf '%s\n' "$2"; fi ;;

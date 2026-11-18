@@ -33,6 +33,9 @@ typedef int64_t avant_int;
 
 #define AVANT_TYPE_BYTES 0
 #define AVANT_TYPE_PTRS 65535u
+/* A string view (AvantStrView, below): a String or Bytes value that is a
+ * run of another string's bytes. */
+#define AVANT_TYPE_STRVIEW 1020u
 #define AVANT_TYPE_BUF 1021u
 #define AVANT_TYPE_ARRAY_OBJ 1022u
 #define AVANT_TYPE_HASH 1023u
@@ -117,22 +120,29 @@ void avant_gc_root(void *slot);
  * slot address into the returned array at its fixed index, and the
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
- * the old myc back end's ABI: the current compiler emits neither, and
- * they stay as deprecated entries until a release note retires them. */
+ * a retired back end's ABI: the compiler emits neither (its call table
+ * has no row for them), and they stay as deprecated entries for user C
+ * until a release note retires them. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 /* Frames in the caller's stack: generated code keeps
  * each frame's record in its own stack frame, laid out as
- * { prev: pointer, slots: pointer, n: u32, cap: u32, scope: u32 } (32
- * bytes with padding; the slot array follows it), with slots, n = cap
- * (the frame's root words), scope = 0 and the slot addresses stored by
- * the caller. It links the record itself (prev = avant_gc_top,
- * avant_gc_top = record) when avant_gc_top is not null, else calls
- * avant_gc_frame_enter, which also registers the thread and initializes
- * the heap; it unlinks it itself (avant_gc_top = prev) when the record is
- * avant_gc_top and prev is not null, else calls avant_gc_frame_leave.
- * User C keeps using avant_gc_enter, avant_gc_root_begin and
- * avant_gc_leave. */
+ * { prev: pointer, desc: u64 } followed in place by the function's root
+ * slots themselves (its locals that hold references across a collecting
+ * call, each at its alignment). desc maps the words after the two header
+ * words: when it is odd, bit i + 1 is set exactly when word i is a root
+ * word (at most 62 words); when its low two bits are 2, desc - 2 is the
+ * address of a constant { n: u64, word: u32[n] } listing the root words'
+ * indices. The caller zeroes the slots, stores desc, and links the
+ * record itself (prev = avant_gc_top, avant_gc_top = record) when
+ * avant_gc_top is not null, else calls avant_gc_frame_enter, which also
+ * registers the thread and initializes the heap; it unlinks it itself
+ * (avant_gc_top = prev) when the record is avant_gc_top and prev is not
+ * null, else calls avant_gc_frame_leave. The runtime also walks the
+ * older record { prev, slots, n, cap, scope } with an array of slot
+ * addresses (desc's low two bits clear), which compilers before this
+ * layout emit and user C's frames use. User C keeps using
+ * avant_gc_enter, avant_gc_root_begin and avant_gc_leave. */
 struct AvantGcFrame;
 extern __thread struct AvantGcFrame *avant_gc_top;
 void avant_gc_frame_enter(struct AvantGcFrame *frame);
@@ -256,6 +266,9 @@ char *avant_c_str(char *s);
  * inside (compiler/llvm/emit_gc.av, ll_c_str). */
 extern uint64_t avant_gc_heap_lo;
 extern uint64_t avant_gc_heap_len;
+char *avant_str_cat_int(const char *prefix, avant_int n);
+char *avant_str_from_int_bytes(void *arr);
+/* The names the seed's compiler calls (avant_str.c). */
 char *avant_str_cat_i32(const char *prefix, avant_int n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);
@@ -297,11 +310,28 @@ int32_t avant_checksum_str(const char *s);
 int32_t avant_checksum_f64(double v);
 char *avant_str_strip(const char *s, int32_t mode);
 void *avant_str_split(const char *s, const char *sep);
+void *avant_str_split_n(const char *s, const char *sep, avant_int limit);
+char *avant_str_replace(const char *s, const char *from, const char *to);
+char *avant_str_repeat(const char *s, avant_int count);
+char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left);
+char *avant_str_join(void *arr, const char *sep);
+char *avant_str_ascii_case(const char *s, int32_t upper);
+char *avant_str_delete_affix(const char *s, const char *pat, int32_t suffix);
+void *avant_str_lines(const char *s);
 void *avant_str_fields(const char *s);
 char *avant_str_from_utf8(const char *s, int32_t *found);
+/* String.code_points (and Bytes'): each code point's number, an
+ * Array(Int); String.from_code_point(n): its UTF-8. */
+void *avant_str_code_points(const char *s);
+void *avant_bytes_code_points(const char *s);
+char *avant_str_from_code_point(avant_int cp);
+/* String.from_c(p, n), Bytes.from_c(p, n): N bytes of C memory copied. */
+char *avant_str_from_c(const void *p, avant_int n);
 void *avant_bytes_to_buf(const char *s);
 
 void *avant_buf_new(avant_int cap);
+void *avant_buf_slice(void *buf, avant_int start, avant_int stop);
+void avant_buf_push_buf(void *buf, void *other);
 void avant_buf_push_byte(void *buf, avant_int b);
 void avant_buf_push_str(void *buf, const char *s);
 void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int stop);
@@ -330,10 +360,16 @@ void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs,
  * a pointer kept across the growth faults and is reported. */
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
+avant_int avant_seq_find(void *hay, int32_t hay_kind, void *needle, int32_t needle_kind, avant_int from, int32_t mode);
+avant_int avant_seq_find_byte(void *hay, int32_t hay_kind, avant_int byte, avant_int from, int32_t mode);
 
 char *avant_base64_encode(const char *s);
 char *avant_base64_decode(const char *s);
 avant_int avant_base64_encode_into(const char *s, void *buf);
+char *avant_base64url_encode(const char *s);
+char *avant_base64url_decode(const char *s);
+avant_int avant_base64url_encode_into(const char *s, void *buf);
+avant_int avant_base64url_decode_into(const char *s, void *buf);
 avant_int avant_base64_decode_into(const char *s, void *buf);
 avant_int avant_base64_take_status(void);
 int32_t avant_crc32_bytes(const char *s);
@@ -358,14 +394,49 @@ avant_int avant_wide_hi(void);
 
 /* Hash(K, V) (avant_hash.c). The descriptor avant_hash_create takes: the
  * key's width in bytes (AVANT_HASH_K_WIDTH: 1, 2, 4 or 8), whether an
- * integer key is signed, whether the key is a String; the value's width
- * (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference. */
+ * integer key is signed, whether the key is a String or a struct the
+ * generated code passes by address (AVANT_HASH_K_STRUCT); the value's
+ * width (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference.
+ * avant_hash_create_typed also takes a struct key's fields (KLAYOUT, its
+ * text below avant_hash.c's header), the key's and the value's sizes in
+ * bytes, the type ids of the key and value buffers and of an Array of
+ * the values: for a struct key or a struct value. */
 #define AVANT_HASH_K_WIDTH 0xfu
 #define AVANT_HASH_K_SIGNED 0x10u
 #define AVANT_HASH_K_STR 0x20u
+#define AVANT_HASH_K_STRUCT 0x40u
 #define AVANT_HASH_V_SHIFT 8
 #define AVANT_HASH_V_REF 0x1000u
+/* Set by avant_hash_create_typed: the hash is an AvantHashX. */
+#define AVANT_HASH_TYPED 0x2000u
+/* The values are structs holding references. */
+#define AVANT_HASH_V_WORDS 0x4000u
 void *avant_hash_create(uint32_t desc);
+void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, uint32_t vw, uint32_t ktid,
+                              uint32_t vtid, uint32_t atid);
+void *avant_hash_find_xk(void *h, const void *key, int32_t *found);
+void *avant_hash_put_xk(void *h, const void *key);
+void *avant_hash_upsert_xk(void *h, const void *key, int32_t *found);
+void avant_hash_set_ref_xk(void *h, const void *key, void *val);
+void *avant_hash_take_xk(void *h, const void *key, int32_t *found);
+void avant_hash_del_xk(void *h, const void *key);
+/* A key with its own hash and equality (avant_hash.c's _uk entries): the
+ * two functions the compiler generates for its type, set after the
+ * creation; the entries take the key by address, as the _xk ones. The
+ * hasher those functions are given (a C stack object) takes the values. */
+void avant_hash_user(void *h, void *hashfn, void *eqfn);
+void avant_hasher_add(void *hs, uint64_t v);
+void avant_hasher_add_str(void *hs, const char *s);
+void *avant_hash_find_uk(void *h, const void *key, int32_t *found);
+void *avant_hash_put_uk(void *h, const void *key);
+void *avant_hash_upsert_uk(void *h, const void *key, int32_t *found);
+void avant_hash_set_ref_uk(void *h, const void *key, void *val);
+void *avant_hash_take_uk(void *h, const void *key, int32_t *found);
+void avant_hash_del_uk(void *h, const void *key);
+void *avant_hash_slot_uk(void *h, const void *key);
+void *avant_hash_slot_ik(void *h, avant_int key);
+void *avant_hash_slot_sk(void *h, const char *key);
+void *avant_hash_slot_xk(void *h, const void *key);
 void *avant_hash_find_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_find_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_put_ik(void *h, avant_int key);
@@ -378,38 +449,17 @@ void *avant_hash_take_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_take_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_keys(void *h);
 void *avant_hash_values(void *h);
-/* The previous compiler's entries (avant_hash.c, the last section). */
-void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
-void avant_hash_set_i32(void *h, const char *key, avant_int val);
-void avant_hash_set_str(void *h, const char *key, const char *val);
-void avant_hash_set_i32k_i32(void *h, avant_int key, avant_int val);
-avant_int avant_hash_get_i32(void *h, const char *key, int32_t *found);
-const char *avant_hash_get_str(void *h, const char *key, int32_t *found);
-avant_int avant_hash_get_i32k_i32(void *h, avant_int key, int32_t *found);
-avant_int avant_hash_take_i32(void *h, const char *key, int32_t *found);
-char *avant_hash_take_str(void *h, const char *key, int32_t *found);
-avant_int avant_hash_take_i32k_i32(void *h, avant_int key, int32_t *found);
-void avant_hash_del(void *h, const char *key);
-void avant_hash_del_i32k(void *h, avant_int key);
+void avant_hash_del_sk(void *h, const char *key);
+void avant_hash_del_ik(void *h, avant_int key);
 avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_int stop);
 const char *avant_hash_last_key(void);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
-int32_t avant_hash_has_str(void *h, const char *key);
-int32_t avant_hash_has_i32k(void *h, avant_int key);
-avant_int avant_hash_inc_str(void *h, const char *key, avant_int by);
-avant_int avant_hash_inc_i32k(void *h, avant_int key, avant_int by);
-avant_int *avant_hash_upsert_i32k(void *h, avant_int key, avant_int init, int32_t *found);
-avant_int *avant_hash_upsert_i32(void *h, const char *key, avant_int init, int32_t *found);
-avant_int avant_hash_get_or_i32(void *h, const char *key, avant_int fallback);
-const char *avant_hash_get_or_str(void *h, const char *key, const char *fallback);
-avant_int avant_hash_get_or_i32k_i32(void *h, avant_int key, avant_int fallback);
-void *avant_hash_keys_str(void *h);
-void *avant_hash_keys_i32(void *h);
-void *avant_hash_vals_str(void *h);
-void *avant_hash_vals_i32(void *h);
+/* The names the seed's compiler calls (avant_hash.c, the last section). */
+void avant_hash_del(void *h, const char *key);
+void avant_hash_del_i32k(void *h, avant_int key);
 
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
 void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id);
@@ -435,6 +485,13 @@ void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 #define AVANT_ARRAY_FROZEN ((int32_t)0x80000000)
 void avant_array_freeze(void *arr, int32_t depth);
 void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
+/* The freeze of a method call on an element (avant_array.c): slot is the
+ * caller's slot holding the array; frozen tests a change to a frozen
+ * array (op, AVANT_FROZEN_*), trapping unless it is an element store or
+ * a fill and only this thread's method calls froze it. */
+void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site);
+void avant_array_unhold(void **slot);
+void avant_array_frozen(void *arr, int32_t op);
 /* What a frozen array refuses: the operation avant_trap_frozen names. */
 #define AVANT_FROZEN_PUSH 0
 #define AVANT_FROZEN_POP 1
@@ -444,6 +501,28 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
 #define AVANT_FROZEN_REVERSE 5
 #define AVANT_FROZEN_RESERVE 6
 #define AVANT_FROZEN_STORE 7
+#define AVANT_FROZEN_DELETE_IF 8
+#define AVANT_FROZEN_INSERT 9
+#define AVANT_FROZEN_DELETE_AT 10
+#define AVANT_FROZEN_CONCAT 11
+#define AVANT_FROZEN_SHUFFLE 12
+/* The freeze of a captured value that holds a hash: a Hash, or an Array
+ * or Hash of them at any level (a value of arrays only takes
+ * avant_array_freeze). depth counts the levels from the outermost, each
+ * an Array or a Hash, and bit i of hashes is set when level i is a
+ * Hash. A frozen array keeps its count in its cap word, a frozen hash in
+ * its own count (avant_hash.c); every operation that changes a frozen
+ * hash (a store, `inc`, `delete`, `clear`, a Set's `add`) traps
+ * (avant_trap_frozen_hash). A thaw writes back an array level's
+ * capacity, elem_size being the innermost level's element size when that
+ * level is an Array. */
+void avant_value_freeze(void *v, int32_t depth, uint32_t hashes);
+void avant_value_thaw(void *v, int32_t depth, uint32_t hashes, uint64_t elem_size);
+/* What a frozen hash refuses: the operation avant_trap_frozen_hash
+ * names. */
+#define AVANT_FROZEN_HASH_STORE 0
+#define AVANT_FROZEN_HASH_DELETE 1
+#define AVANT_FROZEN_HASH_CLEAR 2
 void avant_array_sort_i32(void *arr);
 void avant_array_sort_u32(void *arr);
 void avant_array_sort_i64(void *arr);
@@ -453,6 +532,10 @@ void avant_array_sort_str(void *arr);
 void avant_array_sort_bool(void *arr);
 void avant_array_reverse(void *arr, uint64_t elem_size);
 void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id);
+void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t elem_size, uint32_t buf_type_id);
+void *avant_array_insert_slot(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id);
+void avant_array_delete_at(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id);
+void avant_array_concat(void *dst, void *src, uint64_t elem_size, uint32_t buf_type_id);
 int32_t avant_array_contains_i32(void *arr, int32_t v);
 int32_t avant_array_contains_i64(void *arr, int64_t v);
 int32_t avant_array_contains_u64(void *arr, uint64_t v);
@@ -500,8 +583,11 @@ __attribute__((noreturn, cold)) void avant_trap_overflow_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_in(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_walk_at(int32_t what, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
 __attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_frozen_call(int32_t op, const char *name, const char *site);
+__attribute__((noreturn, cold)) void avant_trap_frozen_hash(int32_t op);
 /* `with` on a poisoned mutex. */
 __attribute__((noreturn, cold)) void avant_trap_poisoned(void);
 __attribute__((noreturn, cold)) void avant_trap_poisoned_at(int32_t site);
@@ -519,6 +605,7 @@ __attribute__((noreturn, cold)) void avant_trap_c_range(int64_t value, int32_t k
 __attribute__((noreturn, cold)) void avant_trap_byte(avant_int value);
 __attribute__((noreturn, cold)) void avant_trap_precision(avant_int prec);
 __attribute__((noreturn, cold)) void avant_trap_slice(avant_int start, avant_int stop, avant_int size);
+__attribute__((noreturn, cold)) void avant_trap_insert(avant_int index, avant_int size);
 __attribute__((noreturn, cold)) void avant_trap_negative(avant_int n, int32_t what);
 __attribute__((noreturn, cold)) void avant_trap_exit_status_at(avant_int status, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);
@@ -571,11 +658,21 @@ uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 avant_int avant_chosen_threads(void);
 avant_int avant_usable_cpus(void);
 void avant_set_flag_threads(long n);
+/* The thread pool's size: --avant-threads=N and std.sync's set_pool_size
+ * take 1 to this many. */
+#define AVANT_POOL_SIZE_MAX 1024
+void avant_set_pool_size(avant_int n);
+avant_int avant_pool_size_fix(void);
 void *avant_spawn(void *fn, void *arg);
 /* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
  * captures' thaw and the captured channels' close), called with the
  * record on the worker after the trap returned to the task's entry. */
 void *avant_spawn_f(void *fn, void *arg, void *fail);
+/* A spawn whose block's value is not an Int: handle is the generated
+ * code's (the task word, then the value's slot), returned once queued;
+ * the block stores its value into avant_task_handle(). */
+void *avant_spawn_h(void *fn, void *arg, void *fail, void *handle);
+void *avant_task_handle(void);
 avant_int avant_join(void *handle);
 /* After avant_join: the trap that ended the task (its text, without the
  * site), or null when the block returned; and the trap's site, "" when
@@ -601,9 +698,29 @@ void avant_gate_clear_poison(void *obj, uint64_t off);
 int32_t avant_gate_poisoned(void *obj, uint64_t off);
 /* The recovery point's two entries for avant_rt_traps.c (hidden). */
 __attribute__((visibility("hidden"))) int avant_task_can_recover(void);
+
+/* A stack overflow's message (avant_stack.c): each registered thread's
+ * stack bounds and signal stack, set at its registration (or at a C
+ * thread's first callback), and what it runs, for the message; the private directory's cleanup on a crash
+ * (avant_io.c), which the fault handler runs. */
+#define AVANT_STACK_RUNTIME 0
+#define AVANT_STACK_FOREIGN 1
+#define AVANT_STACK_WORKER 2
+#define AVANT_STACK_LOOP 3
+__attribute__((visibility("hidden"))) void avant_stack_thread_init(void *lo, void *hi, int foreign);
+__attribute__((visibility("hidden"))) void avant_stack_role(int role);
+__attribute__((visibility("hidden"))) void avant_stack_ensure(void);
+__attribute__((visibility("hidden"))) void avant_tmp_on_crash(void);
 __attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
 __attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
-void avant_parallel_for(avant_int n, void *fn, void *ctx);
+/* A recovery point around one call of an Avant function from C
+ * (std.http's handlers): 0 when fn returned, 1 when it trapped. */
+int avant_task_recover_call(int32_t (*fn)(void *, void *), void *a, void *b);
+/* Returns once every body, and every task a body spawned, has ended:
+ * the number of bodies that trapped (0 when none); then, after the thaw,
+ * the generated code calls avant_parallel_trap when it is not 0. */
+int32_t avant_parallel_for(avant_int n, void *fn, void *ctx);
+__attribute__((noreturn)) void avant_parallel_trap(void);
 uint64_t avant_gate_new(void);
 /* The gate functions take the object holding the gate word and the word's
  * byte offset in it (avant_task.c). */
@@ -664,7 +781,6 @@ void *avant_json_get(void *node, const char *key);
 void *avant_json_at(void *node, avant_int i);
 void *avant_json_first(void *node);
 void *avant_json_next(void *node);
-void *avant_json_f64s(void *node, const char *key);
 avant_int avant_json_len(void *node);
 avant_int avant_json_as_int(void *node);
 avant_int avant_json_obj_int(void *node, const char *key);
@@ -729,11 +845,6 @@ avant_int avant_http_resp_status(const char *raw);
 char *avant_http_resp_headers(const char *raw);
 char *avant_http_resp_body(const char *raw);
 
-#define AVANT_HASH_KEY_I32 0
-#define AVANT_HASH_KEY_STR 1
-#define AVANT_HASH_VAL_I32 0
-#define AVANT_HASH_VAL_STR 1
-
 static inline AvantHeader *avant_header(void *payload) {
   return ((AvantHeader *)payload) - 1;
 }
@@ -744,6 +855,93 @@ static inline char *avant_str_alloc(uint64_t n) {
   avant_size_check(n, AVANT_SIZE_STRING);
   return (char *)avant_alloc(n + 1, AVANT_TYPE_BYTES);
 }
+
+/* A static empty string: a string object outside the heap with the
+ * header a literal has (its size the terminator alone, the string tag),
+ * for the runtime's entries that give the program an empty String
+ * without allocating (one per object file; no symbol). */
+typedef struct AvantStaticStr {
+  AvantHeader h;
+  char bytes[8];
+} AvantStaticStr;
+static inline char *avant_str_static_empty(void) {
+  static const AvantStaticStr empty = {{1u, AVANT_TYPE_BYTES, AVANT_FLAG_STRMETA}, {0}};
+  return (char *)empty.bytes;
+}
+#define AVANT_STR_EMPTY (avant_str_static_empty())
+
+/* A String or Bytes value is the address of a string object, one of two
+ * kinds the header's type id tells apart:
+ *  - flat (AVANT_TYPE_BYTES): the bytes themselves, then a terminator;
+ *    the header size is the bytes and the terminator. A heap string, or
+ *    a literal the compiler emitted with the same header.
+ *  - a view (AVANT_TYPE_STRVIEW): LEN bytes of a flat string BASE from
+ *    OFF on, with no terminator of their own (BASE's terminator ends the
+ *    view only when OFF + LEN is BASE's size). BASE is always the start of
+ *    a flat string object (a view of a view names the first view's base),
+ *    so the view's one reference field follows the field rule and keeps
+ *    the parent alive; the collector traces it by the type map the
+ *    generated code registers for the type id, and a moving collection
+ *    updates it like any field. A view is made only where it is worth an
+ *    object (AVANT_VIEW_MIN bytes or more) and where it cannot hold a much
+ *    larger parent alive (at least 1 / AVANT_VIEW_SHARE of its bytes);
+ *    any other slice is a copy.
+ * The previous release's compiler (avant_str_headered 0) makes neither: its
+ * code passes literals without a header, and no view is made for it. */
+typedef struct AvantStrView {
+  char *base;
+  uint32_t off;
+  uint32_t len;
+} AvantStrView;
+#define AVANT_VIEW_MIN 64u
+#define AVANT_VIEW_SHARE 4u
+extern int32_t avant_str_headered;
+size_t avant_str_n(const char *s);
+
+/* The bytes of a String or Bytes value S and their count in *N: a flat
+ * string's own, or the run of its base a view names (no terminator
+ * there); null is empty. The address lies inside an object that may
+ * move: form it again after any call that may collect. */
+static inline const char *avant_str_bytes(const char *s, size_t *n) {
+  const AvantHeader *h;
+  if (!s) {
+    *n = 0;
+    return AVANT_STR_EMPTY;
+  }
+  if (__builtin_expect(!avant_str_headered, 0)) {
+    *n = avant_str_n(s);
+    return s;
+  }
+  h = avant_header((void *)s);
+  if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
+    const AvantStrView *v = (const AvantStrView *)(const void *)s;
+    *n = v->len;
+    return v->base + v->off;
+  }
+  *n = (size_t)h->size - 1;
+  return s;
+}
+
+/* Whether S is a view (never under the previous compiler's code). */
+static inline int avant_str_is_view(const char *s) {
+  return s && avant_str_headered && avant_header((void *)s)->type_id == AVANT_TYPE_STRVIEW;
+}
+
+/* S as a flat string: itself, or a fresh copy of a view's bytes (a
+ * collecting call then). For the runtime's own C functions and for a
+ * store into C memory, which read a String as a terminated string with
+ * its length in the header. */
+char *avant_str_flat(const char *s);
+/* The address of S's bytes (avant_str_bytes), for generated code; IS_VIEW
+ * is the generated code's view test of S (the call form reads it again). */
+const char *avant_str_data(const char *s, int32_t is_view);
+/* 1 when S is a view, for generated code. */
+int32_t avant_str_view_test(const char *s);
+/* S as a `fun` argument (C's `char *`, terminated): a flat string
+ * itself; a view that ends its base's bytes, the address of its bytes
+ * (the base's terminator ends them, and the call keeps the base where it
+ * is); any other view, a fresh terminated copy (a collecting call then). */
+char *avant_str_c_arg(const char *s);
 
 static inline void avant_str_tag(void *payload) {
   if (payload) {

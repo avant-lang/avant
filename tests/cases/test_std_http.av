@@ -167,29 +167,29 @@ fn test_std_http(c: Checks) {
 
   if opened = Http.listen(0) {
     server = opened
-    server.get("/hello") { |req|
+    server.get("/hello", (req) {
       Response.text("hello http")
-    }
-    server.get("/q") { |req|
+    })
+    server.get("/q", (req) {
       Response.text("${req.path}|${req.query ?? ""}")
-    }
-    server.post("/echo") { |req|
+    })
+    server.post("/echo", (req) {
       Response.bytes(req.body)
-    }
-    server.get("/hdr") { |req|
+    })
+    server.get("/hdr", (req) {
       dups = req.headers.get_all("X-Dup")
       first = req.headers.get("x-dup") ?? ""
       Response.text("${first}/${dups.size}/${req.headers.has("X-One")}")
-    }
-    server.get("/old") { |req|
+    })
+    server.get("/old", (req) {
       Response.text("", 302).header("Location", "/new")
-    }
-    server.get("/new") { |req|
+    })
+    server.get("/new", (req) {
       Response.text("landed")
-    }
-    server.get("/meta") { |req|
+    })
+    server.get("/meta", (req) {
       Response.text("created", 201).header("X-Made", "yes")
-    }
+    })
     port = server.port()
     c.expect(port > 0, "ephemeral port bound")
 
@@ -200,10 +200,10 @@ fn test_std_http(c: Checks) {
       c.expect(true, "second listen on same port fails")
     }
 
-    server.get("/__stop") { |req|
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     out = Channel(String).new(16)
     handle = spawn {
       client_round(port, out)
@@ -240,16 +240,16 @@ fn test_std_http(c: Checks) {
 
   if opened = Http.listen(0, "127.0.0.1", 8) {
     server = opened
-    server.post("/echo") { |req|
+    server.post("/echo", (req) {
       Response.bytes(req.body)
-    }
-    server.get("/ping") { |req|
+    })
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     out = Channel(String).new(8)
     port = server.port()
     handle = spawn {
@@ -284,37 +284,37 @@ fn test_std_http(c: Checks) {
 
   if opened = Http.listen(0, "127.0.0.1", 1048576, 2, 64) {
     server = opened
-    server.websocket("/echo") { |conn, msg|
+    server.websocket("/echo", (conn, msg) {
       sent = conn.send_message(msg)
-    }
-    server.websocket("/shout") { |conn, msg|
+    })
+    server.websocket("/shout", (conn, msg) {
       if msg.is_text {
         sent = conn.send_text("text:${msg.text() ?? ""}")
       } else {
         sent = conn.send_bytes(msg.body)
       }
-    }
-    server.websocket("/work") { |conn, msg|
+    })
+    server.websocket("/work", (conn, msg) {
       sender = conn.sender()
       handle = spawn {
         sent = sender.send_text("worked")
         0
       }
-    }
-    server.websocket("/bye") { |conn, msg|
+    })
+    server.websocket("/bye", (conn, msg) {
       sent = conn.close(1000, "done")
-    }
+    })
     events = Channel(String).new(16)
-    server.websocket_open("/echo") { |conn|
+    server.websocket_open("/echo", (conn) {
       events.send("open")
-    }
-    server.websocket_close("/echo") { |conn, code, reason|
+    })
+    server.websocket_close("/echo", (conn, code, reason) {
       events.send("close=${code}:${reason}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     out = Channel(String).new(4)
     cout = Channel(String).new(2)
     port = server.port()
@@ -349,11 +349,11 @@ fn test_std_http(c: Checks) {
     // connection's close, so the order across connections is not fixed:
     // count the opens and require each close code exactly once.
     evgot: Array(String) = []
-    for i in 0..8 {
+    for i2 in 0..8 {
       if line = events.recv() {
         evgot.push(line)
       } else {
-        c.expect(false, "ws event ${i} present")
+        c.expect(false, "ws event ${i2} present")
       }
     }
     opens = 0
@@ -373,8 +373,8 @@ fn test_std_http(c: Checks) {
     k = 0
     while k < closes.size {
       seen = 0
-      for i in 0..evgot.size {
-        if evgot[i] == closes[k] {
+      for ix in 0..evgot.size {
+        if evgot[ix] == closes[k] {
           seen += 1
         }
       }
@@ -436,13 +436,13 @@ fn test_std_http(c: Checks) {
   // several connections at once, clean stop through a handler.
   if opened = Http.listen(0, "127.0.0.1", 1048576, 4) {
     server = opened
-    server.get("/ping") { |req|
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     done = Channel(Int).new(8)

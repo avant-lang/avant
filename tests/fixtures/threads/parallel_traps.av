@@ -1,0 +1,49 @@
+// A .parallel whose bodies trap: each trapping body ends alone (its trap
+// is told on stderr when it happens), the others run to their end, and
+// then the .parallel traps in its caller, naming how many bodies trapped
+// and the first one's trap. In a task (argument `task`) that ends the
+// task, whose join gives the TaskError, and the program goes on; on the
+// main thread (no argument: the run goldens) it ends the program.
+// Run by tests/cases/test_task_results.av.
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn main: Int {
+  a = argv()
+  xs = [1, 2, 3]
+  ids = [0, 1, 2, 3, 4, 5]
+  if a.size > 1 && a[a.size - 1] == "task" {
+    h = spawn {
+      ys = ids.parallel (i) {
+        if i % 2 == 1 {
+          return_or(at(xs, 7 + i))
+        } else {
+          i
+        }
+      }
+      ys.size
+    }
+    v = h.join() else e {
+      puts("task: ${e.what}")
+      puts("after")
+      return 0
+    }
+    puts(v)
+    return 0
+  }
+  ys = ids.parallel (i) {
+    if i == 4 {
+      at(xs, 9)
+    } else {
+      i * 2
+    }
+  }
+  puts(ys.size)
+  0
+}
+
+fn return_or(v: Int): Int {
+  v
+}

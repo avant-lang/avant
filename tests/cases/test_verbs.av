@@ -1,0 +1,142 @@
+import harness
+import backends
+
+// The refusals of the sequence and array verbs: slices (`xs[a..b]`, the
+// open and inclusive forms, `slice`, `try_slice`), the verbs that take a
+// lambda (`find`, `index_of`, `min_by`, `max_by`, `delete_if`), `fill`,
+// `unique`, `first`, `push_str`'s argument; a function given by name, `insert`, `concat`, `a + b`, `shuffle`'s generator, `try_shl`, and the names with one spelling (`retain`, `remove`); the search methods of String, Bytes and Buf, an array's `index_of` from a start, `join`, `replace`, `pad_left`, `split` with a limit, and `-=` on a String (only `+=` joins strings); `eq_ignore_ascii_case`, `to_ascii_lower`, `lines`, `delete_prefix` and `delete_suffix`; the traps of `count`, `replace`, `repeat`, `split`'s limit and a pattern or fill byte outside 0..255. What they compute is in
+// the run goldens of tests/fixtures/heap/slices.av, verbs.av and
+// trap_slice.av, and tests/fixtures/strings/search.av, build.av and
+// trap_search_from.av. Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column.
+
+class LCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+  pub trap: Bool = false
+}
+
+// A program that compiles and stops with a trap whose line says want.
+fn traps(tag: String, src: String, want: String): LCase {
+  f = LCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = want
+  f.ok = true
+  f.trap = true
+  f
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): LCase {
+  f = LCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("slice-inclusive-open", "fn main {\n  xs = [1, 2]\n  puts(xs[1..=].size)\n}\n", "an inclusive slice needs its last index", "3:12"))
+  xs.push(refused("slice-bounds", "fn main {\n  xs = [1, 2]\n  puts(xs[1.5..].size)\n}\n", "the bounds of a slice are Int, got Float64", "3:11"))
+  xs.push(refused("slice-arity", "fn main {\n  s = \"abc\"\n  puts(s.slice(1, 2, 3))\n}\n", "slice takes start and stop, or start alone", "3:9"))
+  xs.push(refused("find-pipes", "fn main {\n  xs = [1, 2]\n  puts(xs.find { |x| x > 1 } ?? 0)\n}\n", "find takes a lambda: write find((x) { ... })", "3:16"))
+  xs.push(refused("find-break", "fn main {\n  xs = [1, 2]\n  puts(xs.find((x) {\n    if x > 1 {\n      break\n    }\n    true\n  }) ?? 0)\n}\n", "break inside a lambda given to find", "5:7"))
+  xs.push(refused("find-predicate", "fn main {\n  xs = [1, 2]\n  puts(xs.find((x) { x }) ?? 0)\n}\n", "the predicate of find must give a Bool, got Int", "3:16"))
+  xs.push(refused("min-by-key", "fn main {\n  xs = [1, 2]\n  puts(xs.min_by((x) { [x] }) ?? 0)\n}\n", "the key of min_by must be a number, a String or Bytes, got Array(Int)", "3:18"))
+  xs.push(refused("delete-if-walk", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    xs.delete_if((y) { y == x })\n  }\n}\n", "cannot delete_if xs while walking it", "4:7"))
+  xs.push(refused("fill-shared", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  bs = [Box.new()]\n  bs.fill(Box.new())\n}\n", "fill(v) would put the same object in every element", "7:14"))
+  xs.push(refused("unique-eq", "fn main {\n  bs = [Buf.new()]\n  puts(bs.unique().size)\n}\n", "unique compares the elements with ==: Buf has no ==", "3:10"))
+  xs.push(refused("first-arguments", "fn main {\n  xs = [1, 2]\n  puts(xs.first(1) ?? 0)\n}\n", "first takes no arguments", "3:10"))
+  xs.push(refused("push-str-type", "fn main {\n  b = Buf.new()\n  b.push_str(5)\n}\n", "push_str expects String, Bytes or Buf, got Int", "3:14"))
+  xs.push(refused("each-function-type", "fn shout(s: String) {\n  puts(s)\n}\n\nfn main {\n  xs = [1, 2]\n  xs.each(shout)\n}\n", "argument 1 of shout is Int, expected String", "7:11"))
+  xs.push(refused("shuffle-random", "fn main {\n  xs = [1, 2]\n  xs.shuffle(7)\n}\n", "shuffle takes a Random (import std.random; Random.new(seed)), got Int", "3:14"))
+  xs.push(refused("concat-type", "fn main {\n  xs = [1, 2]\n  xs.concat([\"a\"])\n}\n", "array element is String, expected Int", "3:14"))
+  xs.push(refused("remove-hint", "fn main {\n  xs = [1, 2]\n  xs.remove(0)\n}\n", "no method remove on Array(Int) (write `xs.delete_at(i)`", "3:5"))
+  xs.push(refused("retain-hint", "fn main {\n  xs = [1]\n  xs.retain((x) { x > 0 })\n}\n", "no method retain on Array(Int) (write `xs.delete_if (x) { ... }` with the test turned around)", "3:5"))
+  xs.push(refused("try-shl-float", "fn main {\n  x = 1.5\n  puts(x.try_shl(1) ?? 0.0)\n}\n", "no method try_shl on Float64", "3:9"))
+  xs.push(refused("insert-type", "fn main {\n  xs = [1, 2]\n  xs.insert(0, \"a\")\n}\n", "insert expects Int, got String", "3:16"))
+  xs.push(refused("contains-pattern", "fn main {\n  s = \"abc\"\n  puts(s.contains(1.5))\n}\n", "the pattern of contains is a String, Bytes, Buf or a byte (Int), got Float64", "3:19"))
+  xs.push(refused("index-of-start", "fn main {\n  s = \"abc\"\n  puts(s.index_of(\"a\", \"b\") ?? 0)\n}\n", "the start of index_of is an Int, got String", "3:24"))
+  xs.push(refused("count-arity", "fn main {\n  b = Buf.new()\n  puts(b.count())\n}\n", "count takes one pattern: a String, Bytes, Buf or a byte", "3:9"))
+  xs.push(refused("array-index-of-start", "fn main {\n  xs = [1, 2]\n  puts(xs.index_of(1, 2.5) ?? 0)\n}\n", "the start of index_of is an Int, got Float64", "3:23"))
+  xs.push(refused("join-elements", "fn main {\n  xs = [1, 2]\n  puts(xs.join(\",\"))\n}\n", "join takes an Array(String), got Array(Int)", "3:10"))
+  xs.push(refused("replace-arity", "fn main {\n  s = \"abc\"\n  puts(s.replace(\"a\"))\n}\n", "replace takes the String to find and the String to put in its place", "3:9"))
+  xs.push(refused("pad-fill", "fn main {\n  s = \"7\"\n  puts(s.pad_left(3, \"0\"))\n}\n", "the width and the fill byte of pad_left are Int, got String", "3:22"))
+  xs.push(refused("split-limit", "fn main {\n  s = \"a,b\"\n  puts(s.split(\",\", \"2\").size)\n}\n", "the limit of split is an Int, got String", "3:21"))
+  xs.push(refused("minus-eq-string", "fn main {\n  s = \"abc\"\n  s -= \"a\"\n  puts(s)\n}\n", "compound assignment expects a numeric target, got String", "3:5"))
+  xs.push(refused("eq-case-byte", "fn main {\n  s = \"abc\"\n  puts(s.eq_ignore_ascii_case('a'))\n}\n", "eq_ignore_ascii_case compares with a String, Bytes or Buf, got Int", "3:31"))
+  xs.push(refused("ascii-lower-args", "fn main {\n  s = \"abc\"\n  puts(s.to_ascii_lower(1))\n}\n", "to_ascii_lower takes no arguments", "3:9"))
+  xs.push(refused("lines-args", "fn main {\n  s = \"a\\nb\"\n  puts(s.lines(\"\\n\").size)\n}\n", "lines takes no arguments", "3:9"))
+  xs.push(refused("delete-suffix-type", "fn main {\n  s = \"a/\"\n  puts(s.delete_suffix('/'))\n}\n", "delete_suffix expects String, got Int", "3:24"))
+  xs.push(refused("delete-prefix-arity", "fn main {\n  s = \"va\"\n  puts(s.delete_prefix())\n}\n", "delete_prefix takes one String, the part to remove", "3:9"))
+  xs.push(traps("count-empty", "fn main {\n  s = \"abc\"\n  p = \"\"\n  puts(s.count(p))\n}\n", "avant runtime: count of an empty pattern"))
+  xs.push(traps("replace-empty", "fn main {\n  s = \"abc\"\n  p = \"\"\n  puts(s.replace(p, \"x\"))\n}\n", "avant runtime: replace of an empty pattern"))
+  xs.push(traps("repeat-negative", "fn main {\n  n = -2\n  puts(\"ab\".repeat(n))\n}\n", "avant runtime: repeat count -2 is negative"))
+  xs.push(traps("split-limit-zero", "fn main {\n  n = 0\n  puts(\"a,b\".split(\",\", n).size)\n}\n", "avant runtime: split limit 0 is less than 1"))
+  xs.push(traps("pad-byte", "fn main {\n  b = 300\n  puts(\"7\".pad_left(3, b))\n}\n", "avant runtime: byte 300 out of range (0..255)"))
+  xs.push(traps("search-byte", "fn main {\n  b = 256\n  puts(\"abc\".contains(b))\n}\n", "avant runtime: byte 256 out of range (0..255)"))
+  xs.push(refused("join-types", "fn main {\n  xs = [1, 2]\n  ys = [\"a\"]\n  puts((xs + ys).size)\n}\n", "cannot join Array(Int) and Array(String)", "4:12"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/verb-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/verb-${f.tag}.bin", "${dir}/verb-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "verb-${f2.tag}.bin", "verb-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/verb-${f3.tag}.log")
+    if f3.trap {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
+      c.expect(log_text("${dir}/verb-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: traps with ${f3.want}")
+      k += 1
+    } else if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/verb-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/verb-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("verb-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_verbs.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

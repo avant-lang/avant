@@ -862,7 +862,7 @@ int64_t ffi_late_pinned(void *obj) {
  *
  * ffi_gc_count gives one of the collector's public counters
  * (avant_gc_stats): 0 the full collections, 1 the young ones, 2 the bytes
- * the last collection found live. */
+ * the last collection found live, 3 the heap's high-water mark. */
 typedef struct {
   uint64_t collections;
   uint64_t young_collections;
@@ -888,7 +888,10 @@ int64_t ffi_proof_store(void *holder, void *v, int64_t mode) {
 int64_t ffi_gc_count(int64_t which) {
   FfiGcStats st;
   avant_gc_stats(&st);
-  return (int64_t)(which == 0 ? st.full_collections : which == 1 ? st.young_collections : st.live_bytes);
+  return (int64_t)(which == 0   ? st.full_collections
+                   : which == 1 ? st.young_collections
+                   : which == 3 ? st.peak_heap
+                                : st.live_bytes);
 }
 
 /* complete.av: C pins S (a root the program does not hold) and keeps its
@@ -910,4 +913,212 @@ int64_t ffi_unpin_kept(void) {
     ffi_pin_kept = NULL;
   }
   return 1;
+}
+
+/* frame_layout.av: generated code keeps its root words in its frame
+ * record and links a record inline when the thread already has one.
+ * fl_leave calls avant_gc_leave with no avant_gc_enter of its own: the
+ * innermost frame is its Avant caller's record, which the runtime refuses
+ * with a message (it would otherwise put that record, whose words are the
+ * caller's locals, on the thread's free list). fl_inline_bottom links a
+ * record laid out as generated code lays it out, { prev, desc } and one
+ * root word, as the bottom of the thread's chain (no frame below it, as
+ * if a function that is not a thread's first frame ran first) and asks
+ * for a collection: the checked mode stops the program before it
+ * collects; the chain is put back after it. */
+void avant_gc_collect(void);
+struct AvantGcFrame;
+extern __thread struct AvantGcFrame *avant_gc_top;
+
+int64_t fl_leave(void) {
+  avant_gc_leave();
+  return 1;
+}
+
+int64_t fl_inline_bottom(void) {
+  void *rec[3];
+  struct AvantGcFrame *saved = avant_gc_top;
+  rec[0] = NULL;
+  rec[1] = (void *)(uintptr_t)3; /* inline map: word 0 is a root word */
+  rec[2] = NULL;
+  avant_gc_top = (struct AvantGcFrame *)rec;
+  avant_gc_collect();
+  avant_gc_top = saved;
+  return 1;
+}
+
+/* c_strings.av: strings C hands to the program. A static buffer C writes
+ * again on the next call, a buffer C frees, a struct with a string
+ * returned by value, a C field and a callback's argument. */
+static char cs_buf[32];
+const char *cs_next(int n) {
+  snprintf(cs_buf, sizeof cs_buf, "call-%d", n);
+  return cs_buf;
+}
+static char *cs_owned;
+const char *cs_fresh(void) {
+  cs_owned = strdup("freed-by-C-later");
+  return cs_owned;
+}
+void cs_free(void) {
+  memset(cs_owned, 'x', strlen(cs_owned));
+  free(cs_owned);
+  cs_owned = NULL;
+}
+typedef struct CsPair { int n; const char *s; } CsPair;
+CsPair cs_pair(void) {
+  CsPair p = { 5, cs_buf };
+  snprintf(cs_buf, sizeof cs_buf, "pair-text");
+  return p;
+}
+typedef struct CsHold { const char *name; int64_t id; } CsHold;
+static CsHold cs_hold = { "held-name", 9 };
+CsHold *cs_holder(void) { return &cs_hold; }
+void cs_rename(const char *s) { cs_hold.name = s; }
+typedef void (*cs_cb)(const char *);
+void cs_call(cs_cb f) {
+  snprintf(cs_buf, sizeof cs_buf, "cb-arg");
+  f(cs_buf);
+  snprintf(cs_buf, sizeof cs_buf, "cb-changed");
+}
+
+/* c_views.av: what C sees of a string view. */
+int64_t cv_len(const char *s) { return (int64_t)strlen(s); }
+int64_t cv_before(const char *s) { return (int64_t)(unsigned char)s[-1]; }
+typedef struct CvPair { int64_t n; const char *s; } CvPair;
+int64_t cv_pair_len(CvPair p) { return (int64_t)strlen(p.s) + p.n; }
+typedef struct CvHold { const char *name; int64_t id; } CvHold;
+static CvHold cv_hold;
+CvHold *cv_holder(void) { return &cv_hold; }
+int64_t cv_held_len(void) { return cv_hold.name ? (int64_t)strlen(cv_hold.name) : -1; }
+typedef const char *(*cv_give_t)(void);
+int64_t cv_take(cv_give_t f) { return (int64_t)strlen(f()); }
+
+/* pointers.av: C arrays read and written through a pointer, p[i]. */
+static int32_t pt_ints[4] = { 10, -20, 30, -40 };
+int32_t *pt_ints_at(void) { return pt_ints; }
+int64_t pt_ints_sum(const int32_t *p, int n) {
+  int64_t s = 0;
+  for (int i = 0; i < n; i++) {
+    s += p[i];
+  }
+  return s;
+}
+static int64_t pt_longs[2] = { 1LL << 40, -7 };
+int64_t *pt_longs_at(void) { return pt_longs; }
+static uint8_t pt_bytes[5] = { 0, 1, 127, 128, 255 };
+uint8_t *pt_bytes_at(void) { return pt_bytes; }
+int pt_bytes_sum(const uint8_t *p, int n) {
+  int s = 0;
+  for (int i = 0; i < n; i++) {
+    s += p[i];
+  }
+  return s;
+}
+static int8_t pt_sbytes[3] = { -128, 0, 127 };
+int8_t *pt_sbytes_at(void) { return pt_sbytes; }
+static uint16_t pt_shorts[2] = { 65535, 7 };
+uint16_t *pt_shorts_at(void) { return pt_shorts; }
+static float pt_floats[2] = { 1.5f, -0.25f };
+float *pt_floats_at(void) { return pt_floats; }
+static double pt_doubles[2] = { 2.5, 1e10 };
+double *pt_doubles_at(void) { return pt_doubles; }
+static uint64_t pt_wide[1] = { 18446744073709551615ULL };
+uint64_t *pt_wide_at(void) { return pt_wide; }
+static bool pt_flags[2] = { true, false };
+bool *pt_flags_at(void) { return pt_flags; }
+typedef struct PtPair { int32_t a; int32_t b; } PtPair;
+static PtPair pt_p0 = { 1, 2 };
+static PtPair pt_p1 = { 3, 4 };
+static PtPair *pt_pairs[3] = { &pt_p0, NULL, &pt_p1 };
+PtPair **pt_pairs_at(void) { return pt_pairs; }
+int pt_pair_null(int i) { return pt_pairs[i] == NULL; }
+/* pointers.av: the C sizes L.size must equal. */
+typedef struct PtMixed { int8_t a; double b; int16_t c; } PtMixed;
+typedef struct PtNest { PtPair p; uint8_t x; } PtNest;
+typedef struct PtRefs { const char *s; bool f; void *v; float g; } PtRefs;
+int64_t pt_sizeof(int which) {
+  switch (which) {
+  case 0: return (int64_t)sizeof(PtPair);
+  case 1: return (int64_t)sizeof(PtMixed);
+  case 2: return (int64_t)sizeof(PtNest);
+  default: return (int64_t)sizeof(PtRefs);
+  }
+}
+/* pointers.av: out-parameters C writes through (&x). */
+int pt_out_int(int32_t *out) {
+  *out = *out + 41;
+  return 1;
+}
+int pt_out_pair(PtPair **out, int which) {
+  *out = which ? &pt_p1 : NULL;
+  return which;
+}
+void pt_out_u8(uint8_t *b) { *b = (uint8_t)(*b * 2); }
+void pt_out_f32(float *f) { *f = *f / 2; }
+int64_t pt_out_two(int64_t *a, double *d) {
+  *a = 7;
+  *d = 0.5;
+  return 3;
+}
+int pt_names(char **argv, void **slots) { return argv != NULL && slots != NULL; }
+/* pointers.av: bytes with a length, a NUL among them (from_c). */
+static const uint8_t pt_blob_bytes[5] = { 'a', 'b', 0, 'c', 'd' };
+const uint8_t *pt_blob(void) { return pt_blob_bytes; }
+const char *pt_none(void) { return NULL; }
+/* pointers.av: fixed arrays inside a layout (T[N]). */
+typedef struct PtReply {
+  int type;
+  long long integer;
+  double dval;
+  size_t len;
+  char *str;
+  char vtype[4];
+  size_t elements;
+  struct PtReply **element;
+} PtReply;
+static PtReply pt_reply = { 1, 7, 0.0, 3, "abc", "txt", 2, NULL };
+PtReply *pt_reply_at(void) { return &pt_reply; }
+typedef struct PtErr { uint32_t domain; uint32_t code; char message[504]; } PtErr;
+static PtErr pt_err = { 1, 2, "bad json at 3" };
+PtErr *pt_err_at(void) { return &pt_err; }
+typedef struct PtGrid { int32_t cells[3]; PtPair pairs[2]; uint8_t tail; } PtGrid;
+static PtGrid pt_grid = { { 1, 2, 3 }, { { 5, 6 }, { 7, 8 } }, 9 };
+PtGrid *pt_grid_at(void) { return &pt_grid; }
+int64_t pt_grid_sum(const PtGrid *g) {
+  return g->cells[0] + g->cells[1] + g->cells[2] + g->pairs[0].a + g->pairs[0].b + g->pairs[1].a + g->pairs[1].b + g->tail;
+}
+int64_t pt_sizeof_arrays(int which) {
+  switch (which) {
+  case 0: return (int64_t)sizeof(PtReply);
+  case 1: return (int64_t)sizeof(PtErr);
+  case 2: return (int64_t)offsetof(PtReply, elements);
+  default: return (int64_t)sizeof(PtGrid);
+  }
+}
+/* pointers.av: one allocator for every layout (p.as(T), Ptr(T) as void *). */
+void pt_free(void *p) { free(p); }
+int pt_is_null(const void *p) { return p == NULL; }
+
+/* tests/fixtures/ffi/stack_overflow_thread.av: a C thread Avant did not
+ * start calls an Avant callback that recurses too deep; the main thread
+ * waits natively for it (the process ends inside the thread). */
+typedef int64_t (*so_cb_t)(int64_t);
+static so_cb_t so_cb;
+static int64_t so_got;
+static void *so_run(void *arg) {
+  (void)arg;
+  so_got = so_cb(100000000);
+  return NULL;
+}
+int64_t so_call_on_thread(so_cb_t f) {
+  pthread_t t;
+  so_cb = f;
+  if (pthread_create(&t, NULL, so_run, NULL) != 0) {
+    return -1;
+  }
+  avant_gc_native_begin();
+  pthread_join(t, NULL);
+  avant_gc_native_end();
+  return so_got;
 }

@@ -34,7 +34,7 @@ fn tags_lines(text: String): Array(String) {
 fn tags_count(lines: Array(String), a: String, b: String): Int {
   n = 0
   for l in lines {
-    if str_has(l, a) && str_has(l, b) {
+    if l.contains(a) && l.contains(b) {
       n += 1
     }
   }
@@ -70,12 +70,12 @@ fn test_alias_tags_cap(c: Checks, compiler: String, stamp: Int) {
     atomic = 0
     tagged = 0
     for i in 0..lines.size - 1 {
-      if str_has(lines[i], "getelementptr inbounds %\"Array(") && str_has(lines[i], ", i32 0, i32 2") && str_has(lines[i + 1], " = load") {
+      if lines[i].contains("getelementptr inbounds %\"Array(") && lines[i].contains(", i32 0, i32 2") && lines[i + 1].contains(" = load") {
         reads += 1
-        if str_has(lines[i + 1], "load atomic i32, ptr %t") && str_has(lines[i + 1], " monotonic, align 4") {
+        if lines[i + 1].contains("load atomic i32, ptr %t") && lines[i + 1].contains(" monotonic, align 4") {
           atomic += 1
         }
-        if str_has(lines[i + 1], "!tbaa") {
+        if lines[i + 1].contains("!tbaa") {
           tagged += 1
         }
       }
@@ -96,18 +96,18 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   c.eq_int(emit_ll(compiler, src, ll, log), 0, "the array probe's .ll")
   if text = file_read(ll) {
     lines = tags_lines(text)
-    c.expect(str_has(text, "!1 = !{!\"avant alias\"}"), "the alias root")
-    c.expect(str_has(text, "!3 = !{!2, !2, i64 0}"), "the element tag")
-    c.expect(str_has(text, "!5 = !{!4, !4, i64 0}"), "the buffer reference tag")
-    c.expect(str_has(text, "!7 = !{!6, !6, i64 0}"), "the size tag")
-    c.expect(str_has(text, "!9 = !{!8, !8, i64 0}"), "the local tag")
+    c.expect(text.contains("!1 = !{!\"avant alias\"}"), "the alias root")
+    c.expect(text.contains("!3 = !{!2, !2, i64 0}"), "the element tag")
+    c.expect(text.contains("!5 = !{!4, !4, i64 0}"), "the buffer reference tag")
+    c.expect(text.contains("!7 = !{!6, !6, i64 0}"), "the size tag")
+    c.expect(text.contains("!9 = !{!8, !8, i64 0}"), "the local tag")
     c.expect(tags_count(lines, "store i1 false, ptr %t", ", !tbaa !3") >= 1, "an element store carries the element tag")
     c.expect(tags_count(lines, "load i1, ptr %t", ", !tbaa !3") >= 1, "an element load carries the element tag")
     c.expect(tags_count(lines, "load ptr, ptr %t", ", !tbaa !5") >= 2, "the buffer reference's loads carry its tag")
     c.expect(tags_count(lines, "store ptr %t", ", !tbaa !5") >= 1, "the new array's buffer reference store carries its tag")
     c.expect(tags_count(lines, "load i32, ptr %t", ", !tbaa !7") >= 1, "the size's loads carry its tag")
     c.eq_int(tags_count(lines, "load i32, ptr %t", ", !tbaa !7, !range !12"), tags_count(lines, "load i32, ptr %t", ", !tbaa !7"), "every size load carries the size's range")
-    c.expect(str_has(text, "!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
+    c.expect(text.contains("!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
     c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
     c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
     // A checked add's result is the plain add with no signed wrap, after
@@ -117,9 +117,9 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     cap_reads = 0
     cap_tagged = 0
     for i in 0..lines.size - 1 {
-      if str_has(lines[i], "getelementptr inbounds %\"Array(") && str_has(lines[i], ", i32 0, i32 2") {
+      if lines[i].contains("getelementptr inbounds %\"Array(") && lines[i].contains(", i32 0, i32 2") {
         cap_reads += 1
-        if str_has(lines[i + 1], "!tbaa") {
+        if lines[i + 1].contains("!tbaa") {
           cap_tagged += 1
         }
       }
@@ -139,16 +139,16 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     fields = 0
     tagged = 0
     for i in 0..lines2.size - 1 {
-      if str_has(lines2[i], ".Box\", ptr %t") {
+      if lines2[i].contains(".Box\", ptr %t") {
         fields += 1
-        if str_has(lines2[i + 1], ", !tbaa !11") {
+        if lines2[i + 1].contains(", !tbaa !11") {
           tagged += 1
         }
       }
     }
     c.expect(fields >= 2, "the probe reaches an object's field")
     c.eq_int(tagged, fields, "an object's field carries the object field tag")
-    c.expect(str_has(text2, "!11 = !{!10, !10, i64 0}"), "the object field tag")
+    c.expect(text2.contains("!11 = !{!10, !10, i64 0}"), "the object field tag")
     c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !11", ""), 0, "only locals and object fields are tagged without an array")
   } else {
     c.expect(false, "read the object and hash probe's .ll")

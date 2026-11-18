@@ -14,8 +14,8 @@ fn test_coverage(c: Checks) {
     dump_code = dump_av_cov(compiler, src, dump_log)
     c.eq_int(dump_code, 0, "dump with AVANT_COVERAGE")
     if ir = file_read(dump_log) {
-      c.expect(str_has(ir, "avant_cov_hit"), "dump IR has avant_cov_hit")
-      c.expect(str_has(ir, "avant_cov_init"), "dump IR has avant_cov_init")
+      c.expect(ir.contains("avant_cov_hit"), "dump IR has avant_cov_hit")
+      c.expect(ir.contains("avant_cov_init"), "dump IR has avant_cov_init")
     } else {
       c.expect(false, "dump with AVANT_COVERAGE")
     }
@@ -25,16 +25,14 @@ fn test_coverage(c: Checks) {
     c.expect(file_exists(bin), "coverage bin exists")
     c.expect(file_exists("${bin}.covmap"), "slot map defaults beside the binary")
     if ir_map = file_read(dump_log) {
-      c.expect(str_has(ir_map, "/coverage.map"), "dump keeps its slot map in the scratch directory")
+      c.expect(ir_map.contains("/coverage.map"), "dump keeps its slot map in the scratch directory")
     }
     // Into a missing directory: the slot map is written while the
     // program is lowered, so its directory is created before it (the map
     // beside the binary, and AVANT_COVERAGE_MAP; on both back ends until
     // the old one retired).
     backs = ["llvm"]
-    bi = 0
-    while bi < backs.size {
-      bk = backs[bi]
+    for bk in backs {
       nd = "${scratch()}/coverage-${stamp}-newdir-${bk}"
       nd_args: Array(String) = []
       nd_args.push("AVANT_BACKEND=${bk}")
@@ -47,7 +45,7 @@ fn test_coverage(c: Checks) {
       c.eq_int(nd_code, 0, "${bk}: compile with AVANT_COVERAGE into a missing directory")
       c.expect(file_exists("${nd}/a/b/cov.bin"), "${bk}: the binary is in the created directory")
       if nm = file_read("${nd}/a/b/cov.bin.covmap") {
-        c.expect(str_has(nm, "covered"), "${bk}: the slot map is written beside it")
+        c.expect(nm.contains("covered"), "${bk}: the slot map is written beside it")
       } else {
         c.expect(false, "${bk}: the slot map is written beside it")
       }
@@ -79,7 +77,6 @@ fn test_coverage(c: Checks) {
       c.eq_int(lm_code, 1, "${bk}: a coverage build whose slot map cannot be written fails")
       c.expect(!file_exists("${nd}/lost/cov.bin"), "${bk}: and builds no binary")
       c.eq_str(file_read("${nd}-lost.log") ?? "", "error: the coverage map was not written: cannot write ${nd}/isdir: Is a directory\n", "${bk}: and names the file and the reason")
-      bi += 1
     }
     chmod_x(bin)
     // The fixture writes its own lcov. The compiler's report is a different file.
@@ -92,21 +89,21 @@ fn test_coverage(c: Checks) {
     run_code = process_run_out("/usr/bin/env", cov_run, log) ?? -1
     c.eq_int(run_code, 0, "run coverage fixture")
     if out = file_read(log) {
-      c.expect(str_has(out, "% Stmts"), "coverage has % Stmts")
-      c.expect(str_has(out, "% Branch"), "coverage has % Branch")
-      c.expect(str_has(out, "% Funcs"), "coverage has % Funcs")
-      c.expect(str_has(out, "% Lines"), "coverage has % Lines")
-      c.expect(str_has(out, "Uncovered Line"), "coverage has Uncovered Line")
-      c.expect(str_has(out, "All files"), "coverage has All files")
+      c.expect(out.contains("% Stmts"), "coverage has % Stmts")
+      c.expect(out.contains("% Branch"), "coverage has % Branch")
+      c.expect(out.contains("% Funcs"), "coverage has % Funcs")
+      c.expect(out.contains("% Lines"), "coverage has % Lines")
+      c.expect(out.contains("Uncovered Line"), "coverage has Uncovered Line")
+      c.expect(out.contains("All files"), "coverage has All files")
     } else {
       c.expect(false, "coverage table")
     }
     if lcov = file_read(fix_lcov) {
-      c.expect(str_has(lcov, "TN:"), "lcov has TN:")
-      c.expect(str_has(lcov, "SF:"), "lcov has SF:")
-      c.expect(str_has(lcov, "DA:"), "lcov has DA:")
-      c.expect(str_has(lcov, "end_of_record"), "lcov has end_of_record")
-      c.expect(str_has(lcov, "SF:coverage-${stamp}-cov.av\n"), "absolute path keeps its file name")
+      c.expect(lcov.contains("TN:"), "lcov has TN:")
+      c.expect(lcov.contains("SF:"), "lcov has SF:")
+      c.expect(lcov.contains("DA:"), "lcov has DA:")
+      c.expect(lcov.contains("end_of_record"), "lcov has end_of_record")
+      c.expect(lcov.contains("SF:coverage-${stamp}-cov.av\n"), "absolute path keeps its file name")
     } else {
       c.expect(false, "fixture lcov")
     }
@@ -139,7 +136,7 @@ fn test_coverage(c: Checks) {
     rel_run_code = process_run_out("/usr/bin/env", rel_run, rel_log) ?? -1
     c.eq_int(rel_run_code, 0, "run relative coverage fixture")
     if rel_out = file_read(rel_log) {
-      if str_has(rel_out, "% Stmts") {
+      if rel_out.contains("% Stmts") {
         c.expect(false, "REPORT=0 hides the table")
       } else {
         c.expect(true, "REPORT=0 hides the table")
@@ -148,7 +145,7 @@ fn test_coverage(c: Checks) {
       c.expect(false, "REPORT=0 log")
     }
     if rel_lcov = file_read(rel_lcov_path) {
-      c.expect(str_has(rel_lcov, "SF:${rel_src}\n"), "relative SF keeps the directory")
+      c.expect(rel_lcov.contains("SF:${rel_src}\n"), "relative SF keeps the directory")
     } else {
       c.expect(false, "relative lcov")
     }
@@ -172,23 +169,23 @@ fn test_coverage(c: Checks) {
     jcode = process_run_out("/usr/bin/env", env_args, jlog) ?? -1
     c.eq_int(jcode, 0, "mini suite for junit")
     if jout = file_read(jlog) {
-      c.expect(str_has(jout, "PASS ok"), "mini suite prints PASS")
+      c.expect(jout.contains("PASS ok"), "mini suite prints PASS")
       // The runner names a file relative to its working directory when the
       // file is inside it (TMPDIR inside the checkout).
       jname = jcase
       here = "${cwd_here()}/"
-      if str_has(jcase, here) && str_slice(jcase, 0, here.size) == here {
+      if jcase.contains(here) && str_slice(jcase, 0, here.size) == here {
         jname = str_slice(jcase, here.size, jcase.size)
       }
-      c.expect(str_has(jout, "ok ${jname}\n"), "runner names the file")
+      c.expect(jout.contains("ok ${jname}\n"), "runner names the file")
     } else {
       c.expect(false, "mini suite log")
     }
     if xml = file_read(junit) {
-      c.expect(str_has(xml, "<testsuites"), "junit has testsuites")
-      c.expect(str_has(xml, "<testcase"), "junit has testcase")
-      c.expect(str_has(xml, "name=\"ok\""), "junit names the check")
-      c.expect(str_has(xml, "time=\""), "junit has durations")
+      c.expect(xml.contains("<testsuites"), "junit has testsuites")
+      c.expect(xml.contains("<testcase"), "junit has testcase")
+      c.expect(xml.contains("name=\"ok\""), "junit names the check")
+      c.expect(xml.contains("time=\""), "junit has durations")
     } else {
       c.expect(false, "junit.xml")
     }
@@ -205,7 +202,7 @@ fn test_coverage(c: Checks) {
     flag_code = process_run_out(abs_compiler, flag_args, flag_log) ?? -1
     c.expect(flag_code != 0, "compile rejects --coverage")
     if flag_txt = file_read(flag_log) {
-      c.expect(str_has(flag_txt, "unknown"), "compile names the unknown flag")
+      c.expect(flag_txt.contains("unknown"), "compile names the unknown flag")
     } else {
       c.expect(false, "compile flag log")
     }
@@ -233,7 +230,7 @@ fn test_coverage(c: Checks) {
     miss_code = process_run_out("/usr/bin/env", miss_env, miss_log) ?? -1
     c.expect(miss_code != 0, "AVANT_ROOT without lib/std fails")
     if miss_txt = file_read(miss_log) {
-      c.expect(str_has(miss_txt, "cannot find std.testing"), "missing std names the module")
+      c.expect(miss_txt.contains("cannot find std.testing"), "missing std names the module")
     } else {
       c.expect(false, "missing std log")
     }
@@ -252,15 +249,12 @@ fn test_coverage(c: Checks) {
     if walk_text = file_read(walk_rc) {
       walk_code = 0
       wt = walk_text.strip()
-      wi = 0
-      while wi < wt.size {
-        wc = wt[wi]
+      for wc in wt.bytes {
         if wc < 48 || wc > 57 {
           walk_code = 1
           break
         }
         walk_code = walk_code * 10 + (wc - 48)
-        wi += 1
       }
     }
     c.eq_int(walk_code, 0, "std walks up from the compiler")
@@ -287,46 +281,43 @@ fn test_coverage(c: Checks) {
     if proj_text = file_read(proj_rc) {
       proj_code = 0
       pt = proj_text.strip()
-      pi = 0
-      while pi < pt.size {
-        pc = pt[pi]
+      for pc in pt.bytes {
         if pc < 48 || pc > 57 {
           proj_code = 1
           break
         }
         proj_code = proj_code * 10 + (pc - 48)
-        pi += 1
       }
     }
     c.eq_int(proj_code, 0, "avant test --coverage")
     if proj_out = file_read(proj_log) {
-      c.expect(str_has(proj_out, "0 failed, 2 passed"), "coverage run passes")
-      c.expect(str_has(proj_out, "% Stmts"), "coverage table has % Stmts")
-      c.expect(str_has(proj_out, "All files"), "coverage table has All files")
-      c.expect(str_has(proj_out, "src/unused.av"), "unloaded file is in the table")
-      c.expect(str_has(proj_out, "src/greet.av"), "imported file is in the table")
+      c.expect(proj_out.contains("0 failed, 2 passed"), "coverage run passes")
+      c.expect(proj_out.contains("% Stmts"), "coverage table has % Stmts")
+      c.expect(proj_out.contains("All files"), "coverage table has All files")
+      c.expect(proj_out.contains("src/unused.av"), "unloaded file is in the table")
+      c.expect(proj_out.contains("src/greet.av"), "imported file is in the table")
     } else {
       c.expect(false, "coverage project log")
     }
     c.expect(!file_exists("${proj}/lcov.info"), "no lcov.info beside the manifest")
     if proj_lcov = file_read("${proj}/coverage/lcov.info") {
-      c.expect(str_has(proj_lcov, "SF:src/greet.av\n"), "lcov has greet")
-      c.expect(str_has(proj_lcov, "SF:src/unused.av\n"), "lcov has unused")
-      c.expect(str_has(proj_lcov, "DA:"), "lcov has line records")
-      if str_has(proj_lcov, "test_a.av") {
+      c.expect(proj_lcov.contains("SF:src/greet.av\n"), "lcov has greet")
+      c.expect(proj_lcov.contains("SF:src/unused.av\n"), "lcov has unused")
+      c.expect(proj_lcov.contains("DA:"), "lcov has line records")
+      if proj_lcov.contains("test_a.av") {
         c.expect(false, "exclude drops the test file")
       } else {
         c.expect(true, "exclude drops the test file")
       }
-      if str_has(proj_lcov, "FNDA:0,greet") {
+      if proj_lcov.contains("FNDA:0,greet") {
         c.expect(false, "merged greet was hit")
       } else {
-        c.expect(str_has(proj_lcov, "greet"), "merged greet was hit")
+        c.expect(proj_lcov.contains("greet"), "merged greet was hit")
       }
-      if str_has(proj_lcov, "FNDA:0,other") {
+      if proj_lcov.contains("FNDA:0,other") {
         c.expect(false, "merged other was hit")
       } else {
-        c.expect(str_has(proj_lcov, "other"), "merged other was hit")
+        c.expect(proj_lcov.contains("other"), "merged other was hit")
       }
     } else {
       c.expect(false, "project lcov")

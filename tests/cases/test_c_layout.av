@@ -15,7 +15,7 @@ fn release_refused(c: Checks, compiler: String, stamp: Int, tag: String, body: S
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0 && !file_exists(bin), "release ${tag}: does not compile")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), "release ${tag}: ${needle}")
+    c.expect(err.contains(needle), "release ${tag}: ${needle}")
   } else {
     c.expect(false, "release ${tag}: the log")
   }
@@ -31,6 +31,101 @@ fn test_release_errors(c: Checks, compiler: String) {
   release_refused(c, compiler, stamp, "no-string-struct", "  p = e.p_new()\n  release(p)\n", "nothing to release: P has no String field")
   release_refused(c, compiler, stamp, "expression", "  h = e.h_new()\n  x = release(h.name)\n", "release is a statement, not a value")
   release_refused(c, compiler, stamp, "int", "  release(42)\n", "release takes a C-layout field or a Ptr to a C layout, got Int")
+}
+
+// A NULL reached through C: each program prints a line, then reads or
+// writes through NULL. The trap names what was NULL and where, after the
+// line (stdout flushed), status 1; inside a task it fails the task alone.
+// Before, a field through a NULL Ptr was a segmentation fault (status 139,
+// the printed line lost when stdout is a file) and a NULL String field
+// read as "".
+fn null_src(body: String): String {
+  "lib e {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  struct H {\n    name: String\n    note: String?\n    at: Pair\n  }\n  fun malloc(size: Int): Ptr(Pair)\n  fun calloc(n: Int, size: Int): Ptr(H)\n  fun realloc(p: Ptr(Void)?, size: Int): Ptr(Int32)\n  fun strdup(s: String): Ptr(UInt8)\n  struct Arr {\n    xs: Int32[2]\n  }\n  fun aligned_alloc(al: Int, size: Int): Ptr(Arr)\n}\nfn main {\n  puts(\"before\")\n${body}}\n"
+}
+
+fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String, status: Int, want: String) {
+  src = "${scratch()}/c_layout-${stamp}-null-${tag}.av"
+  bin = "${scratch()}/c_layout-${stamp}-null-${tag}.bin"
+  log = "${scratch()}/c_layout-${stamp}-null-${tag}.log"
+  _ = file_write(src, null_src(body))
+  code = compile_av(compiler, src, bin, log)
+  c.eq_int(code, 0, "null ${tag}: compiles")
+  if file_exists(bin) {
+    rlog = "${scratch()}/c_layout-${stamp}-null-${tag}.run"
+    c.eq_int(run_av_bin(bin, rlog), status, "null ${tag}: exit status")
+    got = file_read(rlog) ?? ""
+    c.expect(got.contains(want), "null ${tag}: ${want} (${got})")
+  } else {
+    c.expect(false, "null ${tag}: runs")
+  }
+}
+
+fn test_null_traps(c: Checks, compiler: String) {
+  stamp = now_ms()
+  site = "c_layout-${stamp}-null-"
+  null_trap(c, compiler, stamp, "read", "  p = e.malloc(1 << 62)\n  puts(p.a)\n", 1, "before\navant runtime: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...) at ${site}read.av:23:")
+  null_trap(c, compiler, stamp, "write", "  p = e.malloc(1 << 62)\n  p.b = 7\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
+  null_trap(c, compiler, stamp, "compound", "  p = e.malloc(1 << 62)\n  p.b += 1\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
+  null_trap(c, compiler, stamp, "nested", "  h = e.calloc(1, 1 << 62)\n  puts(h.at.a)\n", 1, "before\navant runtime: the field at read or written through a NULL Ptr(H)")
+  null_trap(c, compiler, stamp, "string-field", "  h = e.calloc(1, 32)\n  puts(h.note ?? \"no note\")\n  puts(h.name.size)\n", 1, "before\nno note\navant runtime: the C field H.name is NULL (declare it String? to read NULL as nil) at ${site}string-field.av:24:")
+  null_trap(c, compiler, stamp, "string-interp", "  h = e.calloc(1, 32)\n  puts(\"name \${h.name}\")\n", 1, "avant runtime: the C field H.name is NULL")
+  null_trap(c, compiler, stamp, "released", "  h = e.calloc(1, 32)\n  h.name = \"x${1}\"\n  puts(h.name)\n  release(h.name)\n  puts(h.name)\n", 1, "before\nx1\navant runtime: the C field H.name is NULL")
+  null_trap(c, compiler, stamp, "index-read", "  q = e.realloc(nil, 1 << 62)\n  puts(q[1])\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32) (a pointer C may leave NULL is declared Ptr(Int32)? and tested: if p = ...) at ${site}index-read.av:23:")
+  null_trap(c, compiler, stamp, "index-write", "  q = e.realloc(nil, 1 << 62)\n  q[0] = 5\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32)")
+  null_trap(c, compiler, stamp, "index-range", "  u = e.strdup(\"ab\")\n  puts(u[0])\n  u[1] = u[0] + 200\n", 1, "before\n97\navant runtime: 297 out of range for the C type UInt8 (0..255)")
+  null_trap(c, compiler, stamp, "from-c-null", "  q = e.realloc(nil, 1 << 62)\n  puts(String.from_c(q, 3))\n", 1, "before\navant runtime: String.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL at ${site}from-c-null.av:23:")
+  null_trap(c, compiler, stamp, "from-c-negative", "  u = e.strdup(\"ab\")\n  puts(Bytes.from_c(u, -1).size)\n", 1, "before\navant runtime: Bytes.from_c needs a length of 0 or more")
+  null_trap(c, compiler, stamp, "c-array-bounds", "  a = e.aligned_alloc(8, Arr.size)\n  a.xs[1] = 5\n  i = 2\n  puts(a.xs[i])\n", 1, "before\navant runtime: index 2 out of bounds (size 2)")
+  null_trap(c, compiler, stamp, "task", "  t = spawn {\n    q = e.malloc(1 << 62)\n    q.a.to_i()\n  }\n  if v = t.join() {\n    puts(v)\n  } else err {\n    puts(\"task: \${err.what}\")\n  }\n  puts(\"after\")\n", 0, "task: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...)\nafter\n")
+}
+
+// A C callback with C's narrow scalars (Int8, UInt8, Int16, UInt16,
+// Float32) as parameters and result: the Avant function takes and returns
+// their Avant views (Int, Float64); each argument converts exactly on the
+// way in, the result is checked on the way out (out of range traps, a
+// Float64 rounds to the nearest Float32). Before, such a callback was a
+// compile error.
+fn test_cb_scalars(c: Checks, compiler: String) {
+  stamp = now_ms()
+  csrc = "${scratch()}/c_layout-${stamp}-cbs.c"
+  _ = file_write(csrc, "#include <stdint.h>\nint cbs_args(int (*f)(uint8_t, int8_t, uint16_t, int16_t, float)) {\n  return f(255, -128, 65535, -32768, 1.5f);\n}\nint cbs_u8(uint8_t (*f)(int), int x) {\n  return f(x);\n}\ndouble cbs_f32(float (*f)(float), float x) {\n  return (double)f(x);\n}\nint cbs_i8(int8_t (*f)(int8_t), int x) {\n  return f((int8_t)x);\n}\n")
+  decls = "lib cbs {\n  fun cbs_args(f: fn(UInt8, Int8, UInt16, Int16, Float32): Int32): Int32\n  fun cbs_u8(f: fn(Int32): UInt8, x: Int32): Int32\n  fun cbs_f32(f: fn(Float32): Float32, x: Float32): Float64\n  fun cbs_i8(f: fn(Int8): Int8, x: Int32): Int32\n}\n"
+  body = "fn all(a: Int, b: Int, d: Int, e: Int, f: Float64): Int32 {\n  puts(\"\${a} \${b} \${d} \${e} \${f}\")\n  (a + b + d + e).to_i32()\n}\nfn plus(x: Int32): Int {\n  x.to_i() + 1\n}\nfn third(x: Float64): Float64 {\n  x / 3.0\n}\nfn main {\n  puts(cbs.cbs_args(all))\n  puts(cbs.cbs_u8(plus, 254))\n  puts(cbs.cbs_f32(third, 1.0))\n  puts(cbs.cbs_i8({ |x| -x - 1 }, 127))\n  puts(cbs.cbs_u8(plus, 255))\n}\n"
+  asrc = "${scratch()}/c_layout-${stamp}-cbs.av"
+  _ = file_write(asrc, "${decls}${body}")
+  fl: Array(String) = []
+  fl.push("--cc")
+  fl.push(csrc)
+  bin = "${scratch()}/c_layout-${stamp}-cbs.bin"
+  code = compile_av_flags(compiler, asrc, bin, "${scratch()}/c_layout-${stamp}-cbs.clog", fl)
+  c.eq_int(code, 0, "callback scalars: compiles")
+  if file_exists(bin) {
+    log = "${scratch()}/c_layout-${stamp}-cbs.run"
+    c.eq_int(run_av_bin(bin, log), 1, "callback scalars: the last callback's result out of range ends the program")
+    got = file_read(log) ?? ""
+    c.expect(got.contains("255 -128 65535 -32768 1.5\n32894\n255\n0.3333333432674408\n-128\navant runtime: 256 out of range for the C type UInt8 (0..255)"), "callback scalars: each converts exactly, the result checked (${got})")
+  } else {
+    c.expect(false, "callback scalars: runs")
+  }
+}
+
+// C given an array a running task reads: the runtime's own C function that
+// writes arrays (the BWT transform LangArena's compress tasks bind) traps
+// as an Avant element store does. Before, it wrote the frozen array.
+fn test_frozen_to_c(c: Checks, compiler: String) {
+  stamp = now_ms()
+  src = "${scratch()}/c_layout-${stamp}-frozen.av"
+  _ = file_write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
+  bin = "${scratch()}/c_layout-${stamp}-frozen.bin"
+  c.eq_int(compile_av(compiler, src, bin, "${scratch()}/c_layout-${stamp}-frozen.clog"), 0, "frozen to C: compiles")
+  if file_exists(bin) {
+    log = "${scratch()}/c_layout-${stamp}-frozen.run"
+    c.eq_int(run_av_bin(bin, log), 1, "frozen to C: the write traps")
+    got = file_read(log) ?? ""
+    c.expect(got.contains("before\navant runtime: an element store on an array a running task reads"), "frozen to C: names the store (${got})")
+  } else {
+    c.expect(false, "frozen to C: runs")
+  }
 }
 
 fn test_c_layout(c: Checks) {
@@ -65,6 +160,9 @@ fn test_c_layout(c: Checks) {
       c.expect(false, "layout field walk stdout")
     }
     test_release_errors(c, compiler)
+    test_null_traps(c, compiler)
+    test_cb_scalars(c, compiler)
+    test_frozen_to_c(c, compiler)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

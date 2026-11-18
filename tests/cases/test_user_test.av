@@ -235,6 +235,92 @@ fn test_user_test(c: Checks) {
       c.expect(ut_has(d_xml, "failures=\"1\""), "failed check: the JUnit report counts tests/test_${nm}.av as a failure")
       i += 1
     }
+    // The test walk does not follow a symbolic link to a directory: one
+    // leading out of the tree (its test would fail) and one back into it
+    // (a cycle) are skipped, and the run ends with the one real file.
+    mkdir_p("${root}/links/tests/sub")
+    mkdir_p("${root}/links-outside")
+    _ = file_write("${root}/links/avant.toml", "[package]\nname = \"links\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${root}/links/tests/sub/test_real.av", "fn main: Int {\n  0\n}\n")
+    _ = file_write("${root}/links-outside/test_outside.av", "fn main: Int {\n  1\n}\n")
+    _ = process_run("/bin/ln", ["-s", "${root}/links-outside", "${root}/links/tests/out"])
+    _ = process_run("/bin/ln", ["-s", "${root}/links/tests", "${root}/links/tests/sub/loop"])
+    lk_rc = "${root}/links.rc"
+    lk_sh = "#!/bin/sh\ncd ${ut_quote(root)}/links && ${ut_quote(compiler)} test > ${ut_quote(root)}/links.log 2>&1; echo $? > ${ut_quote(lk_rc)}\n"
+    c.eq_int(ut_sh(lk_sh, lk_rc), 0, "test walk: links to directories are skipped, so the run passes")
+    lk_text = file_read("${root}/links.log") ?? ""
+    c.expect(ut_has(lk_text, "0 failed, 1 passed"), "test walk: the one real test file runs (${lk_text.size} bytes of log)")
+    // The runner's report on a standard output that fails (a full disk):
+    // the run stops with status 1 and says why, never status 0 with the
+    // report lost.
+    full_rc = "${root}/failcheck-full.rc"
+    full_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > /dev/full 2> ${ut_quote(root)}/failcheck-full.err; echo $? > ${ut_quote(full_rc)}\n"
+    c.eq_int(ut_sh(full_sh, full_rc), 1, "output: a report that cannot be written fails the run")
+    c.expect(ut_has(file_read("${root}/failcheck-full.err") ?? "", "cannot write to standard output: No space left on device"), "output: the failed write is reported on standard error")
+    // compile's one line ("compiled to OUT"), the only thing it writes
+    _ = file_write("${root}/full-hello.av", "fn main {\n}\n")
+    fc_rc = "${root}/full-compile.rc"
+    fc_sh = "#!/bin/sh\ncd ${ut_quote(root)} && ${ut_quote(compiler)} compile full-hello.av full-hello.bin --debug > /dev/full 2> ${ut_quote(root)}/full-compile.err; echo $? > ${ut_quote(fc_rc)}\n"
+    c.eq_int(ut_sh(fc_sh, fc_rc), 1, "output: compile's line that cannot be written fails the compile")
+    c.expect(ut_has(file_read("${root}/full-compile.err") ?? "", "cannot write to standard output: No space left on device"), "output: compile's failed write is reported on standard error")
+    // Every flag that takes a value takes it as --flag=V and as --flag V.
+    _ = file_write("${root}/vflags.av", "fn main {\n  puts(1)\n}\n")
+    vf_forms = [["--cpu", "v2"], ["--lib", "m"], ["--cc", "${root}/vflags.c"]]
+    _ = file_write("${root}/vflags.c", "int vflags_c(void) { return 1; }\n")
+    for fv in vf_forms {
+      for joined in [true, false] {
+        flag_text = "${fv[0]} ${ut_quote(fv[1])}"
+        if joined {
+          flag_text = "${fv[0]}=${ut_quote(fv[1])}"
+        }
+        vf_rc = "${root}/vflags.rc"
+        vf_sh = "#!/bin/sh\ncd ${ut_quote(root)} && ${ut_quote(compiler)} compile vflags.av vflags.bin --debug ${flag_text} > ${ut_quote(root)}/vflags.log 2>&1 && ./vflags.bin > ${ut_quote(root)}/vflags.out 2>&1; echo $? > ${ut_quote(vf_rc)}\n"
+        c.eq_int(ut_sh(vf_sh, vf_rc), 0, "value flags: compile ${flag_text}")
+      }
+    }
+    for fv in [["--jobs", "1"], ["--shard", "1/1"], ["--junit", "${root}/vflags.xml"]] {
+      for joined in [true, false] {
+        flag_text = "${fv[0]} ${ut_quote(fv[1])}"
+        if joined {
+          flag_text = "${fv[0]}=${ut_quote(fv[1])}"
+        }
+        vt_rc = "${root}/vflags-test.rc"
+        vt_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av ${flag_text} > ${ut_quote(root)}/vflags-test.log 2>&1; echo $? > ${ut_quote(vt_rc)}\n"
+        c.eq_int(ut_sh(vt_sh, vt_rc), 0, "value flags: test ${flag_text}")
+      }
+    }
+    // --name: the same run either way
+    nm_logs: Array(String) = []
+    for joined in [true, false] {
+      flag_text = "--name holds"
+      if joined {
+        flag_text = "--name=holds"
+      }
+      vn_rc = "${root}/vflags-name.rc"
+      vn_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av ${flag_text} > ${ut_quote(root)}/vflags-name.log 2>&1; echo $? >> ${ut_quote(root)}/vflags-name.log; echo 0 > ${ut_quote(vn_rc)}\n"
+      _ = ut_sh(vn_sh, vn_rc)
+      nm_logs.push(file_read("${root}/vflags-name.log") ?? "")
+    }
+    c.eq_str(nm_logs[0], nm_logs[1], "value flags: test --name=V and --name V run the same")
+    // AVANT_COMPILER: a value the user exported reaches the tests as it is;
+    // without one, the tests get the runner's own path (the test writes
+    // what it sees into the file ENVC_OUT names)
+    mkdir_p("${root}/envc/tests")
+    _ = file_write("${root}/envc/avant.toml", "[package]\nname = \"envc\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${root}/envc/tests/test_env.av", "fn main: Int {\n  _ = file_write(env_get(\"ENVC_OUT\") ?? \"envc.out\", env_get(\"AVANT_COMPILER\") ?? \"none\")\n  0\n}\n")
+    ec_rc = "${root}/envc-user.rc"
+    ec_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-user.seen AVANT_COMPILER=/the/users/compiler ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-user.log 2>&1; echo $? > ${ut_quote(ec_rc)}\n"
+    c.eq_int(ut_sh(ec_sh, ec_rc), 0, "AVANT_COMPILER: the run with the user's value passes")
+    c.eq_str(file_read("${root}/envc-user.seen") ?? "", "/the/users/compiler", "AVANT_COMPILER: the user's exported value reaches the tests")
+    er_rc = "${root}/envc-rel.rc"
+    er_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-rel.seen AVANT_COMPILER=./rel/compiler ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-rel.log 2>&1; echo $? > ${ut_quote(er_rc)}\n"
+    c.eq_int(ut_sh(er_sh, er_rc), 0, "AVANT_COMPILER: the run with a relative value passes")
+    er_seen = file_read("${root}/envc-rel.seen") ?? ""
+    c.expect(er_seen.size > 0 && er_seen[0] == 47 && ut_has(er_seen, "/envc/./rel/compiler"), "AVANT_COMPILER: a relative value reaches the tests made absolute from the runner's directory (${er_seen})")
+    en_rc = "${root}/envc-none.rc"
+    en_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-none.seen env -u AVANT_COMPILER ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-none.log 2>&1; echo $? > ${ut_quote(en_rc)}\n"
+    c.eq_int(ut_sh(en_sh, en_rc), 0, "AVANT_COMPILER: the run without it passes")
+    c.eq_str(file_read("${root}/envc-none.seen") ?? "", compiler, "AVANT_COMPILER: unset, the tests get the runner's own path")
     dp_rc = "${root}/failcheck-pass.rc"
     dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/failcheck-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
     c.eq_int(ut_sh(dp_sh, dp_rc), 0, "failed check: a void main whose checks pass still passes")

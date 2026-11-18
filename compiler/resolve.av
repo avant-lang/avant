@@ -24,6 +24,22 @@ pub class BoundUse {
   }
 }
 
+// A Hash type whose key is a struct (resolve's Hash case): the checker
+// tests the struct's fields and its own == once every type and method is
+// known (check_hash_key_uses).
+pub class HashKeyUse {
+  pub loc: Location
+  pub key: Ty
+  pub mod_name: String = ""
+  // "a Hash key", or "a Set element" for a Set(T).
+  pub what: String = "a Hash key"
+
+  fn initialize(loc: Location, key: Ty) {
+    self.loc = loc
+    self.key = key
+  }
+}
+
 pub class TypeResolver {
   pub named: Hash(String, Int)
   pub collide: Hash(String, Int)
@@ -63,6 +79,7 @@ pub class TypeResolver {
   alias_ix: Hash(String, Int)
   alias_inflight: Array(String)
   pub bound_uses: Array(BoundUse)
+  pub hash_key_uses: Array(HashKeyUse)
 
   fn initialize {
     n = Hash(String, Int).new()
@@ -96,6 +113,7 @@ pub class TypeResolver {
     self.alias_ix = ai
     self.alias_inflight = []
     self.bound_uses = []
+    self.hash_key_uses = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -417,9 +435,19 @@ pub class TypeResolver {
   pub fn resolve(tn: TypeName): Ty {
     inner = resolve_core(tn)
     if tn.nilable {
-      return ty_nilable(inner)
+      return ty_nilable(no_hasher(inner, tn, "an optional"))
     }
     inner
+  }
+
+  // t, refused (an Int in its place) when it is the Hasher, which lives
+  // only during the hash call that gives it: what may not hold it, shown.
+  pub fn no_hasher(t: Ty, tn: TypeName, what: String): Ty {
+    if t.is_hasher() {
+      fail(tn.loc, hasher_held_text(what))
+      return self.t_int
+    }
+    t
   }
 
   pub fn reject_args(tn: TypeName) {
@@ -433,12 +461,12 @@ pub class TypeResolver {
       params: Array(Ty) = []
       i = 0
       while i < tn.args.size {
-        params.push(resolve_value_uninline(tn.args[i]))
+        params.push(no_hasher(resolve_value_uninline(tn.args[i]), tn.args[i], "a function type"))
         i += 1
       }
       ret = self.t_void
       if r = tn.ret {
-        ret = resolve_uninline(r)
+        ret = no_hasher(resolve_uninline(r), r, "a function type")
       }
       return ty_fn(params, ret)
     }
@@ -446,7 +474,7 @@ pub class TypeResolver {
       parts: Array(Ty) = []
       i = 0
       while i < tn.members.size {
-        parts.push(resolve(tn.members[i]))
+        parts.push(no_hasher(resolve(tn.members[i]), tn.members[i], "a union"))
         i += 1
       }
       u = ty_union_build(parts)
@@ -501,6 +529,10 @@ pub class TypeResolver {
       reject_args(tn)
       return self.t_buf
     }
+    if tn.name == "Hasher" {
+      reject_args(tn)
+      return ty_hasher()
+    }
     if tn.name == "Bytes" {
       reject_args(tn)
       return self.t_bytes
@@ -518,27 +550,52 @@ pub class TypeResolver {
         fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
-      return ty_array(resolve_value_uninline(tn.args[0]))
+      return ty_array(no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "an Array"))
     }
     if tn.name == "Hash" {
       if tn.args.size != 2 {
         fail(tn.loc, "Hash takes two type arguments")
         return self.t_int
       }
-      hk = resolve_value_uninline(tn.args[0])
-      hv = resolve_value_uninline(tn.args[1])
+      hk = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a Hash")
+      hv = no_hasher(resolve_value_uninline(tn.args[1]), tn.args[1], "a Hash")
       why = hash_type_problem(hk, hv)
       if why.size > 0 {
         fail(tn.loc, why)
+      } else if hk.is_struct() {
+        use = HashKeyUse.new(tn.loc, hk)
+        use.mod_name = self.scope_mod
+        self.hash_key_uses.push(use)
       }
       return ty_hash(hk, hv)
+    }
+    if tn.name == "Set" {
+      if tn.args.size != 1 {
+        fail(tn.loc, "Set takes one type argument")
+        return self.t_int
+      }
+      se = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a Set")
+      why = set_type_problem(se)
+      if why.size > 0 {
+        fail(tn.loc, why)
+      } else if se.is_struct() {
+        use = HashKeyUse.new(tn.loc, se)
+        use.mod_name = self.scope_mod
+        use.what = "a Set element"
+        self.hash_key_uses.push(use)
+      }
+      return ty_set(se, self.t_bool)
     }
     if tn.name == "JoinHandle" {
       if tn.args.size != 1 {
         fail(tn.loc, "JoinHandle takes one type argument")
         return self.t_int
       }
-      return ty_join(resolve_value_uninline(tn.args[0]))
+      // A task whose block gives nothing: JoinHandle(Void).
+      if tn.args[0].name == "Void" && tn.args[0].args.size == 0 {
+        return ty_join(self.t_void)
+      }
+      return ty_join(no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a JoinHandle"))
     }
     if idef = find_interface(tn.name) {
       return reject_iface_value(tn, idef)
@@ -553,7 +610,19 @@ pub class TypeResolver {
         reject_args(inner)
         return ty_ptr(self.t_void)
       }
-      return ty_ptr(resolve_uninline(inner))
+      // A Ptr points to C memory: its pointee may be a C scalar of any
+      // width (Ptr(UInt8) is C's uint8_t *, read with p[i]) wherever the
+      // Ptr is written, since the narrow name is the pointer's, not a
+      // value's.
+      saved = self.c_scalar_ok
+      self.c_scalar_ok = true
+      pt = no_hasher(resolve_uninline(inner), inner, "a Ptr")
+      self.c_scalar_ok = saved
+      if !ptr_pointee_ok(pt) {
+        fail(inner.loc, "Ptr(${pt.show()}) points to nothing C lays out: a Ptr's type is a C layout, an opaque C type, Void, a C scalar (Int32, UInt8, Float64, ...) or a Ptr")
+        return ty_ptr(self.t_void)
+      }
+      return ty_ptr(pt)
     }
     if id = self.tparams.get(tn.name), tn.args.size == 0 {
       return ty_var(tn.name)
@@ -910,7 +979,7 @@ pub class TypeResolver {
       // type arguments are pinned where the instance is made).
       saved_scope = self.scope_mod
       self.scope_mod = ty.mod_name
-      fty = resolve_value(field.type)
+      fty = no_hasher(resolve_value(field.type), field.type, "a field")
       self.scope_mod = saved_scope
       tf = TyField.new(field.name, fty)
       tf.vis = field.vis
@@ -1383,23 +1452,53 @@ pub fn c_field_ok(ty: Ty): Bool {
   if ty.is_string() {
     return true
   }
-  if ty.is_clayout() {
+  if r = ty_opt_ref(ty), r.is_string() {
+    // NULL reads as nil, nil stores NULL.
     return true
   }
+  if ty.is_clayout() || ty.is_carray() {
+    return true
+  }
+  if r = ty_opt_ref(ty), r.is_ptr() {
+    // The nullable pointer: NULL reads as nil, nil stores NULL.
+    return c_field_ok(r)
+  }
   if ty.is_ptr() {
-    if inner = ty.inner {
-      if inner.is_void() {
-        return true
-      }
-      if inner.is_opaque() {
-        return true
-      }
-      if inner.is_clayout() {
-        return true
-      }
-    }
+    // Every Ptr the resolver gives points to C memory (ptr_pointee_ok).
+    return true
   }
   false
+}
+
+// The N of a C array field `T[N]`: an integer literal, or a constant of
+// the layout's module written as one (`const msg_len = 504`); 0 after an
+// error.
+pub fn clayout_count(resolver: TypeResolver, cx: Expr, mod_name: String): Int {
+  lit = cx
+  if cx.kind == ex_name() {
+    found = false
+    if p = resolver.program {
+      for cd in p.consts {
+        if cd.name == cx.ident && cd.mod_name == mod_name {
+          lit = cd.value
+          found = true
+        }
+      }
+    }
+    if !found {
+      resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant; ${cx.ident} is neither")
+      return 0
+    }
+  }
+  if lit.kind != ex_int() {
+    resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant whose value is one")
+    return 0
+  }
+  if lit.int_bits < 1u64 || lit.int_bits > 16777216u64 {
+    resolver.fail(cx.loc, "a C array's length is 1 to 16777216, not ${lit.int_bits}")
+    return 0
+  }
+  lit.int_bits.to_i()
 }
 
 pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(String, Int)) {
@@ -1426,6 +1525,18 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
         resolver.fail(field.loc, "${ty.name} is not a complete C layout yet")
         return
       }
+    }
+    if cx = field.count {
+      // `T[N]`: N elements of T, C's room and alignment.
+      if !(ptr_elem_ok(ty) || ty.is_clayout()) {
+        resolver.fail(field.loc, "a C array field holds C scalars, pointers or C layouts, not ${ty.show()}")
+        return
+      }
+      n = clayout_count(resolver, cx, layout.mod_name)
+      if n < 1 {
+        return
+      }
+      ty = ty_carray(ty, n)
     }
     if !c_field_ok(ty) {
       resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show()}")
@@ -1481,7 +1592,7 @@ pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, 
     seen[field.name] = 1
     resolver.qualify_seen(field.type, mod_name)
     resolver.scope_mod = mod_name
-    tf = TyField.new(field.name, resolver.resolve_value(field.type))
+    tf = TyField.new(field.name, resolver.no_hasher(resolver.resolve_value(field.type), field.type, "a field"))
     resolver.scope_mod = ""
     tf.vis = field.vis
     if d = field.default {

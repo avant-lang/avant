@@ -7,6 +7,7 @@ For working on Avant itself: the compiler, the runtime, the suite and the docume
 - [How the compiler works](#how-the-compiler-works)
 - [Building the compiler](#building-the-compiler)
 - [The gate and the suite](#the-gate-and-the-suite)
+- [Checking a change](#checking-a-change)
 - [Checking the documentation](#checking-the-documentation)
 
 ## How the compiler works
@@ -30,7 +31,7 @@ You need:
 
 Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before each release. LLVM 22 is used over 20.1.8 for compile speed (the compiler's release build 18% faster, its self-compile 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with programs as fast (LangArena geometric mean 0.993, same memory) and the archive 4.7% larger; LLVM 20, 21 and 23 also build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
-The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.45.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
+The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.46.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
 
 ```sh
 sh runtime/build.sh
@@ -63,6 +64,22 @@ AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 - For the compiler's suite, `--junit PATH` writes one case per check, with durations; output is printed per file as each finishes, and the summary totals the run.
 - The compiler's own coverage report is an instrumented compiler build's hit file, written once after the processes updating it finish; it is not `avant test --coverage`, which reports the tests.
 - Goldens live in `tests/goldens/`.
+
+## Checking a change
+
+These tools compare a change with its base on a machine shared by several checkouts. Each reads its usage from its header (`sed -n '2,/^set -u/p' tools/NAME.sh`).
+
+| Command | What it gives |
+| --- | --- |
+| `sh tools/base-cache.sh REV` | the base cache's entry of `REV`'s tree, built once on the machine and read by every checkout after: the tree checked out with its runtime, B and C′ built, every corpus program's `__emit-ll` digest and the GC-statistics set (`tools/gcstats.sh`); `--la REV` adds its LangArena part: the 50 programs stitched by the harness, their compile arguments, digests and instruction counts. Keyed by the tree id, so never read for another tree; built under a lock file beside the entry, so two checkouts do not build it twice; complete only when its `COMPLETE` file exists (a stopped build is built again, never read). The cache's directory is `BASE_CACHE`, else the one named in `~/.config/avant/base-cache`, else `~/.cache/avant/base-cache`. When the base's C′ refuses some of the stitched programs (the harness writes the tasks in a spelling the base does not know), the part is complete all the same and names them in its `refused.txt`. `--prune DAYS` removes the entries unread for that long (`--dry-run` lists them): every call stamps the entry it returns, the tools that read one hold its lock shared, and an entry whose lock is held is kept |
+| `sh tools/test-map.sh REV` | the test map of `REV`'s tree, beside its base cache entry: which lines of the compiler each test file's run executes, from the coverage job's instrumented compiler with the hits taken one test file at a time (about ten minutes). `change-check.sh` reads it when it is there |
+| `sh tools/cases-check.sh OUT` | every `tests/cases/test_*.av` through C′'s `__emit-ll`, in a few seconds: a test file the compiler now refuses is named with its message before any suite runs |
+| `sh tools/change-check.sh BASE HEAD OUT` | one line per commit of `BASE..HEAD`, each against the commit before it: the test files its changed files touch (by name, path or import), run by its C′, and with a test map (`tools/test-map.sh`) also those whose run executed a line the commit changes or the function around it, named apart; the corpus programs and LangArena programs whose `__emit-ll` moved, named and counted; the instruction counts of the LangArena programs whose code moved (all of them after a runtime change), as ratios, with their output checked. C′ is rebuilt only when `compiler/`, `lib/` or `runtime/` changed; the commit before the first is read from the base cache. Minutes, not a gate: `OUT/table.md` is the change's record of its own impact |
+| `sh tools/neutral.sh BASE NEW OUT` | the neutrality: every corpus program and the 50 stitched LangArena programs through both compilers' `__emit-ll`, the `.ll` compared. `BASE` is a checkout with C′ built, or a base cache entry (only `NEW`'s C′ then runs); `NEUTRAL_CHANGED` names the change's own files, read apart; LangArena programs the base refuses read not comparable, and the sources are judged alone |
+| `sh tools/layout-retime.sh LADIR SLUG [RUNS]` | one LangArena task compiled by C′ as it is and with only its code moved (an unused C function linked in, `tools/layout/plt.c`), timed alternately: whether the time follows where the code sits. Worth one run before a timing difference at an equal instruction count is believed; `wave-final.sh` names such tasks "layout?" (`tools/layout-flag.py`). It times: run it alone |
+| `sh tools/wave-final.sh OUT [BASE_STATS]` | the final evidence: the gate, the letters' sha256 and exports, the goldens in every mode, the GC statistics, the smoke test of the packed C′, the neutrality against the base cache (`WAVE_BASE`, read as its merge base with `HEAD`) and, with `WAVE_LA=1`, the LangArena timing and its table; one line per step in `OUT/SUMMARY.txt`. Its first step compiles every test file (`tools/cases-check.sh`; `WAVE_CASES_STOP=1` ends the run there when one is refused). It runs in a private `/tmp` (a mount namespace, as the gate), so its litter check sees only what it leaves |
+
+**The machine lock.** Instruction counts, builds, suites and the gate give the same verdict on a busy machine, so they run beside other work; only a timing needs the machine to itself. `wave-final.sh` with `WAVE_RUNNER` (the lock runner's command words) runs every step on the lock's shared side but the LangArena prod pass and its re-measure, which alone hold the whole machine; its `lock:` and `langarena:` lines say so and how long the machine was held. Without `WAVE_RUNNER`, the steps run under whatever lock the run was started with; a run started inside an exclusive lock runner (the whole machine for every step) says so in its first line and its `lock:` line. `WAVE_GROUP=1` takes the shared lock once for the shared steps instead of once a step: another checkout's timing that arrives meanwhile then waits for all of them instead of going first at the next step. Run `change-check.sh` and `base-cache.sh` on the shared side too.
 
 ## Checking the documentation
 

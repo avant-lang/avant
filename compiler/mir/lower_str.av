@@ -154,7 +154,7 @@ pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
 }
 
 // "text${x}..." (the old back end): exactly a text and an Int is one
-// avant_str_cat_i32(text, n); otherwise each non-empty piece becomes a
+// avant_str_cat_int(text, n); otherwise each non-empty piece becomes a
 // string, left to right, and the pieces are folded with avant_str_concat
 // from the left; no piece is "", one piece is itself.
 pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
@@ -169,7 +169,7 @@ pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
       args: Array(MOperand) = []
       args.push(lw.text_value(text))
       args.push(n)
-      return lw.str_call("avant_str_cat_i32", args)
+      return lw.str_call("avant_str_cat_int", args)
     }
   }
   pieces: Array(MOperand) = []
@@ -250,8 +250,9 @@ pub fn (lw: MirLower) lower_str_binary(e: Expr, l: Expr, r: Expr): MOperand {
 // s[i] on String or Bytes (loops.av:4631-4656): the index first, then the
 // string; unless the checker proved it in range, avant_str_size and the
 // bounds check (avant_trap_bounds(i, n)); then the byte, zero-extended.
-// The byte is read through a `ptr u8` view of the string (a `ref` to
-// `ptr` cast) used at once.
+// The byte is read through the address of the string's bytes
+// (avant_str_data: the string itself, or a view's base and offset), a
+// `ptr u8` used at once.
 pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
   b = lw.lw_b
   i = lw.snap(lw.lower_expr(ix), arr)
@@ -264,11 +265,27 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
     n = lw.int_call1("avant_str_size", lw.dup(s))
     b.check_bounds(lw.dup(i), n)
   }
-  pu8 = b.ptr_to(mt_u8())
-  pv = b.temp(pu8)
-  b.assign(b.pl(pv), b.rv_cast(s, pu8))
+  pv = lw.str_data(s)
   byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
   lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
+}
+
+// The address of string s's bytes as a `ptr u8` local, used at once (no
+// call that may collect before its use): the view test
+// (avant_str_view_test, a scalar the loop pass computes once before a
+// loop the string is invariant in, as it does the size: a string object
+// never changes kind), then avant_str_data with it, which the emitter
+// inlines (llvm/emit_gc.av ll_str_data): the string itself, or a view's
+// base and offset.
+pub fn (lw: MirLower) str_data(s: MOperand): Int {
+  b = lw.lw_b
+  t = lw.call_to(mt_i32(), "avant_str_view_test", lw.one(lw.dup(s)))
+  pv = b.temp(b.ptr_to(mt_u8()))
+  args: Array(MOperand) = []
+  args.push(s)
+  args.push(t)
+  b.call(pv, "avant_str_data", args)
+  pv
 }
 
 // The members of String and Bytes in both forms (`s.size`, `s.to_i`,
@@ -278,7 +295,23 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if got = lw.str_heap_member(e, recv, rt, name, args) {
     return got
   }
-  if rt.is_bytes() && name == "slice" && args.size == 2 {
+  if (rt.is_bytes() || rt.is_string()) && name == "slice" && args.size == 1 {
+    // `s.slice(start)`, `s[start..]`: the start, then the receiver, whose
+    // size is the stop.
+    ops1 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    h = lw.hold(ops1[0], mt_str())
+    n = lw.int_call1("avant_str_size", b.copy_local(h))
+    sargs: Array(MOperand) = []
+    sargs.push(b.copy_local(h))
+    sargs.push(ops1[1])
+    sargs.push(n)
+    return lw.str_call("avant_str_slice", sargs)
+  }
+  if (rt.is_bytes() || rt.is_string()) && name == "slice" && args.size == 2 {
     // builtins.av:1820-1844: stop, start, then the receiver.
     ops = lw.lower_args_rev(args)
     s = lw.lower_expr(recv)
@@ -299,13 +332,53 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if rt.is_string() && (name == "to_i" || name == "to_u64" || name == "to_f") {
     return lw.str_parse(e, recv, name, args)
   }
+  if rt.is_string() && (name == "replace" || name == "repeat" || name == "pad_left" || name == "pad_right") {
+    // The arguments last to first, then the receiver; one runtime call
+    // that allocates the result once.
+    ops2 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    if name == "replace" {
+      return lw.str_call("avant_str_replace", ops2)
+    }
+    if name == "repeat" {
+      return lw.str_call("avant_str_repeat", ops2)
+    }
+    if args.size == 1 {
+      // The fill byte by default: a space.
+      ops2.push(b.c_i64(32))
+    }
+    left = 0
+    if name == "pad_left" {
+      left = 1
+    }
+    ops2.push(b.c_i32(left))
+    return lw.str_call("avant_str_pad", ops2)
+  }
+  if rt.is_string() && (name == "delete_prefix" || name == "delete_suffix") && args.size == 1 {
+    // The pattern, then the receiver; a slice of the receiver, or the
+    // receiver itself when the pattern is not there.
+    ops3 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    suffix = 0
+    if name == "delete_suffix" {
+      suffix = 1
+    }
+    ops3.push(b.c_i32(suffix))
+    return lw.str_call("avant_str_delete_affix", ops3)
+  }
   if args.size > 0 {
     lw.refuse(e.loc, "the member .${name} of ${rt.show()}")
     return b.c_i32(0)
   }
   known = name == "size" || name == "bytes"
   if rt.is_string() {
-    known = known || name == "strip" || name == "strip_left" || name == "strip_right"
+    known = known || name == "strip" || name == "strip_left" || name == "strip_right" || name == "to_ascii_lower" || name == "to_ascii_upper"
   }
   if !known {
     lw.refuse(e.loc, "the member .${name} of ${rt.show()}")
@@ -321,6 +394,16 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   if name == "bytes" {
     return s
+  }
+  if name == "to_ascii_lower" || name == "to_ascii_upper" {
+    upper = 0
+    if name == "to_ascii_upper" {
+      upper = 1
+    }
+    cargs: Array(MOperand) = []
+    cargs.push(s)
+    cargs.push(b.c_i32(upper))
+    return lw.str_call("avant_str_ascii_case", cargs)
   }
   mode = 0
   if name == "strip_left" {
@@ -415,4 +498,98 @@ pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(E
   }
   lw.refuse(e.loc, "an untyped ${name}")
   b.c_i32(0)
+}
+
+// The search methods of String, Bytes and Buf: `contains(p)`,
+// `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`,
+// `starts_with(p)`, `ends_with(p)`, `count(p)` and
+// `eq_ignore_ascii_case(p)`, the pattern p a String, Bytes, Buf or one
+// byte (an Int; not for the equality). One call of avant_seq_find
+// (avant_seq_find_byte for a byte), which reads both sides in place; the
+// arguments last to first, then the receiver. nil for another member
+// (Buf's starts_with of a String keeps avant_buf_starts).
+pub fn (lw: MirLower) seq_search(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
+  b = lw.lw_b
+  mode = mir_seq_mode(name)
+  if mode < 0 || args.size < 1 || args.size > 2 || (args.size == 2 && name != "index_of") || e.resolved.size > 0 {
+    return nil
+  }
+  pt = ty_int()
+  if t0 = args[0].ty {
+    pt = t0
+  } else {
+    return nil
+  }
+  if rt.is_buf() && name == "starts_with" && pt.is_string() {
+    return nil
+  }
+  ops = lw.args_then_recv(args, recv)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  hk = 0
+  if rt.is_buf() {
+    hk = 1
+  }
+  from = b.c_i64(0)
+  if args.size == 2 {
+    from = ops[2]
+  }
+  cargs: Array(MOperand) = []
+  cargs.push(ops[0])
+  cargs.push(b.c_i32(hk))
+  f = "avant_seq_find"
+  if pt.is_integer() {
+    f = "avant_seq_find_byte"
+    cargs.push(ops[1])
+  } else {
+    nk = 0
+    if pt.is_buf() {
+      nk = 1
+    }
+    cargs.push(ops[1])
+    cargs.push(b.c_i32(nk))
+  }
+  cargs.push(from)
+  cargs.push(b.c_i32(mode))
+  r = lw.hold(lw.call_to(mt_int(), f, cargs), mt_int())
+  if name == "count" {
+    return b.copy_local(r)
+  }
+  if name == "starts_with" || name == "ends_with" || name == "eq_ignore_ascii_case" {
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(r), b.c_i64(1)))
+  }
+  found = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(r), b.c_i64(0)))
+  if name == "contains" {
+    return found
+  }
+  if t = e.ty {
+    return lw.opt_of(t, found, b.copy_local(r), ty_int(), e.loc)
+  }
+  lw.refuse(e.loc, "an untyped ${name}")
+  b.c_i32(0)
+}
+
+// avant_seq_find's mode for a search method's name, -1 for another.
+pub fn mir_seq_mode(name: String): Int {
+  if name == "contains" || name == "index_of" {
+    return 0
+  }
+  if name == "last_index_of" {
+    return 1
+  }
+  if name == "starts_with" {
+    return 2
+  }
+  if name == "ends_with" {
+    return 3
+  }
+  if name == "count" {
+    return 4
+  }
+  if name == "eq_ignore_ascii_case" {
+    return 5
+  }
+  -1
 }
