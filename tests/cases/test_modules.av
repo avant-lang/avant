@@ -457,6 +457,7 @@ fn test_modules(c: Checks) {
     test_generic_modules(c, compiler, dir)
     test_same_name_methods(c, compiler, dir)
     test_same_name_derived(c, compiler, dir)
+    test_c_binding_twice(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -606,6 +607,17 @@ fn test_same_name_derived(c: Checks, compiler: String, dir: String) {
   write_av(dir, "dtb", "pub struct Box {\n  pub name: String\n  pub y: Int\n}\n\npub class Bag {\n  pub items: Array(String) = []\n  pub w: Int = 2\n}\n\npub struct Key {\n  pub x: Int\n\n  pub fn equals(other: Key): Bool {\n    true\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(0)\n  }\n}\n\npub struct V {\n  pub n: Int\n\n  pub fn compare(other: V): Int {\n    other.n - n\n  }\n}\n\npub struct Rec {\n  pub size: Int\n}\n\npub struct Outer {\n  pub inner: Key\n}\n")
   write_av(dir, "dtmain", "import dta\nimport dtb\n\nfn main {\n  puts(\"\${dta.Box { x: 1 } == dta.Box { x: 1 }} \${dtb.Box { name: \"p\", y: 2 } == dtb.Box { name: \"q\", y: 2 }}\")\n  a = dta.Bag.new(3)\n  a.xs.push(5)\n  b = dtb.Bag.new()\n  b.items.push(\"t\")\n  a2 = a.clone()\n  b2 = b.clone()\n  b2.items.push(\"u\")\n  puts(\"\${a2.n} \${a2.xs.size} \${b2.w} \${b.items.size} \${b2.items.size}\")\n  ha = Hash(dta.Key, Int).new()\n  ha[dta.Key { x: 1 }] = 10\n  ha[dta.Key { x: 2 }] = 20\n  hb = Hash(dtb.Key, Int).new()\n  hb[dtb.Key { x: 1 }] = 10\n  hb[dtb.Key { x: 2 }] = 20\n  ho = Hash(dtb.Outer, Int).new()\n  ho[dtb.Outer { inner: dtb.Key { x: 1 } }] = 1\n  ho[dtb.Outer { inner: dtb.Key { x: 2 } }] = 2\n  puts(\"\${ha.size} \${hb.size} \${ho.size} \${dta.Key { x: 1 } == dta.Key { x: 2 }} \${dtb.Key { x: 1 } == dtb.Key { x: 2 }}\")\n  xs = [dta.V { n: 3 }, dta.V { n: 1 }, dta.V { n: 2 }]\n  ys = [dtb.V { n: 3 }, dtb.V { n: 1 }, dtb.V { n: 2 }]\n  puts(\"\${xs.sorted()[0].n} \${ys.sorted()[0].n} \${dta.V { n: 1 } < dta.V { n: 2 }} \${dtb.V { n: 1 } < dtb.V { n: 2 }}\")\n  puts(\"\${dta.Rec { n: 3 }.size()} \${dtb.Rec { size: 4 }.size}\")\n}\n")
   mod_runs(c, compiler, dir, "dtmain", "true false\n3 1 2 1 2\n2 1 1 false true\n1 3 true false\n3 4\n", "two modules' types of one name each get their own derived methods")
+}
+
+// One C function bound twice with one signature: a program's own binding
+// beside std.sync's, and two modules' bindings; each call goes through its
+// own. Before, the second was refused as already bound.
+fn test_c_binding_twice(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == pool_size())\n}\n")
+  mod_runs(c, compiler, dir, "cbsync", "true\n", "a program binds a C function std.sync binds, with its signature")
+  write_av(dir, "cbother", "lib oc {\n  fun abs(n: Int32): Int32\n}\n\npub fn mag(n: Int): Int {\n  oc.abs(n.to_i32()).to_i()\n}\n")
+  write_av(dir, "cbmain", "// Two modules of the program bind one C function, each with the same\n// signature.\nimport cbother\n\nlib c {\n  fun abs(n: Int32): Int32\n}\n\nfn main {\n  puts(\"\${c.abs(-3)} \${cbother.mag(-4)}\")\n}\n")
+  mod_runs(c, compiler, dir, "cbmain", "3 4\n", "two modules bind one C function with one signature")
 }
 
 fn main: Int {

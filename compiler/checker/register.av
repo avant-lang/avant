@@ -463,10 +463,6 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       checker_self.fail(cfun.loc, "C function ${cfun.name} collides with an Avant function")
       return
     }
-    if bound = checker_self.c_symbols.get(cfun.name) {
-      checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}")
-      return
-    }
     if rid = checker_self.reserved.get(cfun.name) {
       checker_self.fail(cfun.loc, "C function ${cfun.name} is reserved: the runtime defines it and the compiler calls it with its own signature; choose another name")
       return
@@ -526,12 +522,32 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       }
       ret = ty
     }
+    // A second binding of one C name (a program's own beside a library
+    // module's) is the same function only with the same signature; each
+    // call goes through its own binding, the first declares the symbol.
+    if bound = checker_self.c_symbols.get(cfun.name) {
+      if id = checker_self.cfun_index.get(bound) {
+        first = checker_self.cfuns[id]
+        if !c_sigs_same(first.params, first.ret, params, ret) {
+          where = ""
+          if fm = checker_self.lib_mod.get(first.lib_name) {
+            if fm.size > 0 && fm != lib_def.mod_name {
+              where = " in ${fm}"
+            }
+          }
+          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${c_sig_text(first.params, first.ret)}${where}; a second binding of it must declare the same signature, not ${c_sig_text(params, ret)}")
+          return
+        }
+      }
+    }
     sig = CFunSig.new(cfun.name, lib_def.name, params, ret)
     m = lib_def.mod_name
     sig.runtime = m == "prelude" || m == "task" || (m.size > 4 && str_slice(m, 0, 4) == "std.")
     checker_self.cfuns.push(sig)
     checker_self.cfun_index[key] = checker_self.cfuns.size - 1
-    checker_self.c_symbols[cfun.name] = key
+    if !checker_self.c_symbols.has_key(cfun.name) {
+      checker_self.c_symbols[cfun.name] = key
+    }
   }
   checker_self.lib_mod[lib_def.name] = lib_def.mod_name
   if lib_def.vis {
@@ -539,6 +555,39 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
   } else {
     checker_self.lib_vis[lib_def.name] = 0
   }
+}
+
+// Whether two bindings of one C name declare one signature.
+pub fn c_sigs_same(ap: Array(Ty), ar: Ty, bp: Array(Ty), br: Ty): Bool {
+  if ap.size != bp.size || !ar.same_as(br) {
+    return false
+  }
+  i = 0
+  while i < ap.size {
+    if !ap[i].same_as(bp[i]) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+// A binding's signature as written: `(Int32, String): Int`.
+pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
+  out = "("
+  i = 0
+  while i < params.size {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + params[i].show()
+    i += 1
+  }
+  out = out + ")"
+  if !ret.is_void() {
+    out = out + ": " + ret.show()
+  }
+  out
 }
 
 pub fn (checker_self: Checker) register_function(fnn: Function) {
