@@ -2928,7 +2928,7 @@ pub class Checker {
       }
       if object.is_agg() {
         if field_ty = object.field_named(expr.ident) {
-          if sig = find_method(object.name, expr.ident) {
+          if user_op(object, expr.ident) {
             fail(expr.loc, "${object.name}.${expr.ident} is both a field and a method")
             return field_ty
           }
@@ -2938,7 +2938,7 @@ pub class Checker {
         has_zero = false
         for ms in self.methods {
           owner_hit = false
-          if ms.owner == object.name {
+          if ms.is_method_of(object) {
             owner_hit = true
           } else {
             if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
@@ -2965,7 +2965,7 @@ pub class Checker {
         has_method = false
         for ms in self.methods {
           owner_hit = false
-          if ms.owner == object.name {
+          if ms.is_method_of(object) {
             owner_hit = true
           } else {
             if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
@@ -5361,7 +5361,7 @@ pub class Checker {
       shown = ty.show()
       has_init = false
       for ms in self.methods {
-        if ms.owner == ty.name {
+        if ms.is_method_of(ty) {
           if ms.name == "initialize" {
             has_init = true
           }

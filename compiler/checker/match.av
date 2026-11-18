@@ -666,16 +666,21 @@ pub fn (checker_self: Checker) refuse_named_args(expr: Expr) {
   checker_self.fail(first.loc, "${what} takes its arguments by position (${name}: is a named argument): names are given only to a declared function's parameters with defaults")
 }
 
+// A method the checker writes (a derived ==, hash, <, clone, an
+// instance) joins its type's declaration: the struct or class of its
+// owner's name in its owner's module, when that is known (two modules may
+// each declare a type of one name).
 pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
   owner = fnn.owner
+  om = fnn.owner_mod
   for sdef in checker_self.program.structs {
-    if sdef.name == owner {
+    if sdef.name == owner && (om.size == 0 || sdef.mod_name == om) {
       sdef.methods.push(fnn)
       return
     }
   }
   for cdef in checker_self.program.classes {
-    if cdef.name == owner {
+    if cdef.name == owner && (om.size == 0 || cdef.mod_name == om) {
       cdef.methods.push(fnn)
       return
     }

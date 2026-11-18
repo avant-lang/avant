@@ -92,15 +92,16 @@ pub fn (lw: MirLower) key_leaves_of(kty: Int): Array(MirKeyLeaf) {
 // defines its own == (the checker's key_by_methods): its hash is keyed by
 // its type's hash and equality.
 pub fn (lw: MirLower) key_by_methods(ty: Ty, seen: Array(String)): Bool {
-  if !ty.is_struct() || seen.contains(ty.name) {
+  key = "${ty.mod_name}.${ty.name}"
+  if !ty.is_struct() || seen.contains(key) {
     return false
   }
   for ms in lw.lw_syms.methods {
-    if ms.owner == ty.name && ms.name == "==" && !ms.node.lazy {
+    if ms.is_method_of(ty) && ms.name == "==" && !ms.node.lazy {
       return true
     }
   }
-  seen.push(ty.name)
+  seen.push(key)
   for f in ty.fields {
     if lw.key_by_methods(f.ty, seen) {
       return true

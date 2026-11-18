@@ -24,6 +24,14 @@ pub class FuncSig {
   pub fn mangled: String {
     self.node.emit_name
   }
+
+  // Whether this is a method of ty itself: its owner's name and, when
+  // both are known, its module. Two modules may each declare a type of
+  // one name (`ma.Box`, `mb.Box`); each has its own methods, derived ones
+  // included.
+  pub fn is_method_of(ty: Ty): Bool {
+    self.owner == ty.name && (ty.mod_name.size == 0 || self.node.owner_mod.size == 0 || self.node.owner_mod == ty.mod_name)
+  }
 }
 
 pub class CFunSig {

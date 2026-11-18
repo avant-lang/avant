@@ -456,6 +456,7 @@ fn test_modules(c: Checks) {
     test_default_once(c, compiler, dir)
     test_generic_modules(c, compiler, dir)
     test_same_name_methods(c, compiler, dir)
+    test_same_name_derived(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -592,6 +593,19 @@ fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
   write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn equals(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(name)\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
   write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label())\n  puts(b.label())\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext())\n  puts(b.ext())\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero().v)\n  puts(snb.Item.zero().name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label()} \${d.label()}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label())\n  }\n  bs.each { |i| puts(i.label()) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far()} \${q.far()}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far())\n}\n")
   mod_runs(c, compiler, dir, "snmain", "a1\nb-x\na1\nb-x\n6\n2\next-a6\next-bx\n16\nxy 10\ntrue\ntrue\n0\nzero\np\n4\na9 b-q\na6\na9\nb-x\nb-q\n101 6\n2 4\n35\n", "two modules declare a class and a struct of one name with methods of the same names")
+}
+
+// Two modules each declare a struct or class of one name, and each type
+// gets its own derived ==, hash, clone and order, its own initialize and
+// its own fields: before, a derived method joined the first type of that
+// name, so the other's == or clone was "no method", its key functions
+// were not written, its order was another's, its initialize and fields
+// were refused as if it had the first one's.
+fn test_same_name_derived(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "dta", "pub struct Box {\n  pub x: Int\n}\n\npub class Bag {\n  pub n: Int = 0\n  pub xs: Array(Int) = []\n\n  pub fn initialize(self.n) {\n  }\n}\n\npub struct Key {\n  pub x: Int\n}\n\npub struct V {\n  pub n: Int\n\n  pub fn compare(other: V): Int {\n    n - other.n\n  }\n}\n\npub struct Rec {\n  pub n: Int\n\n  pub fn size: Int {\n    n\n  }\n}\n")
+  write_av(dir, "dtb", "pub struct Box {\n  pub name: String\n  pub y: Int\n}\n\npub class Bag {\n  pub items: Array(String) = []\n  pub w: Int = 2\n}\n\npub struct Key {\n  pub x: Int\n\n  pub fn equals(other: Key): Bool {\n    true\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(0)\n  }\n}\n\npub struct V {\n  pub n: Int\n\n  pub fn compare(other: V): Int {\n    other.n - n\n  }\n}\n\npub struct Rec {\n  pub size: Int\n}\n\npub struct Outer {\n  pub inner: Key\n}\n")
+  write_av(dir, "dtmain", "import dta\nimport dtb\n\nfn main {\n  puts(\"\${dta.Box { x: 1 } == dta.Box { x: 1 }} \${dtb.Box { name: \"p\", y: 2 } == dtb.Box { name: \"q\", y: 2 }}\")\n  a = dta.Bag.new(3)\n  a.xs.push(5)\n  b = dtb.Bag.new()\n  b.items.push(\"t\")\n  a2 = a.clone()\n  b2 = b.clone()\n  b2.items.push(\"u\")\n  puts(\"\${a2.n} \${a2.xs.size} \${b2.w} \${b.items.size} \${b2.items.size}\")\n  ha = Hash(dta.Key, Int).new()\n  ha[dta.Key { x: 1 }] = 10\n  ha[dta.Key { x: 2 }] = 20\n  hb = Hash(dtb.Key, Int).new()\n  hb[dtb.Key { x: 1 }] = 10\n  hb[dtb.Key { x: 2 }] = 20\n  ho = Hash(dtb.Outer, Int).new()\n  ho[dtb.Outer { inner: dtb.Key { x: 1 } }] = 1\n  ho[dtb.Outer { inner: dtb.Key { x: 2 } }] = 2\n  puts(\"\${ha.size} \${hb.size} \${ho.size} \${dta.Key { x: 1 } == dta.Key { x: 2 }} \${dtb.Key { x: 1 } == dtb.Key { x: 2 }}\")\n  xs = [dta.V { n: 3 }, dta.V { n: 1 }, dta.V { n: 2 }]\n  ys = [dtb.V { n: 3 }, dtb.V { n: 1 }, dtb.V { n: 2 }]\n  puts(\"\${xs.sorted()[0].n} \${ys.sorted()[0].n} \${dta.V { n: 1 } < dta.V { n: 2 }} \${dtb.V { n: 1 } < dtb.V { n: 2 }}\")\n  puts(\"\${dta.Rec { n: 3 }.size()} \${dtb.Rec { size: 4 }.size}\")\n}\n")
+  mod_runs(c, compiler, dir, "dtmain", "true false\n3 1 2 1 2\n2 1 1 false true\n1 3 true false\n3 4\n", "two modules' types of one name each get their own derived methods")
 }
 
 fn main: Int {

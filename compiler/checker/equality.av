@@ -67,10 +67,10 @@ pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: St
     }
     return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty.name) {
+  if seen.contains(ty_seen_key(ty)) {
     return ""
   }
-  seen.push(ty.name)
+  seen.push(ty_seen_key(ty))
   for f in ty.fields {
     m = checker_self.key_problem(f.ty, seen, "the field ${ty.show()}.${f.name}", what)
     if m.size > 0 {
@@ -104,7 +104,7 @@ pub fn (checker_self: Checker) check_hash_key_uses {
 // derive_hash_method's hash).
 pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == name && !ms.node.lazy {
+    if ms.is_method_of(ty) && ms.name == name && !ms.node.lazy {
       return true
     }
   }
@@ -114,7 +114,7 @@ pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
 // The struct's hash method, written by the program: `fn hash(h: Hasher)`.
 pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == "hash" && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+    if ms.is_method_of(ty) && ms.name == "hash" && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
       return ms
     }
   }
@@ -124,7 +124,7 @@ pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
 // The struct's hash method, its own or the one derive_hash_method wrote.
 pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+    if ms.is_method_of(ty) && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
       return ms
     }
   }
@@ -135,13 +135,13 @@ pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
 // compares it by its type's methods (the runtime's _uk entries): ty, or a
 // struct among its fields at any depth, defines its own ==.
 pub fn (checker_self: Checker) key_by_methods(ty: Ty, seen: Array(String)): Bool {
-  if !ty.is_struct() || seen.contains(ty.name) {
+  if !ty.is_struct() || seen.contains(ty_seen_key(ty)) {
     return false
   }
   if checker_self.own_op(ty, "==") {
     return true
   }
-  seen.push(ty.name)
+  seen.push(ty_seen_key(ty))
   for f in ty.fields {
     if checker_self.key_by_methods(f.ty, seen) {
       return true
@@ -194,10 +194,10 @@ pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): St
   if checker_self.own_op(ty, "==") {
     return "${ty.show()} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty.name) {
+  if seen.contains(ty_seen_key(ty)) {
     return ""
   }
-  seen.push(ty.name)
+  seen.push(ty_seen_key(ty))
   for f in ty.fields {
     m = checker_self.hash_add_problem(f.ty, seen)
     if m.size > 0 {
@@ -369,7 +369,7 @@ pub fn (checker_self: Checker) has_order(ty: Ty, loc: Location): Bool {
     return false
   }
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == "compare" && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
+    if ms.is_method_of(ty) && ms.name == "compare" && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
       checker_self.derive_lt_method(ty, loc)
       return true
     }
@@ -448,7 +448,7 @@ pub fn (checker_self: Checker) check_equals_call(expr: Expr, left: Ty): Ty {
 pub fn (checker_self: Checker) check_hash_pairs {
   for ms in checker_self.methods {
     if !ms.node.lazy && ms.name == "==" {
-      hm = checker_self.named_method(ms.owner, "hash")
+      hm = checker_self.named_method(ms.owner, ms.node.owner_mod, "hash")
       if h = hm {
         if !(h.params.size == 1 && h.params[0].is_hasher() && h.ret.is_void()) {
           checker_self.fail(h.node.loc, "hash takes the Hasher: fn hash(h: Hasher)")
@@ -458,7 +458,7 @@ pub fn (checker_self: Checker) check_hash_pairs {
       }
     }
     if !ms.node.lazy && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() {
-      if e = checker_self.named_method(ms.owner, "==") {
+      if e = checker_self.named_method(ms.owner, ms.node.owner_mod, "==") {
       } else {
         checker_self.fail(ms.node.loc, "${ms.owner} defines hash but no equals: a hash agrees with an equality; add fn equals(other: ${ms.owner}): Bool comparing the values hash adds")
       }
@@ -466,10 +466,11 @@ pub fn (checker_self: Checker) check_hash_pairs {
   }
 }
 
-// The method of owner with this name that the program wrote, or nil.
-pub fn (checker_self: Checker) named_method(owner: String, name: String): FuncSig? {
+// The method of owner (of module owner_mod) with this name that the
+// program wrote, or nil.
+pub fn (checker_self: Checker) named_method(owner: String, owner_mod: String, name: String): FuncSig? {
   for ms in checker_self.methods {
-    if ms.owner == owner && ms.name == name && !ms.node.lazy {
+    if ms.owner == owner && (owner_mod.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == owner_mod) && ms.name == name && !ms.node.lazy {
       return ms
     }
   }
@@ -479,7 +480,7 @@ pub fn (checker_self: Checker) named_method(owner: String, name: String): FuncSi
 // Whether ty (a struct or class) has a method of this name.
 pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
   for ms in checker_self.methods {
-    if ms.owner == ty.name && ms.name == name {
+    if ms.is_method_of(ty) && ms.name == name {
       return true
     }
   }
@@ -495,10 +496,10 @@ pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
     return ""
   }
   if ty.is_struct() {
-    if checker_self.user_op(ty, "==") || seen.contains(ty.name) {
+    if checker_self.user_op(ty, "==") || seen.contains(ty_seen_key(ty)) {
       return ""
     }
-    seen.push(ty.name)
+    seen.push(ty_seen_key(ty))
     for f in ty.fields {
       m = checker_self.eq_missing(f.ty, seen)
       if m.size > 0 {
@@ -595,6 +596,12 @@ pub fn (checker_self: Checker) derive_eq_method(sty: Ty, loc: Location) {
     checker_self.assign_one_method_emit(sig)
     checker_self.pending.push(fnn)
   }
+}
+
+// A struct's name in the lists of structs being looked into, with its
+// module: two modules' structs of one name are two structs.
+pub fn ty_seen_key(ty: Ty): String {
+  "${ty.mod_name}.${ty.name}"
 }
 
 pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
