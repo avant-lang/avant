@@ -1985,7 +1985,7 @@ fn main {
 
 ### Type-level functions
 
-`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `Json.parse`, `Regex.compile`).
+`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `Json.parse`, `Regex.compile`). It may share a method's name when their parameters differ, as two methods may ([Overloads and defaults](#overloads-and-defaults)): `Box.make()` calls the type-level function and `b.make(2)` the method; with the same parameters the second is refused (`method Box.make is already defined`).
 
 ```avant
 struct Money {
@@ -2008,7 +2008,7 @@ fn main {
 
 ### Overloads and defaults
 
-Functions or methods may share a name when their arity or argument types differ (the result type alone does not overload). Defaults are trailing, filled in at the call site.
+Functions or methods may share a name when their arity or argument types differ (the result type alone does not overload); so may a type's [type-level function](#type-level-functions) and its method. Defaults are trailing, filled in at the call site.
 
 ```avant
 fn show(n: Int): String {

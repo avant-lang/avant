@@ -71,6 +71,12 @@ fn cases: Array(NCase) {
   xs.push(only("type-fn-enum", "enum Tok { eof, name }\nfn main {\n  puts(Tok.foo(1))\n}\n", "Tok has no type-level function foo", "3:11"))
   xs.push(only("type-fn-builtin", "fn main {\n  puts(String.foo(1))\n}\n", "String has no type-level function foo", "2:14"))
   xs.push(only("type-fn-instance", "class K {\n  fn inst(a: Int): Int {\n    a\n  }\n}\nfn main {\n  puts(K.inst(1))\n}\n", "K.inst is an instance method; call it on a value", "7:9"))
+  // A type-level function and a method share a name when their
+  // parameters differ, as two methods do; each call reaches its own.
+  xs.push(accepted("type-fn-and-method", "struct Box {\n  n: Int\n  fn self.make: Box {\n    Box { n: 1 }\n  }\n  fn make(k: Int): Box {\n    Box { n: n + k }\n  }\n}\nclass Counter {\n  n: Int = 0\n  fn make: Counter {\n    Counter.make(n + 10)\n  }\n  fn self.make(start: Int): Counter {\n    c = Counter.new()\n    c.n = start\n    c\n  }\n  fn twice: Counter {\n    make().make()\n  }\n}\nfn main {\n  puts(Box.make().make(2).n)\n  c = Counter.make(1)\n  puts(c.make().n)\n  puts(c.twice().n)\n}\n", "3\n11\n21\n"))
+  xs.push(only("type-fn-and-method-same-params", "struct Box {\n  n: Int\n  fn self.make: Box {\n    Box { n: 1 }\n  }\n  fn make: Box {\n    Box { n: n + 1 }\n  }\n}\nfn main {\n  puts(Box.make().n)\n}\n", "method Box.make is already defined", "6:3"))
+  xs.push(only("type-fn-and-method-type-call", "struct Box {\n  n: Int\n  fn self.make: Box {\n    Box { n: 1 }\n  }\n  fn make(k: Int): Box {\n    Box { n: n + k }\n  }\n}\nfn main {\n  puts(Box.make(2).n)\n}\n", "Box.make takes no arguments, given 1", "11:11"))
+  xs.push(only("type-fn-and-method-value-call", "struct Box {\n  n: Int\n  fn self.make: Box {\n    Box { n: 1 }\n  }\n  fn make(k: Int): Box {\n    Box { n: n + k }\n  }\n}\nfn main {\n  b = Box.make()\n  puts(b.make().n)\n}\n", "Box.make takes 1 argument, given 0", "12:9"))
   xs.push(only("type-fn-unknown-receiver", "fn main {\n  puts(Nope.foo(1))\n}\n", "unknown name Nope", "2:8"))
   xs.push(first("type-fn-unknown-value", "fn main {\n  puts(nosuch.foo(1))\n  puts(nosuch2.bar)\n}\n", "unknown name nosuch", "2:8"))
   xs.push(without("type-fn-unknown-value-once", "fn main {\n  puts(nosuch.foo(1))\n}\n", "unknown name nosuch", "2:8", "on Int"))

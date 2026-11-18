@@ -999,10 +999,8 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       if existing.node.mod_name != fnn.mod_name {
         where = " in module ${existing.node.mod_name}"
       }
-      if existing.node.type_method != fnn.type_method {
-        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
-        return
-      }
+      // A type-level function and a method overload one name by their
+      // parameters, as two methods do: `Box.make()` and `b.make(2)`.
       if params_same(existing.params, params) {
         checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
         return
