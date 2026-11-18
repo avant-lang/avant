@@ -651,7 +651,7 @@ fn main {
 }
 ```
 
-- The bound name exists only in the then-block. With one binding, `else e { ... }` names the failure in the `else` ([Reading the error itself](#reading-the-error-itself)).
+- The bound name is new and exists only in the then-block: a name that already exists there (a local, a parameter) is a compile error, since the binding would otherwise assign it and leave the value there after the block, as a [`for`](#for) variable would; give the value a name of its own. Two conditions one after the other may bind the same name. With one binding, `else e { ... }` names the failure in the `else` ([Reading the error itself](#reading-the-error-itself)).
 - It is an expression like any `if`: `width = if v = cfg.get("width") { v } else { 80 }`.
 - A condition may be a comma list of bindings and `Bool` tests, evaluated left to right until one fails, each name in scope for the later ones; the `else` runs when any fails and sees none of the names.
 - `while` takes the same conditions ([While](#while)).
@@ -668,7 +668,7 @@ fn main {
 }
 ```
 
-`while v = x { ... }` runs while `x`, evaluated before each iteration, gives a value, bound to `v` in the body:
+`while v = x { ... }` runs while `x`, evaluated before each iteration, gives a value, bound to `v` in the body (a new name, as in `if`):
 
 ```avant
 class Node {

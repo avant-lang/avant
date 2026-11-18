@@ -16,6 +16,10 @@ import std.process
 //     (`each`, `any`, `all`, a comparator, a Hash's or a Set's `each`,
 //     `Array(T).new(n) { |i| }`) that names an existing variable is
 //     refused the same way; blocks one after the other may share names.
+//   - the name an `if` or `while` condition binds (`if v = x`, `while v =
+//     xs.pop()`, each binding of a condition list, an `if` used as a
+//     value) is its block's own: a name that already exists is refused;
+//     conditions one after the other may bind the same name.
 //   - a Hash or a Set changed during its own walk (`each`, and `for`
 //     over a Set): a key or an element added, through the walked name or
 //     another (a function's parameter too), traps after the step that
@@ -76,6 +80,14 @@ fn cases: Array(PCase) {
   xs.push(refused("for-parameter-name", "fn f(i: Int): Int {\n  for i in 0..3 {\n    puts(i)\n  }\n  i\n}\n\nfn main {\n  puts(f(7))\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "2:3"))
   xs.push(refused("for-inclusive-outer-local", "fn main {\n  k = 0\n  for k in 1..=3 {\n    puts(k)\n  }\n  puts(k)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "3:3"))
   xs.push(refused("for-in-lambda-outer-local", "fn main {\n  i = 5\n  f = { |n: Int|\n    for i in 0..n {\n      puts(i)\n    }\n  }\n  f(2)\n  puts(i)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
+  xs.push(refused("if-bind-outer-local", "fn main {\n  v = 1\n  o: Int? = 5\n  if v = o {\n    puts(v)\n  }\n  puts(v)\n}\n", "if v = ...: v already names a variable here; the name a condition binds is its block's own", "4:3"))
+  xs.push(refused("while-bind-outer-local", "fn main {\n  xs = [1, 2, 3]\n  x = 0\n  while x = xs.pop() {\n    puts(x)\n  }\n  puts(x)\n}\n", "while x = ...: x already names a variable here; the name a condition binds is its block's own", "4:3"))
+  xs.push(refused("if-bind-chain-outer-local", "fn main {\n  a = 1\n  h = [\"x\": 2]\n  if b = h.get(\"x\"), a = h.get(\"x\") {\n    puts(a + b)\n  }\n  puts(a)\n}\n", "if a = ...: a already names a variable here", "4:3"))
+  xs.push(refused("if-bind-chain-first-outer", "fn main {\n  a = 1\n  h = [\"x\": 2]\n  if a = h.get(\"x\"), b = h.get(\"x\") {\n    puts(a + b)\n  }\n  puts(a)\n}\n", "if a = ...: a already names a variable here", "4:3"))
+  xs.push(refused("if-bind-parameter", "fn f(n: Int, o: Int?): Int {\n  if n = o {\n    return n\n  }\n  n\n}\n\nfn main {\n  puts(f(1, 2))\n}\n", "if n = ...: n already names a variable here", "2:3"))
+  xs.push(refused("if-bind-value-outer", "fn main {\n  w = 3\n  o: Int? = 5\n  x = if w = o { w } else { 0 }\n  puts(x + w)\n}\n", "if w = ...: w already names a variable here", "4:7"))
+  xs.push(refused("while-bind-chain-outer", "fn main {\n  xs = [1, 2]\n  n = 0\n  while x = xs.pop(), n = xs.pop() {\n    puts(x + n)\n  }\n  puts(n)\n}\n", "while n = ...: n already names a variable here", "4:3"))
+  xs.push(accepted("if-bind-new-names", "fn main {\n  o: Int? = 5\n  if v = o {\n    puts(v)\n  }\n  if v = o {\n    puts(v + 1)\n  }\n  xs = [1, 2]\n  t = 0\n  while x = xs.pop() {\n    t += x\n  }\n  while x = xs.pop() {\n    t += x\n  }\n  if _ = o {\n    puts(t)\n  }\n}\n", "5\n6\n3\n"))
   xs.push(refused("for-name-gone-after", "fn main {\n  for i in 0..3 {\n    puts(i)\n  }\n  puts(i)\n}\n", "unknown name i", "5:8"))
   xs.push(refused("for-field-name", "class K {\n  pub i: Int = 5\n\n  fn run {\n    for i in 0..3 {\n      puts(i)\n    }\n    puts(self.i)\n  }\n}\n\nfn main {\n  K.new().run()\n}\n", "i is a field of K", "5:5"))
   xs.push(accepted("for-same-name-in-sequence", "fn main {\n  t = 0\n  for i in 0..3 {\n    t += i\n  }\n  for i in 0..2 {\n    t += i\n  }\n  for x in [10, 20] {\n    t += x\n  }\n  for x in [100] {\n    t += x\n  }\n  puts(t)\n}\n", "134\n"))

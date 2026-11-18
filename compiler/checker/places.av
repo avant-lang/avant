@@ -147,6 +147,24 @@ pub fn (checker_self: Checker) refuse_for_name(stmt: Stmt, name: String) {
   }
 }
 
+// The name an `if` or `while` condition binds (`if v = x`, `while v =
+// it.next()`, each binding of a condition list) is the then-block's own,
+// as a loop's variable is the loop's: a name that already exists here is
+// refused. Binding it would assign the existing variable and leave the
+// value there after the block (an outer `v` would read 5 after
+// `if v = o { }`). `_` binds nothing; a `for` over `next` is refused by
+// the loop's own check.
+pub fn (checker_self: Checker) refuse_bind_outer_name(st: Stmt, at: Location) {
+  name = st.bind
+  if name.size == 0 || name == "_" || st.for_kind == 7 || name.starts_with("__") {
+    return
+  }
+  if old = checker_self.lookup(name) {
+    form = if st.loop_head { "while" } else { "if" }
+    checker_self.fail(at, "${form} ${name} = ...: ${name} already names a variable here; the name a condition binds is its block's own and ends with it (binding ${name} would assign it and leave the value there): give the bound value a new name")
+  }
+}
+
 // A builtin block's parameters (`each`, `any`, `all`, a comparator, a
 // Hash's or a Set's `each`, `Array(T).new(n, (i) { })`, `Mutex.with`,
 // `.parallel`) are the block's own, as a `for` variable is the loop's: a
