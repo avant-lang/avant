@@ -289,9 +289,23 @@ say group-lines $ok "$(cat "$w/group.missing" 2>/dev/null | tr '\n' ';') / $(tr 
 
 # 12. Layout?: a LangArena step that passes (stub harness, LR table and
 # counts), a base table of the base cache entry's tree beside it: the task
-# whose time moved at an equal count is named in SUMMARY.txt and floor.md.
+# whose time moved at an equal count is timed across its layouts (a stub
+# layout-check.sh: its four runs span 0.98-1.12 s, so the base's 1.000 s
+# lies within them) and named layout? in SUMMARY.txt and floor.md; with
+# runs of 1.05-1.12 s it is named beyond.
 f=$(fake lay)
 cp "$root/tools/layout-flag.py" "$root/tools/floor.py" "$f/tools/"
+cat > "$f/tools/layout-check.sh" <<'STUB'
+#!/bin/sh
+[ "$1" = build ] && { mkdir -p "$3"; echo "$4" > "$3/built"; exit 0; }
+r=$2/rounds/raw; i=1
+for w in $(cat "$(dirname "$0")/../stub-walls"); do
+  mkdir -p "$r/round-$i"
+  printf 'id\thead--a_same\nround\t%d\nwall_ns\t%d\nexit\t0\noutput\tok\ntask\tA::Same\nside\thead\nlayout\t%d\nundisturbed\tyes\n' $i $w $((i * 64)) > "$r/round-$i/head--a_same.run"
+  i=$((i + 1))
+done
+STUB
+echo "980000000 1050000000 1120000000 1100000000" > "$f/stub-walls"
 lc=$w/lay/cache; le=$lc/feedfacefeedfacefeedfacefeedfacefeedface; mkdir -p "$le/la-x" "$le/gcstats"
 printf 'a_same\t1000000\tx\t0\tc\nb_other\t1000000\tx\t0\tc\n' > "$le/la-x/ins.tsv"
 cat > "$f/tools/base-cache.sh" <<EOF
@@ -329,9 +343,16 @@ cp "$w/layb/final/la/lr-avant.tsv" "$w/layb/final/la/x"; printf 'deadbeef\nfeedf
 (cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t && git branch -q base) > /dev/null 2>&1
 final "$f" "$w/lay.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
 s=$w/lay.out/SUMMARY.txt
-has '^layout: 1 of 2 tasks layout? (time beyond 3% and 0.02 s, instructions within 0.1%): A::Same +10.0% (instructions +0.000%); one layout experiment each before it is believed (tools/layout-retime.sh) (la/layout.tsv)$' "$s" \
-  && grep -q '^## Layout?$' "$w/lay.out/floor.md" && grep -q '^| A::Same | 1.000 | 1.100 | +10.0% | +0.000% | yes |$' "$w/lay.out/floor.md"
+has "^layout: 1 tasks moved at an equal instruction count; 1 within the spread across the head's layouts (layout?): A::Same +10.0% (base 1.000 s, head 0.980-1.120 s across 4 layouts); 0 beyond it (la/layout.tsv)$" "$s" \
+  && grep -q '^## Layout?$' "$w/lay.out/floor.md" && grep -q '^| A::Same | 1.000 | 1.100 | +10.0% | +0.000% | 0.980–1.120 | layout? | yes |$' "$w/lay.out/floor.md" \
+  && [ "$(cat "$w/lay.out/la/layout-check/built" 2>/dev/null)" = a_same ]
 say layout-marked $? "$(line layout: "$s"); $(line langarena: "$s"); $(grep -A 6 '^## Layout' "$w/lay.out/floor.md" 2>/dev/null | tr '\n' ';')"
+echo "1050000000 1120000000 1100000000 1080000000" > "$f/stub-walls"
+(cd "$f" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m walls) > /dev/null 2>&1
+final "$f" "$w/lay3.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
+has "^layout: 1 tasks moved at an equal instruction count; 0 within the spread across the head's layouts (layout?); 1 beyond it: A::Same +10.0% (base 1.000 s, head 1.050-1.120 s across 4 layouts) (la/layout.tsv)$" "$w/lay3.out/SUMMARY.txt" \
+  && grep -q '^| A::Same | 1.000 | 1.100 | +10.0% | +0.000% | 1.050–1.120 | beyond | yes |$' "$w/lay3.out/floor.md"
+say layout-beyond $? "$(line layout: "$w/lay3.out/SUMMARY.txt"); $(grep -A 6 '^## Layout' "$w/lay3.out/floor.md" 2>/dev/null | tr '\n' ';')"
 printf 'deadbeef\nanothertree\n' > "$w/layb/final/head.txt"
 final "$f" "$w/lay2.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
 has '^layout: skipped (the floor.s base table is of tree anothertree, the base cache.s entry of feedface' "$w/lay2.out/SUMMARY.txt"

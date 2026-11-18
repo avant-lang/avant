@@ -20,6 +20,19 @@ Prints one line: `layout: N of M tasks ...`, naming each flagged task with
 its time change and count change; with OUT.tsv, writes one line per flagged
 task (task, slug, base s, head s, time %, count %). Exit 0, 2 on a usage
 error or an unreadable input.
+
+  python3 tools/layout-flag.py --spread OUT.tsv ROUNDS_DIR
+
+then judges each flagged task by its own layouts: ROUNDS_DIR is a
+tools/rounds.py session of the head's program at several code shifts
+(tools/layout-check.sh, one run per shift). A task stays `layout?` only
+when the base's time lies within the head's range across its layouts (the
+fastest layout's run to the slowest's): the address alone covers the
+difference. A task outside it moved beyond what its layouts move: the
+change, or noise in the one-pass times (a second look, not a layout).
+Rewrites OUT.tsv with the head's range and the verdict (`layout?` or
+`beyond`) and prints one line: `layout: N of M tasks ...; K within the
+spread across layouts (layout?): ...; J beyond it: ...`.
 """
 import sys
 
@@ -51,7 +64,51 @@ def ins(path):
     return counts
 
 
+def spread(argv):
+    """--spread OUT.tsv ROUNDS_DIR: the flagged tasks judged by the head's own layouts."""
+    import os
+    path, d = argv[2], argv[3]
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError as e:
+        sys.stderr.write("layout-flag.py: %s\n" % e)
+        return 2
+    runs = {}
+    rd = os.path.join(d, "raw")
+    for r in sorted(os.listdir(rd)) if os.path.isdir(rd) else []:
+        for f in sorted(os.listdir(os.path.join(rd, r))):
+            if not f.endswith(".run"):
+                continue
+            rec = dict(l.rstrip("\n").split("\t", 1) for l in open(os.path.join(rd, r, f), encoding="utf-8") if "\t" in l)
+            if rec.get("undisturbed", "yes") == "yes" and rec.get("exit") == "0":
+                runs.setdefault(rec["task"], []).append((int(rec["wall_ns"]) / 1e9, rec.get("layout", "?")))
+    out, within, beyond, unmeasured = [lines[0] + "\thead_min_s\thead_max_s\tlayouts\tverdict"] if lines else [], [], [], []
+    for line in lines[1:]:
+        p = line.split("\t")
+        task, base = p[0], float(p[2])
+        rs = runs.get(task, [])
+        if len(rs) < 2:
+            unmeasured.append(task)
+            out.append(line + "\t-\t-\t%d\tunmeasured" % len(rs))
+            continue
+        lo, hi = min(w for w, _ in rs), max(w for w, _ in rs)
+        ok = lo <= base <= hi
+        (within if ok else beyond).append("%s %s%% (base %.3f s, head %.3f-%.3f s across %d layouts)" % (task, p[4], base, lo, hi, len(rs)))
+        out.append(line + "\t%.3f\t%.3f\t%d\t%s" % (lo, hi, len(rs), "layout?" if ok else "beyond"))
+    open(path, "w", encoding="utf-8").write("\n".join(out) + "\n")
+    n = len(lines) - 1
+    parts = ["layout: %d tasks moved at an equal instruction count" % n]
+    parts.append("%d within the spread across the head's layouts (layout?)%s" % (len(within), (": " + ", ".join(within)) if within else ""))
+    parts.append("%d beyond it%s" % (len(beyond), (": " + ", ".join(beyond)) if beyond else ""))
+    if unmeasured:
+        parts.append("%d not measured: %s" % (len(unmeasured), ", ".join(unmeasured)))
+    print("; ".join(parts))
+    return 0
+
+
 def main(argv):
+    if len(argv) == 4 and argv[1] == "--spread":
+        return spread(argv)
     if len(argv) not in (5, 6):
         sys.stderr.write(__doc__.split("\n\n")[1] + "\n")
         return 2

@@ -92,9 +92,11 @@
 #      base cache entry's tree: the head's instruction counts of the base
 #      cache's stitched programs (tools/la-count.sh, shared), and the tasks
 #      whose time moved beyond 3% and 0.02 s at counts within 0.1% named
-#      "layout?" (tools/layout-flag.py): a `layout:` line, la/layout.tsv and
-#      a "Layout?" section in floor.md (tools/layout-retime.sh is the
-#      experiment that tells)
+#      (tools/layout-flag.py), each then timed again with its code at four
+#      shifts (tools/layout-check.sh: the build shared, the timing --timed,
+#      la/layout-check/): it stays "layout?" only when the base's time lies
+#      within the head's range across its layouts, else "beyond"; a
+#      `layout:` line, la/layout.tsv and a "Layout?" section in floor.md
 #   7. tmp-after.txt (red on an entry this run left in /tmp, tmp-new.txt;
 #      an entry another program removed meanwhile is listed in
 #      tmp-gone.txt, not red), and SUMMARY.txt: one line per step
@@ -530,9 +532,8 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
     else step "floor: red (no LR table)"; fi
     # Layout?: a task whose time moved against the base's LR re-measure
     # while its instruction count (the head's C' and the base cache's, on
-    # the same stitched programs) did not is named, here and in floor.md:
-    # worth one layout experiment (tools/layout-retime.sh) before the time
-    # is believed. Only when the base's table and the base cache are of one
+    # the same stitched programs) did not is named, here and in floor.md,
+    # and judged by its own layouts below. Only when the base's table and the base cache are of one
     # tree, so the times and the counts are of one base.
     curname=layout
     blr=${fbase:+$(dirname "$fbase")/lr-avant.tsv}
@@ -548,6 +549,18 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
         sh tools/la-count.sh . "$lap" "$2/ins-head.tsv" < /dev/null >> "$2/ins-head.log" 2>&1; exit 0' la-counts "$entry" "$la"
       if [ -s "$la/ins-head.tsv" ] && [ -s "$la/la-part.txt" ]; then
         ll=$(python3 -I tools/layout-flag.py "$la/lr-avant.tsv" "$blr" "$la/ins-head.tsv" "$(cat "$la/la-part.txt")/ins.tsv" "$la/layout.tsv" 2> "$la/layout.err")
+        # Each task so flagged is timed again across its own layouts (the
+        # head's program at several code shifts, tools/layout-check.sh):
+        # it stays layout? only when the base's time lies within that
+        # spread; one beyond it moved more than its address moves it.
+        spread=""
+        if [ -n "$ll" ] && [ "$(wc -l < "$la/layout.tsv")" -gt 1 ]; then
+          # shellcheck disable=SC2046
+          lk shared "layout check build" sh tools/layout-check.sh build "$(cat "$la/la-part.txt")" "$la/layout-check" $(awk -F'\t' 'NR > 1 { print $2 }' "$la/layout.tsv") < /dev/null > "$la/layout-check.log" 2>&1 \
+            && lk timed "layout check" sh tools/layout-check.sh time "$la/layout-check" "$side/LangArena/run.js" < /dev/null >> "$la/layout-check.log" 2>&1 \
+            && spread=$(python3 -I tools/layout-flag.py --spread "$la/layout.tsv" "$la/layout-check/rounds" 2>> "$la/layout.err")
+          [ -n "$spread" ] && ll=$spread || ll="$ll; the check across layouts failed (la/layout-check.log), so every one stays layout?"
+        fi
         if [ -n "$ll" ]; then
           step "$ll (la/layout.tsv)"
           if [ -f "$out/floor.md" ]; then
@@ -555,13 +568,13 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
               echo
               echo "## Layout?"
               echo
-              echo "Tasks whose time moved against the base's (\`$blr\`) while their instruction count did not (the head's C' and the base cache's, \`la/ins-head.tsv\` and the part's \`ins.tsv\`): where the code sits is the first suspect, one layout experiment each (\`tools/layout-retime.sh\`) before the time is believed."
+              echo "Tasks whose time moved against the base's (\`$blr\`) while their instruction count did not (the head's C' and the base cache's, \`la/ins-head.tsv\` and the part's \`ins.tsv\`), each timed again with its code at several shifts (\`tools/layout-check.sh\`, \`la/layout-check/\`): **layout?** when the base's time lies within the head's range across its layouts (the address alone covers the difference), **beyond** when it lies outside (the change, or noise in the one-pass times)."
               echo
               if [ "$(wc -l < "$la/layout.tsv")" -gt 1 ]; then
-                echo "| Task | Base s | Head s | Time | Instructions | On the floor |"
-                echo "| --- | ---: | ---: | ---: | ---: | --- |"
+                echo "| Task | Base s | Head s | Time | Instructions | Head across layouts s | Verdict | On the floor |"
+                echo "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |"
                 awk -F'\t' 'FILENAME == ARGV[1] { if ($0 ~ /^\| [A-Z]/) { split($0, c, " \\| "); sub(/^\| /, "", c[1]); fl[c[1]] = 1 }; next }
-                  FNR > 1 { printf "| %s | %.3f | %.3f | %s%% | %s%% | %s |\n", $1, $3, $4, $5, $6, ($1 in fl) ? "yes" : "no" }' "$out/floor.md" "$la/layout.tsv"
+                  FNR > 1 { printf "| %s | %.3f | %.3f | %s%% | %s%% | %s | %s | %s |\n", $1, $3, $4, $5, $6, (NF >= 10 ? $7 "–" $8 : "—"), (NF >= 10 ? $10 : "layout?"), ($1 in fl) ? "yes" : "no" }' "$out/floor.md" "$la/layout.tsv"
               else echo "None: $ll."; fi
             } >> "$out/floor.md"
           fi

@@ -1,5 +1,6 @@
 #!/bin/sh
-# tools/layout-flag.py and tools/layout-retime.sh. Run by
+# tools/layout-flag.py, tools/layout-retime.sh, tools/layout-cc.sh,
+# tools/layout-spread.py and tools/rounds.py --layouts. Run by
 # tests/cases/test_tools.av; by hand:
 #
 #   sh tests/tools/layout.sh WORK
@@ -15,7 +16,21 @@
 #   retime-overlap: with both binaries alike (each run 0.05 s or 0.25 s
 #     in turn, so their ranges overlap whatever the noise), "not separated";
 #   retime-args: the stub saw the harness's compile arguments and the
-#     shift's C file, and nothing is left in TMPDIR.
+#     shift's C file, and nothing is left in TMPDIR;
+#   cc-shifts: tools/layout-cc.sh as CC links a C program as asked and once
+#     per shift: shift 0 is the same bytes, and main sits 64 and 192 bytes
+#     later in the others, each of which runs;
+#   cc-passthrough: a compile (-c) and a link without LAYOUT_DIR pass
+#     through untouched; cc-bad-shift: a shift not a multiple of 64 fails;
+#   rounds-layouts: rounds.py --layouts runs round r at the
+#     ((r - 1) mod K)-th shift, names it in each raw file and lists every
+#     layout's binary;
+#   spread-verdicts: layout-spread.py calls a task whose layouts differ
+#     beyond its noise `layout`, one alike at every layout `ok`, and one
+#     whose copies of shift 0 differ as much `noisy`;
+#   spread-compare: compare reads two spread tables;
+#   flag-spread: layout-flag.py --spread keeps a task whose base time lies
+#     within the head's layouts layout?, and calls one outside them beyond.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -72,4 +87,66 @@ say retime-follows $? "rc=$rc $(tr '\n' ';' < "$w/retime1.out")"
 say retime-overlap $? "rc=$rc $(tr '\n' ';' < "$w/retime2.out")"
 grep -qx -- '--release --cpu=v3' "$w/args1.log" && grep -qx -- "--release --cpu=v3 --cc $f/tools/layout/plt.c" "$w/args1.log" && [ -z "$(ls "$w/tmp")" ]
 say retime-args $? "$(tr '\n' ';' < "$w/args1.log"); left: $(ls "$w/tmp" | tr '\n' ' ')"
+# 3. The CC wrapper, on a real link.
+c=$w/cc; mkdir -p "$c"
+printf '#include <stdio.h>\nint main(void) { puts("42"); return 0; }\n' > "$c/p.c"
+cc -c -O1 -falign-functions=64 -o "$c/p.o" "$c/p.c"
+(cd "$c" && env CC= LAYOUT_DIR="$c/lay" LAYOUT_SHIFTS="0 64 192" sh "$root/tools/layout-cc.sh" p.o -o prog < /dev/null > "$c/log" 2>&1); rc=$?
+addr() { nm "$1" 2>/dev/null | awk '$3 == "main" { print $1 }'; }
+a0=$(addr "$c/lay/0/prog"); a1=$(addr "$c/lay/64/prog"); a2=$(addr "$c/lay/192/prog")
+[ $rc -eq 0 ] && cmp -s "$c/prog" "$c/lay/0/prog" && [ $((0x$a1 - 0x$a0)) = 64 ] && [ $((0x$a2 - 0x$a0)) = 192 ] \
+  && [ "$("$c/lay/64/prog")" = 42 ] && [ "$("$c/lay/192/prog")" = 42 ]
+say cc-shifts $? "rc=$rc main at $a0 $a1 $a2; $(cat "$c/log")"
+(cd "$c" && env LAYOUT_DIR="$c/lay2" LAYOUT_SHIFTS="64" sh "$root/tools/layout-cc.sh" -c -O1 -o q.o p.c < /dev/null \
+  && env -u LAYOUT_DIR sh "$root/tools/layout-cc.sh" q.o -o q < /dev/null) > "$c/log2" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -f "$c/q.o" ] && [ -x "$c/q" ] && [ ! -e "$c/lay2" ]
+say cc-passthrough $? "rc=$rc $(cat "$c/log2")"
+(cd "$c" && env LAYOUT_DIR="$c/lay3" LAYOUT_SHIFTS="0 48" sh "$root/tools/layout-cc.sh" p.o -o r < /dev/null > "$c/log3" 2>&1); rc=$?
+[ $rc -eq 2 ] && grep -q 'shift 48 is not a multiple of 64' "$c/log3"
+say cc-bad-shift $? "rc=$rc $(cat "$c/log3")"
+
+# 4. rounds.py --layouts: two fake layouts of one fake task.
+r=$w/rl; mkdir -p "$r/bin/0" "$r/bin/64"
+printf '#!/bin/sh\necho 111\n' > "$r/bin/0/fake_one"; printf '#!/bin/sh\n# moved\necho 111\n' > "$r/bin/64/fake_one"
+chmod +x "$r/bin/0/fake_one" "$r/bin/64/fake_one"
+printf '[\n  {\n    "name": "Fake::One",\n    "checksum": 111,\n  },\n]\n' > "$r/run.js"
+python3 -I "$root/tools/rounds.py" langarena --rounds 3 --run-js "$r/run.js" --out "$r/s" --side x="$r/bin" --layouts 0,64 --allow-governor \
+  --cpu-tolerance 1 --max-involuntary 100000 --max-outside 100 < /dev/null > "$r/log" 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -qx 'layout	0' "$r/s/raw/round-1/x--fake_one.run" && grep -qx 'layout	64' "$r/s/raw/round-2/x--fake_one.run" \
+  && grep -qx 'layout	0' "$r/s/raw/round-3/x--fake_one.run" && grep -q '  x@64--fake_one$' "$r/s/binaries.sha256" \
+  && grep -q '  x@0--fake_one$' "$r/s/binaries.sha256" && grep -q '^Layouts: round r ran' "$r/s/rounds.md" && grep -q '^layouts: shifts 0 64' "$r/s/session.txt"
+say rounds-layouts $? "rc=$rc $(tail -2 "$r/log" | tr '\n' ';')"
+
+# 5. layout-spread.py on fabricated sessions.
+sp=$w/sp; mkdir -p "$sp"
+run() { # ROUND SIDE TASK WALL
+  mkdir -p "$sp/s/raw/round-$1"
+  printf 'id\t%s--x\nround\t%s\nwall_ns\t%d\nexit\t0\noutput\tok\ntask\t%s\nside\t%s\nundisturbed\tyes\n' "$2" "$1" "$4" "$3" "$2" \
+    > "$sp/s/raw/round-$1/$2--$(echo "$3" | tr -d ':' | tr A-Z a-z).run"
+}
+for k in 1 2 3; do
+  run $k s0 A::Moves 1000000000; run $k s64 A::Moves 1100000000; run $k s0c1 A::Moves 1001000000
+  run $k s0 B::Still 1000000000; run $k s64 B::Still 1002000000; run $k s0c1 B::Still 1001000000
+  run $k s0 C::Noisy 1000000000; run $k s64 C::Noisy 1050000000; run $k s0c1 C::Noisy 1100000000
+done
+o=$(python3 -I "$root/tools/layout-spread.py" spread --out "$sp/out" "$sp/s" 2>&1); rc=$?
+v() { awk -F'\t' -v t="$1" '$1 == t { print $9 }' "$sp/out/spread.tsv"; }
+[ $rc -eq 1 ] && [ "$(v A::Moves)" = layout ] && [ "$(v B::Still)" = ok ] && [ "$(v C::Noisy)" = noisy ] \
+  && echo "$o" | grep -q '^layout spread: 3 tasks; 1 over the bar (2.0%) and their noise, 1 noisy at one layout;'
+say spread-verdicts $? "rc=$rc $o; $(tr '\n' ';' < "$sp/out/spread.tsv" 2>/dev/null)"
+o=$(python3 -I "$root/tools/layout-spread.py" compare "$sp/out/spread.tsv" "$sp/out/spread.tsv" "$sp/cmp.md" 2>&1); rc=$?
+[ $rc -eq 0 ] && echo "$o" | grep -q '^compare: 3 tasks; median ratio new/base geometric mean 1.0000' && grep -q '^| A::Moves |' "$sp/cmp.md"
+say spread-compare $? "rc=$rc $o"
+
+# 6. layout-flag.py --spread on the flag's TSV and a head's layout runs.
+fs=$w/fs; mkdir -p "$fs/rounds/raw/round-1" "$fs/rounds/raw/round-2"
+printf 'task\tslug\tbase_s\thead_s\ttime_pct\tins_pct\nA::In\ta_in\t1.000\t1.100\t+10.0\t+0.000\nB::Out\tb_out\t1.000\t1.100\t+10.0\t+0.000\n' > "$fs/layout.tsv"
+for k in 1 2; do
+  printf 'task\tA::In\nround\t%d\nwall_ns\t%d\nexit\t0\nlayout\t%d\nundisturbed\tyes\n' $k $((900000000 + k * 100000000)) $((k * 64)) > "$fs/rounds/raw/round-$k/head--a_in.run"
+  printf 'task\tB::Out\nround\t%d\nwall_ns\t%d\nexit\t0\nlayout\t%d\nundisturbed\tyes\n' $k $((1050000000 + k * 10000000)) $((k * 64)) > "$fs/rounds/raw/round-$k/head--b_out.run"
+done
+o=$(python3 -I "$root/tools/layout-flag.py" --spread "$fs/layout.tsv" "$fs/rounds" 2>&1); rc=$?
+[ $rc -eq 0 ] && echo "$o" | grep -q "1 within the spread across the head's layouts (layout?): A::In +10.0% (base 1.000 s, head 1.000-1.100 s across 2 layouts); 1 beyond it: B::Out" \
+  && [ "$(awk -F'\t' '$1 == "B::Out" { print $10 }' "$fs/layout.tsv")" = beyond ] && [ "$(awk -F'\t' '$1 == "A::In" { print $10 }' "$fs/layout.tsv")" = 'layout?' ]
+say flag-spread $? "rc=$rc $o"
 echo done
