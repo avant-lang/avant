@@ -259,7 +259,7 @@ fn ws_route_round(port: Int, t: Int, rounds: Int, done: sync.Channel(Int), wrong
           want.push("b1 ${body}")
           want.push("b2 ${body}")
         }
-        if conn.send_text(body) {
+        if went(conn.send_text(body)) {
           for w in want {
             if wrong.size == 0 {
               got = "nothing"
@@ -591,6 +591,14 @@ fn client_framing_cases(c: Checks, root: String) {
 
 // The result of one client call as a line: "STATUS BODY" or the
 // HttpError's message.
+// Whether a WebSocket send went (false for either WsSendError).
+fn went(r: Void | http.WsSendError): Bool {
+  switch r {
+    case http.WsSendError { false }
+    else { true }
+  }
+}
+
 fn outcome(r: Response | HttpError): String {
   switch r {
     case e: HttpError { e.message }
@@ -815,7 +823,7 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
         for i in 0..n {
           b.push_byte(97 + i % 26)
         }
-        sent = "${conn.send_text(b.to_s())}"
+        sent = "${went(conn.send_text(b.to_s()))}"
         big.with (v) { v = sent }
       } else {
         said = big.with (v) { v }
@@ -901,7 +909,7 @@ fn write_piece_cases(c: Checks) {
       said = "no connection"
       if conn = ws.connect("ws://127.0.0.1:${port}/ws", 10000) {
         said = "not sent"
-        if conn.send_text(big) {
+        if went(conn.send_text(big)) {
           said = "no answer"
           if msg = conn.recv(10000) {
             said = msg.text() ?? "binary"
@@ -1102,9 +1110,16 @@ fn ws_live_cases(c: Checks, root: String) {
       _ = conn.send_message(msg)
     })
     stuck = sync.Mutex(String).new("open")
+    refused = sync.Mutex(String).new("none")
     server.websocket("/ws-stuck", (conn, msg) {
+      // Sends until the queue refuses one: WsSendError.full, a slow
+      // reader, not a closed connection.
       n = 0
-      while n < 1000 && conn.send_text(big) {
+      while n < 1000 {
+        conn.send_text(big) else e {
+          refused.with((v) { v = "${e == http.WsSendError.full}: ${e}" })
+          break
+        }
         n += 1
       }
     })
@@ -1131,6 +1146,7 @@ fn ws_live_cases(c: Checks, root: String) {
     want: Array(String) = []
     want.push("ws_live=quiet:closed,ponger:open, pinged,trickle:closed,stuck:closed")
     expect_lines(c, out, want, "a silent WebSocket peer is pinged and closed, a slow one closed:")
+    c.eq_str(refused.with((v) { v }), "true: the WebSocket connection's send queue is full", "a send the queue refuses answers WsSendError.full")
   } else {
     c.expect(false, "listen for the WebSocket liveness test")
   }

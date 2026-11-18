@@ -152,12 +152,25 @@ fn limit_round(port: Int, out: sync.Channel(String), script: String, stamp: Int)
   0
 }
 
+// What a WebSocket send or close answered: "sent", or its WsSendError.
+fn sent_word(r: Void | http.WsSendError): String {
+  switch r {
+    case e: http.WsSendError {
+      switch e {
+        case closed { "closed" }
+        case full { "full" }
+      }
+    }
+    else { "sent" }
+  }
+}
+
 fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
   if conn = ws.connect("ws://127.0.0.1:${port}/shout") {
-    sent = conn.send_text("abc")
+    _ = conn.send_text("abc")
     if msg = conn.recv(5000) {
       first = msg.text() ?? ""
-      sent2 = conn.send_bytes("xy".bytes)
+      _ = conn.send_bytes("xy".bytes)
       if msg2 = conn.recv(5000) {
         // send_message keeps a message's kind (the server's WsConn had
         // it; the client's had not): text back as text, bytes as bytes.
@@ -180,6 +193,8 @@ fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
     }
     conn.close()
     conn.close()
+    // A send after close: the error says the connection is closed.
+    out.send("ws-client-after=${sent_word(conn.send_text("late"))} ${sent_word(conn.send_message(http.WsMessage { is_text: true, body: "x".bytes }))}")
   } else {
     out.send("ws-client=BAD0")
   }
@@ -497,25 +512,29 @@ fn test_std_http(c: Checks) {
 
   if opened = http.listen(0, "127.0.0.1", 1048576, 2, 64) {
     server = opened
+    byes = sync.Channel(String).new(4)
     server.websocket("/echo", (conn, msg) {
-      sent = conn.send_message(msg)
+      _ = conn.send_message(msg)
     })
     server.websocket("/shout", (conn, msg) {
       if msg.is_text {
-        sent = conn.send_text("text:${msg.text() ?? ""}")
+        _ = conn.send_text("text:${msg.text() ?? ""}")
       } else {
-        sent = conn.send_bytes(msg.body)
+        _ = conn.send_bytes(msg.body)
       }
     })
     server.websocket("/work", (conn, msg) {
       sender = conn.sender()
       handle = spawn {
-        sent = sender.send_text("worked")
+        _ = sender.send_text("worked")
         0
       }
     })
     server.websocket("/bye", (conn, msg) {
-      sent = conn.close(1000, "done")
+      // The close goes; a send after it, a second close and a send
+      // through the sender each answer WsSendError.closed.
+      first = sent_word(conn.close(1000, "done"))
+      byes.send("bye ${first} ${sent_word(conn.send_text("late"))} ${sent_word(conn.close())} ${sent_word(conn.sender().send_bytes("x".bytes))}")
     })
     events = sync.Channel(String).new(16)
     server.websocket_open("/echo", (conn, req) {
@@ -551,6 +570,8 @@ fn test_std_http(c: Checks) {
     } else {
       c.expect(false, "ws client round present")
     }
+    c.eq_str(cout.recv() ?? "none", "ws-client-after=closed closed", "a client's send after close answers WsSendError.closed")
+    c.eq_str(byes.recv() ?? "none", "bye sent closed closed closed", "a server's send or close after close answers WsSendError.closed")
     want: Array(String) = []
     want.push("ws-echo=ok")
     want.push("ws-proto=ok")

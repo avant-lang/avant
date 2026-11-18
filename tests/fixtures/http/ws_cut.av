@@ -29,6 +29,14 @@ fn fail_big_mallocs(on: Bool) {
   _ = c.setenv("AVANT_TEST_MALLOC_FAIL", value, one)
 }
 
+// Whether a send went (false for either WsSendError).
+fn went(r: Void | http.WsSendError): Bool {
+  switch r {
+    case http.WsSendError { false }
+    else { true }
+  }
+}
+
 fn main: Int {
   a = process.args()
   if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
@@ -44,9 +52,9 @@ fn main: Int {
         }
         big = b.to_s()
         fail_big_mallocs(true)
-        sent = conn.send_text(big)
+        sent = went(conn.send_text(big))
         fail_big_mallocs(false)
-        after = conn.send_text("after")
+        after = went(conn.send_text("after"))
         said.with((v) { v = "big ${sent}, after ${after}" })
       } else {
         report = said.with((v) { v })

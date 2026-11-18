@@ -2504,7 +2504,7 @@ fn main {
 }
 ```
 
-`Error` is a marker on the declaration and a [bound](#bounds), not a type to store; no type may be named `Error`. The library's errors are marked: `IoError`, `ProcessError`, `JsonError`, `RegexError`, `HttpError`, `TaskError`, and the enums `ZlibError`, `Base64Error` and `MutexError` ([An enum as an error](#an-enum-as-an-error)).
+`Error` is a marker on the declaration and a [bound](#bounds), not a type to store; no type may be named `Error`. The library's errors are marked: `IoError`, `ProcessError`, `JsonError`, `RegexError`, `HttpError`, `TaskError`, and the enums `ZlibError`, `Base64Error`, `MutexError` and `WsSendError` ([An enum as an error](#an-enum-as-an-error)).
 
 ### Causes
 
@@ -2582,7 +2582,7 @@ fn main {
 
 It is read, refused as dropped and discarded like any error; a `switch` over the result names it as a member. `e.message` reads the message, as on every error.
 
-The library's errors that are a kind and nothing else are enums: `ZlibError` and `Base64Error` (`invalid_data`, `too_large`: the result would pass a `Buf`'s size limit) and `MutexError` (`poisoned`). The errors that carry data stay classes: `IoError` (its operation, path and `errno`), `JsonError` and `RegexError` (an offset), `ProcessError`, `HttpError`, `TaskError`.
+The library's errors that are a kind and nothing else are enums: `ZlibError` and `Base64Error` (`invalid_data`, `too_large`: the result would pass a `Buf`'s size limit) `MutexError` (`poisoned`) and `std.http`'s `WsSendError` (`closed`, `full`). The errors that carry data stay classes: `IoError` (its operation, path and `errno`), `JsonError` and `RegexError` (an offset), `ProcessError`, `HttpError`, `TaskError`.
 
 ### Errors cannot be dropped
 
@@ -4761,7 +4761,7 @@ import std.http
 fn main {
   if server = http.listen(8080) {
     server.websocket("/echo", (conn, msg) {
-      conn.send_message(msg)                   // echo, text or binary
+      _ = conn.send_message(msg)               // echo, text or binary; a full queue drops it
     })
     server.websocket_close("/echo", (conn, code, reason) {
       puts("closed with ${code}")
@@ -4777,10 +4777,10 @@ fn main {
 | `websocket_open(path, (conn, req) { ... })`, `websocket_close(path, (conn, code, reason) { ... })` | `path: String`, a lambda | the `Server` | — | run once per connection: `req` is the handshake request (its headers, a cookie or an `Authorization`, its query, its peer), which the handler may check and `conn.close` on; `code` is 1006 when the connection dropped without a close frame |
 | `msg.text()`, `msg.is_text` | — | `String?`: the text, `nil` for a binary message or bytes that are not valid UTF-8; `Bool` | — | a text message |
 | `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
-| `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole, or, when no memory is left to hold its rest, the connection is closed |
+| `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Void \| WsSendError` | `WsSendError.closed` when the connection is closed (or closing), `WsSendError.full` when its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole (`full`: a slow reader; `_ = conn.send_text(x)` where such a message may be dropped); one the socket has begun to take is always sent whole, or, when no memory is left to hold its rest, the connection is closed. The result cannot be dropped silently ([Errors cannot be dropped](#errors-cannot-be-dropped)) |
 | `conn.sender` | — | a sender with the same four calls | — | a connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it |
 
-A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four. Ping, the close handshake and fragmentation are handled for you, and a silent connection is pinged after the server's `websocket_idle_timeout` and closed if it stays silent (see the limits under [HTTP server](#http-server)). `server.close()` sends code 1001 to open connections.
+A `WsConn` kept after its connection closed, or after `serve` returned, answers `WsSendError.closed` to all four. Ping, the close handshake and fragmentation are handled for you, and a silent connection is pinged after the server's `websocket_idle_timeout` and closed if it stays silent (see the limits under [HTTP server](#http-server)). `server.close()` sends code 1001 to open connections.
 
 #### WebSocket client
 
@@ -4793,7 +4793,10 @@ import std.ws
 
 fn main {
   if conn = ws.connect("ws://127.0.0.1:8080/echo") {
-    conn.send_text("hi")
+    conn.send_text("hi") else e {
+      puts("not sent: ${e}")
+      return
+    }
     if msg = conn.recv() {
       puts(msg.text() ?? "")
     }
@@ -4807,8 +4810,8 @@ fn main {
 | `ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
 | `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage?` | `nil` when the connection closed or the timeout passed, and `close_code` says which | blocks. Never call `recv` from a server handler |
 | `close_code` | — | `Int` | — | 1006 until a close frame arrives |
-| `send_text`, `send_bytes`, `send_message` | a `String`, `Bytes`, a `WsMessage` (sent as it came, text or binary) | `Bool` | `false` after `close` | |
-| `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing |
+| `send_text`, `send_bytes`, `send_message` | a `String`, `Bytes`, a `WsMessage` (sent as it came, text or binary) | `Void \| WsSendError` | `WsSendError.closed` after `close`; `full` when no memory is left to queue it | |
+| `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `WsSendError.closed`, `recv` `nil`, `close_code` 1006, and another `close` does nothing |
 
 Both timeouts use the monotonic clock. An unclosed connection keeps its thread until the process exits. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 

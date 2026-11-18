@@ -389,6 +389,36 @@ pub struct WsMessage {
   }
 }
 
+// Why a WebSocket send or close did not go: the connection is closed
+// (or closing: a close was sent, or it was cut), or its send queue is
+// full (a message that cannot go out at once and would leave more than
+// 1 MiB waiting is refused whole; the client's queue, when no memory is
+// left to hold it). A full queue is a slow reader: a program that may
+// drop such a message writes `_ = conn.send_text(x)`.
+pub enum WsSendError: Error {
+  closed,
+  full
+
+  fn message: String {
+    switch self {
+      case closed { "the WebSocket connection is closed" }
+      case full { "the WebSocket connection's send queue is full" }
+    }
+  }
+}
+
+// The runtime's answer to a send or a close: 1 sent, 2 refused for a
+// full queue, 0 closed.
+fn ws_sent(code: Int): Void | WsSendError {
+  if code == 1 {
+    return
+  }
+  if code == 2 {
+    return WsSendError.full
+  }
+  return WsSendError.closed
+}
+
 // The crossable half of a WsConn: a bare connection id, the one field
 // that may cross a `spawn` boundary (a spawn copies scalars, not the
 // pointer a WsConn also holds). Hand work to a task as a sender:
@@ -401,23 +431,24 @@ pub struct WsMessage {
 pub struct WsSender {
   id: Int
 
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_send_text_by_id(self.id, text) != 0
+  pub fn send_text(text: String): Void | WsSendError {
+    ws_sent(httpc.avant_ws_send_text_by_id(self.id, text))?
   }
 
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_send_bytes_by_id(self.id, data) != 0
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    ws_sent(httpc.avant_ws_send_bytes_by_id(self.id, data))?
   }
 
-  pub fn send_message(msg: WsMessage): Bool {
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      return httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body) != 0
+      ws_sent(httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body))?
+      return
     }
-    httpc.avant_ws_send_bytes_by_id(self.id, msg.body) != 0
+    ws_sent(httpc.avant_ws_send_bytes_by_id(self.id, msg.body))?
   }
 
-  pub fn close(code: Int = 1000, reason: String = ""): Bool {
-    httpc.avant_ws_close_by_id(self.id, code, reason) != 0
+  pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
+    ws_sent(httpc.avant_ws_close_by_id(self.id, code, reason))?
   }
 }
 
@@ -425,11 +456,12 @@ pub struct WsSender {
 // the address of its record in the runtime. The record is never freed
 // and the runtime checks the id against it on every operation, so a
 // value kept after its connection closed, or after `serve` returned,
-// answers false and touches nothing else. The value itself stays on
+// answers WsSendError.closed and touches nothing else. The value itself stays on
 // the loop thread (a raw pointer may not cross a `spawn` boundary);
 // `sender` above is the half that may cross.
-// `send_text` and `send_bytes` return false when the connection is
-// closed or its bounded send queue is full. They may be called from
+// `send_text`, `send_bytes`, `send_message` and `close` return a
+// WsSendError when the connection is closed (`closed`) or its bounded
+// send queue is full (`full`). They may be called from
 // any task: a send from a task other than the connection's loop thread
 // is queued in C (1 MiB per connection) and written in order when the
 // loop wakes. Ping is answered by the runtime, never delivered here;
@@ -443,25 +475,26 @@ pub struct WsConn {
     WsSender { id: self.id }
   }
 
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_send_text_direct(self.handle, self.id, text) != 0
+  pub fn send_text(text: String): Void | WsSendError {
+    ws_sent(httpc.avant_ws_send_text_direct(self.handle, self.id, text))?
   }
 
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_send_bytes_direct(self.handle, self.id, data) != 0
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    ws_sent(httpc.avant_ws_send_bytes_direct(self.handle, self.id, data))?
   }
 
   // Sends a received message onward with its kind preserved, without
   // materializing a string for a text message.
-  pub fn send_message(msg: WsMessage): Bool {
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      return httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body) != 0
+      ws_sent(httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body))?
+      return
     }
-    httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body) != 0
+    ws_sent(httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body))?
   }
 
-  pub fn close(code: Int = 1000, reason: String = ""): Bool {
-    httpc.avant_ws_close_direct(self.handle, self.id, code, reason) != 0
+  pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
+    ws_sent(httpc.avant_ws_close_direct(self.handle, self.id, code, reason))?
   }
 }
 
@@ -1015,25 +1048,24 @@ struct UrlParts {
   target: String
 }
 
-fn parse_port(text: String): Int {
+// A URL's port, 1 to 65535 in decimal digits; nil for anything else.
+fn parse_port(text: String): Int? {
   n = 0
-  i = 0
   if text.size == 0 {
-    return -1
+    return nil
   }
-  while i < text.size {
+  for i in 0..text.size {
     c = text[i]
     if c < 48 || c > 57 {
-      return -1
+      return nil
     }
     n = n * 10 + (c - 48)
     if n > 65535 {
-      return -1
+      return nil
     }
-    i += 1
   }
   if n == 0 {
-    return -1
+    return nil
   }
   n
 }
@@ -1085,10 +1117,7 @@ fn http_parse_url(url: String): UrlParts? {
       if authority[close + 1] != 58 {
         return nil
       }
-      port = parse_port(authority[close + 2..])
-      if port < 0 {
-        return nil
-      }
+      port = parse_port(authority[close + 2..]) ?? return nil
     }
   } else {
     colon = -1
@@ -1099,10 +1128,7 @@ fn http_parse_url(url: String): UrlParts? {
     }
     if colon >= 0 {
       host = authority[..colon]
-      port = parse_port(authority[colon + 1..])
-      if port < 0 {
-        return nil
-      }
+      port = parse_port(authority[colon + 1..]) ?? return nil
     }
   }
   if host.size == 0 {
@@ -1527,27 +1553,29 @@ fn request_lines(method: String, url: String, body: String | Bytes, headers: Arr
 // finalizer.
 // The value is the connection's id in the runtime, a number that is
 // never given twice: after `close`, every copy of the value finds
-// nothing there, so `send_text` and `send_bytes` return false, `recv`
+// nothing there, so `send_text` and `send_bytes` return
+// WsSendError.closed, `recv`
 // returns nil, `close_code` is 1006 and a second `close` does nothing,
 // whatever connections were opened since.
 pub struct WsConnection {
   id: Int
 
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_client_send_text(self.id, text) != 0
+  pub fn send_text(text: String): Void | WsSendError {
+    ws_sent(httpc.avant_ws_client_send_text(self.id, text))?
   }
 
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_client_send_bytes(self.id, data) != 0
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    ws_sent(httpc.avant_ws_client_send_bytes(self.id, data))?
   }
 
   // Sends a message onward with its kind kept, as WsConn.send_message
   // does on the server.
-  pub fn send_message(msg: WsMessage): Bool {
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      return httpc.avant_ws_client_send_text_bytes(self.id, msg.body) != 0
+      ws_sent(httpc.avant_ws_client_send_text_bytes(self.id, msg.body))?
+      return
     }
-    httpc.avant_ws_client_send_bytes(self.id, msg.body) != 0
+    ws_sent(httpc.avant_ws_client_send_bytes(self.id, msg.body))?
   }
 
   // The next message, or nil when the connection has closed. With a

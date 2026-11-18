@@ -2064,6 +2064,17 @@ char *avant_ws_event_reason(void *evp) {
   return make_string(ev->reason, ev->reason_len);
 }
 
+/* What a send or a close through std.http answers (WsSendError): 1 sent
+ * or queued, 0 the connection is closed (or was cut by this send: a frame
+ * begun whose rest could not be held), 2 refused whole for a full queue
+ * (the 1 MiB bound, or no memory to hold it). */
+static int32_t ws_send_sent(const AvantWsConn *ws, int ok) {
+  if (ok) {
+    return 1;
+  }
+  return ws->dead || ws->cut ? 0 : 2;
+}
+
 static int32_t ws_send_common(void *srvp, avant_int id, int32_t is_text,
                               const char *data) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
@@ -2083,7 +2094,7 @@ static int32_t ws_send_common(void *srvp, avant_int id, int32_t is_text,
     pthread_mutex_unlock(&g_ws_mu);
     return 0;
   }
-  ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
+  ok = ws_send_sent(ws, ws_send_frame(ws, is_text ? 1 : 2, data, len));
   pthread_mutex_unlock(&g_ws_mu);
   return ok;
 }
@@ -2125,8 +2136,8 @@ int32_t avant_ws_close_conn(void *srvp, avant_int id, avant_int code,
   }
   ws->close_sent = 1;
   ws->shutdown_after_flush = 1;
-  ok = ws_send_frame(ws, 8, (const char *)payload, payload_len);
-  if (ok && pthread_equal(pthread_self(), ws->owner_tid)) {
+  ok = ws_send_sent(ws, ws_send_frame(ws, 8, (const char *)payload, payload_len));
+  if (ok == 1 && pthread_equal(pthread_self(), ws->owner_tid)) {
     ws_flush(ws);
   }
   pthread_mutex_unlock(&g_ws_mu);
@@ -2167,7 +2178,7 @@ static int32_t ws_send_direct(void *handle, avant_int id, int32_t is_text,
   }
   if (ws->dead || ws->close_sent) { return 0; }
   len = avant_str_n(data);
-  ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
+  ok = ws_send_sent(ws, ws_send_frame(ws, is_text ? 1 : 2, data, len));
   return ok;
 }
 
@@ -2204,7 +2215,7 @@ avant_int avant_ws_close_direct(void *handle, avant_int id, avant_int code,
   if (reason_len > 0) { memcpy(payload + 2, reason, reason_len); }
   ws->close_sent = 1;
   ws->shutdown_after_flush = 1;
-  ok = ws_send_frame(ws, 8, (const char *)payload, 2 + reason_len);
+  ok = ws_send_sent(ws, ws_send_frame(ws, 8, (const char *)payload, 2 + reason_len));
   ws_flush(ws);
   return ok;
 }
@@ -4229,13 +4240,13 @@ static int ws_client_send_frame(WsClient *c, int opcode, const char *payload,
   header_len += 4;
   framed_len = header_len + len;
   framed = (char *)malloc(framed_len ? framed_len : 1);
-  if (!framed) { return 0; }
+  if (!framed) { return 2; }
   memcpy(framed, header, header_len);
   for (i = 0; i < len; i++) {
     framed[header_len + i] = (char)(payload[i] ^ mask[i & 3]);
   }
   node = (WsOut *)calloc(1, sizeof(WsOut));
-  if (!node) { free(framed); return 0; }
+  if (!node) { free(framed); return 2; }
   node->data = framed;
   node->len = framed_len;
   pthread_mutex_lock(&c->mu);
