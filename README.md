@@ -3939,7 +3939,7 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.regex`](#stdregex) | `Regex.compile`, `Match` values, replace and split | PCRE2, and re2c scanners for literal patterns |
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
-| [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64` | the aklomp Base64 codec |
+| [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
 | [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes | — |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
@@ -4273,6 +4273,8 @@ fn main {
   if raw = enc.bytes.from_base64() {
     puts(String.from_utf8(raw) ?? "")          // => avant
   }
+  token = "{\"alg\":\"HS256\"}".bytes.to_base64_url()
+  puts(token)                                  // => eyJhbGciOiJIUzI1NiJ9
 }
 ```
 
@@ -4281,6 +4283,7 @@ fn main {
 | `to_base64` | — | a `String` | — | encoding never fails |
 | `from_base64` | — | `Bytes \| Base64Error` | a `Base64Error` on malformed input | |
 | `to_base64_into(buf)`, `from_base64_into(buf)` | `buf: Buf` | `Base64Error?` | as above | the `Buf` twins |
+| `to_base64_url`, `from_base64_url`, and their `_into(buf)` twins | as above | as above | as above, and a `+` or `/` | the URL-safe alphabet without padding (`-` and `_` for `+` and `/`, no `=`), as JWT and URL tokens write it; the decoder takes the text with or without its padding |
 
 ### std.random
 

@@ -71,6 +71,86 @@ fn test_std_base64(c: Checks) {
     c.expect(false, "decode_into invalid is an error")
   }
   c.eq_str(keep.to_s(), "keep", "failed decode_into keeps the buffer")
+  test_base64_url(c)
+}
+
+fn url_back(s: String): String {
+  if b = s.bytes.from_base64_url() {
+    return String.from_utf8(b) ?? "?"
+  }
+  "error"
+}
+
+// The URL-safe alphabet without padding: every length's tail, the two
+// characters that differ, both padded and unpadded input decoded, and
+// the standard alphabet refused.
+fn test_base64_url(c: Checks) {
+  c.eq_str("".bytes.to_base64_url(), "", "url: encode empty")
+  c.eq_str("a".bytes.to_base64_url(), "YQ", "url: one byte, no padding")
+  c.eq_str("aa".bytes.to_base64_url(), "YWE", "url: two bytes, no padding")
+  c.eq_str("aaa".bytes.to_base64_url(), "YWFh", "url: three bytes")
+  c.eq_str("hello world!".bytes.to_base64_url(), "aGVsbG8gd29ybGQh", "url: whole groups")
+  odd = buf_new(4)
+  odd.push_byte(251)
+  odd.push_byte(255)
+  odd.push_byte(191)
+  c.eq_str(odd.to_bytes().to_base64(), "+/+/", "standard alphabet of fb ff bf")
+  c.eq_str(odd.to_bytes().to_base64_url(), "-_-_", "url: - and _ for + and /")
+  c.eq_str("{\"alg\":\"HS256\"}".bytes.to_base64_url(), "eyJhbGciOiJIUzI1NiJ9", "url: a JWT header")
+  c.eq_str(url_back("eyJhbGciOiJIUzI1NiJ9"), "{\"alg\":\"HS256\"}", "url: decode a JWT header")
+  c.eq_str(url_back("YQ"), "a", "url: decode unpadded one byte")
+  c.eq_str(url_back("YQ=="), "a", "url: decode padded one byte")
+  c.eq_str(url_back("YWE"), "aa", "url: decode unpadded two bytes")
+  c.eq_str(url_back(""), "", "url: decode empty")
+  if b = "-_-_".bytes.from_base64_url() {
+    c.eq_int(b.size, 3, "url: decode - and _")
+    c.eq_int(b.get(0) ?? -1, 251, "url: decode - and _ byte 0")
+    c.eq_int(b.get(2) ?? -1, 191, "url: decode - and _ byte 2")
+  } else {
+    c.expect(false, "url: decode - and _")
+  }
+  c.eq_str(url_back("+/+/"), "error", "url: the standard alphabet is an error")
+  c.eq_str(url_back("Y"), "error", "url: one character is no Base64")
+  c.eq_str(url_back("YQ="), "error", "url: a padded text whose length is not a multiple of four")
+  c.eq_str(url_back("Y!Q"), "error", "url: invalid characters")
+  for n in 0..40 {
+    raw = buf_new(n)
+    for i in 0..n {
+      raw.push_byte((i * 37 + 11) & 255)
+    }
+    bytes = raw.to_bytes()
+    enc = bytes.to_base64_url()
+    std = bytes.to_base64()
+    c.expect(!enc.bytes.chars().has("="), "url: no padding at ${n} bytes")
+    if back = enc.bytes.from_base64_url() {
+      c.expect(back == bytes, "url: round trip at ${n} bytes")
+    } else {
+      c.expect(false, "url: round trip at ${n} bytes")
+    }
+    c.eq_int(enc.size, (n * 4 + 2) / 3, "url: length at ${n} bytes")
+    c.expect(std.size >= enc.size, "url: not longer than standard at ${n} bytes")
+  }
+  into = buf_new(16)
+  into.push_str(">")
+  if err = "aa".bytes.to_base64_url_into(into) {
+    c.expect(false, "url: encode_into ${err.message}")
+  } else {
+    c.eq_str(into.to_s(), ">YWE", "url: encode_into appends")
+  }
+  into.clear()
+  if err2 = "-_-_".bytes.from_base64_url_into(into) {
+    c.expect(false, "url: decode_into ${err2.message}")
+  } else {
+    c.eq_int(into.size, 3, "url: decode_into")
+  }
+  keep = buf_new(8)
+  keep.push_str("k")
+  if err3 = "a/b".bytes.from_base64_url_into(keep) {
+    c.eq_str(err3.message, "invalid base64 data", "url: decode_into refuses /")
+  } else {
+    c.expect(false, "url: decode_into refuses /")
+  }
+  c.eq_str(keep.to_s(), "k", "url: a failed decode_into keeps the buffer")
 }
 
 fn main: Int {
