@@ -325,6 +325,86 @@ pub fn (checker_self: Checker) unknown_type_text(name: String): String {
   "unknown type ${name}"
 }
 
+// The type a type alias names where the alias is used as a value
+// (`type Rx = regex.Regex`, then `Rx.compile(...)`, `Rx { ... }` or, for
+// an alias of a class, `Rx.new(...)`): its target when that is a named
+// type, through an alias of an alias; nil when name is a local, not an
+// alias this module sees, or an alias of a union or a function type.
+pub fn (checker_self: Checker) alias_value_target(name: String, loc: Location): TypeName? {
+  if name.size == 0 || !(name[0] >= 65 && name[0] <= 90) {
+    return nil
+  }
+  first = TypeName.new(loc, name)
+  saved0 = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  any = checker_self.resolver.find_alias(first)
+  checker_self.resolver.scope_mod = saved0
+  if a0 = any {
+  } else {
+    return nil
+  }
+  if found = checker_self.lookup(name) {
+    return nil
+  }
+  if f = checker_self.implicit_field(name) {
+    return nil
+  }
+  cur = name
+  qual = ""
+  depth = 0
+  while depth < 16 {
+    tn = TypeName.new(loc, cur)
+    tn.mod_name = qual
+    saved = checker_self.resolver.scope_mod
+    checker_self.resolver.scope_mod = checker_self.current_module
+    got = checker_self.resolver.find_alias(tn)
+    checker_self.resolver.scope_mod = saved
+    if al = got {
+      if al.mod_name != checker_self.current_module && !(al.vis && checker_self.imported_by(checker_self.current_module, al.mod_name)) {
+        return nil
+      }
+      t = al.target
+      if t.fn_type || t.members.size > 0 || t.nilable {
+        return nil
+      }
+      if t.args.size == 0 {
+        cur = t.name
+        qual = t.mod_name
+        if more = checker_self.resolver.find_alias(t) {
+          depth += 1
+          continue
+        }
+      }
+      return clone_type_name(t)
+    }
+    return nil
+  }
+  nil
+}
+
+// Why a type alias used as a value names no one type to build (an alias
+// of a union or a function type), or "" (not such an alias, or a local).
+pub fn (checker_self: Checker) alias_not_value_text(name: String, loc: Location): String {
+  if name.size == 0 || !(name[0] >= 65 && name[0] <= 90) {
+    return ""
+  }
+  tn = TypeName.new(loc, name)
+  saved = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  got = checker_self.resolver.find_alias(tn)
+  checker_self.resolver.scope_mod = saved
+  if al = got {
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    t = al.target
+    if t.members.size > 0 || t.fn_type || t.nilable {
+      return "${name} is an alias of a union or a function type, not one type: build a value with its member's own name"
+    }
+  }
+  ""
+}
+
 // A bare name of an imported std module's function: refused with its
 // qualified spelling; true when refused.
 pub fn (checker_self: Checker) refuse_std_bare(loc: Location, name: String): Bool {

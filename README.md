@@ -1116,8 +1116,21 @@ fn main {
 
 - An alias is private to its module unless `pub`, starts with a capital letter and takes no type parameters.
 - An alias may not reach itself except through a struct or class: `type Json = Int | Array(Json)` is refused; give the recursive part a class, as `Add` above.
-- An alias stands where a type is written (a declaration, a field, a parameter, a type argument); a value is built with the type's own name (`Num.new(2)`, not `Expr.new()`).
+- An alias stands where a type is written (a declaration, a field, a parameter, a type argument), and where a type is used as a value when it names one type: `Rx.compile(...)`, `P { x: 1 }`, `B.new()` for `type Rx = regex.Regex`, `type P = Point`, `type B = Box`. An alias of a union builds nothing: a value is built with its member's own name (`Num.new(2)`, not `Expr.new()`).
+- A short alias suits a type a module uses often, from a `std` module above all: `type Rx = regex.Regex` and then `Rx.compile(...)`, `rs: Array(Rx)`. There is one spelling, `type Name = T`; `std` exports no alias of another module's type.
 - `type` is a keyword only at the start of a declaration; elsewhere it is a usable name.
+
+```avant
+import std.regex
+
+type Rx = regex.Regex
+
+fn main {
+  if r = Rx.compile("a+") {
+    puts(r.count("caab"))   // => 1
+  }
+}
+```
 
 ### What an optional costs
 

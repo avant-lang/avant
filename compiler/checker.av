@@ -3880,6 +3880,15 @@ pub class Checker {
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.mod_name.size == 0 && expr.type_args.size == 0 {
+      // A struct literal through a type alias (`type P = geo.Point`,
+      // `P { x: 1, y: 2 }`) builds the type the alias names.
+      if t = alias_value_target(expr.type_name, expr.loc) {
+        expr.type_name = t.name
+        expr.mod_name = t.mod_name
+        expr.type_args = t.args
+      }
+    }
     drop_struct_defaults(expr)
     if expr.type_name == "Hasher" && expr.mod_name.size == 0 {
       fail(expr.loc, hasher_made_text())
@@ -6004,6 +6013,30 @@ pub class Checker {
 
   pub fn check_method_call_of(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_module_receiver(recv)
+    if recv.kind == ex_name() && recv.mod_name.size == 0 && recv.type_args.size == 0 {
+      // A type alias used as a value stands for the type it names.
+      if t = alias_value_target(recv.ident, recv.loc) {
+        if t.mod_name.size > 0 && t.args.size == 0 {
+          // Written as the qualified name it stands for (`regex.Regex`).
+          m = Expr.new(ex_name(), recv.loc)
+          m.ident = t.mod_name
+          q = Expr.new(ex_field(), recv.loc)
+          q.object = m
+          q.ident = t.name
+          recv = q
+        } else {
+          recv.ident = t.name
+          recv.mod_name = t.mod_name
+          recv.type_args = t.args
+        }
+      } else {
+        why = alias_not_value_text(recv.ident, recv.loc)
+        if why.size > 0 {
+          fail(recv.loc, why)
+          return t_int()
+        }
+      }
+    }
     if expr.callee == "new" {
       recv = flatten_type_chain(recv)
     }
