@@ -424,9 +424,51 @@ pub fn task_word(node: Expr): String {
     return ".parallel"
   }
   if node.kind == ex_lambda() {
-    return "an HTTP handler"
+    return handler_word(node)
   }
   "spawn"
+}
+
+// What a server's lambda is called in a message, by the method that
+// registered it (node.callee, set by check_handler_lambda): a timer of
+// Server.every and a hook of Server.on_close are checked as handlers,
+// but neither is one.
+pub fn handler_word(node: Expr): String {
+  if node.callee == "every" {
+    return "a Server.every timer"
+  }
+  if node.callee == "on_close" {
+    return "a Server.on_close hook"
+  }
+  "an HTTP handler"
+}
+
+// handler_runs, said of a function value given as the lambda.
+pub fn handler_runs_fn(node: Expr): String {
+  if node.callee == "every" || node.callee == "on_close" {
+    return handler_runs(node)
+  }
+  "the server runs it on each of its loop threads at once"
+}
+
+// handler_runs, said of the one lambda a message names.
+pub fn handler_runs_one(node: Expr): String {
+  if node.callee == "every" || node.callee == "on_close" {
+    return handler_runs(node)
+  }
+  "the server runs the handler on each of its loop threads at once"
+}
+
+// Why what a server's lambda captures must cross threads, in the words
+// of the method that registered it.
+pub fn handler_runs(node: Expr): String {
+  if node.callee == "every" {
+    return "the timer runs on the server's first loop thread while the handlers run on every loop thread"
+  }
+  if node.callee == "on_close" {
+    return "the hook runs on the thread that called serve, after the loop threads that ran the handlers"
+  }
+  "the server runs every handler on each of its loop threads at once"
 }
 
 // Who shares a captured Array with the code around node, and what a
@@ -449,6 +491,9 @@ pub fn task_unit(node: Expr): String {
 pub fn frozen_until(node: Expr): String {
   if node.kind == ex_call() && node.callee == "parallel" {
     return "read-only while the bodies run"
+  }
+  if node.kind == ex_lambda() && (node.callee == "every" || node.callee == "on_close") {
+    return "read-only once it is registered, since ${handler_runs(node)}"
   }
   if node.kind == ex_lambda() {
     return "read-only once the handler is registered, since the server runs the handler on each of its loop threads at once"
@@ -499,7 +544,7 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
       if target.kind == ex_name() {
         if ty = checker_self.lookup(target.ident) {
           if node.kind == ex_lambda() {
-            checker_self.fail(target.loc, "an HTTP handler cannot assign to ${target.ident}: the server runs the handler on each of its loop threads at once, so the captured variable would be written by several threads; keep a value the handlers change in a Mutex")
+            checker_self.fail(target.loc, "${handler_word(node)} cannot assign to ${target.ident}: ${handler_runs_one(node)}, so the captured variable would be written by several threads; keep a value the handlers change in a Mutex")
           } else if task_word(node) == "spawn" {
             checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join")
           } else {
@@ -1175,7 +1220,7 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
         }
       }
       if node.kind == ex_lambda() {
-        checker_self.fail(expr.loc, "an HTTP handler cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; numbers, Bool, String, Bytes, enums, structs of them, Arrays and Hashes of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
+        checker_self.fail(expr.loc, "${handler_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and ${handler_runs(node)}; numbers, Bool, String, Bytes, enums, structs of them, Arrays and Hashes of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
         return
       }
       if ty_holds_ptr(ty) {
@@ -1296,18 +1341,21 @@ pub fn (checker_self: Checker) check_handler_args(expr: Expr) {
       return
     }
     if arg.kind == ex_lambda() {
-      checker_self.check_handler_lambda(arg)
+      checker_self.check_handler_lambda(arg, expr.callee)
     } else if at = arg.ty, at.is_fn() {
       if arg.kind == ex_name() && arg.fn_ref {
         continue
       }
-      checker_self.fail(arg.loc, "an HTTP handler must be a lambda written at the call or a named function: the server runs it on each of its loop threads at once, and what a function value captures is not checked")
+      node = Expr.new(ex_lambda(), arg.loc)
+      node.callee = expr.callee
+      checker_self.fail(arg.loc, "${handler_word(node)} must be a lambda written at the call or a named function: ${handler_runs_fn(node)}, and what a function value captures is not checked")
     }
   }
 }
 
-pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
+pub fn (checker_self: Checker) check_handler_lambda(lam: Expr, method: String) {
   node = Expr.new(ex_lambda(), lam.loc)
+  node.callee = method
   seen = Hash(String, Int).new()
   if b = lam.block {
     mark = checker_self.spawn_skip.size
@@ -1323,11 +1371,11 @@ pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
   // A lambda in a method captures `self` without naming it.
   for i in 0..lam.cap_names.size {
     if lam.cap_names[i] == "self" && !checker_self.copyable_for_spawn(lam.cap_tys[i]) {
-      checker_self.fail(lam.loc, "an HTTP handler cannot capture self: its type, ${lam.cap_tys[i].show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; state the handlers change belongs in a Mutex")
+      checker_self.fail(lam.loc, "${handler_word(node)} cannot capture self: its type, ${lam.cap_tys[i].show()}, cannot cross to another thread, and ${handler_runs(node)}; state the handlers change belongs in a Mutex")
       return
     }
     if lam.cap_names[i] == "self" {
-      checker_self.note_handles(lam.cap_tys[i], lam.loc, "an HTTP handler cannot capture self")
+      checker_self.note_handles(lam.cap_tys[i], lam.loc, "${handler_word(node)} cannot capture self")
     }
   }
   for i in 0..node.cap_names.size {
