@@ -4,6 +4,7 @@ import ast
 import token
 import checker
 import checker.spawn
+import checker.clone
 import typed_ir
 
 // What may happen to the guarded value inside `Mutex.with`. The lock
@@ -52,6 +53,11 @@ pub class GuardWalk {
   pub decl_scope: Int = -1
   pub loops: Int = 0
   pub decl_loops: Int = 0
+  // The consuming call is a spawn that takes place by move (checker/
+  // spawn.av note_spawn_capture): the messages name the task.
+  pub task: Bool = false
+  // Where the spawn captures the moved name (its first use in the block).
+  pub cap_loc: Location? = nil
 
   fn initialize(place: String) {
     self.place = place
@@ -192,6 +198,10 @@ pub fn (checker_self: Checker) guard_reaches(w: GuardWalk, e: Expr): Bool {
     return false
   }
   if k == ex_call() {
+    if is_clone_call(e) {
+      // A copy: nothing in it is the guarded value's.
+      return false
+    }
     if recv = e.receiver {
       return checker_self.guard_bad(w, recv)
     }
@@ -250,6 +260,10 @@ pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
   if t = e.ty {
     shown = t.show()
   }
+  if w.consume && w.task {
+    checker_self.fail(e.loc, "the spawn at ${w.call_at} takes ${w.place} by move, so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the task takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the task's object while the task runs")
+    return
+  }
   if w.consume {
     checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the mutex takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock")
     return
@@ -270,6 +284,10 @@ pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
   if t = value.ty {
     shown = t.show()
   }
+  if w.consume && w.task {
+    checker_self.fail(value.loc, "the spawn at ${w.call_at} takes ${w.place} by move, so this value stored into ${w.place} (${shown}) must be new (a constructor call, a literal or a clone) or plain: a reference kept elsewhere would reach the task's object while the task runs")
+    return
+  }
   if w.consume {
     checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so this value stored into ${w.place} (${shown}) must be new (a constructor call or a literal) or plain: a reference kept elsewhere would reach the guarded value without the lock")
     return
@@ -284,6 +302,10 @@ pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
 // kept by the object it builds).
 pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
   if checker_self.guard_plain(e) {
+    return true
+  }
+  // A clone is new however its receiver is reached (checker/clone.av).
+  if is_clone_call(e) {
     return true
   }
   k = e.kind
@@ -351,6 +373,85 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
     return true
   }
   false
+}
+
+// What may leave a `Mutex.with` as its value when its type is not plain
+// (checker.av check_mutex_with): every way the value leaves (the last
+// expression, the arms of a switch there, and in a lambda with its
+// result type written each `return`) gives a plain value or a clone,
+// which is new (checker/clone.av is_clone_call). A failure that `?`
+// returns from such a lambda is checked where it is made (guard_expr):
+// one reached from the guarded value must be plain.
+pub fn (checker_self: Checker) with_value_leaves(b: Block): Bool {
+  if b.body.size == 0 {
+    return true
+  }
+  last = b.body[b.body.size - 1]
+  if last.kind != st_expr() {
+    return false
+  }
+  if e = last.expr {
+    if !checker_self.with_exit_ok(e) {
+      return false
+    }
+  }
+  if b.paren && b.returns {
+    return checker_self.with_returns_ok(b.body)
+  }
+  true
+}
+
+pub fn (checker_self: Checker) with_exit_ok(e: Expr): Bool {
+  if checker_self.guard_plain(e) || is_clone_call(e) {
+    return true
+  }
+  if e.kind == ex_switch() && e.op != tk_return() {
+    for c in e.cases {
+      if !checker_self.with_tail_ok(c.body) {
+        return false
+      }
+    }
+    if e.has_else {
+      return checker_self.with_tail_ok(e.else_body)
+    }
+    return true
+  }
+  false
+}
+
+pub fn (checker_self: Checker) with_tail_ok(body: Array(Stmt)): Bool {
+  if body.size == 0 {
+    return true
+  }
+  st = body[body.size - 1]
+  if st.kind == st_expr() {
+    if e = st.expr {
+      return checker_self.with_exit_ok(e)
+    }
+    return true
+  }
+  if st.kind == st_if() {
+    return checker_self.with_tail_ok(st.then_body) && checker_self.with_tail_ok(st.else_body)
+  }
+  checker_self.with_returns_ok(body)
+}
+
+// Every `return` of a lambda's body (not of a lambda or a spawn block
+// inside it) gives a plain value or a clone.
+pub fn (checker_self: Checker) with_returns_ok(body: Array(Stmt)): Bool {
+  for st in body {
+    if st.kind == st_return() {
+      if e = st.expr {
+        if !checker_self.with_exit_ok(e) {
+          return false
+        }
+      }
+    }
+    if !checker_self.with_returns_ok(st.pre) || !checker_self.with_returns_ok(st.then_body) || !checker_self.with_returns_ok(st.else_body) || !checker_self.with_returns_ok(st.body) {
+      return false
+    }
+  }
+  true
 }
 
 // A value in a place where it outlives the expression: refused when it
@@ -651,6 +752,10 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
   if e.implicit_field {
     return
   }
+  if w.passed && w.is_consumed_var(e.ident) && w.task {
+    checker_self.fail(e.loc, "${e.ident} was moved into the task the spawn at ${w.call_at} starts: the task holds it now, and the code here cannot use it; give a new value a new name, or join the task and take what it gives back")
+    return
+  }
   if w.passed && w.is_consumed_var(e.ident) {
     checker_self.fail(e.loc, "${e.ident} was consumed by ${w.ctor}.${w.verb} at ${w.call_at}: the mutex holds its value now, so reach it only through with")
     return
@@ -663,6 +768,10 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
     return
   }
   if e.ident == w.place {
+    if w.consume && w.task {
+      checker_self.fail(e.loc, "the spawn at ${w.call_at} takes ${e.ident} by move, so ${e.ident} cannot be captured by another lambda or spawn block, which may run while the task has it")
+      return
+    }
     if w.consume {
       checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${e.ident} (at ${w.call_at}), so ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the mutex has taken it")
       return
@@ -717,6 +826,11 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
       is_spawn = false
     }
     if is_spawn {
+      if w.consume && w.task && !w.passed && e.loc.show() == w.call_loc {
+        // The spawn that takes the name: its block owns it from here.
+        checker_self.guard_consume_at(w, e)
+        return
+      }
       if b = e.block {
         checker_self.guard_captured_body(w, b)
       }
@@ -725,6 +839,12 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
   }
   if w.consume && !w.passed && e.callee == w.verb && e.loc.show() == w.call_loc {
     checker_self.guard_consume_at(w, e)
+    return
+  }
+  if is_clone_call(e) && e.args.size == 1 {
+    // A clone's template takes the cloned value as its argument
+    // (checker/clone.av): it reads it, as a receiver is read.
+    checker_self.guard_expr(w, e.args[0])
     return
   }
   recv_bad = false
@@ -810,6 +930,7 @@ pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
     // What it guards is checked once the program is.
     checker_self.guarded.push(ty.ty_args[0])
     checker_self.guarded_at.push(expr.loc)
+    checker_self.guarded_by.push("")
   }
   if checker_self.has_err() || expr.args.size < 1 || expr.args.size > 2 || ty.ty_args.size != 1 {
     return
@@ -841,6 +962,9 @@ pub fn (checker_self: Checker) check_mutex_value(expr: Expr, ty: Ty, verb: Strin
   if arg.kind == ex_name() && !arg.implicit_field {
     if f = checker_self.current_fn {
       checker_self.consumes.push(expr)
+      checker_self.consume_names.push(arg.ident)
+      checker_self.consume_tys.push(ty)
+      checker_self.consume_locs.push(arg.loc)
       return
     }
   }
@@ -924,16 +1048,29 @@ pub fn (checker_self: Checker) recover_capture_ok(t: Ty): Bool {
 
 // The function walks for the consuming calls check_mutex_new recorded.
 pub fn (checker_self: Checker) check_consumes(body: Array(Stmt)) {
-  for call in checker_self.consumes {
+  for ci in 0..checker_self.consumes.size {
+    call = checker_self.consumes[ci]
     if checker_self.has_err() {
       return
     }
-    w = GuardWalk.new(call.args[0].ident)
+    place = ""
+    if call.callee == "spawn" {
+      place = checker_self.consume_names[ci]
+    } else {
+      place = call.args[0].ident
+    }
+    w = GuardWalk.new(place)
     w.consume = true
     w.call_loc = call.loc.show()
     w.call_at = "${call.loc.line()}:${call.loc.column()}"
     if t = call.ty {
       w.ctor = t.show()
+    }
+    if call.callee == "spawn" {
+      w.task = true
+      w.verb = "spawn"
+      w.ctor = checker_self.consume_tys[ci].show()
+      w.cap_loc = checker_self.consume_locs[ci]
     }
     if call.callee == "recover" {
       if r = call.receiver, rt = r.ty {
@@ -954,6 +1091,10 @@ pub fn (checker_self: Checker) check_consumes(body: Array(Stmt)) {
 // An assignment to the consumed name: before the call, a new or plain
 // value (its first one declares the variable); after it, refused.
 pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
+  if w.passed && w.is_consumed_var(w.place) && w.task {
+    checker_self.fail(value.loc, "${w.place} was moved into the task the spawn at ${w.call_at} starts: the task holds it now; give a new value a new name")
+    return
+  }
   if w.passed && w.is_consumed_var(w.place) {
     checker_self.fail(value.loc, "${w.place} was consumed by ${w.ctor}.${w.verb} at ${w.call_at}: the mutex holds its value now; give a new value a new name")
     return
@@ -966,6 +1107,10 @@ pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
     shown = "a value"
     if t = value.ty {
       shown = t.show()
+    }
+    if w.task {
+      checker_self.fail(value.loc, "the spawn at ${w.call_at} takes ${w.place} by move, so every value ${w.place} holds must be new (a constructor call, a literal or a clone): this ${shown} may be reached by another reference, which would reach the task's object while the task runs")
+      return
     }
     checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so every value ${w.place} holds must be new (a constructor call or a literal): this ${shown} may be reached by another reference, which would reach the guarded value without the lock")
     return
@@ -980,6 +1125,10 @@ pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
 
 // The consuming call itself.
 pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
+  if w.task {
+    checker_self.guard_move_at(w, e)
+    return
+  }
   arg = e.args[0]
   if !w.is_consumed_var(w.place) {
     checker_self.fail(arg.loc, "${w.ctor}.${w.verb}: ${w.place} is a parameter or a name the code around holds, which another reference may reach without the lock; give the mutex a new value (a constructor call or a literal) or a local variable, which the call consumes")
@@ -996,6 +1145,34 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
   alias = w.alias_in_scope()
   if alias.size > 0 {
     checker_self.fail(arg.loc, "${w.ctor}.${w.verb} consumes ${w.place}, but ${alias}, which holds a reference reached from it, is still in scope and would reach the guarded value without the lock")
+    return
+  }
+  w.passed = true
+}
+
+// The spawn that takes w.place by move: the same conditions as a
+// consuming call's, in the task's words.
+pub fn (checker_self: Checker) guard_move_at(w: GuardWalk, e: Expr) {
+  head = "spawn cannot capture ${w.place}: its type, ${w.ctor}, cannot be shared with another task"
+  at = e.loc
+  if cl = w.cap_loc {
+    at = cl
+  }
+  if !w.is_consumed_var(w.place) {
+    checker_self.fail(at, "${head}, and it moves into the task only from a local variable whose every value is new (a constructor call, a literal or a clone); ${w.place} is a parameter or a name the code around holds, which another reference may reach; capture a clone (c = ${w.place}.clone(), then use c in the block)")
+    return
+  }
+  if w.floor >= 0 && w.decl_scope < w.floor {
+    checker_self.fail(at, "${head}, and ${w.place} is captured by the lambda or spawn block around this spawn, which cannot give it away; declare it inside that block")
+    return
+  }
+  if w.loops > w.decl_loops {
+    checker_self.fail(at, "${head}, and the spawn is inside a loop or a block that ${w.place} was declared outside of: a second round would move the same object into a second task; declare it inside")
+    return
+  }
+  alias = w.alias_in_scope()
+  if alias.size > 0 {
+    checker_self.fail(at, "${head}, and ${alias}, which holds a reference reached from ${w.place}, is still in scope and would reach the task's object while the task runs")
     return
   }
   w.passed = true
@@ -1035,7 +1212,9 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
     }
     if !checker_self.send_crosses(t) {
       checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task: a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
+      return
     }
+    checker_self.note_handles(t, arg.loc, "Channel.send cannot send this ${t.show()}")
   }
 }
 
@@ -1076,6 +1255,8 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
 // A plain value (leaves_mutex_with) is a copy and goes anywhere.
 pub class ClassWalk {
   pub mutex: String = ""
+  // The class is moved into a task by a spawn, not guarded by a Mutex.
+  pub task: Bool = false
   pub at: String = ""
   pub owner: String = ""
   pub method: String = ""
@@ -1115,7 +1296,7 @@ pub fn (checker_self: Checker) check_guarded_types {
     t = checker_self.guarded[i]
     if !checker_self.guarded_ok.has_key(t.show()) {
       checker_self.guarded_ok[t.show()] = 1
-      checker_self.check_guarded(t, checker_self.guarded_at[i])
+      checker_self.check_guarded(t, checker_self.guarded_at[i], checker_self.guarded_by[i])
     }
     i += 1
   }
@@ -1162,7 +1343,7 @@ pub fn (checker_self: Checker) guarded_method_of(ms: FuncSig, t: Ty): Bool {
   t.mod_name.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == t.mod_name
 }
 
-pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
+pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location, by: String) {
   seen = Hash(String, Int).new()
   types: Array(Ty) = []
   checker_self.guarded_reach(t, seen, types)
@@ -1182,6 +1363,10 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
         w = ClassWalk.new()
         w.mutex = "Mutex(${t.show()})"
+        if by == "spawn" {
+          w.mutex = "spawn's move of ${t.show()}"
+          w.task = true
+        }
         // The file's own name, not its path: a message is the same from
         // any directory (the probe matrix compares it).
         base = at.path
@@ -1511,6 +1696,10 @@ pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
 // ---- the stores and the calls
 
 pub fn (checker_self: Checker) cw_fail(w: ClassWalk, loc: Location, what: String) {
+  if w.task {
+    checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a spawn takes by move, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the task's object from outside the task")
+    return
+  }
   checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock")
 }
 

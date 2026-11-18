@@ -126,7 +126,10 @@ fn rules: Array(PRule) {
   // task captures by copy what may cross, never assigns a captured name,
   // and a captured Array is read-only on both sides until the join.
   tsite = "class PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n@\n  puts(pb.n)\n}\n"
-  xs.push(rule("spawn-capture-class", "stmt", "", tsite, "", "ph = spawn { pb.n }\nputs(ph.join() ?? -1)", "pn = pb.n\nph = spawn { pn }\nputs(ph.join() ?? -1)", "spawn cannot capture pb: its type, PBox, cannot cross to another task"))
+  // A class's object moves into a task only from a local whose every
+  // value is new: a parameter's is the caller's too.
+  psite = "class PBox {\n  pub n: Int = 0\n}\n\nfn run(pb: PBox) {\n@\n}\n\nfn main {\n  run(PBox.new())\n}\n"
+  xs.push(rule("spawn-capture-class", "stmt", "", psite, "", "ph = spawn { pb.n }\nputs(ph.join() ?? -1)", "pn = pb.n\nph = spawn { pn }\nputs(ph.join() ?? -1)", "spawn cannot capture pb: its type, PBox, cannot be shared with another task"))
   xs.push(rule("spawn-assign-capture", "stmt", "", tsite, "", "pk = 1\nph = spawn {\n  pk = 2\n  pk\n}\nputs(ph.join() ?? -1)", "pk = 1\nph = spawn {\n  pj = 2\n  pj + pk\n}\nputs(ph.join() ?? -1)", "spawn cannot assign to pk"))
   xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Array pxs"))
   xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join() ?? -1)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))

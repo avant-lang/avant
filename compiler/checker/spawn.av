@@ -22,7 +22,7 @@ pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
-  if checker_self.is_share_ty(ty) {
+  if checker_self.is_share_ty(ty) || checker_self.is_handle_class(ty) {
     return true
   }
   // A captured Array is shared with the task, frozen until the task
@@ -44,6 +44,134 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
     return false
   }
   checker_self.copyable_bits(ty)
+}
+
+// A class whose every field is a Channel or a Mutex: it crosses a task as
+// a handle, the reference shared as the handles it holds are, when no
+// code assigns one of its fields outside its initialize (checked once
+// the program is: check_handle_classes), so every task reads the same
+// handles for good and nothing else in it can change.
+pub fn (checker_self: Checker) is_handle_class(ty: Ty): Bool {
+  if !ty.is_class() || ty.template {
+    return false
+  }
+  for f in ty.fields {
+    if !checker_self.is_share_ty(f.ty) {
+      return false
+    }
+  }
+  true
+}
+
+// The handle classes a crossing value of type ty holds (itself, or the
+// elements and values of its Arrays and Hashes), noted with where they
+// crossed and what (`spawn cannot capture s`, ...): the message if one of
+// their fields is assigned outside initialize.
+pub fn (checker_self: Checker) note_handles(ty: Ty, loc: Location, what: String) {
+  if checker_self.is_handle_class(ty) {
+    checker_self.handle_tys.push(ty)
+    checker_self.handle_at.push(loc)
+    checker_self.handle_what.push(what)
+    return
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      checker_self.note_handles(e, loc, what)
+    }
+    return
+  }
+  if ty.is_hash() {
+    if v = ty.val {
+      checker_self.note_handles(v, loc, what)
+    }
+  }
+}
+
+// Every assignment to a field of a class that crossed as a handle,
+// outside that class's initialize, refuses the crossing.
+pub fn (checker_self: Checker) check_handle_classes(fns: Array(Function)) {
+  if checker_self.handle_tys.size == 0 || checker_self.any_err() {
+    return
+  }
+  all: Array(Function) = []
+  for f in fns {
+    if !f.generic {
+      all.push(f)
+    }
+  }
+  for f2 in checker_self.pending {
+    all.push(f2)
+  }
+  for fnn in all {
+    // An initialize sets its own object's fields: "MODULE.Class".
+    in_init = ""
+    if fnn.name == "initialize" && fnn.owner.size > 0 {
+      om = fnn.owner_mod
+      if om.size == 0 {
+        om = fnn.mod_name
+      }
+      in_init = "${om}.${fnn.owner}"
+    }
+    checker_self.handle_stores(fnn.body, in_init)
+    if checker_self.has_err() {
+      return
+    }
+  }
+}
+
+pub fn (checker_self: Checker) handle_stores(body: Array(Stmt), in_init: String) {
+  for st in body {
+    if checker_self.has_err() {
+      return
+    }
+    if st.kind == st_assign() {
+      if t = st.target, t.kind == ex_field() {
+        if obj = t.object, ot = obj.ty {
+          for i in 0..checker_self.handle_tys.size {
+            ht = checker_self.handle_tys[i]
+            if ot.is_class() && ot.name == ht.name && ot.mod_name == ht.mod_name && !(in_init == "${ht.mod_name}.${ht.name}" && obj.kind == ex_name() && obj.ident == "self") {
+              at = checker_self.handle_at[i]
+              checker_self.fail(at, "${checker_self.handle_what[i]}: a ${ht.show()}, a class of Mutex and Channel fields, crosses as a handle only when no field of it is assigned after initialize, and ${ht.show()}.${t.ident} is assigned at ${t.loc.line()}:${t.loc.column()}; set its fields in initialize, or keep the changing value in one of its Mutexes")
+              return
+            }
+          }
+        }
+      }
+    }
+    for e in [st.expr, st.cond, st.target, st.value] {
+      if x = e {
+        checker_self.handle_stores_expr(x, in_init)
+      }
+    }
+    checker_self.handle_stores(st.pre, in_init)
+    checker_self.handle_stores(st.then_body, in_init)
+    checker_self.handle_stores(st.else_body, in_init)
+    checker_self.handle_stores(st.body, in_init)
+  }
+}
+
+pub fn (checker_self: Checker) handle_stores_expr(e: Expr, in_init: String) {
+  if b = e.block {
+    checker_self.handle_stores(b.body, in_init)
+  }
+  for cs in e.cases {
+    checker_self.handle_stores(cs.body, in_init)
+  }
+  checker_self.handle_stores(e.else_body, in_init)
+  for x in [e.inner, e.left, e.right, e.object, e.receiver, e.cond, e.size_expr] {
+    if y = x {
+      checker_self.handle_stores_expr(y, in_init)
+    }
+  }
+  for a in e.args {
+    checker_self.handle_stores_expr(a, in_init)
+  }
+  for a2 in e.elems {
+    checker_self.handle_stores_expr(a2, in_init)
+  }
+  for a3 in e.field_exprs {
+    checker_self.handle_stores_expr(a3, in_init)
+  }
 }
 
 // The part of a type spawn's rule refuses that names it best: an
@@ -113,6 +241,13 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   if ty.is_string() {
     return true
   }
+  // Bytes is immutable, as a String is: both tasks keep the same bytes.
+  if ty.is_bytes() {
+    return true
+  }
+  if ty.is_ptr() {
+    return checker_self.ptr_crosses_here(ty)
+  }
   if ty.is_struct() {
     for field in ty.fields {
       if !checker_self.copyable_bits(field.ty) {
@@ -120,6 +255,106 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
       }
     }
     return true
+  }
+  false
+}
+
+// A C pointer crosses a task only in the module that declares it: a
+// `Ptr(T)` whose T is a C layout of one of this module's `lib` blocks,
+// or an opaque C type one of them names (in a function's parameters or
+// result, or a layout's field). The package that binds a C library
+// shares its handles between its own tasks (a client pool, a
+// connection the library makes safe for threads): C memory's
+// thread-safety is the C library's, and the package's code is where
+// that is known. Its users see a crossing refused as before. A
+// `Ptr(Void)`, or a pointer to a C scalar or to another pointer, names
+// no declaration, and never crosses.
+pub fn (checker_self: Checker) ptr_crosses_here(ty: Ty): Bool {
+  if p = ty.inner {
+    if !(p.is_opaque() || p.is_clayout()) {
+      return false
+    }
+    for lb in checker_self.program.libs {
+      if lb.mod_name == checker_self.current_module && lib_declares(lb, p.name, p.is_clayout()) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// Whether every Ptr a value of type t holds (itself, a struct's fields,
+// a union's members) crosses here.
+pub fn (checker_self: Checker) ptrs_cross_here(t: Ty): Bool {
+  if t.is_ptr() {
+    return checker_self.ptr_crosses_here(t)
+  }
+  if t.is_union() {
+    for m in t.members {
+      if !checker_self.ptrs_cross_here(m) {
+        return false
+      }
+    }
+    return true
+  }
+  if t.is_struct() {
+    for f in t.fields {
+      if !checker_self.ptrs_cross_here(f.ty) {
+        return false
+      }
+    }
+  }
+  true
+}
+
+// Whether the lib block lb declares the C type name: a layout of that
+// name (a C layout), or a name its functions and layouts write (an
+// opaque type).
+pub fn lib_declares(lb: LibDef, name: String, layout: Bool): Bool {
+  if layout {
+    for lay in lb.layouts {
+      if lay.name == name {
+        return true
+      }
+    }
+    return false
+  }
+  for f in lb.funs {
+    for p in f.params {
+      if type_name_names(p.type, name) {
+        return true
+      }
+    }
+    if r = f.return_type, type_name_names(r, name) {
+      return true
+    }
+  }
+  for lay2 in lb.layouts {
+    for fl in lay2.fields {
+      if type_name_names(fl.type, name) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn type_name_names(tn: TypeName, name: String): Bool {
+  if tn.name == name && tn.args.size == 0 {
+    return true
+  }
+  for a in tn.args {
+    if type_name_names(a, name) {
+      return true
+    }
+  }
+  for m in tn.members {
+    if type_name_names(m, name) {
+      return true
+    }
+  }
+  if r = tn.ret {
+    return type_name_names(r, name)
   }
   false
 }
@@ -898,17 +1133,45 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
       return
     }
     if !checker_self.copyable_for_spawn(ty) {
+      if task_word(node) == "spawn" && ty.is_class() {
+        if f = checker_self.current_fn {
+          // A class's object moves into the task: the name is taken
+          // as `Mutex(T).new` takes it, once the function is checked
+          // (checker/guard.av check_consumes, guard_move_at), and its
+          // class's methods keep nothing from outside
+          // (check_guarded).
+          if prev = seen.get(expr.ident) {
+            return
+          }
+          seen[expr.ident] = 1
+          checker_self.consumes.push(node)
+          checker_self.consume_names.push(expr.ident)
+          checker_self.consume_tys.push(ty)
+          checker_self.consume_locs.push(expr.loc)
+          checker_self.guarded.push(ty)
+          checker_self.guarded_at.push(expr.loc)
+          checker_self.guarded_by.push("spawn")
+          node.cap_names.push(expr.ident)
+          node.cap_tys.push(ty)
+          return
+        }
+      }
       if node.kind == ex_lambda() {
         checker_self.fail(expr.loc, "an HTTP handler cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; numbers, Bool, String, Bytes, enums, structs of them, Arrays and Hashes of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
         return
       }
-      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex")
+      if ty_holds_ptr(ty) {
+        checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, holds C memory, which crosses to another task only in the module whose lib block declares its C type (a layout or an opaque type; never Ptr(Void)), since whether C may use it from two threads is known there")
+        return
+      }
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, Bytes, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex")
       return
     }
     if prev = seen.get(expr.ident) {
       return
     }
     seen[expr.ident] = 1
+    checker_self.note_handles(ty, expr.loc, "${task_word(node)} cannot capture ${expr.ident}")
     node.cap_names.push(expr.ident)
     node.cap_tys.push(ty)
   }
@@ -996,18 +1259,9 @@ pub fn (checker_self: Checker) check_element_writes {
 // itself may be captured (a handler that stops or inspects it). A
 // handler given as a function value is refused: what that value captures
 // was never checked; a named function captures nothing.
-// What a handler may capture beyond spawn's rule: the Server itself,
-// and `Bytes` (immutable, as a String is), alone or in an Array.
+// What a handler may capture beyond spawn's rule: the Server itself.
 pub fn (checker_self: Checker) handler_shares(ty: Ty): Bool {
-  if checker_self.is_http_server(ty) || ty.is_bytes() {
-    return true
-  }
-  if ty.is_array() {
-    if e = ty.inner {
-      return e.is_bytes()
-    }
-  }
-  false
+  checker_self.is_http_server(ty)
 }
 
 pub fn (checker_self: Checker) is_http_server(ty: Ty): Bool {
@@ -1055,6 +1309,9 @@ pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
     if lam.cap_names[i] == "self" && !checker_self.copyable_for_spawn(lam.cap_tys[i]) {
       checker_self.fail(lam.loc, "an HTTP handler cannot capture self: its type, ${lam.cap_tys[i].show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; state the handlers change belongs in a Mutex")
       return
+    }
+    if lam.cap_names[i] == "self" {
+      checker_self.note_handles(lam.cap_tys[i], lam.loc, "an HTTP handler cannot capture self")
     }
   }
   for i in 0..node.cap_names.size {

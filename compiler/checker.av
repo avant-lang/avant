@@ -180,11 +180,19 @@ pub class Checker {
   // The `Mutex(T).new(name)` calls of the function being checked, whose
   // names they consume (checker/guard.av check_consumes).
   pub consumes: Array(Expr) = []
+  // For each, the name it consumes, the type it is taken as and where
+  // (a spawn's: the class moved into the task, and the block's first use
+  // of the name).
+  pub consume_names: Array(String) = []
+  pub consume_tys: Array(Ty) = []
+  pub consume_locs: Array(Location) = []
   // The types `Mutex(T).new` guards and where, checked once the whole
   // program is (checker/guard.av check_guarded_types), and the types
   // already found fit.
   pub guarded: Array(Ty) = []
   pub guarded_at: Array(Location) = []
+  // "spawn" for a class a spawn takes by move, else "".
+  pub guarded_by: Array(String) = []
   pub guarded_ok: Hash(String, Int) = Hash(String, Int).new()
   // The method calls on an element of an Array a running task reads
   // (`xs[0].bump`), in a spawn block (1), in the sender (2) or in a
@@ -195,6 +203,13 @@ pub class Checker {
   pub elem_calls: Array(Expr) = []
   pub elem_roots: Array(String) = []
   pub elem_sides: Array(Int) = []
+  // The classes of Mutex and Channel fields that crossed a task as a
+  // handle, where, and the name or value that crossed: refused once the
+  // whole program is checked if a field of one is assigned outside its
+  // initialize (checker/spawn.av check_handle_classes).
+  pub handle_tys: Array(Ty) = []
+  pub handle_at: Array(Location) = []
+  pub handle_what: Array(String) = []
   pub lam_exprs: Array(Expr)
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
@@ -829,12 +844,21 @@ pub class Checker {
     }
     self.current_fn = fnn
     saved_consumes = self.consumes
+    saved_cn = self.consume_names
+    saved_ct = self.consume_tys
+    saved_cl = self.consume_locs
     self.consumes = []
+    self.consume_names = []
+    self.consume_tys = []
+    self.consume_locs = []
     check_body(fnn.body, ret, true)
     if self.consumes.size > 0 && !self.has_err() {
       check_consumes(fnn.body)
     }
     self.consumes = saved_consumes
+    self.consume_names = saved_cn
+    self.consume_tys = saved_ct
+    self.consume_locs = saved_cl
     self.current_fn = nil
     self.pop_scope()
     self.self_ty = nil
@@ -2401,6 +2425,20 @@ pub class Checker {
       return t_int()
     }
     if self.inline_what.size > 0 {
+      // A lambda in parentheses whose written result type holds every
+      // failure (`m.with((x): Int | ParseError { parse(x)? })`): `?`
+      // ends this run of its body with the failure as the lambda's
+      // value, as `return` would (inline_try_returns); any other is
+      // refused, with the way out.
+      if inline_try_returns(got) {
+        if t = self.inline_target {
+          t.returns = true
+        }
+        if success = failure_split(got, loc, "postfix ?") {
+          return success
+        }
+        return t_int()
+      }
       fail(loc, inline_exit_message("?", self.inline_what))
       return t_int()
     }
@@ -2452,6 +2490,30 @@ pub class Checker {
       }
     }
     t_int()
+  }
+
+  // Whether `?` on got, in a lambda a builtin inlines, returns its
+  // failure from the lambda: the lambda's result type is written and is
+  // a union that holds every failure of got (an error union, or an
+  // optional for a nil), and got has a success value.
+  pub fn inline_try_returns(got: Ty): Bool {
+    ret = self.return_type
+    if ret.is_var() || ret.is_void() || !ret.is_union() {
+      return false
+    }
+    if !got.is_union() || !ty_has_success(got) {
+      return false
+    }
+    fails = ty_failures(got)
+    if fails.size == 0 {
+      return false
+    }
+    for f in fails {
+      if !ty_assignable(f, ret) {
+        return false
+      }
+    }
+    true
   }
 
   pub fn check_interp(expr: Expr): Ty {
@@ -6847,8 +6909,8 @@ pub class Checker {
         }
         result = ty_union_build(parts)
       }
-      if !self.has_err() && ty_holds_ptr(result) {
-        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it does not cross to another task")
+      if !self.has_err() && ty_holds_ptr(result) && !ptrs_cross_here(result) {
+        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it crosses to another task only in the module whose lib block declares its C type")
       }
       collect_spawn_captures(expr, b.body)
       return ty_join(result)
@@ -7149,8 +7211,8 @@ pub class Checker {
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out
       // this way and lost updates).
-      if !self.has_err() && !result.is_void() && !leaves_mutex_with(result) {
-        fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show()}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
+      if !self.has_err() && !result.is_void() && !leaves_mutex_with(result) && !with_value_leaves(b) {
+        fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show()}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex) or a clone (x.clone())")
       }
       // Nor may a statement hand the guarded value out
       // (checker/guard.av).

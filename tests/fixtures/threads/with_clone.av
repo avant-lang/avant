@@ -1,0 +1,51 @@
+// A record store under a Mutex: a clone of the caller's record goes in,
+// and a clone of the stored one comes out (an optional clones its value),
+// from the main thread and from tasks.
+import std.sync
+
+class Session {
+  pub id: String = ""
+  pub roles: Array(String) = []
+}
+
+class Store {
+  m: Mutex(Hash(String, Session)) = Mutex(Hash(String, Session)).new(Hash(String, Session).new())
+
+  pub fn set(s: Session) {
+    m.with((h) { h[s.id] = s.clone() })
+  }
+
+  pub fn get(id: String): Session? {
+    m.with((h) { h[id].clone() })
+  }
+}
+
+fn main {
+  store = Store.new()
+  s = Session.new()
+  s.id = "s1"
+  s.roles.push("admin")
+  store.set(s)
+  s.roles.push("changed after set")
+  if got = store.get("s1") {
+    got.roles.push("changed after get")
+    puts(got.roles.size)
+  }
+  if again = store.get("s1") {
+    puts(again.roles.size)
+  }
+  hs: Array(JoinHandle(Int)) = []
+  for i in 0..4 {
+    hs.push(spawn {
+      t = Session.new()
+      t.id = "t${i}"
+      store.set(t)
+      (store.get("t${i}") ?? Session.new()).roles.size + i
+    })
+  }
+  total = 0
+  for h in hs {
+    total += h.join() ?? -100
+  }
+  puts(total)
+}

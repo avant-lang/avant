@@ -1,0 +1,19 @@
+// Bytes crosses as a String does: a captured value, a struct field, a send.
+import std.sync
+
+struct Msg {
+  id: Int
+  body: Bytes
+}
+
+fn main {
+  b = "hello".bytes
+  m = Msg { id: 1, body: "abc".bytes }
+  h = spawn { b.size + m.body.size }
+  puts(h.join() ?? -1)
+  ch = Channel(Bytes).new(1)
+  _ = ch.send(b)
+  if got = ch.recv() {
+    puts(got.size)
+  }
+}

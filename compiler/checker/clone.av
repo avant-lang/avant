@@ -203,6 +203,25 @@ pub fn (checker_self: Checker) check_clone_call(expr: Expr, object: Ty, expected
   object
 }
 
+// Whether e is a clone (`x.clone()` of any type, after check_clone_call):
+// the derived method of a class or struct, an Array's builtin copy, or
+// one of the templates below. Its value is new: every mutable part is
+// allocated anew, only immutable values and Channel or Mutex handles
+// are shared, and no type may replace the derived method, so nothing
+// else reaches it (checker/guard.av guard_fresh, guard_reaches).
+pub fn is_clone_call(e: Expr): Bool {
+  if e.kind != ex_call() {
+    return false
+  }
+  if e.callee == "clone" {
+    if r = e.receiver {
+      return e.args.size == 0
+    }
+    return false
+  }
+  e.callee == "__avant_clone_opt" || e.callee == "__avant_clone_array" || e.callee == "__avant_clone_hash" || e.callee == "__avant_clone_set" || e.callee == "__avant_clone_same"
+}
+
 // The generic functions behind the clone of a value that is not a class
 // or a struct, as Avant, parsed once per program when first needed.
 pub fn clone_template_source(name: String): String {

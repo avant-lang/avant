@@ -470,6 +470,8 @@ fn test_modules(c: Checks) {
     test_same_name_methods(c, compiler, dir)
     test_same_name_derived(c, compiler, dir)
     test_c_binding_twice(c, compiler, dir)
+    test_ptr_crossing(c, compiler, dir)
+    test_layout_twins(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -630,6 +632,23 @@ fn test_c_binding_twice(c: Checks, compiler: String, dir: String) {
   write_av(dir, "cbother", "lib oc {\n  fun abs(n: Int32): Int32\n}\n\npub fn mag(n: Int): Int {\n  oc.abs(n.to_i32()).to_i()\n}\n")
   write_av(dir, "cbmain", "// Two modules of the program bind one C function, each with the same\n// signature.\nimport cbother\n\nlib c {\n  fun abs(n: Int32): Int32\n}\n\nfn main {\n  puts(\"\${c.abs(-3)} \${cbother.mag(-4)}\")\n}\n")
   mod_runs(c, compiler, dir, "cbmain", "3 4\n", "two modules bind one C function with one signature")
+}
+
+// A Ptr to a C layout crosses a task only in the module whose lib block
+// declares it: a program that imports the package cannot capture one.
+fn test_ptr_crossing(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "xpkg", "// A package that binds C memory and shares it with its own tasks: a\n// Ptr to a C layout this module's lib block declares crosses here.\nlib ptrpkg {\n  struct Cell {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Cell)\n  fun free(p: Ptr(Cell))\n  fun malloc(n: Int): Ptr(Void)\n}\n\npub fn shared_sum(k: Int): Int {\n  p = ptrpkg.calloc(1, Cell.size)\n  p.n = 41\n  h = spawn { p.n.to_i() + k }\n  r = h.join() ?? -1\n  ptrpkg.free(p)\n  r\n}\n\npub fn handed: Ptr(Cell) {\n  q = ptrpkg.calloc(1, Cell.size)\n  q.n = 7\n  h = spawn { q }\n  h.join() ?? q\n}\n")
+  write_av(dir, "xuser", "import xpkg\n\nfn main {\n  p = xpkg.handed()\n  h = spawn { p.n.to_i() }\n  puts(h.join() ?? -1)\n}\n")
+  mod_fails(c, compiler, dir, "xuser", "spawn cannot capture p: its type, Ptr(Cell), holds C memory, which crosses to another task only in the module whose lib block declares its C type", "a Ptr crosses a task only in its lib's module")
+}
+
+// Two modules' C layouts of one name: a method of one module's Ptr(Pair)
+// is not the other's.
+fn test_layout_twins(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "tla", "lib twina {\n  struct Pair {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twina.calloc(1, Pair.size)\n  p.n = 5\n  p\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n.to_i()\n}\n\npub fn (p: Ptr(Pair)) twice: Int {\n  p.n.to_i() * 2\n}\n")
+  write_av(dir, "tlb", "lib twinb {\n  struct Pair {\n    k: Int32\n    j: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twinb.malloc(Pair.size)\n  p.k = 7\n  p.j = 8\n  p\n}\n\npub fn (p: Ptr(Pair)) n: Int {\n  99\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n()\n}\n")
+  write_av(dir, "tlmain", "import tla\nimport tlb\n\nfn main {\n  q = tlb.make()\n  puts(q.twice())\n}\n")
+  mod_fails(c, compiler, dir, "tlmain", "no method twice on Ptr(Pair)", "a method of one module's Ptr(Pair) is not another module's")
 }
 
 fn main: Int {

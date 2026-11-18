@@ -714,6 +714,32 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
       lw.branch_failure(src, uty, fails, bf, bok)
     }
     b.at(bf)
+    if lw.lw_lam_ends.size > 0 {
+      // In a lambda a builtin inlines whose result type holds the
+      // failure: this run of its body ends with the failure as its
+      // value, as its `return` does (lower_block.av lam_return).
+      top = lw.lw_lam_ends.size - 1
+      want = lw.lw_lam_tys[top]
+      slot = lw.lw_lam_slots[top]
+      if slot >= 0 {
+        if want.same_as(uty) {
+          b.assign(b.pl(slot), b.rv_use(b.copy_local(src)))
+        } else if fails.size == 1 {
+          fv0 = lw.coerce(lw.unwrap(src, uty, fails[0], e.loc), fails[0], want, e.loc)
+          b.assign(b.pl(slot), b.rv_use(fv0))
+        } else {
+          b.assign(b.pl(slot), b.rv_use(lw.retag(b.copy_local(src), uty, want, e.loc)))
+        }
+      }
+      i = lw.lw_ffi.pins.size - 1
+      while i >= lw.lw_lam_pins[top] {
+        lw.unpin(lw.lw_ffi.pins[i])
+        i -= 1
+      }
+      b.goto(lw.lw_lam_ends[top])
+      b.at(bok)
+      return lw.unwrap(src, uty, success, e.loc)
+    }
     if ret.same_as(uty) {
       b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
     } else if fails.size == 1 {

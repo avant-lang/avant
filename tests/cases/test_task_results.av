@@ -154,13 +154,15 @@ fn try_cases(c: Checks) {
   ws = ["2", "x", "4"].parallel (w) { w.to_i()? * 2 }
   c.eq_int((ws[0] ?? -1) + (ws[1] ?? -1) + (ws[2] ?? -1), 11, ".parallel ? with nil")
 
-  // ? inside a Mutex's with, in a spawn block: the lock is released.
+  // ? inside a Mutex's with, in a spawn block: the lambda's result type
+  // holds the failure, which leaves the with (the lock released) as its
+  // value, and the spawn block's ? gives it to the join.
   m = Mutex(Int).new(5)
   h5 = spawn {
-    m.with { |x|
+    m.with((x): Int | Bad {
       x += check(7)?
       x
-    }
+    })?
   }
   c.eq_int(h5.join() ?? -1, -1, "? leaves with")
   c.eq_int(m.with (x) { x }, 5, "the mutex is free and unchanged")

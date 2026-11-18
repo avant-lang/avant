@@ -3343,7 +3343,7 @@ fn main {
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); `break`, `continue` and a `?` have nowhere to go in it; every way out releases the lock.
+- `Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); a `?` ends it too when the written result type holds the failure, which becomes the call's value (`m.with((x): Int | ParseError { x += parse(s)?; x })?` passes it on: inside a `spawn` block, to the join); `break` and `continue` have nowhere to go in it; every way out releases the lock.
 - **Leaving early keeps the changes made so far** (only a trap poisons), unchecked by the compiler: leave only where the guarded value is whole, after the update (`n += 1`, then `return`) or before it (`if q.size == 0 { return nil }`, then the change).
 - **A poisoned mutex heals** ([When a task traps](#when-a-task-traps)) by one of three operations, each under the lock:
   - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda written there (`recover: () { Stats.new() }`), whose captures are plain values (a number, `Bool`, `String`, an enum, or a struct, optional or union of those), copied when the mutex is made: `recover: () { Stats.new(size) }` rebuilds with `size` as it was at the call, whatever is assigned to `size` later, and a captured class, `Array`, `Hash`, `fn`, `Channel` or `Mutex`, or a function value from a variable, is refused, since the rebuild runs on whichever task meets the poison; a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
@@ -3373,13 +3373,13 @@ fn main {
 }
 ```
 
-- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
+- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one or a clone (`m.with((h) { h[id].clone() })`: a deep copy no reference from the guarded value reaches, `nil` when the key is absent). To take data out otherwise, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
 - **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
   - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push`, `insert`, `fill` or `concat`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
   - `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods;
   - `initialize` is not read: its object is new, and a constructor's arguments are checked at the call;
   - the error names the mutex, class, method and store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`.
-- **Nothing from outside comes in.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or literal whose parts are new or plain), already reached from the guarded value, or plain.
+- **Nothing from outside comes in.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or literal whose parts are new or plain, or a clone: `h[s.id] = s.clone()`), already reached from the guarded value, or plain.
 - **`Mutex(T).new(v)` consumes `v`** when `T` is not plain: pass a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`) or a local variable, unusable after the call by source order, not paths (a use in the other branch of an `if`, or after a `return` that follows the call, is refused too: declare the value in the branch that gives it to the mutex); a field, an element, a parameter or a call's result is refused. Before the call, the local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), holds only new values, and no other name holds a reference reached from it, even one no longer used (`inner = b.inner` is refused: write `b.inner.n += 1`); the call is not in a loop or a block (another mutex's `with` among them) the variable was declared outside of (declare it inside, or pass `Box.new()`).
 
 A channel hands values from one task to another:
@@ -3427,13 +3427,32 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | --- | --- |
 | an integer, a `Bool`, a `Float64` | a copy |
 | a struct whose every field may cross | a copy |
-| a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
+| a `String` or `Bytes` | a shared pointer: it is immutable, and both tasks keep it alive |
 | an `Array` whose elements may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` copies it |
 | a `Hash` or `Set` whose keys are plain values (the rows above but an `Array`) and whose values may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` refuses it, and an `Array` holding one (a send copies arrays only) |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
-| a class instance, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` or `Hash` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects) |
+| a class whose every field is a `Channel` or a `Mutex`, none assigned after `initialize` | shared, as the handles it holds are; a field assigned anywhere else refuses the crossing |
+| a class instance held by a local variable whose every value is new (a constructor call, a literal or a clone), captured by `spawn` | **moved** into the task: the reference is handed over, no copy; the sender cannot use the name afterwards (refused at compile time), nor capture it in another lambda, keep another reference to it, or spawn it in a loop it was declared outside of; its class's methods may not keep a reference from outside or hand out their own (the rule of [what a `Mutex` may guard](#channel-and-mutex)); a parameter, a field or a call's result is refused (capture its `clone()`) |
+| a `Ptr` to a C layout or an opaque C type, or a struct holding one | shared, only in the module whose `lib` block declares that type (a package's C handles among its own tasks; their thread-safety is the C library's); refused anywhere else, and a `Ptr(Void)` or a pointer to a C scalar never crosses |
+| a class instance otherwise, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` or `Hash` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects); `.parallel` and an HTTP handler never take a class by move, since every body or request would share it |
 
-A mutable object reaches another task only inside a `Mutex`, or as the results of `.parallel`.
+A mutable object reaches another task only inside a `Mutex`, moved into the task that alone uses it, or as the results of `.parallel`.
+
+```avant
+class Job {
+  pub items: Array(Int) = []
+}
+
+fn main {
+  job = Job.new()
+  job.items.push(4)
+  h = spawn {
+    job.items.push(5)          // the task's own object now
+    job.items.size
+  }
+  puts(h.join() ?? -1)         // => 2
+}
+```
 
 ### The thread pool
 

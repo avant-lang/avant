@@ -1,0 +1,50 @@
+// ? in a lambda whose result type is an error union: the failure is the
+// lambda's value; in a spawn block it then goes to the join with ?.
+import std.sync
+
+class Bad: Error {
+  pub n: Int = 0
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  pub fn message: String {
+    "bad ${n}"
+  }
+}
+
+fn check(n: Int): Int | Bad {
+  if n > 2 {
+    return Bad.new(n)
+  }
+  n * 10
+}
+
+fn main {
+  m = Mutex(Int).new(5)
+  h = spawn {
+    m.with((x): Int | Bad {
+      x += check(7)?
+      x
+    })?
+  }
+  r = h.join()
+  if v = r {
+    puts(v)
+  } else {
+    puts("failed")
+  }
+  puts(m.with((x) { x }))
+  h2 = spawn {
+    m.with((x): Int | Bad {
+      x += check(2)?
+      x
+    })?
+  }
+  puts(h2.join() ?? -1)
+  v3 = m.with((x): Int? { "12".to_i()? + x })
+  puts(v3 ?? -1)
+  v4 = m.with((x): Int? { "zz".to_i()? + x })
+  puts(v4 ?? -1)
+}
