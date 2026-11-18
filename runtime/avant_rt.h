@@ -814,7 +814,11 @@ void avant_http_req_respond(void *req, avant_int status, const char *ctype,
                             const char *head, const char *body);
 void *avant_http_listen(const char *host, avant_int port, avant_int max_body, avant_int loops, avant_int max_message);
 avant_int avant_http_port(void *srv);
-avant_int avant_http_serve(void *srv, void *state, void *cb, void *ws_cb);
+avant_int avant_http_serve(void *srv, void *state, void *cb, void *ws_cb,
+                           void *timer_cb);
+avant_int avant_http_add_timer(void *srv, avant_int ms);
+void avant_http_trap(const char *message);
+avant_int avant_http_timer_index(void *ev);
 avant_int avant_http_close(void *srv);
 avant_int avant_http_req_is_ws(void *req);
 avant_int avant_http_req_ws_upgrade(void *req, avant_int route);

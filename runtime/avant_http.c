@@ -454,6 +454,16 @@ typedef int32_t (*AvantHttpDispatch)(void *state, void *req);
 typedef struct AvantHttpServer AvantHttpServer;
 typedef struct HttpLoop HttpLoop;
 
+/* A program's timer on the server's first loop (Server.every): its
+ * period, its index among the program's timers, and its uSockets timer
+ * while serving. */
+typedef struct HttpTimer {
+  AvantHttpServer *srv;
+  uint32_t ms;
+  avant_int index;
+  struct us_timer_t *t;
+} HttpTimer;
+
 /* One queued outbound frame remainder or cross-thread frame. Allocated
  * only when the kernel did not take a whole direct write, or when a
  * send arrives from a non-loop thread; the loop-thread hot path writes
@@ -632,6 +642,11 @@ struct AvantHttpServer {
   int64_t body_held;
   int64_t conns;
   AvantWsConn *ws_all;
+  /* The program's timers (Server.every), run on loops[0] while serving
+   * through timer_dispatch. */
+  AvantHttpDispatch timer_dispatch;
+  HttpTimer *timers;
+  int ntimers;
 };
 
 /* conn comes first: a Conn's address is its node's. peer is the peer's
@@ -3123,6 +3138,8 @@ static struct us_socket_t *srv_on_writable(struct us_socket_t *s) {
   return s;
 }
 
+static void timers_close(AvantHttpServer *srv);
+
 static void srv_on_wakeup(struct us_loop_t *loop) {
   HttpLoop *hl = *(HttpLoop **)us_loop_ext(loop);
   if (!hl) {
@@ -3146,6 +3163,10 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
   if (hl->listen) {
     us_listen_socket_close(0, hl->listen);
     hl->listen = NULL;
+  }
+  if (hl == &hl->srv->loops[0]) {
+    /* The program's timers stop with the server. */
+    timers_close(hl->srv);
   }
   if (!hl->close_at) {
     hl->close_at = http_now_ms();
@@ -3184,6 +3205,54 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
       node = next;
     }
   }
+}
+
+/* A program's timer fired (Server.every): its handler runs as a
+ * handler does, in a recovery point (a trap is printed and the server
+ * goes on), unless the server is closing. */
+static void timer_fire(struct us_timer_t *t) {
+  HttpTimer *ht = *(HttpTimer **)us_timer_ext(t);
+  AvantHttpServer *srv = ht->srv;
+  if (srv->closing || !srv->timer_dispatch || !srv->state) {
+    return;
+  }
+  enter_avant();
+  (void)avant_task_recover_call(srv->timer_dispatch, srv->state, ht);
+  leave_avant();
+}
+
+static void timers_close(AvantHttpServer *srv) {
+  int i;
+  for (i = 0; i < srv->ntimers; i++) {
+    if (srv->timers[i].t) {
+      us_timer_close(srv->timers[i].t);
+      srv->timers[i].t = NULL;
+    }
+  }
+}
+
+avant_int avant_http_timer_index(void *evp) {
+  return ((HttpTimer *)evp)->index;
+}
+
+/* Server.every: a timer of `ms` milliseconds (1 or more, checked by
+ * std.http), started when serve starts; its index. */
+avant_int avant_http_add_timer(void *srvp, avant_int ms) {
+  AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  HttpTimer *next;
+  if (!srv) {
+    return -1;
+  }
+  next = (HttpTimer *)realloc(srv->timers, sizeof(HttpTimer) * (size_t)(srv->ntimers + 1));
+  if (!next) {
+    avant_trap_text("out of memory adding a timer to the server");
+  }
+  srv->timers = next;
+  next[srv->ntimers].srv = srv;
+  next[srv->ntimers].ms = ms > INT32_MAX ? INT32_MAX : (uint32_t)ms;
+  next[srv->ntimers].index = srv->ntimers;
+  next[srv->ntimers].t = NULL;
+  return srv->ntimers++;
 }
 
 static void srv_pre(struct us_loop_t *loop) {
@@ -3305,6 +3374,8 @@ static void srv_teardown(AvantHttpServer *srv) {
     pthread_mutex_unlock(&g_ws_mu);
     ws_record_release(ws);
   }
+  timers_close(srv);
+  free(srv->timers);
   for (i = 0; i < srv->nloops; i++) {
     loop_teardown(&srv->loops[i]);
   }
@@ -3542,7 +3613,8 @@ static void *loop_thread_main(void *arg) {
   return NULL;
 }
 
-avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
+avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb,
+                           void *timer_cb) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;
   if (!srv || !srv->loops || srv->nloops < 1) {
@@ -3556,7 +3628,16 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   srv->state = state;
   srv->dispatch = (AvantHttpDispatch)cb;
   srv->ws_dispatch = (AvantHttpDispatch)ws_cb;
+  srv->timer_dispatch = (AvantHttpDispatch)timer_cb;
   srv->running = 1;
+  for (i = 0; i < srv->ntimers; i++) {
+    HttpTimer *ht = &srv->timers[i];
+    ht->t = us_create_timer(srv->loops[0].loop, 1, (unsigned int)sizeof(HttpTimer *));
+    if (ht->t) {
+      *(HttpTimer **)us_timer_ext(ht->t) = ht;
+      us_timer_set(ht->t, timer_fire, (int)ht->ms, (int)ht->ms);
+    }
+  }
   if (srv->mem_ceiling < 0) {
     int64_t limit = http_container_memory();
     srv->mem_ceiling = limit > 0 ? limit / 10 * 9 : 0;
@@ -3624,6 +3705,13 @@ __attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *
 /* A limit set while the server serves: the loops read the limits with
  * no lock, as they read the routes, so it is refused like a route. A
  * trap of the language. */
+/* A std.http call given a value it refuses (the message names the call
+ * and the rule): a trap of the language, which fails a handler's
+ * request. */
+__attribute__((noreturn, cold)) void avant_http_trap(const char *message) {
+  avant_trap_text(message);
+}
+
 __attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *name) {
   char msg[160];
   snprintf(msg, sizeof msg, "Server.%s called while the server is serving: set every limit before serve", name);

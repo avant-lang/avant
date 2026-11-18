@@ -19,10 +19,13 @@ lib httpc {
   fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
-  fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
+  fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void)), timer_cb: fn(HttpState, Ptr(Void))): Int
+  fun avant_http_add_timer(srv: Ptr(Void), ms: Int): Int
+  fun avant_http_timer_index(ev: Ptr(Void)): Int
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
   fun avant_http_limit_while_serving(name: String)
+  fun avant_http_trap(message: String)
   fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int)
   fun avant_http_header_check(name: String, value: String)
   fun avant_http_token_bad(s: String): Int
@@ -479,6 +482,10 @@ struct WsCloseRoute {
   handler: fn(WsConn, Int, String)
 }
 
+struct Hook {
+  handler: fn()
+}
+
 // The mutable half of a Server, held by reference so every copy of the
 // Server value registers routes on, closes, and serves the same
 // server. Not public: programs meet Server, not this.
@@ -487,6 +494,10 @@ class HttpState {
   ws_routes: Array(WsRoute) = []
   ws_open_routes: Array(WsOpenRoute) = []
   ws_close_routes: Array(WsCloseRoute) = []
+  fallbacks: Array(Route) = []
+  timers: Array(Hook) = []
+  close_hooks: Array(Hook) = []
+  hooks_ran: Bool = false
   closed: Bool = false
   serving: Bool = false
   bound_port: Int = 0
@@ -503,6 +514,39 @@ class HttpState {
       httpc.avant_http_route_while_serving("route ${method} ${path}")
     }
     self.routes.push(Route { method: method, path: path, handler: handler })
+  }
+
+  fn set_fallback(handler: fn(Request): Response) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("fallback route")
+    }
+    self.fallbacks.clear()
+    self.fallbacks.push(Route { method: "", path: "", handler: handler })
+  }
+
+  fn add_timer(handler: fn()) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("every timer")
+    }
+    self.timers.push(Hook { handler: handler })
+  }
+
+  fn add_close_hook(handler: fn()) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("on_close hook")
+    }
+    self.close_hooks.push(Hook { handler: handler })
+  }
+
+  // The close hooks, once, in the order they were registered.
+  fn run_close_hooks {
+    if self.hooks_ran {
+      return
+    }
+    self.hooks_ran = true
+    for h in self.close_hooks {
+      (h.handler)()
+    }
   }
 
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
@@ -594,6 +638,9 @@ class HttpState {
         return (r.handler)(req)
       }
     }
+    if self.fallbacks.size > 0 {
+      return (self.fallbacks[0].handler)(req)
+    }
     Response.text("not found", 404)
   }
 }
@@ -648,6 +695,13 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // (until the handshake a defer region here and a second one in the
   // entry kept other loop threads' collections off).
   httpc.avant_http_req_respond(raw, resp.status, resp.ctype, resp.head, resp.body)
+}
+
+// The C loop calls this named function each time a timer of `every`
+// fires, on the server's first loop thread.
+fn timer_dispatch(state: HttpState, raw: Ptr(Void)) {
+  i = httpc.avant_http_timer_index(raw)
+  (state.timers[i].handler)()
 }
 
 // The C loop calls this named function once per WebSocket message and
@@ -740,6 +794,39 @@ pub struct Server {
 
   pub fn route(method: String, path: String, handler: fn(Request): Response): Server {
     self.state.add(method, path, handler)
+    self
+  }
+
+  // The handler of every request no route names, by its method and path
+  // (404 without one): a framework's router, given every request it has
+  // to route (`/messages/42`). A second call replaces the first.
+  pub fn fallback(handler: fn(Request): Response): Server {
+    self.state.set_fallback(handler)
+    self
+  }
+
+  // Runs `handler` every `ms` milliseconds while the server serves, the
+  // first time `ms` after `serve` starts, on the server's first loop
+  // thread: like a handler it must not block, what it captures is
+  // checked as a handler's, and a trap in it is printed and the server
+  // goes on. Registered before `serve`, like a route; `ms` is 1 or more.
+  pub fn every(ms: Int, handler: fn()): Server {
+    if ms < 1 {
+      httpc.avant_http_trap("Server.every(${ms}): a period is 1 ms or more")
+    }
+    self.state.add_timer(handler)
+    if !self.state.closed {
+      _ = httpc.avant_http_add_timer(self.handle, ms)
+    }
+    self
+  }
+
+  // Runs `handler` once when the server stops: after `close`, on the
+  // thread that called `serve`, when its loops have stopped and before
+  // `serve` returns (in `close` itself for a server never served).
+  // Hooks run in the order they were registered.
+  pub fn on_close(handler: fn()): Server {
+    self.state.add_close_hook(handler)
     self
   }
 
@@ -867,9 +954,10 @@ pub struct Server {
     }
     self.state.serving = true
     pin(self.state) {
-      httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch)
+      httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch, timer_dispatch)
     }
     self.state.serving = false
+    self.state.run_close_hooks()
   }
 
   // Stops the server: wakes the loop, closes the listen socket and
@@ -885,6 +973,9 @@ pub struct Server {
     }
     self.state.closed = true
     httpc.avant_http_close(self.handle)
+    if !self.state.serving {
+      self.state.run_close_hooks()
+    }
   }
 }
 

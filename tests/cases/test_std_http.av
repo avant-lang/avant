@@ -345,6 +345,46 @@ fn test_std_http(c: Checks) {
     }
   }
 
+  // Every request no route names, by its path or its method, reaches
+  // the fallback (it answered the server's own 404): a framework's
+  // router gets /messages/42.
+  if opened_fb = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    fb = opened_fb
+    fb.get("/a", (req) {
+      Response.text("route a")
+    })
+    fb.fallback((req) {
+      Response.text("fallback ${req.method} ${req.path} ${req.query() ?? "-"}", 404)
+    })
+    fb.get("/__stop", (req) {
+      fb.close()
+      Response.text("bye")
+    })
+    fb_port = fb.port()
+    fb_task = spawn {
+      got = buf_new()
+      base = "http://127.0.0.1:${fb_port}"
+      for target in ["/a", "/messages/42?x=1"] {
+        u = "${base}${target}"
+        if resp = Http.get(u) {
+          got.push_str("${resp.status} ${body_text(resp)}|")
+        }
+      }
+      u = "${base}/a"
+      if resp = Http.post(u, "x") {
+        got.push_str("${resp.status} ${body_text(resp)}")
+      }
+      stop_url = "${base}/__stop"
+      _ = Http.get(stop_url)
+      got.to_s()
+    }
+    fb.serve()
+    switch fb_task.join() {
+      case got: String { c.eq_str(got, "200 route a|404 fallback GET /messages/42 x=1|404 fallback POST /a -", "the fallback gets what no route names") }
+      case TaskError { c.expect(false, "the fallback task") }
+    }
+  }
+
   stamp = now_ms()
   script = "${scratch()}/http-raw-${stamp}.py"
   py = "import socket, sys\nport = int(sys.argv[1])\nmode = sys.argv[2]\ns = socket.create_connection((\"127.0.0.1\", port))\nif mode == \"chunked\":\n    s.sendall(b\"POST /echo HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r\\n0\\r\\n\\r\\n\")\nelif mode == \"keepalive\":\n    s.sendall(b\"GET /ping HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    s.settimeout(5)\n    data = b\"\"\n    try:\n        while data.count(b\"pong\") < 2:\n            chunk = s.recv(4096)\n            if not chunk:\n                break\n            data += chunk\n    except Exception:\n        pass\n    print(\"keepalive=\" + \",\".join([\"pong\"] * data.count(b\"pong\")))\n    sys.exit(0)\nelse:\n    s.sendall(b\"this is not http\\r\\n\\r\\n\")\ndata = b\"\"\ntry:\n    while True:\n        chunk = s.recv(4096)\n        if not chunk:\n            break\n        data += chunk\nexcept Exception:\n    pass\nprint(data.decode(\"latin1\").split(\"\\r\\n\")[0])\n"

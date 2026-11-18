@@ -1,0 +1,72 @@
+import std.http
+import std.sync
+
+// Server.every and Server.on_close. A timer every 20 ms counts its
+// runs and traps on its third: the trap is printed and the server goes
+// on, so the timer runs again. A task closes the server after 400 ms;
+// the two close hooks run then, in their order, on the thread that
+// called serve, after the loops stopped and before serve returns. A
+// server closed without serving runs its hooks in close. The run
+// goldens run it as it is.
+
+lib c {
+  fun usleep(micros: UInt32): Int32
+}
+
+fn sleep_ms(ms: Int) {
+  _ = c.usleep((ms * 1000).to_u32())
+}
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn main: Int {
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 2) {
+    server = opened
+    runs = Mutex(Int).new(0)
+    xs = [1, 2]
+    server.every(20, () {
+      n = runs.with((v) {
+        v += 1
+        v
+      })
+      if n == 3 {
+        _ = at(xs, 5)
+      }
+    })
+    server.on_close(() {
+      n = runs.with((v) { v })
+      if n > 5 {
+        puts("hook 1: the timer ran on after its trap")
+      } else {
+        puts("hook 1: the timer ran ${n} times")
+      }
+    })
+    server.on_close(() {
+      puts("hook 2")
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    stopper = spawn {
+      sleep_ms(400)
+      url = "http://127.0.0.1:${port}/__stop"
+      _ = Http.get(url)
+    }
+    server.serve()
+    puts("served")
+    _ = stopper.join()
+  }
+  if quiet = Http.listen(0) {
+    quiet.on_close(() {
+      puts("closed without serving")
+    })
+    quiet.close()
+    quiet.close()
+    quiet.serve()
+  }
+  0
+}
