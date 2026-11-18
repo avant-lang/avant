@@ -247,6 +247,16 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
     c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 1, "refused: ${b[0]}")
     c.expect(str_has(file_read(rlog) ?? "", b[1]), "the message: ${b[1]}")
   }
+
+  // --lib PATH links a library file.
+  _ = file_write("${base}/half.c", "int half_of(int x) { return x / 2; }\n")
+  c.eq_int(process_run_out("/usr/bin/cc", ["-c", "-o", "${base}/half.o", "${base}/half.c"], glog) ?? -1, 0, "cc half.o")
+  c.eq_int(process_run_out("/usr/bin/ar", ["rcs", "${base}/libhalf.a", "${base}/half.o"], glog) ?? -1, 0, "ar libhalf.a")
+  _ = file_write("${base}/half.av", "lib half {\n  fun half_of(x: Int32): Int32\n}\n\nfn main {\n  puts(half.half_of(42))\n}\n")
+  c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/libhalf.a"]), 0, "--lib PATH")
+  c.eq_str(file_read(rlog) ?? "", "21\n", "--lib PATH links the library file")
+  c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/nope.a"]), 1, "--lib PATH of no file")
+  c.expect(str_has(file_read(rlog) ?? "", "--lib ${base}/nope.a: no such library file"), "--lib PATH of no file is named")
 }
 
 fn test_packages(c: Checks) {

@@ -1141,6 +1141,24 @@ pub fn compile_c_file(path: String): String {
   obj
 }
 
+// --lib NAME links the system's library (-lNAME); --lib PATH, a name
+// with a slash or a library file's name (lib.a, lib.so, lib.so.1), links
+// that file, as a .o is.
+pub fn link_lib(job: LinkJob, v: String): String {
+  if v.size == 0 {
+    return "--lib needs a name or a library's path"
+  }
+  if str_contains(v, "/") || str_ends(v, ".a") || str_ends(v, ".so") || str_contains(v, ".so.") {
+    if !file_exists(v) || dir_exists(v) {
+      return "--lib ${v}: no such library file"
+    }
+    job.objects.push(v)
+    return ""
+  }
+  job.flags.push("-l${v}")
+  ""
+}
+
 pub fn parse_link(args: Array(String)): LinkJob {
   job = LinkJob.new()
   i = 0
@@ -1191,15 +1209,19 @@ pub fn parse_link(args: Array(String)): LinkJob {
       job.cpu = v
     } else if arg == "--lib" {
       if i + 1 >= args.size {
-        job.err = "--lib needs a name"
+        job.err = "--lib needs a name or a library's path"
         return job
       }
-      name = args[i + 1]
-      job.flags.push("-l${name}")
+      job.err = link_lib(job, args[i + 1])
+      if job.err.size > 0 {
+        return job
+      }
       i += 2
     } else if str_starts(arg, "--lib=") {
-      name = str_slice(arg, 6, arg.size)
-      job.flags.push("-l${name}")
+      job.err = link_lib(job, str_slice(arg, 6, arg.size))
+      if job.err.size > 0 {
+        return job
+      }
       i += 1
     } else if arg == "--cc" {
       if i + 1 >= args.size {

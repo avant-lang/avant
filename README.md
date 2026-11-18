@@ -3707,6 +3707,7 @@ A capturing lambda, a `fn` value held in a variable, and a C function returning 
 
 ```sh
 avant compile app.av --lib z            # link a system library: -lz
+avant compile app.av --lib build/libvalkey.a   # link a library file (a path, or a name ending .a or .so)
 avant compile app.av --cc helper.c      # compile and link a C file (or link a .o)
 avant run app.av --lib z
 ```
@@ -4674,7 +4675,7 @@ avant format . --check
 | --- | --- |
 | `--debug`, `--release` | the [build mode](#build-modes) (`--final` is another spelling of `--release`) |
 | `--cpu=LEVEL` | the x86-64 level of the generated code: `baseline`, `v2`, `v3`, `v4` or `native` |
-| `--lib NAME` | link a system library ([Linking C code](#linking-c-code)); `--lib=NAME` is the same |
+| `--lib NAME` | link a system library, or `--lib PATH` a library file ([Linking C code](#linking-c-code)); `--lib=NAME` is the same |
 | `--cc FILE.c` | compile and link a C file, or link a `.o` |
 | `--keep-tmp` | keep the command's [temporary files](#temporary-files) and print where |
 
