@@ -86,6 +86,14 @@ fn frozen_cases(c: Checks, compiler: String, stamp: Int) {
     want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array"
     c.expect((fs.read(log) ?? "").contains(want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
   }
+  // A runtime mutator's trap names the call's file and line, as a
+  // change the generated code tests itself does.
+  sited = ["push", "pop", "fill", "sort", "reverse", "reserve", "insert", "concat", "concat-empty", "task-alias", "nested", "parallel"]
+  sites = ["88:7", "96:11", "100:7", "102:7", "106:7", "108:7", "112:7", "118:7", "120:7", "144:11", "218:10", "241:7"]
+  for i, kind in sited {
+    log = "${scratch()}/safety-frozen-${stamp}-${kind}.log"
+    c.expect((fs.read(log) ?? "").contains("before changing the array at frozen_trap.av:${sites[i]}\n"), "frozen ${kind}: the trap names its site, frozen_trap.av:${sites[i]}")
+  }
 }
 
 // A Hash a running task reads is frozen as an Array is

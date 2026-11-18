@@ -163,11 +163,13 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
 
 /* A change to an Array a running task reads (avant_rt.h,
  * AVANT_ARRAY_FROZEN): op names the operation
- * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
- * growth, pop, fill, sort, reverse, reserve, insert, concat) print no
- * site; generated code's (an element store, clear, a sort with a block,
- * delete_if, delete_at, shuffle, a fill of other elements) call the _at
- * form. */
+ * (AVANT_FROZEN_*). Generated code tests the freeze itself and calls the
+ * _at form, which names the site: an element store, clear, a sort with a
+ * block, delete_if, delete_at, shuffle, a fill of other elements, and,
+ * in a program that spawns, the call of any runtime mutator. The
+ * runtime's own test inside those functions (push's growth, pop, fill,
+ * sort, reverse, reserve, insert, concat), which has no site, stays for
+ * their other callers. */
 static const char *frozen_op(int32_t op) {
   static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if", "insert", "delete_at", "concat", "shuffle"};
   return op >= 0 && op <= 12 ? names[op] : "a change";

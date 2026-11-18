@@ -492,7 +492,20 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, a sort with a
 // block, `delete_if`, `delete_at`, and a `fill` of elements other than
 // numbers, a `shuffle` and a `try_delete_at` (generic functions' loops,
-// checked at their call). The ops are avant_rt.h's AVANT_FROZEN_*.
+// checked at their call). In a program that spawns or uses .parallel,
+// the calls of the runtime's mutators (push, pop, a fill of numbers,
+// sort, reverse, reserve, insert, concat) test it here too, before the
+// call (mutator_frozen_check), so a task's freeze traps naming the call's
+// file and line; the runtime's own test, which has no site, stays for
+// its other callers. The ops are avant_rt.h's AVANT_FROZEN_*.
+pub fn mir_frozen_push: Int {
+  0
+}
+
+pub fn mir_frozen_pop: Int {
+  1
+}
+
 pub fn mir_frozen_clear: Int {
   2
 }
@@ -515,6 +528,22 @@ pub fn mir_frozen_shuffle: Int {
 
 pub fn mir_frozen_sort: Int {
   4
+}
+
+pub fn mir_frozen_reverse: Int {
+  5
+}
+
+pub fn mir_frozen_reserve: Int {
+  6
+}
+
+pub fn mir_frozen_insert: Int {
+  9
+}
+
+pub fn mir_frozen_concat: Int {
+  11
 }
 
 pub fn mir_frozen_store: Int {
@@ -551,6 +580,18 @@ pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
     return
   }
   lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
+}
+
+// A call of a runtime mutator on the array held in h: in a program that
+// spawns or uses .parallel, the freeze test before the call, so its trap
+// names the call's file and line (the runtime's own test has no site).
+// Any other program's code is unchanged: there only a method call on an
+// element freezes an array, and the runtime's trap names that call.
+pub fn (lw: MirLower) mutator_frozen_check(h: Int, op: Int, loc: Location) {
+  if lw.lw_m.shared {
+    lw.at(loc)
+    lw.frozen_check(h, op, loc)
+  }
 }
 
 // An array verb written as a generic function of the program
@@ -950,6 +991,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     lw.at(e.loc)
     h = lw.hold(a, aty)
     if name == "push" {
+      lw.mutator_frozen_check(h, mir_frozen_push(), e.loc)
       lw.arr_push(h, aty, et, v)
       return zero
     }
@@ -966,6 +1008,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
           v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
         }
       }
+      lw.mutator_frozen_check(h, mir_frozen_fill(), e.loc)
       b.call(-1, f, lw.two(b.copy_local(h), v))
       return zero
     }
@@ -994,6 +1037,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     hi = lw.hold(a, aty)
+    lw.mutator_frozen_check(hi, mir_frozen_insert(), e.loc)
     four = lw.two(b.copy_local(hi), ip)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1031,6 +1075,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     hc = lw.hold(a, aty)
+    lw.mutator_frozen_check(hc, mir_frozen_concat(), e.loc)
     four = lw.two(b.copy_local(hc), o)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1080,6 +1125,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return zero
     }
     lw.at(e.loc)
+    lw.mutator_frozen_check(h2, mir_frozen_reserve(), e.loc)
     four = lw.two(b.copy_local(h2), n)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1087,6 +1133,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "pop" {
+    lw.mutator_frozen_check(h2, mir_frozen_pop(), e.loc)
     return lw.lower_pop(e, h2, aty, et, want)
   }
   if name == "clear" {
@@ -1105,6 +1152,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "reverse" {
+    lw.mutator_frozen_check(h2, mir_frozen_reverse(), e.loc)
     b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
@@ -1127,6 +1175,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return zero
     }
     if name == "sort" {
+      lw.mutator_frozen_check(h2, mir_frozen_sort(), e.loc)
       b.call(-1, sf, lw.one(b.copy_local(h2)))
       return zero
     }
