@@ -4488,7 +4488,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `json.decode(text, T, ignore_unknown = false)` | `text: String`; `T` a type, written as the argument (`User`, `Array(User)`, `Hash(String, User)`, `Box(Int)`, `geo.Point`) | `T \| JsonError` | text that does not parse: the parse's `JsonError`; a member of the wrong kind, a missing member (a field neither optional nor defaulted), a member no field names, an enum's unknown name: a `JsonError` whose message names the path (`at $.items[2].name: missing member`) | `ignore_unknown: true` skips the members no field names, at every level |
+| `json.decode(text, T, ignore_unknown = false, max_depth = 256, max_bytes: Int? = nil, max_entries: Int? = nil)` | `text: String`; `T` a type, written as the argument (`User`, `Array(User)`, `Hash(String, User)`, `Box(Int)`, `geo.Point`); the limits as `Json.parse`'s | `T \| JsonError` | text that does not parse or passes a limit: the parse's `JsonError`; a member of the wrong kind, a missing member (a field neither optional nor defaulted), a member no field names, an enum's unknown name: a `JsonError` whose message names the path (`at $.items[2].name: missing member`) | `ignore_unknown: true` skips the members no field names, at every level |
 | `json.encode(value)` | `value` of a type below | `String`: compact JSON | a NaN or an infinity traps, naming it | every pub field, `nil` as `null`, a `Hash` in its order |
 | `json.encode_into(buf, value)` | `buf: Buf`, `value` | — | as `encode` | appends the text to `buf` |
 
@@ -4515,7 +4515,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `json.Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none) | |
+| `json.Json.parse(text, max_depth = 256, max_bytes: Int? = nil, max_entries: Int? = nil)` | `text: String`; the limits (below) | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none); a limit passed is a `JsonError` naming it; a limit below 1 traps | |
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
@@ -4526,6 +4526,14 @@ fn main {
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
 | `text` | — | `String`: the value written back as JSON text | — | |
 | `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document, and a `JsonBuilder` writes it back (`b.value(v)`); an object's members are in `members`, a `Hash` by name in the document's order (a repeated name keeps its first value) |
+
+**Limits.** A parse (`Json.parse`, `json.decode`) takes three, each a named argument; a document past one is a `JsonError` naming it, never a trap, so a server can parse a client's body with a bound it states:
+
+| Limit | Default | Refuses |
+| --- | --- | --- |
+| `max_depth` | `256` | arrays and objects nested deeper (the root's depth is 1): `JSON nested deeper than max_depth 256 at byte 4100`, `e.offset` the bracket's; checked by the reader as it goes, an increment and a compare per array or object (yyjson has no limit of its own; a document a million brackets deep used to parse, and any walk by recursion ran out of stack on it) |
+| `max_bytes` | none | a longer text, before anything is allocated: `JSON text of 70000 bytes is over max_bytes 65536` |
+| `max_entries` | none | a document of more values, each array, object, member's name and scalar counted once: `JSON document of 1200 values is over max_entries 1000` |
 
 **Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 

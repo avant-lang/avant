@@ -775,7 +775,7 @@ avant_int avant_job_signal(void);
 void avant_cov_init(const char *map_path);
 void avant_cov_hit(int32_t slot);
 
-void *avant_json_parse(const char *s);
+void *avant_json_parse(const char *s, avant_int max_depth, avant_int max_bytes, avant_int max_entries);
 avant_int avant_json_take_status(void);
 char *avant_json_take_pool(void);
 void *avant_json_root(void *doc);
@@ -795,6 +795,7 @@ char *avant_json_as_str(void *node);
 char *avant_json_obj_str(void *node, const char *key);
 char *avant_json_key_at(void *node, avant_int i);
 char *avant_json_text(void *node);
+void *avant_json_first_key(void *node);
 
 avant_int avant_http_take_status(void);
 avant_int avant_http_header_count(const char *data);

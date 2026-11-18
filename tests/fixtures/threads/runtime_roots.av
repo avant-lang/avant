@@ -15,7 +15,7 @@
 import std.json
 
 lib jroot {
-  fun avant_json_parse(text: String): Ptr(Void)
+  fun avant_json_parse(text: String, max_depth: Int, max_bytes: Int, max_entries: Int): Ptr(Void)
 }
 
 class Cell {
@@ -46,7 +46,7 @@ fn churn(id: Int, r: Int, n: Int): Int {
 fn work(id: Int, rounds: Int): Int {
   bad = 0
   for r in 0..rounds {
-    _ = jroot.avant_json_parse("{\"w\": ${id}, \"r\": ${r}}")
+    _ = jroot.avant_json_parse("{\"w\": ${id}, \"r\": ${r}}", 256, -1, -1)
     bad += churn(id, r, 300)
     if doc = json.Json.parse("{\"id\": ${id}, \"round\": ${r}, \"name\": \"t${id}\"}") {
       bad += churn(id, r, 50)

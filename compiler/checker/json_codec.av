@@ -532,7 +532,9 @@ pub fn json_mark_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
 
 // ---- decoding
 
-// The roots: `fn (text, ignore_unknown = false): T | JsonError`.
+// The roots: `fn (text, ignore_unknown = false, max_depth = 256,
+// max_bytes: Int? = nil, max_entries: Int? = nil): T | JsonError`, the
+// limits Json.parse's.
 pub fn (checker_self: Checker) json_decode_root(ty: Ty, loc: Location): FuncSig? {
   name = "__avant_json_decode__${json_key(ty)}"
   if found = checker_self.json_find(name) {
@@ -542,8 +544,8 @@ pub fn (checker_self: Checker) json_decode_root(ty: Ty, loc: Location): FuncSig?
   t0 = gen.ph(ty)
   deps: Array(Ty) = []
   b = buf_new()
-  b.push_str("fn ${name}(text: String, ignore_unknown: Bool = false): ${t0} | JsonError {\n")
-  b.push_str("  doc = Json.parse(text)?\n")
+  b.push_str("fn ${name}(text: String, ignore_unknown: Bool = false, max_depth: Int = 256, max_bytes: Int? = nil, max_entries: Int? = nil): ${t0} | JsonError {\n")
+  b.push_str("  doc = Json.parse(text, max_depth: max_depth, max_bytes: max_bytes, max_entries: max_entries)?\n")
   b.push_str("  v = ${json_dec_call(ty, "doc", deps)} else e {\n")
   b.push_str("    return codec_done(e)\n")
   b.push_str("  }\n")
@@ -647,7 +649,7 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
     b.push_str("  }\n")
     b.push_str("  len = jsonc.avant_json_len(j.node)\n")
     b.push_str("  out = Hash(String, ${tv}).new()\n")
-    b.push_str("  key = jsoncodec.avant_json_first_key(j.node)\n")
+    b.push_str("  key = jsonmore.avant_json_first_key(j.node)\n")
     b.push_str("  i = 0\n")
     b.push_str("  while kn = key {\n")
     b.push_str("    k = jsonc.avant_json_as_str(kn)\n")

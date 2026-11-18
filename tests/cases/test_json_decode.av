@@ -167,6 +167,27 @@ fn test_decode_shapes(c: Checks) {
   }
 }
 
+// json.decode takes Json.parse's limits.
+fn test_decode_limits(c: Checks) {
+  deep = "{\"id\": 1, \"meta\": " + "[".repeat(300) + "]".repeat(300) + "}"
+  c.eq_str(decode_error(deep), "JSON nested deeper than max_depth 256 at byte 273", "the default max_depth")
+  if o = json.decode("{\"id\": 1}", Order, max_bytes: 4) {
+    c.expect(false, "max_bytes")
+  } else e {
+    c.eq_str(e.message, "JSON text of 9 bytes is over max_bytes 4", "max_bytes")
+  }
+  if o = json.decode("{\"id\": 1, \"items\": []}", Order, max_entries: 5, max_depth: 2) {
+    c.eq_int(o.id, 1, "within max_entries and max_depth")
+  } else e {
+    c.expect(false, "within the limits: ${e.message}")
+  }
+  if o = json.decode("{\"id\": 1, \"items\": [[]]}", Order, max_depth: 2, ignore_unknown: true) {
+    c.expect(false, "max_depth")
+  } else e {
+    c.eq_str(e.message, "JSON nested deeper than max_depth 2 at byte 20", "max_depth")
+  }
+}
+
 fn decode_empty(text: String): String {
   if e0 = json.decode(text, Empty) {
     return "decoded"
@@ -268,6 +289,7 @@ fn cases: Array(JCase) {
   // with its own field types; a private field refuses the decode.
   xs.push(accepted("module", "import std.json\nimport jshapes\nfn main {\n  if p = json.decode(\"{\\\"x\\\": 1, \\\"y\\\": 2.5}\", jshapes.Pt(Float64)) {\n    puts(p.x + p.y)\n    puts(json.encode(p))\n  }\n  h = jshapes.hid(4)\n  puts(json.encode(h))\n}\n", "3.5\n{\"x\":1.0,\"y\":2.5}\n{\"a\":4}\n"))
   xs.push(refused("module-private", "import std.json\nimport jshapes\nfn main {\n  if h = json.decode(\"{}\", jshapes.Hid) {\n    puts(h.a)\n  }\n}\n", "json.decode cannot read Hid: field b of Hid is not pub", "4:35"))
+  xs.push(accepted("limit-trap", pre + "fn main {\n  puts(1)\n  if d = json.Json.parse(\"[]\", max_bytes: 0) {\n    puts(2)\n  }\n}\n", "1\n"))
   xs.push(accepted("nan-trap", pre + "fn main {\n  puts(json.encode([1.0]))\n  z = 0.0\n  puts(json.encode([z / z]))\n}\n", "[1.0]\n"))
   xs
 }
@@ -298,6 +320,9 @@ fn run_cases(c: Checks, compiler: String, dir: String, all: Array(JCase)) {
       if f3.tag == "nan-trap" {
         c.expect(runs[k].code != 0, "${f3.tag}: a NaN stops the program")
         c.expect(log_text("${dir}/jx-${f3.tag}.run.err").contains("json.encode: nan is not a JSON number; write null or a string for it"), "${f3.tag}: says why")
+      } else if f3.tag == "limit-trap" {
+        c.expect(runs[k].code != 0, "${f3.tag}: a limit below 1 stops the program")
+        c.expect(log_text("${dir}/jx-${f3.tag}.run.err").contains("json.Json.parse: max_bytes 0 is below 1"), "${f3.tag}: says which")
       } else {
         c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
       }
@@ -317,6 +342,7 @@ fn test_main(c: Checks) {
   test_decode_shapes(c)
   test_encode(c)
   test_decode_many(c)
+  test_decode_limits(c)
   if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {

@@ -4,7 +4,7 @@ Avant wraps these; it does not reimplement JSON or HTTP.
 
 | Tree | Role | License | Pin |
 | --- | --- | --- | --- |
-| `yyjson/` | JSON | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`) |
+| `yyjson/` | JSON | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`), with the local patch listed under "yyjson: local patches" |
 | `uSockets/` | HTTP evented sockets (the C library only) | Apache-2.0 | `7a7c820` (`src/` only), with the local patches listed under "uSockets: local patches" |
 | `base64/` | Base64 codec (aklomp/base64) | BSD-style, copyright Nick Galbreath, Wojciech Muła, Matthieu Darbois, and Alfred Klomp (see `base64/LICENSE`) | `e4cc438b7a8f2780b15f88aed24a89927f6bd6c6` (`base64/PIN`) |
 | `pcre2/` | Regular expressions for `std.regex` computed patterns; literal patterns take re2c | BSD-3-Clause with the PCRE2 exception, copyright University of Cambridge and the PCRE2 authors (see `pcre2/LICENCE.md`, `pcre2/AUTHORS.md`); the bundled sljit JIT compiler is BSD-2-Clause, copyright Zoltan Herczeg (`pcre2/deps/sljit/LICENSE`) | 10.49 (`pcre2/PIN`: tarball sha256 and the release signature checked) |
@@ -20,6 +20,12 @@ Do not tidy these trees except to update the pin.
 ## CVE and update policy
 
 Each vendored tree has exactly one pin of record: the table above for `yyjson/` and `uSockets/`, `crc32-chromium/PIN` for `crc32-chromium/`, `sha-intrinsics/PIN` for `sha-intrinsics/`, `base64/PIN` for `base64/`, `pcre2/PIN` for `pcre2/`, and `zlib/PIN` for `zlib/`. A security fix or a needed upstream fix updates the work the same way every time: replace the tree with the fixed upstream revision, update the pin in this file (and the tree's `PIN` file where it has one) in the same change, and record the reason in the commit message. There is no floating "latest" anywhere: a build always names the revision it vendored. If upstream has no fixed revision yet, the pin stays and the exposure is recorded here rather than patched silently in-tree, so the vendored tree never diverges from its named pin without this file saying so.
+
+## yyjson: local patches
+
+The tree is upstream v0.10.0 plus the change below, marked "Avant patch" in the source. An update of the pin re-applies it or drops it with the upstream change that makes it unnecessary, and says which in the commit message.
+
+- `yyjson/yyjson.c`, `read_root_minify` and `read_root_pretty`, and `yyjson/yyjson.h`: a nesting limit. yyjson's reader takes any depth (it keeps no stack of its own), so a document of a million `[` is read, and every reader that walks it after by recursion (`std.json`'s `to_value`, a typed decode, a program's own walk) runs out of stack on it. The reader now counts the arrays and objects it is inside, the root's being 1, and refuses a container past the reading thread's `yyjson_avant_max_depth` with `YYJSON_READ_ERROR_AVANT_DEPTH` at its bracket; 0 is no limit, yyjson's own behaviour. `std.json`'s `Json.parse` sets it from its `max_depth` (`runtime/avant_json.c`). Cost: an increment and a compare per container read.
 
 ## uSockets: local patches
 

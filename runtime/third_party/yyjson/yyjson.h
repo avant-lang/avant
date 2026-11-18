@@ -813,6 +813,10 @@ static const yyjson_read_code YYJSON_READ_ERROR_UNEXPECTED_CHARACTER    = 6;
 /** Invalid JSON structure, such as `[1,]`. */
 static const yyjson_read_code YYJSON_READ_ERROR_JSON_STRUCTURE          = 7;
 
+/** Avant patch: arrays and objects nested deeper than the reading
+    thread's yyjson_avant_max_depth (yyjson.c). */
+static const yyjson_read_code YYJSON_READ_ERROR_AVANT_DEPTH             = 100;
+
 /** Invalid comment, such as unclosed multi-line comment. */
 static const yyjson_read_code YYJSON_READ_ERROR_INVALID_COMMENT         = 8;
 

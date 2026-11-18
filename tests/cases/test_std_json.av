@@ -453,6 +453,40 @@ fn test_json_members(c: Checks) {
   }
 }
 
+// The limits of a parse: max_depth (256 unless set) refuses arrays and
+// objects nested deeper, at the bracket that goes past it; max_bytes and
+// max_entries (none unless set) refuse a longer text or a document of
+// more values (each member's name counted as one). Each is a JsonError
+// naming it, never a trap; a parse used to take any depth.
+fn parse_says(text: String, max_depth: Int, max_bytes: Int?, max_entries: Int?): String {
+  if doc = Json.parse(text, max_depth: max_depth, max_bytes: max_bytes, max_entries: max_entries) {
+    return "ok ${doc.len()}"
+  } else e {
+    return e.message
+  }
+}
+
+fn test_json_limits(c: Checks) {
+  deep = "[".repeat(300) + "]".repeat(300)
+  if d = Json.parse(deep) {
+    c.expect(false, "300 levels are over the default max_depth")
+  } else e {
+    c.eq_str(e.message, "JSON nested deeper than max_depth 256 at byte 256", "300 levels are over the default max_depth")
+    c.eq_int(e.offset ?? -1, 256, "the offset of the bracket past the limit")
+  }
+  c.eq_str(parse_says("[".repeat(256) + "]".repeat(256), 256, nil, nil), "ok 1", "256 levels are within it")
+  c.eq_str(parse_says(deep, 300, nil, nil), "ok 1", "max_depth raised")
+  c.eq_str(parse_says("{\"a\": [[1]]}", 2, nil, nil), "JSON nested deeper than max_depth 2 at byte 7", "an object's member nested too deep")
+  c.eq_str(parse_says("{\"a\": [1]}", 2, nil, nil), "ok 1", "an object holding an array: depth 2")
+  c.eq_str(parse_says("7", 1, nil, nil), "ok 0", "a scalar has no depth")
+  c.eq_str(parse_says("[1, 2, 3]", 256, nil, 3), "JSON document of 4 values is over max_entries 3", "max_entries counts the array too")
+  c.eq_str(parse_says("[1, 2, 3]", 256, nil, 4), "ok 3", "within max_entries")
+  c.eq_str(parse_says("{\"a\": 1}", 256, nil, 2), "JSON document of 3 values is over max_entries 2", "a member's name counts")
+  c.eq_str(parse_says("[1, 2, 3]", 256, 8, nil), "JSON text of 9 bytes is over max_bytes 8", "max_bytes")
+  c.eq_str(parse_says("[1, 2, 3]", 256, 9, nil), "ok 3", "within max_bytes")
+  c.eq_str(parse_says("[1, 2", 256, 9, 100), "invalid JSON at byte 5: unexpected end of data", "a text within the limits that does not parse")
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -463,5 +497,6 @@ fn main: Int {
   test_json_kinds(c)
   test_json_members(c)
   test_json_value_written(c)
+  test_json_limits(c)
   c.finish()
 }

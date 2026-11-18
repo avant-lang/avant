@@ -5725,6 +5725,13 @@ copy_utf8:
  *============================================================================*/
 
 /** Read single value JSON document. */
+/* Avant patch: the deepest nesting of arrays and objects a read takes
+ * (the root container is depth 1), 0 for no limit; set by the reading
+ * thread before yyjson_read_opts (runtime/avant_json.c). A document
+ * nested deeper is refused with YYJSON_READ_ERROR_AVANT_DEPTH at the
+ * container that goes past it. */
+__thread size_t yyjson_avant_max_depth = 0;
+
 static_noinline yyjson_doc *read_root_single(u8 *hdr,
                                              u8 *cur,
                                              u8 *end,
@@ -5893,6 +5900,7 @@ static_inline yyjson_doc *read_root_minify(u8 *hdr,
     usize alc_len; /* value count allocated */
     usize alc_max; /* maximum value count for allocator */
     usize ctn_len; /* the number of elements in current container */
+    usize room; /* Avant patch: the containers that may still open */
     yyjson_val *val_hdr; /* the head of allocated values */
     yyjson_val *val_end; /* the end of allocated values */
     yyjson_val *val_tmp; /* temporary pointer for realloc */
@@ -5920,6 +5928,8 @@ static_inline yyjson_doc *read_root_minify(u8 *hdr,
     val = val_hdr + hdr_len;
     ctn = val;
     ctn_len = 0;
+    /* Avant patch: the containers that may open inside the root. */
+    room = yyjson_avant_max_depth ? yyjson_avant_max_depth - 1 : USIZE_MAX;
     raw = has_read_flag(NUMBER_AS_RAW) || has_read_flag(BIGNUM_AS_RAW);
     inv = has_read_flag(ALLOW_INVALID_UNICODE) != 0;
     raw_end = NULL;
@@ -5936,6 +5946,8 @@ static_inline yyjson_doc *read_root_minify(u8 *hdr,
     }
     
 arr_begin:
+    /* Avant patch: one container deeper. */
+    if (unlikely(room-- == 0)) goto fail_depth;
     /* save current container */
     ctn->tag = (((u64)ctn_len + 1) << YYJSON_TAG_BIT) |
                (ctn->tag & YYJSON_TAG_MASK);
@@ -6035,6 +6047,7 @@ arr_val_end:
     goto fail_character_arr_end;
     
 arr_end:
+    room++; /* Avant patch */
     /* get parent container */
     ctn_parent = (yyjson_val *)(void *)((u8 *)ctn - ctn->uni.ofs);
     
@@ -6053,6 +6066,8 @@ arr_end:
     }
     
 obj_begin:
+    /* Avant patch: one container deeper. */
+    if (unlikely(room-- == 0)) goto fail_depth;
     /* push container */
     ctn->tag = (((u64)ctn_len + 1) << YYJSON_TAG_BIT) |
                (ctn->tag & YYJSON_TAG_MASK);
@@ -6181,6 +6196,7 @@ obj_val_end:
     goto fail_character_obj_end;
     
 obj_end:
+    room++; /* Avant patch */
     /* pop container */
     ctn_parent = (yyjson_val *)(void *)((u8 *)ctn - ctn->uni.ofs);
     /* point to the next value */
@@ -6220,6 +6236,8 @@ fail_string:
     return_err(cur, INVALID_STRING, msg);
 fail_number:
     return_err(cur, INVALID_NUMBER, msg);
+fail_depth: /* Avant patch */
+    return_err(cur - 1, AVANT_DEPTH, "nesting deeper than max_depth");
 fail_alloc:
     return_err(cur, MEMORY_ALLOCATION, 
                "memory allocation failed");
@@ -6305,6 +6323,7 @@ static_inline yyjson_doc *read_root_pretty(u8 *hdr,
     usize alc_len; /* value count allocated */
     usize alc_max; /* maximum value count for allocator */
     usize ctn_len; /* the number of elements in current container */
+    usize room; /* Avant patch: the containers that may still open */
     yyjson_val *val_hdr; /* the head of allocated values */
     yyjson_val *val_end; /* the end of allocated values */
     yyjson_val *val_tmp; /* temporary pointer for realloc */
@@ -6332,6 +6351,8 @@ static_inline yyjson_doc *read_root_pretty(u8 *hdr,
     val = val_hdr + hdr_len;
     ctn = val;
     ctn_len = 0;
+    /* Avant patch: the containers that may open inside the root. */
+    room = yyjson_avant_max_depth ? yyjson_avant_max_depth - 1 : USIZE_MAX;
     raw = has_read_flag(NUMBER_AS_RAW) || has_read_flag(BIGNUM_AS_RAW);
     inv = has_read_flag(ALLOW_INVALID_UNICODE) != 0;
     raw_end = NULL;
@@ -6350,6 +6371,8 @@ static_inline yyjson_doc *read_root_pretty(u8 *hdr,
     }
     
 arr_begin:
+    /* Avant patch: one container deeper. */
+    if (unlikely(room-- == 0)) goto fail_depth;
     /* save current container */
     ctn->tag = (((u64)ctn_len + 1) << YYJSON_TAG_BIT) |
                (ctn->tag & YYJSON_TAG_MASK);
@@ -6466,6 +6489,7 @@ arr_val_end:
     goto fail_character_arr_end;
     
 arr_end:
+    room++; /* Avant patch */
     /* get parent container */
     ctn_parent = (yyjson_val *)(void *)((u8 *)ctn - ctn->uni.ofs);
     
@@ -6485,6 +6509,8 @@ arr_end:
     }
     
 obj_begin:
+    /* Avant patch: one container deeper. */
+    if (unlikely(room-- == 0)) goto fail_depth;
     /* push container */
     ctn->tag = (((u64)ctn_len + 1) << YYJSON_TAG_BIT) |
                (ctn->tag & YYJSON_TAG_MASK);
@@ -6633,6 +6659,7 @@ obj_val_end:
     goto fail_character_obj_end;
     
 obj_end:
+    room++; /* Avant patch */
     /* pop container */
     ctn_parent = (yyjson_val *)(void *)((u8 *)ctn - ctn->uni.ofs);
     /* point to the next value */
@@ -6673,6 +6700,8 @@ fail_string:
     return_err(cur, INVALID_STRING, msg);
 fail_number:
     return_err(cur, INVALID_NUMBER, msg);
+fail_depth: /* Avant patch */
+    return_err(cur - 1, AVANT_DEPTH, "nesting deeper than max_depth");
 fail_alloc:
     return_err(cur, MEMORY_ALLOCATION,
                "memory allocation failed");

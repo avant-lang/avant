@@ -1,5 +1,5 @@
 lib jsonc {
-  fun avant_json_parse(text: String): Ptr(Void)
+  fun avant_json_parse(text: String, max_depth: Int, max_bytes: Int, max_entries: Int): Ptr(Void)
   fun avant_json_take_status: Int
   fun avant_json_take_pool: Bytes
   fun avant_json_root(doc: Ptr(Void)): Ptr(Void)
@@ -55,7 +55,7 @@ fn json_error(code: Int): JsonError {
     off = jsonc.avant_json_error_offset().to_i()
     return JsonError.new("invalid JSON at byte ${off}: ${jsonc.avant_json_error_text()}", off)
   }
-  JsonError.new("JSON parse ran out of memory")
+  limit_error(code)
 }
 
 // A JSON value copied out of its document (Json.to_value). An object's
@@ -80,8 +80,8 @@ pub struct Json {
   node: Ptr(Void)
   pool: Bytes
 
-  pub fn self.parse(text: String): Json | JsonError {
-    doc = jsonc.avant_json_parse(text)
+  pub fn self.parse(text: String, max_depth: Int = 256, max_bytes: Int? = nil, max_entries: Int? = nil): Json | JsonError {
+    doc = jsonc.avant_json_parse(text, parse_limit("max_depth", max_depth), parse_limit_or_none("max_bytes", max_bytes), parse_limit_or_none("max_entries", max_entries))
     code = jsonc.avant_json_take_status()
     if code != 0 {
       return json_error(code)
@@ -588,6 +588,47 @@ pub class JsonBuilder {
   }
 }
 
+// C functions declared after the lines above, which keep their numbers
+// (and so the places their traps name).
+lib jsonmore {
+  fun avant_json_first_key(node: Ptr(Void)): Ptr(Void)?
+  fun avant_json_error_count: Int
+  fun avant_json_error_limit: Int
+}
+
+// A parse's limit, checked (1 or more) and given to the runtime.
+fn parse_limit(name: String, n: Int): Int {
+  if n < 1 {
+    jsonc.avant_json_misuse("json.Json.parse: ${name} ${n} is below 1")
+  }
+  n
+}
+
+// An optional limit: -1, none, when it is nil.
+fn parse_limit_or_none(name: String, n: Int?): Int {
+  if v = n {
+    return parse_limit(name, v)
+  }
+  -1
+}
+
+// A parse refused for a limit, or out of memory (json_error's codes 2
+// to 5, the runtime's).
+fn limit_error(code: Int): JsonError {
+  limit = jsonmore.avant_json_error_limit()
+  if code == 3 {
+    off = jsonc.avant_json_error_offset().to_i()
+    return JsonError.new("JSON nested deeper than max_depth ${limit} at byte ${off}", off)
+  }
+  if code == 4 {
+    return JsonError.new("JSON document of ${jsonmore.avant_json_error_count()} values is over max_entries ${limit}")
+  }
+  if code == 5 {
+    return JsonError.new("JSON text of ${jsonmore.avant_json_error_count()} bytes is over max_bytes ${limit}")
+  }
+  JsonError.new("JSON parse ran out of memory")
+}
+
 // The typed decode and encode (json.decode, json.encode and
 // json.encode_into) are written by the compiler for each type from its
 // fields, in this module; these are the pieces that code calls. A
@@ -595,9 +636,6 @@ pub class JsonBuilder {
 // reaches it, so a program that never decodes nor encodes pays nothing
 // for them.
 //
-lib jsoncodec {
-  fun avant_json_first_key(node: Ptr(Void)): Ptr(Void)?
-}
 
 // A decode error is built from the inside out: the value that fails
 // gives ": expected an integer, found \"7\"", each container on the way
@@ -662,7 +700,7 @@ fn codec_missing(key: String): JsonError {
 // an error; nil when every name is known (a name given twice: the first
 // is the one read, as get reads it).
 fn codec_unknown(j: Json, known: Array(String)): JsonError? {
-  key = jsoncodec.avant_json_first_key(j.node)
+  key = jsonmore.avant_json_first_key(j.node)
   i = 0
   while kn = key {
     k = jsonc.avant_json_as_str(kn)

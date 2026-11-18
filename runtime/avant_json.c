@@ -15,13 +15,22 @@
  * dropped. Accessors report a missing key or a wrong kind through the
  * thread-local status, in the zlib/base64 shape. */
 
-/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
+/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure,
+ * 3 nested deeper than the parse's max_depth, 4 more values than its
+ * max_entries. */
 static __thread int32_t g_json_status;
 /* Why the last parse on this thread failed:
  * yyjson's message (a static string) and the byte offset it names. */
 static __thread const char *g_json_err_msg;
 static __thread int64_t g_json_err_pos;
 static __thread char *g_json_pool;
+/* The last parse refused for a limit (status 3 to 5): what it measured
+ * (values, bytes) and the limit. */
+static __thread int64_t g_json_count;
+static __thread int64_t g_json_limit;
+
+/* yyjson.c's Avant patch: the deepest nesting a read takes (0: none). */
+extern __thread size_t yyjson_avant_max_depth;
 static __thread int g_json_pool_rooted;
 
 static void set_status(int32_t code) {
@@ -98,12 +107,25 @@ static void bump_free(void *ctx, void *ptr) {
  * yyjson reads it after the allocation and allocates
  * only from its pool, never from the collector, so the parse itself
  * needs no no-GC region. */
-void *avant_json_parse(const char *s) {
+/* The limits (std.json's Json.parse; -1 for none, else 1 or more):
+ * max_depth, the deepest nesting of arrays and objects (the root's is 1),
+ * checked by the reader as it goes (an increment and a compare per
+ * container: yyjson.c's Avant patch); max_bytes, the text's size, before
+ * anything is allocated (status 5); max_entries, the most values (each
+ * member's name counted as one, as yyjson counts them), against the
+ * parsed document's count (status 4). */
+void *avant_json_parse(const char *s, avant_int max_depth, avant_int max_bytes, avant_int max_entries) {
   size_t n = avant_str_n(s);
   int attempt;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
   set_status(0);
+  if (max_bytes >= 0 && (int64_t)n > (int64_t)max_bytes) {
+    g_json_count = (int64_t)n;
+    g_json_limit = (int64_t)max_bytes;
+    set_status(5);
+    return NULL;
+  }
   /* The pool waits in g_json_pool until avant_json_take_pool hands it to
    * the Json value: a runtime root of this thread meanwhile (without
    * it, a full collection between the two calls could free it). */
@@ -140,7 +162,17 @@ void *avant_json_parse(const char *s) {
     alc.realloc = bump_realloc;
     alc.free = bump_free;
     alc.ctx = &bump;
+    yyjson_avant_max_depth = max_depth > 0 ? (size_t)max_depth : 0;
     doc = yyjson_read_opts((char *)(s ? s : ""), n, 0, &alc, &err);
+    yyjson_avant_max_depth = 0;
+    if (doc && max_entries >= 0 && (int64_t)yyjson_doc_get_val_count(doc) > (int64_t)max_entries) {
+      /* The pool is young and not yet rooted (g_json_pool): it dies
+       * with the document. */
+      g_json_count = (int64_t)yyjson_doc_get_val_count(doc);
+      g_json_limit = (int64_t)max_entries;
+      set_status(4);
+      return NULL;
+    }
     if (doc) {
       /* The pool is rooted (g_json_pool) before the trim, whose lock
        * wait may let another thread collect; it is large and stays put. */
@@ -151,7 +183,8 @@ void *avant_json_parse(const char *s) {
     if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
       g_json_err_msg = err.msg;
       g_json_err_pos = (int64_t)err.pos;
-      set_status(1);
+      g_json_limit = (int64_t)max_depth;
+      set_status(err.code == YYJSON_READ_ERROR_AVANT_DEPTH ? 3 : 1);
       return NULL;
     }
   }
@@ -451,6 +484,16 @@ char *avant_json_error_text(void) {
 
 int64_t avant_json_error_offset(void) {
   return g_json_err_pos;
+}
+
+/* What the last parse refused for a limit measured (values or bytes),
+ * and that limit. */
+int64_t avant_json_error_count(void) {
+  return g_json_count;
+}
+
+int64_t avant_json_error_limit(void) {
+  return g_json_limit;
 }
 
 /* A JsonBuilder used against its contract: what says how. A trap: inside
