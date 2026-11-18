@@ -1594,6 +1594,12 @@ pub class Checker {
       fail(loc, "this statement drops a value that can be an error (${got.show()}); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...")
       return
     }
+    if can && (!got.is_union() || !ty_has_success(got)) {
+      // An optional error (`E?`), or a bare error: no success to pass
+      // on, so `?` does not apply.
+      fail(loc, "this statement drops a value that can be an error (${got.show()}); read the error with `if e = ... { }`, or discard it on purpose with _ = ...")
+      return
+    }
     if can {
       fail(loc, "this statement drops a value that can be an error (${got.show()}); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...")
     }
