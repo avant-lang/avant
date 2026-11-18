@@ -109,6 +109,17 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       // runtime's string with an ok flag, as String?.
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
     }
+    if e.resolved == "ptr.as" {
+      // `v.as(T)`: the same address, as a Ptr(T).
+      if t = e.ty {
+        o = lw.lower_expr(recv)
+        if lw.failed() {
+          return zero
+        }
+        lw.at(e.loc)
+        return lw.coerce(o, recv.ty ?? t, t, e.loc)
+      }
+    }
     if e.resolved == "carray.to_s" {
       return lw.lower_carray_to_s(e, recv)
     }

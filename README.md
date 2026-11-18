@@ -3362,7 +3362,7 @@ fn main {
 }
 ```
 
-`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. `Pair.size` is the layout's C size (`sizeof(Pair)`), known when compiling, so `c.malloc(Pair.size)` replaces a size counted by hand; it takes the integer type its place wants, as a literal does.
+`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around or convert with `.as(T)`; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. `Pair.size` is the layout's C size (`sizeof(Pair)`), known when compiling, so `c.malloc(Pair.size)` replaces a size counted by hand; it takes the integer type its place wants, as a literal does.
 
 `p[i]` reads element `i` of the C array a `Ptr` points to (`p[0]` its one value): `Ptr(UInt8)`, `Ptr(Int32)`, `Ptr(Ptr(Reply)?)` and the rest; `p[i] = v` writes it. A narrow element reads as its Avant type and is range-checked when written, as a layout's field. C gave no length, so nothing checks `i`: the count comes from C (`elements`, `len`) and stays your code's to respect. A NULL `p` traps.
 
@@ -3431,6 +3431,35 @@ fn main {
     puts(length(a))         // => 2
   }
   puts(length(c.calloc(1, 1 << 62)))   // => 0
+}
+```
+
+`v.as(T)` reads a `Ptr(Void)` as a `Ptr(T)` (C's cast of a `void *`; `T` any type a `Ptr` points to), and any `Ptr` passes as a `Ptr(Void)`, as C converts to `void *`: one `malloc` serves every layout.
+
+```avant
+lib c {
+  struct Pair {
+    a: Int32
+    b: Int32
+  }
+  struct Node {
+    v: Int32
+    next: Ptr(Node)?
+  }
+  fun malloc(size: Int): Ptr(Void)?
+  fun free(p: Ptr(Void))
+}
+
+fn main {
+  if v = c.malloc(Pair.size), w = c.malloc(Node.size) {
+    p = v.as(Pair)
+    n = w.as(Node)
+    p.a = 2
+    n.v = 40
+    puts(p.a + n.v)     // => 42
+    c.free(p)
+    c.free(n)
+  }
 }
 ```
 

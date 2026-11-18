@@ -61,6 +61,17 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
     lw.at(loc)
     return lw.tmp(pw, lw.lw_b.rv_cast(o, pw))
   }
+  if ptr_void_takes(want, got) && !lw.failed() {
+    // A Ptr as a Ptr(Void)? (C's `void *` that may be NULL): one word
+    // either way, a pointer cast when the MIR types differ.
+    pw2 = lw.ty_at(want, loc, "a pointer")
+    pg2 = lw.ty_at(got, loc, "a pointer")
+    if lw.failed() || pw2 == pg2 {
+      return o
+    }
+    lw.at(loc)
+    return lw.tmp(pw2, lw.lw_b.rv_cast(o, pw2))
+  }
   if !want.is_union() || got.same_as(want) || lw.failed() {
     return o
   }

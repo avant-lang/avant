@@ -10,7 +10,8 @@
 // `Bytes.from_c(p, n)` copy n bytes of C memory, NULs kept. A layout's
 // `T[N]` field is C's `T name[N]`: indexed (checked against N), sized
 // (`.size`), and read as text (`.to_s()`) when it holds chars; the fields
-// after it sit where C puts them.
+// after it sit where C puts them. `v.as(T)` reads a Ptr(Void) as a Ptr(T),
+// and any Ptr passes as a Ptr(Void), so one malloc serves every layout.
 
 const msg_len = 504
 
@@ -80,6 +81,10 @@ lib pt {
   fun pt_grid_at: Ptr(Grid)
   fun pt_grid_sum(g: Ptr(Grid)): Int
   fun pt_sizeof_arrays(which: Int32): Int
+  fun malloc(size: Int): Ptr(Void)?
+  fun memset(p: Ptr(Void), c: Int32, n: Int): Ptr(Void)
+  fun pt_free(p: Ptr(Void))
+  fun pt_is_null(p: Ptr(Void)?): Int32
   fun pt_none: Ptr(Int8)?
   fun free(p: Ptr(Pair))
 }
@@ -204,4 +209,15 @@ fn main {
   g.pairs[1].b = 80
   puts(pt.pt_grid_sum(g))
   puts("${Reply.size} ${pt.pt_sizeof_arrays(0)} ${pt.pt_sizeof_arrays(2)} ${Err.size} ${pt.pt_sizeof_arrays(1)} ${Grid.size} ${pt.pt_sizeof_arrays(3)}")
+  if v = pt.malloc(Grid.size) {
+    gg = v.as(Grid)
+    _ = pt.memset(gg, 0, Grid.size)
+    gg.tail = 3
+    puts(gg.tail + gg.cells[1].to_i())
+    bs = v.as(UInt8)
+    puts(bs[Grid.size - 4])
+    pt.pt_free(gg)
+  }
+  maybe: Ptr(Pair)? = pt.calloc(1, Pair.size)
+  puts("${pt.pt_is_null(maybe)} ${pt.pt_is_null(pt.pt_ints_at())} ${pt.pt_is_null(nil)}")
 }

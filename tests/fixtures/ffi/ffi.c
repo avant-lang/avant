@@ -1096,3 +1096,6 @@ int64_t pt_sizeof_arrays(int which) {
   default: return (int64_t)sizeof(PtGrid);
   }
 }
+/* pointers.av: one allocator for every layout (p.as(T), Ptr(T) as void *). */
+void pt_free(void *p) { free(p); }
+int pt_is_null(const void *p) { return p == NULL; }

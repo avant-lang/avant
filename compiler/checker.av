@@ -3120,6 +3120,60 @@ pub class Checker {
     t_int()
   }
 
+  // `p.as(T)`: a Ptr(Void) as a Ptr(T) (C's cast of a `void *`), T any
+  // type a Ptr points to, written as a type (`v.as(Pair)`, `v.as(UInt8)`,
+  // `v.as(Ptr(Node))`). A Ptr(T) passes as a Ptr(Void) without it.
+  pub fn check_ptr_as(expr: Expr, object: Ty): Ty {
+    if inner = object.inner, !inner.is_void() {
+      fail(expr.loc, "as converts a Ptr(Void); ${object.show()} is already typed (it passes as a Ptr(Void) as it is)")
+      return object
+    }
+    if expr.args.size != 1 {
+      fail(expr.loc, "as takes one type: p.as(Pair)")
+      return object
+    }
+    if tn = expr_type_name(expr.args[0]) {
+      wrap = TypeName.new(expr.args[0].loc, "Ptr")
+      wrap.args.push(tn)
+      t = resolve_in_module(wrap)
+      self.pull_resolve()
+      expr.resolved = "ptr.as"
+      expr.args[0].ty = t
+      return t
+    }
+    fail(expr.args[0].loc, "as takes a type: p.as(Pair), p.as(UInt8), p.as(Ptr(Node))")
+    object
+  }
+
+  // The type name an argument written as a type spells (`Pair`, `UInt8`,
+  // `Ptr(Node)`, `mod.Pair`), or nil.
+  pub fn expr_type_name(e: Expr): TypeName? {
+    if e.kind == ex_name() && e.type_args.size == 0 {
+      tn = TypeName.new(e.loc, e.ident)
+      tn.mod_name = e.mod_name
+      return tn
+    }
+    if e.kind == ex_name() && e.type_args.size > 0 {
+      tn2 = TypeName.new(e.loc, e.ident)
+      tn2.mod_name = e.mod_name
+      for ta in e.type_args {
+        tn2.args.push(ta)
+      }
+      return tn2
+    }
+    if e.kind == ex_call() && e.args.size == 1 {
+      if r = e.receiver {
+        return nil
+      }
+      if inner = expr_type_name(e.args[0]) {
+        tn3 = TypeName.new(e.loc, e.callee)
+        tn3.args.push(inner)
+        return tn3
+      }
+    }
+    nil
+  }
+
   // A field of C memory that is a C array (`T[N]`) is read only by its
   // readers (carray_ok); anywhere else it is refused, since it is no value.
   pub fn carray_member(expr: Expr, got: Ty, ok: Bool): Ty {
@@ -3192,7 +3246,7 @@ pub class Checker {
         fail(expr.loc, "cannot index ${container.show()}: p[i] reads C scalars and pointers; a layout's fields are read through the pointer (p.x)")
         return t_int()
       }
-      fail(expr.loc, "cannot index ${container.show()}: it points to no elements Avant knows (a Ptr(Void) is only passed around)")
+      fail(expr.loc, "cannot index ${container.show()}: it points to no elements Avant knows; give it a type first (p.as(UInt8))")
       return t_int()
     }
     fail(expr.loc, "cannot index ${container.show()}")
@@ -5741,6 +5795,9 @@ pub class Checker {
       }
       fail_no_type_fn(expr.loc, recv, tn, expr.callee)
       return t_int()
+    }
+    if object.is_ptr() && expr.callee == "as" {
+      return check_ptr_as(expr, object)
     }
     if object.is_carray() {
       // `r.message.to_s()`: a C char array's text, up to its first NUL

@@ -1430,8 +1430,33 @@ pub fn ty_success_part(ty: Ty): Ty? {
   ty_union_build(kept)
 }
 
+// Whether want, a Ptr(Void) or a Ptr(Void)?, takes got: any Ptr passes as
+// C's `void *` (and a pointer that may be NULL as one that may be NULL).
+pub fn ptr_void_takes(want: Ty, got: Ty): Bool {
+  if want.is_ptr() {
+    if wi = want.inner, wi.is_void() {
+      return got.is_ptr()
+    }
+    return false
+  }
+  if wr = ty_opt_ref(want), wr.is_ptr() {
+    if wi = wr.inner, wi.is_void() {
+      if got.is_ptr() {
+        return true
+      }
+      if gr = ty_opt_ref(got), gr.is_ptr() {
+        return true
+      }
+    }
+  }
+  false
+}
+
 pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
+    return true
+  }
+  if ptr_void_takes(want, got) {
     return true
   }
   if want.is_union() && want.includes_member(got) {
