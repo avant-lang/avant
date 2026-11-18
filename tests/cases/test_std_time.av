@@ -2,7 +2,7 @@ import harness
 import std.time
 
 fn iso_of(text: String): String {
-  if t = Time.parse_iso(text) {
+  if t = time.Time.parse_iso(text) {
     return t.iso()
   }
   "nil"
@@ -13,17 +13,17 @@ fn iso_of(text: String): String {
 // and sleeping.
 fn test_std_time(c: Checks) {
   c.suite("tests/cases/test_std_time.av")
-  epoch = Time { sec: 0, nsec: 0 }
+  epoch = time.Time { sec: 0, nsec: 0 }
   c.eq_str(epoch.iso(), "1970-01-01T00:00:00Z", "the epoch")
-  c.eq_str(Time { sec: 1, nsec: 500000000 }.iso(), "1970-01-01T00:00:01.5Z", "a half second")
-  c.eq_str(Time { sec: 0, nsec: 1000 }.iso(), "1970-01-01T00:00:00.000001Z", "a microsecond")
-  c.eq_str(Time { sec: 0, nsec: 999999999 }.iso(), "1970-01-01T00:00:00.999999999Z", "the last nanosecond")
-  c.eq_str(Time { sec: -1, nsec: 0 }.iso(), "1969-12-31T23:59:59Z", "a second before the epoch")
-  c.eq_str(Time { sec: 951782400, nsec: 0 }.iso(), "2000-02-29T00:00:00Z", "a leap day of a year divisible by 400")
-  c.eq_str(Time { sec: 1794994200, nsec: 0 }.iso(), "2026-11-18T09:30:00Z", "a date of 2026")
-  c.eq_str(Time { sec: 253402300799, nsec: 0 }.iso(), "9999-12-31T23:59:59Z", "the last second of year 9999")
-  c.eq_str(Time { sec: -62135596800, nsec: 0 }.iso(), "0001-01-01T00:00:00Z", "year 1")
-  if t = Time.parse_iso("2026-11-18T09:30:00Z") {
+  c.eq_str(time.Time { sec: 1, nsec: 500000000 }.iso(), "1970-01-01T00:00:01.5Z", "a half second")
+  c.eq_str(time.Time { sec: 0, nsec: 1000 }.iso(), "1970-01-01T00:00:00.000001Z", "a microsecond")
+  c.eq_str(time.Time { sec: 0, nsec: 999999999 }.iso(), "1970-01-01T00:00:00.999999999Z", "the last nanosecond")
+  c.eq_str(time.Time { sec: -1, nsec: 0 }.iso(), "1969-12-31T23:59:59Z", "a second before the epoch")
+  c.eq_str(time.Time { sec: 951782400, nsec: 0 }.iso(), "2000-02-29T00:00:00Z", "a leap day of a year divisible by 400")
+  c.eq_str(time.Time { sec: 1794994200, nsec: 0 }.iso(), "2026-11-18T09:30:00Z", "a date of 2026")
+  c.eq_str(time.Time { sec: 253402300799, nsec: 0 }.iso(), "9999-12-31T23:59:59Z", "the last second of year 9999")
+  c.eq_str(time.Time { sec: -62135596800, nsec: 0 }.iso(), "0001-01-01T00:00:00Z", "year 1")
+  if t = time.Time.parse_iso("2026-11-18T09:30:00Z") {
     c.eq_int(t.sec, 1794994200, "parse: seconds")
     c.eq_int(t.nsec, 0, "parse: no fraction")
   } else {
@@ -50,18 +50,18 @@ fn test_std_time(c: Checks) {
   c.eq_str(iso_of("2026-1-18T09:30:00Z"), "nil", "parse: a one-digit month")
   c.eq_str(iso_of(""), "nil", "parse: empty")
   for s in [0, 1, -1, 86399, 86400, -86401, 1700000000, -2208988800, 4102444800] {
-    t = Time { sec: s, nsec: 123 }
-    if back = Time.parse_iso(t.iso()) {
+    t = time.Time { sec: s, nsec: 123 }
+    if back = time.Time.parse_iso(t.iso()) {
       c.expect(back == t, "round trip at ${s}")
     } else {
       c.expect(false, "round trip at ${s}")
     }
   }
-  a = Time { sec: 10, nsec: 5 }
-  b = Time { sec: 10, nsec: 6 }
-  e = Time { sec: 9, nsec: 999999999 }
+  a = time.Time { sec: 10, nsec: 5 }
+  b = time.Time { sec: 10, nsec: 6 }
+  e = time.Time { sec: 9, nsec: 999999999 }
   c.expect(a < b && e < a && !(b < a), "times are ordered by seconds, then nanoseconds")
-  c.expect(a == Time { sec: 10, nsec: 5 } && a != b && a <= a && b >= a, "times compare")
+  c.expect(a == time.Time { sec: 10, nsec: 5 } && a != b && a <= a && b >= a, "times compare")
   xs = [b, e, a]
   xs.sort()
   c.expect(xs[0] == e && xs[1] == a && xs[2] == b, "times sort")

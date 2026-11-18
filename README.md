@@ -67,7 +67,7 @@ import std.http
 
 fn main {
   if server = http.listen(8080) {
-    server.get("/", (req) { Response.text("hello") })
+    server.get("/", (req) { http.Response.text("hello") })
     server.serve()
   }
 }
@@ -1977,7 +1977,7 @@ fn main {
 
 No class field is ever read unset (a struct has no `initialize`: [Structs](#structs)). Each field gets, in order:
 
-1. **A default**: any expression that uses neither `self` nor another field (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new()`, `at: Span = Span.new(0, 0)`), evaluated at each construction, in declaration order, before `initialize` (compute a value from other fields in `initialize`).
+1. **A default**: any expression that uses neither `self` nor another field (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new()`, `at: Span = regex.Span.new(0, 0)`), evaluated at each construction, in declaration order, before `initialize` (compute a value from other fields in `initialize`).
 2. **The type's zero**, if it has one and there is no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, a struct of such fields.
 3. **`initialize`**, for every other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one): it must set the field on every path, before reading it and before `self` is used as a value or a method of `self` is called.
 
@@ -2057,7 +2057,7 @@ fn main {
 
 ### Type-level functions
 
-`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `Json.parse`, `Regex.compile`). It may share a method's name when their parameters differ, as two methods may ([Overloads and defaults](#overloads-and-defaults)): `Box.make()` calls the type-level function and `b.make(2)` the method; with the same parameters the second is refused (`method Box.make is already defined`).
+`fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors (the library's `json.Json.parse`, `regex.Regex.compile`). It may share a method's name when their parameters differ, as two methods may ([Overloads and defaults](#overloads-and-defaults)): `Box.make()` calls the type-level function and `b.make(2)` the method; with the same parameters the second is refused (`method Box.make is already defined`).
 
 ```avant
 struct Money {
@@ -2254,7 +2254,7 @@ fn main {
 error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 ```
 
-- `?` returns from a lambda whose result type holds the failure (`(): Int | ParseError { ... }`); it is refused in a `spawn` block and in a lambda given to a builtin (`each`, `parallel`, `Mutex.with`, ...), where it has nowhere to return the failure: a `for` loop's `?` returns from the function.
+- `?` returns from a lambda whose result type holds the failure (`(): Int | ParseError { ... }`); it is refused in a `spawn` block and in a lambda given to a builtin (`each`, `parallel`, `sync.Mutex.with`, ...), where it has nowhere to return the failure: a `for` loop's `?` returns from the function.
 - These forms are compile errors on a union with no failure (`Int | String`) or only failures (`IoError | ParseError`).
 - An optional error (`ParseError?`) is a `T?`: if-assign and `??` give the error when not `nil`; `?` is refused.
 
@@ -2319,7 +2319,7 @@ fn main {
 - `save("a", "b")` alone is a compile error ([Errors cannot be dropped](#errors-cannot-be-dropped)): write `?`, `else e { ... }`, `?? return`, or `_ =`.
 - `if v = save(...)` and `v = save(...) else e` are refused (no value to bind); a `switch` reads the failure (`case e: SaveError { ... } else { ... }`).
 - `Void` stands only beside failures marked `Error` (`Void | IoError`, `Void | A | B`; `Void | Int` and `Void | E?` are refused). `Void | E` with a class `E` is one pointer, `Void` its null.
-- `fs.make_dir` and `fs.delete` return `Void | IoError`, and so does a [`Mutex.try_with`](#channel-and-mutex) whose block ends without a value.
+- `fs.make_dir` and `fs.delete` return `Void | IoError`, and so does a [`sync.Mutex.try_with`](#channel-and-mutex) whose block ends without a value.
 
 ### Declaring an error
 
@@ -2361,19 +2361,19 @@ import std.fs
 
 class ConfigError: Error {
   message: String
-  cause: IoError | JsonError
+  cause: IoError | json.JsonError
 
-  fn initialize(message: String, cause: IoError | JsonError) {
+  fn initialize(message: String, cause: IoError | json.JsonError) {
     self.message = message
     self.cause = cause
   }
 }
 
-fn load(path: String): Json | ConfigError {
+fn load(path: String): json.Json | ConfigError {
   text = fs.read(path) else e {
     return ConfigError.new("cannot load ${path}", e)
   }
-  json = Json.parse(text) else e {
+  json = json.Json.parse(text) else e {
     return ConfigError.new("bad config in ${path}", e)
   }
   json
@@ -2385,7 +2385,7 @@ fn main {
     puts("${e}")       // => bad config in app.json: invalid JSON at byte 9: unexpected end of data
     switch e.cause {
       case IoError { puts("could not read it") }
-      case j: JsonError { puts("at offset ${j.offset ?? -1}") }   // => at offset 9
+      case j: json.JsonError { puts("at offset ${j.offset ?? -1}") }   // => at offset 9
     }
     return
   }
@@ -2578,7 +2578,7 @@ A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), 
 | The operation can fail, and the caller should know why | `T \| SomeError` | must handle it, pass it up, or discard it visibly |
 | The program is wrong: a bug, not an input | a trap (`panic("why")` raises one) | cannot continue; fix the code |
 
-In the library, `h[k]` and `"42".to_i` return optionals, `fs.read` and `Json.parse` errors, and `xs[9]` on three elements traps.
+In the library, `h[k]` and `"42".to_i` return optionals, `fs.read` and `json.Json.parse` errors, and `xs[9]` on three elements traps.
 
 ## Function values
 
@@ -2702,7 +2702,7 @@ fn main {
 
 ### Lambdas given to builtins
 
-`each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort`, `sorted`, `parallel`, `Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
+`each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort`, `sorted`, `parallel`, `sync.Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
@@ -3030,7 +3030,7 @@ A module importing only one names it bare. Generic types alike: two modules may 
 - Functions with different parameter types still meet as one overload set across modules: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments.
 - A qualified call reaches only that module's `pub` functions. A module may qualify its own names (`main.helper()`).
 - A nested module is qualified by its whole name, `http.server.Server`, or by its last name, `server.Server`, as Go's packages are: after `import std.time`, `time.now()` is `std.time.now()`. A local or a field of that name is the local or the field; a module whose whole name it is (`import time` beside `import std.time`) is that module; two imports that end in it (`a.util` and `b.util`) make `util.f()` an error that asks for the whole name.
-- A `std` module's functions are written only with its name, as Go's are: `import std.fs` gives `fs.read`, never a bare `read`, so a program's own `read` beside the import is its own and never ambiguous. A bare use of one says so: `read needs its module's name: write fs.read; a std module's functions are not named bare`. A program's own modules keep their bare names, and a `std` module's types are named bare (`Json`, `JsonBuilder`, `Time`) or qualified (`fs.Reader`).
+- A `std` module's functions and types are written only with its name, as Go's are: `import std.fs` gives `fs.read` and `fs.Reader`, never a bare `read` or `Reader`, so a program's own `read` or `class Reader` beside the import is its own and never ambiguous. A bare use of one says so: `read needs its module's name: write fs.read; a std module's functions are not named bare`, `Mutex needs its module's name: write sync.Mutex; a std module's types are not named bare`. A module's main type reads twice (`json.Json`, `regex.Regex`, `time.Time`), as Go's `time.Time` does. The prelude's types (`String`, `Array`, `Hash`, `IoError`, ...) are bare, and a program's own modules keep their bare names. A module's own name stands for an import that ends in it: a program in `http.av` that imports `std.http` writes `http.listen`.
 
 ## Packages
 
@@ -3352,13 +3352,13 @@ The block takes one parameter; the statement form `parallel { }`, without a rece
 
 ### Channel and Mutex
 
-`Channel(T)` passes values between tasks and `Mutex(T)` guards one shared value, for any type `T`; both are in `std.sync`.
+`sync.Channel(T)` passes values between tasks and `sync.Mutex(T)` guards one shared value, for any type `T`; both are in `std.sync`.
 
 ```avant
 import std.sync
 
 fn main {
-  hits = Mutex(Int).new(0)
+  hits = sync.Mutex(Int).new(0)
   handles: Array(JoinHandle(Void)) = []
   for i in 0..4 {
     handles.push(spawn {
@@ -3374,11 +3374,11 @@ fn main {
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); a `?` ends it too when the written result type holds the failure, which becomes the call's value (`m.with((x): Int | ParseError { x += parse(s)?; x })?` passes it on: inside a `spawn` block, to the join); `break` and `continue` have nowhere to go in it; every way out releases the lock.
+- `sync.Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); a `?` ends it too when the written result type holds the failure, which becomes the call's value (`m.with((x): Int | ParseError { x += parse(s)?; x })?` passes it on: inside a `spawn` block, to the join); `break` and `continue` have nowhere to go in it; every way out releases the lock.
 - **Leaving early keeps the changes made so far** (only a trap poisons), unchecked by the compiler: leave only where the guarded value is whole, after the update (`n += 1`, then `return`) or before it (`if q.size == 0 { return nil }`, then the change).
 - **A poisoned mutex heals** ([When a task traps](#when-a-task-traps)) by one of three operations, each under the lock:
-  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda written there (`recover: () { Stats.new() }`), whose captures are plain values (a number, `Bool`, `String`, an enum, or a struct, optional or union of those), copied when the mutex is made: `recover: () { Stats.new(size) }` rebuilds with `size` as it was at the call, whatever is assigned to `size` later, and a captured class, `Array`, `Hash`, `fn`, `Channel` or `Mutex`, or a function value from a variable, is refused, since the rebuild runs on whichever task meets the poison; a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
-  - `m.recover(value)` replaces the value and clears the poison; it takes `value` as `Mutex(T).new(value)` does (a new value, or a local variable it consumes).
+  - `sync.Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda written there (`recover: () { Stats.new() }`), whose captures are plain values (a number, `Bool`, `String`, an enum, or a struct, optional or union of those), copied when the mutex is made: `recover: () { Stats.new(size) }` rebuilds with `size` as it was at the call, whatever is assigned to `size` later, and a captured class, `Array`, `Hash`, `fn`, `Channel` or `Mutex`, or a function value from a variable, is refused, since the rebuild runs on whichever task meets the poison; a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
+  - `m.recover(value)` replaces the value and clears the poison; it takes `value` as `sync.Mutex(T).new(value)` does (a new value, or a local variable it consumes).
   - `m.clear_poison()` keeps the value as the trapped task left it: for a value whose every state is valid.
 
 ```avant
@@ -3389,7 +3389,7 @@ fn fresh: Array(Int) {
 }
 
 fn main {
-  counts = Mutex(Array(Int)).new([0, 0, 0], recover: fresh)
+  counts = sync.Mutex(Array(Int)).new([0, 0, 0], recover: fresh)
   h = spawn {
     counts.with (c) {
       c[0] += 1
@@ -3405,13 +3405,13 @@ fn main {
 ```
 
 - **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one, a clone (`m.with((h) { h[id].clone() })`: a deep copy no reference from the guarded value reaches, `nil` when the key is absent) or another new object built from such values (`m.with((h) { Summary.new(h.size) })`, `[h.n, h.m]`). To take data out otherwise, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
-- **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
+- **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `sync.Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
   - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push`, `insert`, `fill` or `concat`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
   - `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods;
   - `initialize` is not read: its object is new, and a constructor's arguments are checked at the call;
   - the error names the mutex, class, method and store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`.
 - **Nothing from outside comes in.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or literal whose parts are new or plain, or a clone: `h[s.id] = s.clone()`), already reached from the guarded value, or plain.
-- **`Mutex(T).new(v)` consumes `v`** when `T` is not plain: pass a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`) or a local variable, unusable after the call by source order, not paths (a use in the other branch of an `if`, or after a `return` that follows the call, is refused too: declare the value in the branch that gives it to the mutex); a field, an element, a parameter or a call's result is refused. Before the call, the local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), holds only new values, and no other name holds a reference reached from it, even one no longer used (`inner = b.inner` is refused: write `b.inner.n += 1`); the call is not in a loop or a block (another mutex's `with` among them) the variable was declared outside of (declare it inside, or pass `Box.new()`).
+- **`sync.Mutex(T).new(v)` consumes `v`** when `T` is not plain: pass a new value (`sync.Mutex(Box).new(Box.new())`, `sync.Mutex(Array(Int)).new([])`) or a local variable, unusable after the call by source order, not paths (a use in the other branch of an `if`, or after a `return` that follows the call, is refused too: declare the value in the branch that gives it to the mutex); a field, an element, a parameter or a call's result is refused. Before the call, the local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), holds only new values, and no other name holds a reference reached from it, even one no longer used (`inner = b.inner` is refused: write `b.inner.n += 1`); the call is not in a loop or a block (another mutex's `with` among them) the variable was declared outside of (declare it inside, or pass `Box.new()`).
 
 A channel hands values from one task to another:
 
@@ -3419,7 +3419,7 @@ A channel hands values from one task to another:
 import std.sync
 
 fn main {
-  jobs = Channel(Int).new(4)          // buffered: four values may wait
+  jobs = sync.Channel(Int).new(4)          // buffered: four values may wait
   producer = spawn {
     for i in 1..6 {
       jobs.send(i * i)
@@ -3435,7 +3435,7 @@ fn main {
 }
 ```
 
-- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty, so `for v in ch { ... }` receives until then; `close` closes.
+- `sync.Channel(T).new()` is a rendezvous channel (a send waits for its receive); `sync.Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty, so `for v in ch { ... }` receives until then; `close` closes.
 - A `send` on a closed channel returns `false` at once, buffered or not, full or not; a waiting send returns `false` when the channel closes, its value not received. Values sent before the close stay to be drained. A program that closes only after its last send can ignore the result (`ch.send(v)` as a statement).
 - A sent value follows the `spawn` capture rule ([What may cross a task](#what-may-cross-a-task)), except that an `Array` is copied at every level, so each side owns its own. `T` may be any type: a channel can carry channels (a reply channel per request) or mutexes.
 - A `Channel` or `Mutex` holds no memory outside the object: make as many as you like.
@@ -3446,8 +3446,8 @@ fn main {
 | --- | --- | --- |
 | an array, and the same independent work for each element | `.parallel` | one line; results come back in order; nothing to join |
 | a few different jobs to run beside the main one | `spawn` and `.join` | each task has its own code and its own result |
-| a stream of values from producers to consumers | `Channel(T)` | hand-off without shared state; `recv` ends the loop when the channel closes |
-| one value several tasks update (a counter, a table) | `Mutex(T)` | the value is read and changed under its lock |
+| a stream of values from producers to consumers | `sync.Channel(T)` | hand-off without shared state; `recv` ends the loop when the channel closes |
+| one value several tasks update (a counter, a table) | `sync.Mutex(T)` | the value is read and changed under its lock |
 | work too small to be worth a thread (a few microseconds per item) | nothing: a plain loop | a task costs a thread hop; measure first |
 
 ### What may cross a task
@@ -4210,21 +4210,21 @@ Each module is imported on its own and links only its own C library: a program t
 
 | Module | Gives you | Stands on |
 | --- | --- | --- |
-| [`std.json`](#stdjson) | `Json.parse`, a document to walk, `JsonBuilder` | yyjson |
-| [`std.regex`](#stdregex) | `Regex.compile`, `Match` values, replace and split | PCRE2, and re2c scanners for literal patterns |
+| [`std.json`](#stdjson) | `json.Json.parse`, a document to walk, `JsonBuilder` | yyjson |
+| [`std.regex`](#stdregex) | `regex.Regex.compile`, `Match` values, replace and split | PCRE2, and re2c scanners for literal patterns |
 | [`std.http`](#stdhttp) | HTTP server and client (`http.listen`, `http.get`), WebSocket server | uSockets and picohttpparser |
 | [`std.ws`](#websocket-client) | the WebSocket client, `ws.connect(url)` | `std.http` |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
-| [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
-| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
+| [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `time.Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
+| [`std.random`](#stdrandom) | `random.Random.new(seed)`, the generator `shuffle` takes; `random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
 | [`std.fs`](#files-and-directories) | `fs.read`, `fs.write`, `fs.open`, `fs.walk` and the rest of the file system | the C library |
 | [`std.process`](#processes-and-environment) | `process.args()`, `process.env(name)`, `process.run`, `process.output` | the C library |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
-The libraries are compiled into the runtime, nothing to install; their speed is theirs ([Reading these numbers](#reading-these-numbers)). A module's file is its import name: `std.regex` is `lib/std/regex.av`. A failure is an error value (`Json.parse` returns `Json | JsonError`); a call that allocates its result usually has an `_into(buf)` twin writing into your `Buf`.
+The libraries are compiled into the runtime, nothing to install; their speed is theirs ([Reading these numbers](#reading-these-numbers)). A module's file is its import name: `std.regex` is `lib/std/regex.av`. A failure is an error value (`json.Json.parse` returns `Json | JsonError`); a call that allocates its result usually has an `_into(buf)` twin writing into your `Buf`.
 
 ### std.json
 
@@ -4233,7 +4233,7 @@ import std.json
 
 fn main {
   text = "{\"name\": \"ada\", \"langs\": [\"avant\", \"c\"], \"age\": 36}"
-  if doc = Json.parse(text) {
+  if doc = json.Json.parse(text) {
     puts(doc.str("name") ?? "?")       // => ada
     puts(doc.int("age") ?? 0)          // => 36
     if langs = doc.get("langs"), first = langs.at(0) {
@@ -4242,7 +4242,7 @@ fn main {
     }
   }
 
-  out = Json.object()
+  out = json.Json.object()
   out.set("ok", true)
   out.set("count", 2)
   out.key("tags").arr().add("x").add("y").end()
@@ -4255,7 +4255,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none) | |
+| `json.Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none) | |
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
@@ -4271,8 +4271,8 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Json.object`, `Json.array` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open (not `obj` and `arr`: those read a parsed value) |
-| `JsonBuilder.into(buf)` | `buf: Buf` | a `JsonBuilder` | — | starts one that writes into your `Buf` |
+| `json.Json.object`, `json.Json.array` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open (not `obj` and `arr`: those read a parsed value) |
+| `json.JsonBuilder.into(buf)` | `buf: Buf` | a `JsonBuilder` | — | starts one that writes into your `Buf` |
 | `set(name, v)`, `set_null(name)` | `name: String`, `v` (below) | the builder | — | a member of the open object |
 | `add(v)`, `null` | `v` (below) | the builder | — | an element of the open array |
 | `key(name)`, then `obj`, `arr` or `value(v)` | `name: String`, `v` (below) | the builder | `key` outside an object traps | a member that is itself a container or a value |
@@ -4287,7 +4287,7 @@ fn main {
 import std.regex
 
 fn main {
-  if re = Regex.compile(r"(\w+)@(\w+)\.com") {
+  if re = regex.Regex.compile(r"(\w+)@(\w+)\.com") {
     if m = re.find("write to ada@example.com today") {
       puts(m.start)                            // => 9
       puts(m.group(1) ?? "")                   // => ada
@@ -4304,7 +4304,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, an `Int?`, `nil` for a failed match; `e.kind` is `RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
+| `regex.Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, an `Int?`, `nil` for a failed match; `e.kind` is `regex.RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
 | `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none; a limit reached traps | |
 | `re.try_find(text, from = 0)` | `text: String`, `from: Int` | `Match? \| RegexError`: `find`'s answer, or why there is none | a limit reached is a `RegexError` (`Regex.try_find: match limit exceeded (PCRE2 error -47)`; `e.kind`: `match_limit`, `depth_limit`, `heap_limit`, `memory` or `failed`) | for a pattern or a text from outside |
 | `m.start`, `m.end` | — | `Int`: the match's bounds, in bytes | — | a `Match` is a value: there are no global match cursors |
@@ -4319,7 +4319,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 
 **After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A `Regex` that is dropped without `close` keeps its compiled pattern until the program ends (the collector runs no finalizer), but not its place in the cache: compiling new patterns stays cached.
 
-**Limits.** Each `Regex` has its own, set at `compile` (`Regex.compile(p, match_limit: 100000, heap_limit: 1 << 20)`): `match_limit` bounds the backtracking steps of one match (the default, ten million, is reached in about 40 ms by `(a+)+$` on the JIT), `depth_limit` the interpreter's backtracking depth, and `heap_limit` the bytes one deep match may take (256 MiB by default: the JIT's larger stack and the interpreter's frames). Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it within `heap_limit`. A limit past what PCRE2 holds (32 bits; `heap_limit` in KiB) is the largest it holds. A literal pattern on re2c's scanner never backtracks; its `count` runs on PCRE2 and keeps the limits. A pattern may have any number of groups PCRE2 accepts.
+**Limits.** Each `Regex` has its own, set at `compile` (`regex.Regex.compile(p, match_limit: 100000, heap_limit: 1 << 20)`): `match_limit` bounds the backtracking steps of one match (the default, ten million, is reached in about 40 ms by `(a+)+$` on the JIT), `depth_limit` the interpreter's backtracking depth, and `heap_limit` the bytes one deep match may take (256 MiB by default: the JIT's larger stack and the interpreter's frames). Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it within `heap_limit`. A limit past what PCRE2 holds (32 bits; `heap_limit` in KiB) is the largest it holds. A literal pattern on re2c's scanner never backtracks; its `count` runs on PCRE2 and keeps the limits. A pattern may have any number of groups PCRE2 accepts.
 
 **At a limit a match is never "no match"**: `find`, `count`, `replace`, `split` and `matches` trap with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`), and their `try_` twins (`try_find`, `try_count`, `try_replace`, `try_replace_into`, `try_split`, `try_matches`) return a `RegexError`. Server code, and any code that matches a pattern or a text from outside, sets the limits and uses the `try_` forms: one request must not end the program.
 
@@ -4336,7 +4336,7 @@ fn main {
   if server = http.listen(0) {                 // port 0: the OS picks a free port
     server.get("/hello", (req) {
       server.close()                             // this example answers once, then stops
-      Response.text("hello ${req.query() ?? "nobody"}")
+      http.Response.text("hello ${req.query() ?? "nobody"}")
     })
     port = server.port()
     client = spawn {
@@ -4362,13 +4362,13 @@ import std.http
 fn main {
   if server = http.listen(8080, "0.0.0.0") {
     server.get("/", (req) {
-      Response.text("hello")
+      http.Response.text("hello")
     })
     server.post("/echo", (req) {
-      Response.bytes(req.body()).header("X-Echo", "1")
+      http.Response.bytes(req.body()).header("X-Echo", "1")
     })
     server.route("OPTIONS", "/", (req) {
-      Response.text("", 204)
+      http.Response.text("", 204)
     })
     server.serve()
   }
@@ -4384,12 +4384,12 @@ fn main {
 | `every(ms, () { ... })` | `ms: Int` (1 or more), a lambda | the `Server` | a period under 1 traps (`avant runtime: Server.every(0): a period is 1 ms or more`) | runs every `ms` while serving, the first time `ms` after `serve` starts, on the server's first loop thread; like a handler it must not block, and a trap in it is printed and the server goes on |
 | `on_close(() { ... })` | a lambda | the `Server` | as a route | runs once when the server stops, on the thread that called `serve`, after its loops stopped and before `serve` returns (in `close` for a server never served); hooks run in their order |
 | a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
-| `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
+| `http.Response.text(body, status = 200)`, `http.Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers()`: a response's are those received, or for one built in code those it will send (its `Content-Type` first; `Content-Length` and `Connection` are the server's); `for name, value in req.headers() { ... }` walks a `Headers` value in wire order, duplicates included |
-| `req.param(name)`, `req.params()`, `Params.parse(text)` | `name`, `text: String` | `String?`, a `Params` | — | **query parameters**, decoded as a form is (`+` a space, `%XX` a byte, a `%` without two hex digits kept, bytes that are not UTF-8 read as U+FFFD); names exact, order and repeats kept. A `Params` has `get`, `has`, `get_all`, `count`, `name_at`, `value_at` as headers do; `Params.parse(String.from_utf8(req.body()) ?? "")` reads a form body |
+| `req.param(name)`, `req.params()`, `http.Params.parse(text)` | `name`, `text: String` | `String?`, a `Params` | — | **query parameters**, decoded as a form is (`+` a space, `%XX` a byte, a `%` without two hex digits kept, bytes that are not UTF-8 read as U+FFFD); names exact, order and repeats kept. A `Params` has `get`, `has`, `get_all`, `count`, `name_at`, `value_at` as headers do; `http.Params.parse(String.from_utf8(req.body()) ?? "")` reads a form body |
 | `http.decode_component(text)` | `text: String` | `String` | — | a path segment percent-decoded (`+` stays `+`), for a router |
-| `Request.build(method, target, headers = [], body = "".bytes)` | `method`, `target: String` (a path with an optional `?query`), `headers: Array(Header)`, `body: Bytes` | a `Request`, as a handler would get it, with no peer (`""`) | a header that `.header` would refuse traps | **a request in memory**, for tests that call a handler or a framework's router with it |
+| `http.Request.build(method, target, headers = [], body = "".bytes)` | `method`, `target: String` (a path with an optional `?query`), `headers: Array(Header)`, `body: Bytes` | a `Request`, as a handler would get it, with no peer (`""`) | a header that `.header` would refuse traps | **a request in memory**, for tests that call a handler or a framework's router with it |
 | `serve` | — | — | — | runs until `close` |
 | `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
 
@@ -4422,7 +4422,7 @@ fn main {
   if opened = http.listen(8080) {
     server = opened.head_timeout(5000).min_rate(1000, 2000).max_connections(50000)
     server.get("/", (req) {
-      Response.text("hello")
+      http.Response.text("hello")
     })
     server.serve()
   }
@@ -4459,11 +4459,11 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
 | `http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | |
-| `http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
+| `http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`http.Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
 | The call returns an `HttpError` when | Message |
 | --- | --- |
-| its method and header names are not tokens, a header value holds a control character but tab (`Response.header`'s rules), or its URL a space or control character: the call sends nothing | naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`) |
+| its method and header names are not tokens, a header value holds a control character but tab (`http.Response.header`'s rules), or its URL a space or control character: the call sends nothing | naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`) |
 | the response has more than one `Content-Length` value (even identical) or a non-number | `invalid HTTP response body from …` |
 | `timeout_ms` passed, whatever had arrived | `request to 127.0.0.1:8080 timed out` |
 | with `idle_ms` above 0, no byte arrived or left for that long (the connect included) | `request to 127.0.0.1:8080 stalled: nothing arrived or left for 2000 ms` |
@@ -4581,19 +4581,19 @@ fn main {
 
 ### std.time
 
-A `Time` is a point in time: `sec`, the seconds since 1970-01-01T00:00:00Z (UTC, negative before it), and `nsec`, the nanoseconds within that second. `time.now()` reads the wall clock (the module's functions are qualified by its last name, `time`, [Name clashes](#name-clashes)). Two times compare with `==`, `<` and the others and sort in order; `t.iso()` writes the RFC 3339 text in UTC and `Time.parse_iso(text)` reads it back, any offset taken into account. An interval is measured with the prelude's monotonic `now_ms()` and `now_us()`, since the wall clock can be set back.
+A `Time` is a point in time: `sec`, the seconds since 1970-01-01T00:00:00Z (UTC, negative before it), and `nsec`, the nanoseconds within that second. `time.now()` reads the wall clock (the module's functions are qualified by its last name, `time`, [Name clashes](#name-clashes)). Two times compare with `==`, `<` and the others and sort in order; `t.iso()` writes the RFC 3339 text in UTC and `time.Time.parse_iso(text)` reads it back, any offset taken into account. An interval is measured with the prelude's monotonic `now_ms()` and `now_us()`, since the wall clock can be set back.
 
 ```avant
 import std.time
 
 fn main {
-  t = Time { sec: 1794994200, nsec: 0 }
+  t = time.Time { sec: 1794994200, nsec: 0 }
   puts(t.iso())                                         // => 2026-11-18T09:30:00Z
-  if u = Time.parse_iso("2026-11-18T10:30:00.25+01:00") {
+  if u = time.Time.parse_iso("2026-11-18T10:30:00.25+01:00") {
     puts(u.iso())                                       // => 2026-11-18T09:30:00.25Z
     puts(t < u)                                         // => true
   }
-  bad = Time.parse_iso("2026-02-30T00:00:00Z") ?? t
+  bad = time.Time.parse_iso("2026-02-30T00:00:00Z") ?? t
   puts(bad == t)                                        // => true
   start = now_ms()
   time.sleep_ms(20)
@@ -4605,9 +4605,9 @@ fn main {
 | Call | Result |
 | --- | --- |
 | `time.now()` | the wall clock, now (`clock_gettime`'s `CLOCK_REALTIME`) |
-| `Time { sec: s, nsec: n }` | the time `s` seconds and `n` nanoseconds after the epoch (`n` in 0 to 999,999,999) |
+| `time.Time { sec: s, nsec: n }` | the time `s` seconds and `n` nanoseconds after the epoch (`n` in 0 to 999,999,999) |
 | `t.iso()` | `2026-11-18T09:30:00Z`: the date and time in UTC, with the fraction of a second when `nsec` is not 0 (up to nine digits, without the zeros that end them) |
-| `Time.parse_iso(text)` | `Time?`: RFC 3339's `YYYY-MM-DDTHH:MM:SS`, a fraction of a second (more than nine digits are cut), then `Z` or an offset `+HH:MM` or `-HH:MM` (`t` and `z` in lower case too); `nil` for any other text or a field out of its range (April 31, a second 60) |
+| `time.Time.parse_iso(text)` | `Time?`: RFC 3339's `YYYY-MM-DDTHH:MM:SS`, a fraction of a second (more than nine digits are cut), then `Z` or an offset `+HH:MM` or `-HH:MM` (`t` and `z` in lower case too); `nil` for any other text or a field out of its range (April 31, a second 60) |
 | `a < b`, `a == b`, `xs.sort()` | seconds first, then nanoseconds |
 | `time.sleep_ms(ms)` | waits `ms` milliseconds (other tasks run meanwhile); a negative `ms` traps |
 
@@ -4615,17 +4615,17 @@ Time zones and calendar arithmetic are not in `std.time` yet.
 
 ### std.random
 
-A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
+A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `random.Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
 
 ```avant
 import std.random
 
 fn main {
-  rng = Random.new(42)
+  rng = random.Random.new(42)
   deck = [1, 2, 3, 4, 5]
   deck.shuffle(rng)
   puts(deck.size)                    // => 5
-  again = [1, 2, 3, 4, 5].shuffled(Random.new(42))
+  again = [1, 2, 3, 4, 5].shuffled(random.Random.new(42))
   puts(again == deck)                // => true
   puts(rng.int(6) < 6)               // => true
   die = rng.int(1, 7)
@@ -4636,8 +4636,8 @@ fn main {
 
 | Call | Result |
 | --- | --- |
-| `Random.new(seed)` | a generator; `seed` is any `Int` |
-| `Random.new()` | a generator seeded from the system's entropy (`getrandom`) |
+| `random.Random.new(seed)` | a generator; `seed` is any `Int` |
+| `random.Random.new()` | a generator seeded from the system's entropy (`getrandom`) |
 | `rng.int(n)` | an `Int` in `0..n`, each value equally likely; traps unless `n > 0` |
 | `rng.int(lo, hi)` | an `Int` in `lo..hi` (`hi` excluded), each value equally likely; traps unless `lo < hi` |
 | `rng.float()` | a `Float64` in `[0, 1)` |
@@ -4657,7 +4657,7 @@ fn greet(name: String): String {
 }
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   t.check(greet("Ada") == "Hello, Ada", "greet uses the name")
   t.check_eq(greet(""), "Hello, ", "greet handles empty")
   t.finish()
@@ -4704,7 +4704,7 @@ For each file the runner prints its output in source order, then `ok tests/test_
 
 ### Checks
 
-`Test.new()` holds the checks. Name each check after its case, so a `FAIL` line alone says what broke.
+`testing.Test.new()` holds the checks. Name each check after its case, so a `FAIL` line alone says what broke.
 
 | Method | Passes when |
 | --- | --- |
@@ -4728,7 +4728,7 @@ fn greet(name: String): String {
 }
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   names = ["Ada", "Bo", "Cy"]
   wants = ["Hello, Ada", "Hello, Bo", "Hello, Cy"]
   for i in 0..names.size {
@@ -4745,7 +4745,7 @@ import std.testing
 import std.fs
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   dir = t.temp_dir()
   t.check((fs.write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
   t.finish()
@@ -4761,7 +4761,7 @@ fn main: Int {
 import std.testing
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   t.golden("want.txt", "Hello Avant\n")
   t.run_golden("hello.av", "hello.want")
   t.rejects("bad.av", "unknown name")
@@ -4780,7 +4780,7 @@ Checks written in the file, and bodies passed to `t.test`, run one at a time in 
 import std.testing
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   t.test("adds", () {
     t.check(1 + 2 == 3, "1+2")
   })

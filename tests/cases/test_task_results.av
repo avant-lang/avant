@@ -119,7 +119,7 @@ fn value_cases(c: Checks) {
   c.eq_str(hs.join() ?? "", "a3", "a second join")
 
   // A dropped handle: the task still runs to its end.
-  m = Mutex(Int).new(0)
+  m = sync.Mutex(Int).new(0)
   for i in 0..8 {
     _ = spawn { m.with (x) { x += 1 } }
   }
@@ -159,7 +159,7 @@ fn try_cases(c: Checks) {
   // ? inside a Mutex's with, in a spawn block: the lambda's result type
   // holds the failure, which leaves the with (the lock released) as its
   // value, and the spawn block's ? gives it to the join.
-  m = Mutex(Int).new(5)
+  m = sync.Mutex(Int).new(5)
   h5 = spawn {
     m.with((x): Int | Bad {
       x += check(7)?
@@ -177,7 +177,7 @@ fn structured_cases(c: Checks) {
   // done.
   for round in 0..20 {
     xs = [1, 2, 3]
-    done = Channel(Int).new(1)
+    done = sync.Channel(Int).new(1)
     h = spawn {
       inner = spawn {
         t = 0

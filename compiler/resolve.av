@@ -272,6 +272,12 @@ pub class TypeResolver {
     if tn.fn_type || tn.members.size > 0 || tn.mod_name.size > 0 || tn.pinned {
       return
     }
+    if mod_name.size > 0 {
+      if t0 = get_named(tn.name), t0.mod_name != mod_name && str_starts(t0.mod_name, "std.") {
+        fail(tn.loc, std_bare_text(tn.name, t0.mod_name))
+        return
+      }
+    }
     if flag = self.collide.get(tn.name) {
       owners = seen_owners(tn.name, mod_name)
       if owners.size > 1 {
@@ -345,7 +351,7 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == self.scope_mod {
           for imp in info.imports {
-            if imp != self.scope_mod && template_in(imp, name) && type_is_pub(p, imp, name) {
+            if imp != self.scope_mod && !str_starts(imp, "std.") && template_in(imp, name) && type_is_pub(p, imp, name) {
               out.push(imp)
             }
           }
@@ -371,6 +377,38 @@ pub class TypeResolver {
     false
   }
 
+  // A std module other than from that declares the type name (generic or
+  // not), or "": a std module's types are written with its name
+  // (`sync.Mutex(Int)`, `fs.Reader`), never bare outside it.
+  pub fn std_owner_of(name: String, from: String): String {
+    if p = self.program {
+      for sdef in p.structs {
+        if sdef.name == name && sdef.mod_name != from && str_starts(sdef.mod_name, "std.") {
+          return sdef.mod_name
+        }
+      }
+      for cdef in p.classes {
+        if cdef.name == name && cdef.mod_name != from && str_starts(cdef.mod_name, "std.") {
+          return cdef.mod_name
+        }
+      }
+    }
+    ""
+  }
+
+  pub fn std_bare_text(name: String, owner: String): String {
+    last = owner
+    i = owner.size - 1
+    while i >= 0 {
+      if owner[i] == 46 {
+        last = str_slice(owner, i + 1, owner.size)
+        break
+      }
+      i -= 1
+    }
+    "${name} needs its module's name: write ${last}.${name}; a std module's types are not named bare"
+  }
+
   // The modules whose type name mod_name sees: its own, then each import
   // that declares it pub, in import order.
   pub fn seen_owners(name: String, mod_name: String): Array(String) {
@@ -382,7 +420,7 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == mod_name {
           for imp in info.imports {
-            if imp != mod_name && type_is_pub(p, imp, name) {
+            if imp != mod_name && !str_starts(imp, "std.") && type_is_pub(p, imp, name) {
               if t2 = get_named_in(imp, name) {
                 out.push(imp)
               }
@@ -700,6 +738,25 @@ pub class TypeResolver {
       return ty_var(tn.name)
     }
     ntmpl = template_count(tn.name)
+    if ntmpl > 0 && tn.mod_name.size == 0 && self.scope_mod.size > 0 {
+      sm = std_owner_of(tn.name, self.scope_mod)
+      if sm.size > 0 && template_in(sm, tn.name) {
+        // A std module's generic type named bare: a program's own (or an
+        // import's) is meant, else the qualified spelling is asked for.
+        owners = template_owners(tn.name)
+        if owners.size == 1 {
+          use = clone_type_name(tn)
+          use.mod_name = owners[0]
+          return instantiate_template(use)
+        }
+        if owners.size == 0 {
+          fail(tn.loc, std_bare_text(tn.name, sm))
+        } else {
+          fail(tn.loc, owners_clash_text(tn.name, owners))
+        }
+        return self.t_int
+      }
+    }
     if ntmpl > 0 {
       if tn.mod_name.size == 0 && ntmpl > 1 {
         owners = template_owners(tn.name)
@@ -730,6 +787,10 @@ pub class TypeResolver {
     if found = get_named(tn.name) {
       if found.template {
         fail(tn.loc, "${tn.name} needs type arguments")
+        return self.t_int
+      }
+      if tn.mod_name.size == 0 && self.scope_mod.size > 0 && found.mod_name != self.scope_mod && str_starts(found.mod_name, "std.") {
+        fail(tn.loc, std_bare_text(tn.name, found.mod_name))
         return self.t_int
       }
       return found
@@ -1101,7 +1162,7 @@ pub class TypeResolver {
       return
     }
     if template_count(tn.name) > 0 {
-      if tn.mod_name.size == 0 && template_count(tn.name) > 1 {
+      if tn.mod_name.size == 0 && (template_count(tn.name) > 1 || std_owner_of(tn.name, self.scope_mod).size > 0) {
         owners = template_owners(tn.name)
         if owners.size == 1 {
           tn.mod_name = owners[0]

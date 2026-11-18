@@ -727,6 +727,20 @@ fn test_std_qualified(c: Checks, compiler: String, dir: String) {
   mod_fails(c, compiler, dir, "stdbareproc", "args needs its module's name: write process.args", "std qualifier: process.args, not a bare args")
   write_av(dir, "stdbaresync", "import std.sync\n\nfn main {\n  puts(pool_size())\n}\n")
   mod_fails(c, compiler, dir, "stdbaresync", "pool_size needs its module's name: write sync.pool_size", "std qualifier: sync.pool_size, not a bare pool_size")
+  // A std module's types are named with its name too: a program's own
+  // type of the same name beside the import is its own.
+  write_av(dir, "stdowntype", "import std.fs\nimport std.sync\n\nclass Reader {\n  pub n: Int = 3\n}\n\nclass Mutex {\n  pub held: Bool = false\n}\n\nfn main {\n  r = Reader.new()\n  puts(r.n)\n  puts(Mutex.new().held)\n  m = sync.Mutex(Int).new(4)\n  puts(m.with((v) { v }))\n  if f = fs.open(\"/no/such/file\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.op)\n  }\n}\n")
+  mod_runs(c, compiler, dir, "stdowntype", "3\nfalse\n4\nopen\n", "std qualifier: a program's own Reader and Mutex beside import std.fs and std.sync are its own")
+  write_av(dir, "stdtypequal", "import std.json\nimport std.sync\nimport std.regex\nimport std.time\n\nstruct Holder {\n  m: sync.Mutex(Int)\n  ch: sync.Channel(String)\n}\n\nfn total(m: sync.Mutex(Int)): Int {\n  m.with((n) { n })\n}\n\nfn main {\n  h = Holder { m: sync.Mutex(Int).new(5), ch: sync.Channel(String).new(2) }\n  puts(total(h.m))\n  if j = json.Json.parse(\"[1,2]\") {\n    puts(\"parsed\")\n  }\n  if r = regex.Regex.compile(\"a+\") {\n    puts(r.count(\"caab\"))\n  }\n  t: time.Time = time.Time { sec: 0, nsec: 0 }\n  puts(t.iso())\n  xs: Array(sync.Mutex(Int)) = [h.m]\n  puts(xs.size)\n}\n")
+  mod_runs(c, compiler, dir, "stdtypequal", "5\nparsed\n1\n1970-01-01T00:00:00Z\n1\n", "std qualifier: sync.Mutex(Int), json.Json, regex.Regex and time.Time as types, constructors and type-level calls")
+  write_av(dir, "stdbarefield", "import std.sync\n\nstruct Holder {\n  m: Mutex(Int)\n}\n\nfn main {\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "stdbarefield", "Mutex needs its module's name: write sync.Mutex; a std module's types are not named bare", "std qualifier: a bare std type in a field")
+  write_av(dir, "stdbarector", "import std.sync\n\nfn main {\n  m = Mutex(Int).new(5)\n  puts(m.with((v) { v }))\n}\n")
+  mod_fails(c, compiler, dir, "stdbarector", "Mutex needs its module's name: write sync.Mutex; a std module's types are not named bare", "std qualifier: a bare generic constructor")
+  write_av(dir, "stdbaretypefn", "import std.json\n\nfn main {\n  if j = Json.parse(\"[1]\") {\n    puts(\"ok\")\n  }\n}\n")
+  mod_fails(c, compiler, dir, "stdbaretypefn", "Json needs its module's name: write json.Json; a std module's types are not named bare", "std qualifier: a bare type-level call")
+  write_av(dir, "stdbareparam", "import std.regex\n\nfn first(r: Regex): Int {\n  1\n}\n\nfn main {\n  puts(2)\n}\n")
+  mod_fails(c, compiler, dir, "stdbareparam", "Regex needs its module's name: write regex.Regex; a std module's types are not named bare", "std qualifier: a bare std type in a signature")
 }
 
 fn main: Int {

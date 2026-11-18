@@ -117,7 +117,7 @@ fn test_cb_scalars(c: Checks, compiler: String) {
 fn test_frozen_to_c(c: Checks, compiler: String) {
   stamp = now_ms()
   src = "${scratch()}/c_layout-${stamp}-frozen.av"
-  _ = fs.write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
+  _ = fs.write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = sync.Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
   bin = "${scratch()}/c_layout-${stamp}-frozen.bin"
   c.eq_int(compile_av(compiler, src, bin, "${scratch()}/c_layout-${stamp}-frozen.clog"), 0, "frozen to C: compiles")
   if fs.exists(bin) {

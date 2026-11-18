@@ -4,11 +4,11 @@
 import std.sync
 
 class Store {
-  m: Mutex(Hash(String, Int)) = Mutex(Hash(String, Int)).new(Hash(String, Int).new())
-  done: Channel(Int)
+  m: sync.Mutex(Hash(String, Int)) = sync.Mutex(Hash(String, Int)).new(Hash(String, Int).new())
+  done: sync.Channel(Int)
 
   fn initialize(n: Int) {
-    self.done = Channel(Int).new(n)
+    self.done = sync.Channel(Int).new(n)
   }
 
   pub fn put(k: String, v: Int) {
@@ -37,7 +37,7 @@ fn main {
   r = [0, 1].parallel((i) { stores[i].get("k1") })
   puts(r[0])
   puts(r[1])
-  ch = Channel(Store).new(1)
+  ch = sync.Channel(Store).new(1)
   _ = ch.send(s)
   if got = ch.recv() {
     puts(got.get("k2"))

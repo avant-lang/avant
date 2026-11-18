@@ -93,7 +93,7 @@ fn test_testing_docs(c: Checks) {
     // print (the table, temp_dir), `avant test` running a file's parallel
     // bodies after its serial work, the golden checks beside their files
     // (the README's block is marked skip), and `avant run FILE -- ARGS`.
-    table_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = Test.new()\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  for i in 0..names.size {\n    t.check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n  }\n  t.finish()\n}\n"
+    table_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = testing.Test.new()\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  for i in 0..names.size {\n    t.check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n  }\n  t.finish()\n}\n"
     _ = fs.write("${dir}/test_table.av", table_body)
     table_log = "${dir}/table.log"
     table_rc = "${dir}/table.rc"
@@ -106,7 +106,7 @@ fn test_testing_docs(c: Checks) {
       c.expect(false, "README table test output")
     }
 
-    tmp_body = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  dir = t.temp_dir()\n  t.check((fs.write(\"\${dir}/notes.txt\", \"hi\") ?? -1) == 2, \"write in temp_dir\")\n  t.finish()\n}\nimport std.fs\n"
+    tmp_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  dir = t.temp_dir()\n  t.check((fs.write(\"\${dir}/notes.txt\", \"hi\") ?? -1) == 2, \"write in temp_dir\")\n  t.finish()\n}\nimport std.fs\n"
     _ = fs.write("${dir}/test_tmp.av", tmp_body)
     tmp_log = "${dir}/tmp.log"
     tmp_rc = "${dir}/tmp.rc"
@@ -119,7 +119,7 @@ fn test_testing_docs(c: Checks) {
       c.expect(false, "README temp_dir test output")
     }
 
-    par_body = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish()\n}\n"
+    par_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish()\n}\n"
     _ = fs.write("${dir}/test_parallel.av", par_body)
     par_log = "${dir}/parallel.log"
     par_rc = "${dir}/parallel.rc"
@@ -139,7 +139,7 @@ fn test_testing_docs(c: Checks) {
     // compiled binary, skipped its t.parallel bodies without a word and
     // exited 0 with the serial checks alone. With no runner listening the
     // bodies now run in that process: the same checks every way.
-    both_body = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(1 + 1 == 2, \"serial\")\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"in a test body\")\n  }\n  t.parallel(\"first\") {\n    t.check(true, \"first a\")\n    t.check(true, \"first b\")\n  }\n  t.parallel(\"second\") {\n    t.check(2 * 2 == 4, \"second a\")\n  }\n  t.parallel(\"third\") {\n    t.check(true, \"third a\")\n    t.check(true, \"third b\")\n  }\n  t.finish()\n}\n"
+    both_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(1 + 1 == 2, \"serial\")\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"in a test body\")\n  }\n  t.parallel(\"first\") {\n    t.check(true, \"first a\")\n    t.check(true, \"first b\")\n  }\n  t.parallel(\"second\") {\n    t.check(2 * 2 == 4, \"second a\")\n  }\n  t.parallel(\"third\") {\n    t.check(true, \"third a\")\n    t.check(true, \"third b\")\n  }\n  t.finish()\n}\n"
     mkdir_p("${dir}/both")
     _ = fs.write("${dir}/both/test_both.av", both_body)
     both_rc = "${dir}/both.rc"
@@ -163,7 +163,7 @@ fn test_testing_docs(c: Checks) {
     // status 0. Each is given a path that is a directory (it cannot be
     // written, whoever runs the suite): the run fails and names the file
     // and the reason.
-    lost_body = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"serial\")\n  t.parallel(\"one\") {\n    t.check(true, \"in one\")\n  }\n  t.finish()\n}\n"
+    lost_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"serial\")\n  t.parallel(\"one\") {\n    t.check(true, \"in one\")\n  }\n  t.finish()\n}\n"
     mkdir_p("${dir}/lost/isdir")
     _ = fs.write("${dir}/lost/test_lost.av", lost_body)
     lost_rc = "${dir}/lost.rc"
@@ -179,7 +179,7 @@ fn test_testing_docs(c: Checks) {
     _ = fs.write("${dir}/hello.want", "Hello Avant\n")
     _ = fs.write("${dir}/hello.av", "fn main {\n  puts(\"Hello Avant\")\n}\n")
     _ = fs.write("${dir}/bad.av", "fn main {\n  missing\n}\n")
-    gold_body = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.golden(\"want.txt\", \"Hello Avant\\n\")\n  t.run_golden(\"hello.av\", \"hello.want\")\n  t.rejects(\"bad.av\", \"unknown name\")\n  t.finish()\n}\n"
+    gold_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.golden(\"want.txt\", \"Hello Avant\\n\")\n  t.run_golden(\"hello.av\", \"hello.want\")\n  t.rejects(\"bad.av\", \"unknown name\")\n  t.finish()\n}\n"
     _ = fs.write("${dir}/test_gold.av", gold_body)
     gold_log = "${dir}/gold.log"
     gold_rc = "${dir}/gold.rc"

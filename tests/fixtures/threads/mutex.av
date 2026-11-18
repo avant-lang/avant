@@ -23,7 +23,7 @@ struct Cell {
   name: String
 }
 
-fn bump(m: Mutex(Int), times: Int): Int {
+fn bump(m: sync.Mutex(Int), times: Int): Int {
   i = 0
   while i < times {
     m.with (x) {
@@ -35,7 +35,7 @@ fn bump(m: Mutex(Int), times: Int): Int {
 }
 
 fn main {
-  count = Mutex(Int).new(0)
+  count = sync.Mutex(Int).new(0)
   hs: Array(JoinHandle(Int)) = []
   i = 0
   while i < 8 {
@@ -46,7 +46,7 @@ fn main {
   hs.each (h) { ran = ran + (h.join() ?? -1) }
   puts(ran)
   puts(count.with (x) { x })
-  held = Mutex(Held).new(Held.new(5))
+  held = sync.Mutex(Held).new(Held.new(5))
   hh = spawn {
     held.with (h) {
       h.n = h.n + 10
@@ -59,7 +59,7 @@ fn main {
     h.n
   }
   puts(after)
-  cell = Mutex(Cell).new(Cell { n: 1, name: "c" })
+  cell = sync.Mutex(Cell).new(Cell { n: 1, name: "c" })
   hc = spawn {
     j = 0
     while j < 100 {
@@ -73,7 +73,7 @@ fn main {
   }
   puts(hc.join() ?? -1)
   puts(cell.with (c) { c.name })
-  text = Mutex(String).new("")
+  text = sync.Mutex(String).new("")
   ts: Array(JoinHandle(Int)) = []
   i = 0
   while i < 4 {
@@ -93,7 +93,7 @@ fn main {
   ts.each (t) { sum = sum + (t.join() ?? -1) }
   puts(sum)
   puts(text.with (s) { s.size })
-  plain = Mutex(Int).new(3)
+  plain = sync.Mutex(Int).new(3)
   plain.with (x) {
     x += 4
   }

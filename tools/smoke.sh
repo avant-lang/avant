@@ -239,7 +239,7 @@ src json.av <<'EOF'
 import std.json
 
 fn main {
-  if doc = Json.parse("{\"n\": 7, \"name\": \"ada\"}") {
+  if doc = json.Json.parse("{\"n\": 7, \"name\": \"ada\"}") {
     if n = doc.int("n") {
       puts(n)
     }
@@ -258,7 +258,7 @@ src regex_literal.av <<'EOF'
 import std.regex
 
 fn main {
-  if re = Regex.compile("a+") {
+  if re = regex.Regex.compile("a+") {
     if m = re.find("xxaa") {
       puts(m.start)
       puts(m.end)
@@ -285,7 +285,7 @@ import std.regex
 fn main {
   p = "a"
   p = p + "+"
-  if re = Regex.compile(p) {
+  if re = regex.Regex.compile(p) {
     if m = re.find("xxaa") {
       puts(m.start)
       puts(m.end)
@@ -324,7 +324,7 @@ fn main {
   if server = http.listen(0) {
     server.get("/") { |req|
       server.close()
-      Response.text("Hello Avant")
+      http.Response.text("Hello Avant")
     }
     port = server.port()
     handle = spawn {
@@ -354,7 +354,7 @@ src tests/test_ok.av <<'EOF'
 import std.testing
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   t.check(1 + 1 == 2, "arithmetic")
   t.finish()
 }

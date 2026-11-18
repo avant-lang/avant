@@ -12,14 +12,14 @@ class Odd: Error {
   pub message: String = "odd"
 }
 
-fn plain(m: Mutex(Int), times: Int) {
+fn plain(m: sync.Mutex(Int), times: Int) {
   for i in 0..times {
     m.with (n) { n += 1 }
   }
 }
 
 // Returns from inside the block on every other call.
-fn by_return(m: Mutex(Int), i: Int): Int {
+fn by_return(m: sync.Mutex(Int), i: Int): Int {
   m.with { |n|
     n += 1
     if i % 2 == 0 {
@@ -30,7 +30,7 @@ fn by_return(m: Mutex(Int), i: Int): Int {
 }
 
 // Leaves the loop from inside the block.
-fn by_break(m: Mutex(Int), times: Int): Int {
+fn by_break(m: sync.Mutex(Int), times: Int): Int {
   k = 0
   while true {
     m.with { |n|
@@ -45,7 +45,7 @@ fn by_break(m: Mutex(Int), times: Int): Int {
 }
 
 // Skips the rest of the body from inside the block.
-fn by_continue(m: Mutex(Int), times: Int): Int {
+fn by_continue(m: sync.Mutex(Int), times: Int): Int {
   skipped = 0
   for i in 0..times {
     m.with { |n|
@@ -68,7 +68,7 @@ fn check(i: Int): Int | Odd {
 }
 
 // A `?` inside the block returns the failure.
-fn by_try(m: Mutex(Int), i: Int): Int | Odd {
+fn by_try(m: sync.Mutex(Int), i: Int): Int | Odd {
   m.with { |n|
     n += 1
     v = check(i)?
@@ -78,7 +78,7 @@ fn by_try(m: Mutex(Int), i: Int): Int | Odd {
 }
 
 fn main {
-  m = Mutex(Int).new(0)
+  m = sync.Mutex(Int).new(0)
   times = 500
   hs: Array(JoinHandle(Int)) = []
   for t in 0..8 {

@@ -16,7 +16,7 @@ fn test_std_zlib(c: Checks) {
   if ignored = plain.uncompress() {
     c.expect(false, "plain text is not zlib")
   } else e {
-    c.expect(e == ZlibError.invalid_data, "plain text is not zlib: the kind invalid_data")
+    c.expect(e == zlib.ZlibError.invalid_data, "plain text is not zlib: the kind invalid_data")
     c.eq_str("${e}", "invalid zlib data", "plain text is not zlib: the message")
   }
   dst = buf_new(64)
@@ -49,7 +49,7 @@ fn out_of_memory_cases(c: Checks, root: String) {
   if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/zlib-oom-${stamp}.av"
-    _ = fs.write(src, "import std.process\nimport std.zlib\n\nfn main {\n  raw = \"hello\".bytes\n  puts(raw.compress().size > 0)\n  process.env_set(\"AVANT_TEST_MALLOC_FAIL\", \"65536\")\n  switch raw.compress_into(Buf.new()) {\n    case e: ZlibError { puts(\"error \${e}\") }\n    case nil { puts(\"compressed\") }\n  }\n}\n")
+    _ = fs.write(src, "import std.process\nimport std.zlib\n\nfn main {\n  raw = \"hello\".bytes\n  puts(raw.compress().size > 0)\n  process.env_set(\"AVANT_TEST_MALLOC_FAIL\", \"65536\")\n  switch raw.compress_into(Buf.new()) {\n    case e: zlib.ZlibError { puts(\"error \${e}\") }\n    case nil { puts(\"compressed\") }\n  }\n}\n")
     bin = "${scratch()}/zlib-oom-${stamp}.bin"
     so = "${scratch()}/zlib-oom-${stamp}.so"
     c.eq_int(compile_av(compiler, src, bin, "${scratch()}/zlib-oom-${stamp}.clog"), 0, "the out-of-memory program compiles")

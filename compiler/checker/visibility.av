@@ -142,7 +142,20 @@ pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
   out
 }
 
+// Whether from_mod sees module mod_name's type name written bare: its
+// own, or an import's pub type, but never a std module's, whose types
+// are written with its name as its functions are (`fs.Reader`,
+// `sync.Mutex(Int)`), so a program's own type of that name is its own.
 pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String, from_mod: String): Bool {
+  if mod_name != from_mod && std_needs_qualifier(mod_name) {
+    return false
+  }
+  checker_self.type_slot_visible_q(name, mod_name, from_mod)
+}
+
+// Whether from_mod sees module mod_name's type name written with that
+// module's name (`std.fs.Reader`, `fs.Reader`).
+pub fn (checker_self: Checker) type_slot_visible_q(name: String, mod_name: String, from_mod: String): Bool {
   if mod_name == from_mod {
     return true
   }
@@ -177,7 +190,7 @@ pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Boo
 
 pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, qual: String): String {
   if qual.size > 0 {
-    if o = checker_self.type_mod.get(type_slot(qual, name)), checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible(name, qual, from_mod) {
+    if o = checker_self.type_mod.get(type_slot(qual, name)), checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible_q(name, qual, from_mod) {
       return qual
     }
     return ""
@@ -283,6 +296,33 @@ fn (checker_self: Checker) last_name_unique(q: String, from_mod: String): Bool {
     }
   }
   n == 1
+}
+
+// The qualified spelling of a pub type of a std module the current module
+// imports, named bare (`fs.Reader` for `Reader` after `import std.fs`);
+// "" when no imported std module has a pub type of that name.
+pub fn (checker_self: Checker) std_type_bare_spelling(name: String): String {
+  from_mod = checker_self.current_module
+  for m in checker_self.mods_of_type(name) {
+    if m != from_mod && std_needs_qualifier(m) && checker_self.imported_by(from_mod, m) && checker_self.type_slot_visible_q(name, m, from_mod) {
+      last = module_last_name(m)
+      if last.size > 0 && checker_self.last_name_unique(last, from_mod) {
+        return "${last}.${name}"
+      }
+      return "${m}.${name}"
+    }
+  }
+  ""
+}
+
+// "unknown type NAME", or for a std module's type named bare, the
+// qualified spelling to write.
+pub fn (checker_self: Checker) unknown_type_text(name: String): String {
+  spelled = checker_self.std_type_bare_spelling(name)
+  if spelled.size > 0 {
+    return "${name} needs its module's name: write ${spelled}; a std module's types are not named bare"
+  }
+  "unknown type ${name}"
 }
 
 // A bare name of an imported std module's function: refused with its
@@ -636,7 +676,7 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
   if qual.size > 0 {
     checker_self.fail(loc, "unknown type ${qual}.${name}")
   } else {
-    checker_self.fail_hint(loc, "unknown type ${name}", checker_self.type_hint_here(name))
+    checker_self.fail_hint(loc, checker_self.unknown_type_text(name), checker_self.type_hint_here(name))
   }
   nil
 }
@@ -688,7 +728,7 @@ pub fn (checker_self: Checker) type_part_seen(tn: TypeName): Bool {
         return false
       }
       if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        checker_self.fail(tn.loc, checker_self.unknown_type_text(tn.name))
         return false
       }
       if flag = checker_self.type_multi.get(tn.name) {
@@ -733,7 +773,7 @@ pub fn (checker_self: Checker) resolve_in_module_core(tn: TypeName): Ty {
         return checker_self.t_int()
       }
       if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        checker_self.fail(tn.loc, checker_self.unknown_type_text(tn.name))
         return checker_self.t_int()
       }
       if flag = checker_self.type_multi.get(tn.name) {

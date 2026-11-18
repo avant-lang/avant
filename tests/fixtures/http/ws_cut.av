@@ -33,7 +33,7 @@ fn main: Int {
   a = process.args()
   if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    said = Mutex(String).new("nothing")
+    said = sync.Mutex(String).new("nothing")
     server.websocket("/ws", (conn, msg) {
       text = msg.text() ?? ""
       if text.size > 4 && text[0] == 98 && text[1] == 105 && text[2] == 103 && text[3] == 32 {
@@ -58,7 +58,7 @@ fn main: Int {
     })
     server.get("/__stop", (req) {
       server.close()
-      Response.text("bye")
+      http.Response.text("bye")
     })
     if a.size > 1 {
       if wrote = fs.write(a[1], "${server.port()}\n") {

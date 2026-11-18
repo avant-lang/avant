@@ -178,7 +178,7 @@ fn test_user_test(c: Checks) {
     _ = fs.write("${root}/proj/vec.av", "pub fn origin: Int {\n  4\n}\nfn hidden: Int {\n  9\n}\n")
     _ = fs.write("${root}/proj/std/testing.av", "pub fn fake: Int {\n  1\n}\n")
     _ = fs.write("${root}/proj/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
-    imp_body = "import vec\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check_eq(origin(), 4, \"origin\")\n  t.finish()\n}\n"
+    imp_body = "import vec\nimport std.testing\nfn main: Int {\n  t = testing.Test.new()\n  t.check_eq(origin(), 4, \"origin\")\n  t.finish()\n}\n"
     _ = fs.write("${root}/proj/tests/test_import.av", imp_body)
     imp_rc = "${root}/import.rc"
     imp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_import.av > ${ut_quote(root)}/import.log 2>&1; echo $? > ${ut_quote(imp_rc)}\n"
@@ -199,7 +199,7 @@ fn test_user_test(c: Checks) {
     hid_code = run_out(compiler, hid_args, hid_log) ?? -1
     c.expect(hid_code != 0, "a test does not see a private name")
 
-    miss_body = "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.golden(\"missing-want.txt\", \"x\")\n  t.finish()\n}\n"
+    miss_body = "import std.testing\nfn main: Int {\n  t = testing.Test.new()\n  t.golden(\"missing-want.txt\", \"x\")\n  t.finish()\n}\n"
     _ = fs.write("${root}/proj/tests/test_miss.av", miss_body)
     miss_rc = "${root}/miss.rc"
     miss_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_miss.av > ${ut_quote(root)}/miss.log 2>&1; echo $? > ${ut_quote(miss_rc)}\n"
@@ -211,10 +211,10 @@ fn test_user_test(c: Checks) {
     // returns 0, and a check that fails on another thread.
     mkdir_p("${root}/failcheck/tests")
     _ = fs.write("${root}/failcheck/avant.toml", "[package]\nname = \"failcheck\"\nversion = \"0.1.0\"\n")
-    _ = fs.write("${root}/failcheck/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
-    _ = fs.write("${root}/failcheck/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
-    _ = fs.write("${root}/failcheck/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new()\n    u.check(false, \"fails on a task\")\n    1\n  }\n  (h.join() ?? -1)\n  0\n}\n")
-    _ = fs.write("${root}/failcheck/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_void.av", "import std.testing\n\nfn main {\n  t = testing.Test.new()\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = testing.Test.new()\n    u.check(false, \"fails on a task\")\n    1\n  }\n  (h.join() ?? -1)\n  0\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = testing.Test.new()\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
     failcheck_names = ["void", "zero", "task"]
     failcheck_fails = ["one is two", "one is two", "fails on a task"]
     i = 0
@@ -335,9 +335,9 @@ fn test_user_test(c: Checks) {
     mkdir_p("${root}/killed/tests")
     _ = fs.write("${root}/killed/avant.toml", "[package]\nname = \"killed\"\nversion = \"0.1.0\"\n")
     sig_lib = "lib c {\n  fun raise(sig: Int32): Int32\n}\n\n"
-    _ = fs.write("${root}/killed/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish()\n}\n")
-    _ = fs.write("${root}/killed/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  7\n}\n")
-    _ = fs.write("${root}/killed/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish()\n}\n")
+    _ = fs.write("${root}/killed/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish()\n}\n")
+    _ = fs.write("${root}/killed/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  7\n}\n")
+    _ = fs.write("${root}/killed/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish()\n}\n")
     // The last run is test_sig's again, started with SIGPIPE ignored as a
     // CI runner starts its jobs: the test process still
     // dies by it, since the runtime resets SIGPIPE to the default before
@@ -392,7 +392,7 @@ fn test_user_test(c: Checks) {
     _ = fs.write("${root}/ctlchar/avant.toml", "[package]\nname = \"ctlchar\"\nversion = \"0.1.0\"\n")
     ctlchar_ctl = "fn main: Int {\n  b = buf_new()\n  b.push_str(\"before \")\n  b.push_byte(27)\n  b.push_str(\"[31mred\")\n  b.push_byte(27)\n  b.push_str(\"[0m bell\")\n  b.push_byte(7)\n  b.push_str(\" ff\")\n  b.push_byte(255)\n  b.push_str(\" fffe\")\n  b.push_byte(239)\n  b.push_byte(191)\n  b.push_byte(190)\n  b.push_str(\" tab\\tcaf\")\n  b.push_byte(195)\n  b.push_byte(169)\n  b.push_str(\" after\")\n  puts(b.to_s())\n  1\n}\n"
     _ = fs.write("${root}/ctlchar/tests/test_ctl.av", ctlchar_ctl)
-    ctlchar_name = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  b = buf_new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s())\n  t.finish()\n}\n"
+    ctlchar_name = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  b = buf_new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s())\n  t.finish()\n}\n"
     _ = fs.write("${root}/ctlchar/tests/test_name.av", ctlchar_name)
     ctlchar_rc = "${root}/ctlchar.rc"
     ctlchar_sh = "#!/bin/sh\ncd ${ut_quote(root)}/ctlchar && ${ut_quote(compiler)} test --junit ${ut_quote(root)}/ctlchar.xml > ${ut_quote(root)}/ctlchar.log 2>&1; echo $? > ${ut_quote(ctlchar_rc)}\n"
@@ -436,8 +436,8 @@ fn test_user_test(c: Checks) {
     mkdir_p("${w5}/f/avant.lock")
     _ = fs.write("${w5}/p/avant.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n")
     _ = fs.write("${w5}/f/avant.toml", "[package]\nname = \"f\"\nversion = \"0.1.0\"\n")
-    _ = fs.write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
-    _ = fs.write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
+    _ = fs.write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
+    _ = fs.write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = regex.Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
     _ = fs.write("${w5}/ok.av", "fn main {\n  puts(1)\n}\n")
     _ = fs.write("${w5}/fmt.av", "fn main {\n    puts(1)\n}\n")
     mkdir_p("${w5}/p/coverage/lcov.info")
@@ -533,8 +533,8 @@ fn test_user_test(c: Checks) {
     nm_dir = "${root}/namefilter"
     mkdir_p("${nm_dir}/tests")
     _ = fs.write("${nm_dir}/avant.toml", "[package]\nname = \"namefilter\"\nversion = \"0.1.0\"\n")
-    _ = fs.write("${nm_dir}/tests/test_pick.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"alpha check\")\n  t.check_eq(2, 2, \"beta check\")\n  t.test(\"gamma test\") {\n    t.check(true, \"inside gamma\")\n  }\n  t.test(\"delta test\") {\n    t.check(true, \"inside delta\")\n  }\n  t.parallel(\"epsilon par\") {\n    t.check(true, \"inside epsilon\")\n  }\n  t.parallel(\"zeta par\") {\n    t.check(true, \"inside zeta\")\n  }\n  t.finish()\n}\n")
-    _ = fs.write("${nm_dir}/tests/test_other.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"other check\")\n  t.finish()\n}\n")
+    _ = fs.write("${nm_dir}/tests/test_pick.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"alpha check\")\n  t.check_eq(2, 2, \"beta check\")\n  t.test(\"gamma test\") {\n    t.check(true, \"inside gamma\")\n  }\n  t.test(\"delta test\") {\n    t.check(true, \"inside delta\")\n  }\n  t.parallel(\"epsilon par\") {\n    t.check(true, \"inside epsilon\")\n  }\n  t.parallel(\"zeta par\") {\n    t.check(true, \"inside zeta\")\n  }\n  t.finish()\n}\n")
+    _ = fs.write("${nm_dir}/tests/test_other.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"other check\")\n  t.finish()\n}\n")
     nm_pats = ["alpha", "gamma", "epsilon", "check"]
     nm_want = ["alpha check", "inside gamma", "inside epsilon", "alpha check beta check"]
     nm_what = ["one check", "one t.test body", "one t.parallel body", "every name that contains the pattern"]
@@ -610,11 +610,11 @@ fn test_user_test(c: Checks) {
     clock = "${root}/clock"
     mkdir_p("${clock}/tests")
     _ = fs.write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
-    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = process.env(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = testing.Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = process.env(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
     left = ut_fill(piece, clock)
     left = ut_fill_name(left, "left")
-    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
-    mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = testing.Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = testing.Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
     _ = fs.write("${clock}/tests/test_left.av", left)
     _ = fs.write("${clock}/tests/test_right.av", right_src)
     _ = fs.write("${clock}/tests/test_mid.av", mid_src)
@@ -661,7 +661,7 @@ fn test_user_test(c: Checks) {
     one = "${root}/onecpu"
     mkdir_p("${one}/tests")
     _ = fs.write("${one}/avant.toml", "[package]\nname = \"onecpu\"\nversion = \"0.1.0\"\n")
-    pair = "import std.testing\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    listing = v == \"1\"\n  }\n  if !listing {\n    dummy = fs.write(\"DIR/NAME.start\", \"1\")\n    args: Array(String) = []\n    args.push(\"0.05\")\n    i = 0\n    while i < 20 {\n      if fs.exists(\"DIR/OTHER.start\") {\n        dummy2 = fs.write(\"DIR/NAME.met\", \"met\")\n        i = 20\n      }\n      dummy3 = process.run(\"/bin/sleep\", args)\n      i = i + 1\n    }\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    pair = "import std.testing\nfn main: Int {\n  t = testing.Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    listing = v == \"1\"\n  }\n  if !listing {\n    dummy = fs.write(\"DIR/NAME.start\", \"1\")\n    args: Array(String) = []\n    args.push(\"0.05\")\n    i = 0\n    while i < 20 {\n      if fs.exists(\"DIR/OTHER.start\") {\n        dummy2 = fs.write(\"DIR/NAME.met\", \"met\")\n        i = 20\n      }\n      dummy3 = process.run(\"/bin/sleep\", args)\n      i = i + 1\n    }\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
     _ = fs.write("${one}/tests/test_a.av", ut_sub(ut_fill_name(ut_fill(pair, one), "a"), "OTHER", "b"))
     _ = fs.write("${one}/tests/test_b.av", ut_sub(ut_fill_name(ut_fill(pair, one), "b"), "OTHER", "a"))
     one_rc = "${root}/onecpu.rc"
@@ -677,7 +677,7 @@ fn test_user_test(c: Checks) {
     mkdir_p("${order}/tests")
     _ = fs.write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
     _ = fs.write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
-    _ = fs.write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"z\")\n  t.finish()\n}\n")
+    _ = fs.write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"z\")\n  t.finish()\n}\n")
     order_rc = "${root}/order.rc"
     order_sh = "#!/bin/sh\ncd ${ut_quote(order)} && ${ut_quote(compiler)} test --jobs 1 > ${ut_quote(root)}/order.log 2>&1; echo $? > ${ut_quote(order_rc)}\n"
     c.eq_int(ut_sh(order_sh, order_rc), 1, "first fixture fails on its broken file")
@@ -709,7 +709,7 @@ fn test_user_test(c: Checks) {
     // working standard output prints its lines and exits 0.
     full_dir = "${root}/devfull"
     mkdir_p(full_dir)
-    _ = fs.write("${full_dir}/report.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"one\")\n  t.check(1 + 1 == 2, \"two\")\n  t.finish()\n}\n")
+    _ = fs.write("${full_dir}/report.av", "import std.testing\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"one\")\n  t.check(1 + 1 == 2, \"two\")\n  t.finish()\n}\n")
     fq = ut_quote(full_dir)
     full_rc = "${full_dir}/full.rc"
     full_sh = "#!/bin/sh\n${ut_quote(compiler)} compile ${fq}/report.av ${fq}/report --debug > ${fq}/compile.log 2>&1 || { echo 90 > ${fq}/full.rc; echo 90 > ${fq}/plain.rc; exit 0; }\n${fq}/report > /dev/full 2> ${fq}/full.err; echo $? > ${fq}/full.rc\n${fq}/report > ${fq}/plain.out 2> ${fq}/plain.err; echo $? > ${fq}/plain.rc\n"

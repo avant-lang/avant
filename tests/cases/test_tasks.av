@@ -42,7 +42,7 @@ fn test_tasks(c: Checks) {
   c.eq_int(lens[1], 2, "parallel string 1")
   c.eq_int(lens[2], 3, "parallel string 2")
 
-  buf = Channel(Int).new(2)
+  buf = sync.Channel(Int).new(2)
   kept = 4
   buf.send(kept)
   buf.send(5)
@@ -64,7 +64,7 @@ fn test_tasks(c: Checks) {
     c.expect(true, "closed empty")
   }
 
-  wrap = Channel(Int).new(2)
+  wrap = sync.Channel(Int).new(2)
   wrap.send(1)
   wrap.send(2)
   if w0 = wrap.recv() {
@@ -84,7 +84,7 @@ fn test_tasks(c: Checks) {
     c.expect(false, "wrap last")
   }
 
-  ch = Channel(Int).new()
+  ch = sync.Channel(Int).new()
   hr = spawn {
     ch.send(7)
     1
@@ -96,7 +96,7 @@ fn test_tasks(c: Checks) {
   }
   c.eq_int(hr.join() ?? -1, 1, "rendezvous join")
 
-  many = Channel(Int).new(2)
+  many = sync.Channel(Int).new(2)
   h1 = spawn {
     many.send(1)
     1
@@ -119,7 +119,7 @@ fn test_tasks(c: Checks) {
   c.eq_int(sum, 3, "two senders")
   c.eq_int((h1.join() ?? -1) + (h2.join() ?? -1), 2, "two joins")
 
-  cs = Channel(String).new()
+  cs = sync.Channel(String).new()
   hcs = spawn {
     cs.send("hi")
     1
@@ -131,7 +131,7 @@ fn test_tasks(c: Checks) {
   }
   c.eq_int(hcs.join() ?? -1, 1, "channel string join")
 
-  mu = Mutex(Int).new(1)
+  mu = sync.Mutex(Int).new(1)
   bumped = mu.with (x) {
     x += 1
     x
@@ -140,21 +140,21 @@ fn test_tasks(c: Checks) {
   again = mu.with (x) { x }
   c.eq_int(again, 2, "mutex read")
 
-  box = Mutex(Held).new(Held.new(1))
+  box = sync.Mutex(Held).new(Held.new(1))
   bn = box.with (x) {
     x.n += 1
     x.n
   }
   c.eq_int(bn, 2, "mutex class")
 
-  cell = Mutex(Cell).new(Cell { n: 1 })
+  cell = sync.Mutex(Cell).new(Cell { n: 1 })
   cn = cell.with (x) {
     x.n += 4
     x.n
   }
   c.eq_int(cn, 5, "mutex struct")
 
-  shared = Mutex(Int).new(1)
+  shared = sync.Mutex(Int).new(1)
   hm = spawn {
     shared.with (x) {
       x += 10

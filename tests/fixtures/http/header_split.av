@@ -14,8 +14,8 @@ import std.http
 // Without arguments (the run goldens) the kind is crlf. The kinds
 // status-* answer with that status: one outside 200-599 traps
 // when the answer is written.
-fn bad_header(kind: String): Response {
-  r = Response.text("x")
+fn bad_header(kind: String): http.Response {
+  r = http.Response.text("x")
   if kind == "crlf" {
     return r.header("X-A", "1\r\nSet-Cookie: evil=1")
   } else if kind == "lf" {
@@ -37,23 +37,23 @@ fn bad_header(kind: String): Response {
   } else if kind == "name-empty" {
     return r.header("", "1")
   } else if kind == "status-99" {
-    return Response.text("x", 99)
+    return http.Response.text("x", 99)
   } else if kind == "status-600" {
-    return Response.text("x", 600)
+    return http.Response.text("x", 600)
   } else if kind == "status-neg" {
-    return Response.bytes("x".bytes, -200)
+    return http.Response.bytes("x".bytes, -200)
   } else if kind == "status-big" {
-    return Response.text("x", 99999999999)
+    return http.Response.text("x", 99999999999)
   } else if kind == "status-100" {
-    return Response.text("x", 100)
+    return http.Response.text("x", 100)
   } else if kind == "status-101" {
-    return Response.text("x", 101)
+    return http.Response.text("x", 101)
   } else if kind == "status-199" {
-    return Response.text("x", 199)
+    return http.Response.text("x", 199)
   } else if kind == "status-200" {
-    return Response.text("x", 200)
+    return http.Response.text("x", 200)
   } else if kind == "status-599" {
-    return Response.text("x", 599)
+    return http.Response.text("x", 599)
   }
   // "ok": a tab, a quote and bytes over 127 are a valid value; the
   // token's punctuation is a valid name.
@@ -73,7 +73,7 @@ fn main: Int {
     })
     server.get("/__stop", (req) {
       server.close()
-      Response.text("bye")
+      http.Response.text("bye")
     })
     port = server.port()
     if a.size > 2 {

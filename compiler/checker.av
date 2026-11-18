@@ -4366,6 +4366,11 @@ pub class Checker {
         return t_int()
       }
     }
+    spelled = std_type_bare_spelling(expr.ident)
+    if spelled.size > 0 {
+      fail(expr.loc, "${expr.ident} needs its module's name: write ${spelled}; a std module's types are not named bare")
+      return t_int()
+    }
     fail_hint(expr.loc, "unknown name ${expr.ident}", name_hint(expr.ident))
     t_int()
   }
@@ -5510,7 +5515,7 @@ pub class Checker {
       return check_call(expr, has_want, want)
     }
     if recv.kind == ex_name() {
-      if cdef = find_class_template(recv.ident, recv.mod_name) {
+      if cdef = find_class_template(recv.ident, recv.mod_name), recv.mod_name.size > 0 || cdef.mod_name == self.current_module || !str_starts(cdef.mod_name, "std.") {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
@@ -6003,6 +6008,24 @@ pub class Checker {
       recv = flatten_type_chain(recv)
     }
     expr.receiver = recv
+    if recv.kind == ex_name() && recv.type_args.size > 0 && recv.mod_name.size == 0 {
+      // A std module's generic type named bare (`Mutex(Int).new`): the
+      // program's own or an import's is meant, else the qualified
+      // spelling is asked for (`sync.Mutex(Int).new`).
+      sm = self.resolver.std_owner_of(recv.ident, self.current_module)
+      if sm.size > 0 && self.resolver.template_in(sm, recv.ident) {
+        saved_scope = self.resolver.scope_mod
+        self.resolver.scope_mod = self.current_module
+        owners = self.resolver.template_owners(recv.ident)
+        self.resolver.scope_mod = saved_scope
+        if owners.size == 1 {
+          recv.mod_name = owners[0]
+        } else if owners.size == 0 {
+          fail(recv.loc, self.resolver.std_bare_text(recv.ident, sm))
+          return t_int()
+        }
+      }
+    }
     if recv.kind == ex_name() && recv.type_args.size > 0 {
       if is_generic_template_in(recv.ident, recv.mod_name) {
         take_type_app(recv)
@@ -6022,8 +6045,10 @@ pub class Checker {
             clash = clash_message(recv.ident, self.current_module)
             if clash.size > 0 {
               fail(recv.loc, clash)
+            } else if recv.mod_name.size > 0 {
+              fail(recv.loc, "unknown type ${recv.mod_name}.${recv.ident}")
             } else {
-              fail(recv.loc, "unknown type ${recv.ident}")
+              fail(recv.loc, unknown_type_text(recv.ident))
             }
             return t_int()
           }
@@ -6051,7 +6076,12 @@ pub class Checker {
             if lib_is_visible(recv.ident, self.current_module) {
               return check_lib_call(expr, recv.ident)
             }
-            fail(recv.loc, "unknown name ${recv.ident}")
+            spelled = std_type_bare_spelling(recv.ident)
+            if spelled.size > 0 {
+              fail(recv.loc, "${recv.ident} needs its module's name: write ${spelled}; a std module's types are not named bare")
+            } else {
+              fail(recv.loc, "unknown name ${recv.ident}")
+            }
             return t_int()
           }
           if k = self.known_mods.get(recv.ident), qualifier_ok(recv.ident, self.current_module) {

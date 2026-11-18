@@ -4,8 +4,8 @@
 import std.sync
 
 struct Ports {
-  hits: Mutex(Int)
-  done: Channel(Int)
+  hits: sync.Mutex(Int)
+  done: sync.Channel(Int)
   name: String
 }
 
@@ -15,7 +15,7 @@ struct Pair {
 }
 
 fn main {
-  p = Ports { hits: Mutex(Int).new(0), done: Channel(Int).new(4), name: "p" }
+  p = Ports { hits: sync.Mutex(Int).new(0), done: sync.Channel(Int).new(4), name: "p" }
   hs: Array(JoinHandle(Void)) = []
   for i in 0..4 {
     hs.push(spawn {
@@ -39,7 +39,7 @@ fn main {
   })
   puts(r[0] + r[1])
   puts(p.hits.with((n) { n }))
-  ch = Channel(Ports).new(1)
+  ch = sync.Channel(Ports).new(1)
   _ = ch.send(p)
   if got = ch.recv() {
     got.hits.with((n) { n += 100 })

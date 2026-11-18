@@ -113,14 +113,14 @@ import std.base64
 import std.http
 
 fn main {
-  if doc = Json.parse("{\"n\": 1}") {
+  if doc = json.Json.parse("{\"n\": 1}") {
     puts(doc.int("n") ?? 0)
   }
-  if re = Regex.compile("a+") {
+  if re = regex.Regex.compile("a+") {
     puts(re.count("aa"))
   }
   p = "b"
-  if re2 = Regex.compile(p + "+") {
+  if re2 = regex.Regex.compile(p + "+") {
     puts(re2.count("bb"))
   }
   if back = "z".bytes.compress().uncompress() {

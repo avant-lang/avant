@@ -194,7 +194,7 @@ fn test_scratch(c: Checks) {
     c.expect(read_all(top_log).contains("avant: kept temporary directory ${top_dir}"), "top-level keep prints the path")
 
     std_src = "${work}/std_temp.av"
-    std_body = "import std.testing\nfn main: Int {\n  t = Test.new()\n  a = t.temp_dir()\n  b = t.temp_dir()\n  puts(a)\n  t.check(a != b, \"fresh per call\")\n  t.check(fs.exists(a) && fs.exists(b), \"created\")\n  t.check((fs.write(\"\${a}/x.txt\", \"x\") ?? -1) == 1, \"writable\")\n  t.finish()\n}\nimport std.fs\n"
+    std_body = "import std.testing\nfn main: Int {\n  t = testing.Test.new()\n  a = t.temp_dir()\n  b = t.temp_dir()\n  puts(a)\n  t.check(a != b, \"fresh per call\")\n  t.check(fs.exists(a) && fs.exists(b), \"created\")\n  t.check((fs.write(\"\${a}/x.txt\", \"x\") ?? -1) == 1, \"writable\")\n  t.finish()\n}\nimport std.fs\n"
     _ = fs.write(std_src, std_body)
     std_bin = "${work}/std_temp.bin"
     std_code = compile_av(compiler, std_src, std_bin, "${work}/std_temp.clog")
@@ -314,7 +314,7 @@ fn test_scratch(c: Checks) {
     loud = scratch_dir()
     mkdir_p("${loud}/tests")
     _ = fs.write("${loud}/avant.toml", "[package]\nname = \"loud\"\nversion = \"0.1.0\"\n")
-    _ = fs.write("${loud}/tests/test_loud.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  for i in 0..5000 {\n    t.check(true, \"one of 5000 checks whose output fills the pipe\")\n  }\n  t.finish()\n}\n")
+    _ = fs.write("${loud}/tests/test_loud.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  for i in 0..5000 {\n    t.check(true, \"one of 5000 checks whose output fills the pipe\")\n  }\n  t.finish()\n}\n")
     pm = 0
     while pm < pipe_modes.size {
       rbase = "${work}/pipe-runner-base-${pm}"
