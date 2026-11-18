@@ -653,6 +653,13 @@ fn test_layout_twins(c: Checks, compiler: String, dir: String) {
   write_av(dir, "tlb", "lib twinb {\n  struct Pair {\n    k: Int32\n    j: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twinb.malloc(Pair.size)\n  p.k = 7\n  p.j = 8\n  p\n}\n\npub fn (p: Ptr(Pair)) n: Int {\n  99\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n()\n}\n")
   write_av(dir, "tlmain", "import tla\nimport tlb\n\nfn main {\n  q = tlb.make()\n  puts(q.twice())\n}\n")
   mod_fails(c, compiler, dir, "tlmain", "no method twice on Ptr(Pair)", "a method of one module's Ptr(Pair) is not another module's")
+  // One C function bound by two modules with their own layouts of one
+  // name: the two signatures read the same, so each layout is named with
+  // its module.
+  write_av(dir, "tlc", "lib twinc {\n  struct Pair {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  twinc.calloc(1, Pair.size)\n}\n")
+  write_av(dir, "tld", "lib twind {\n  struct Pair {\n    k: Int\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  twind.calloc(1, Pair.size)\n}\n")
+  write_av(dir, "tlcd", "import tlc\nimport tld\n\nfn main {\n  p = tlc.make()\n  q = tld.make()\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "tlcd", "C function calloc is already bound as twinc.calloc(Int, Int): Ptr(tlc.Pair) in tlc; a second binding of it must declare the same signature, not (Int, Int): Ptr(tld.Pair)", "a second binding's layout of another module is named with its module")
 }
 
 // A module's last name qualifies its names, as its whole name does

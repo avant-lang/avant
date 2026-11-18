@@ -547,7 +547,15 @@ pub fn (checker_self: Checker) register_lib_in(lib_def: LibDef) {
               where = " in ${fm}"
             }
           }
-          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${c_sig_text(first.params, first.ret)}${where}; a second binding of it must declare the same signature, not ${c_sig_text(params, ret)}")
+          was = c_sig_text(first.params, first.ret)
+          now = c_sig_text(params, ret)
+          if was == now {
+            // Two modules' C layouts of one name read the same: each
+            // named with its module.
+            was = c_sig_text_mod(first.params, first.ret)
+            now = c_sig_text_mod(params, ret)
+          }
+          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${was}${where}; a second binding of it must declare the same signature, not ${now}")
           return
         }
       }
@@ -582,6 +590,37 @@ pub fn c_sigs_same(ap: Array(Ty), ar: Ty, bp: Array(Ty), br: Ty): Bool {
     i += 1
   }
   true
+}
+
+// A binding's signature with each C layout and opaque C type named by
+// its module: `(Int, Int): Ptr(ma.Pair)`.
+pub fn c_sig_text_mod(params: Array(Ty), ret: Ty): String {
+  out = "("
+  i = 0
+  while i < params.size {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + c_ty_text_mod(params[i])
+    i += 1
+  }
+  out = out + ")"
+  if !ret.is_void() {
+    out = out + ": " + c_ty_text_mod(ret)
+  }
+  out
+}
+
+pub fn c_ty_text_mod(t: Ty): String {
+  if t.is_ptr() {
+    if e = t.inner {
+      return "Ptr(${c_ty_text_mod(e)})"
+    }
+  }
+  if (t.is_clayout() || t.is_opaque()) && t.mod_name.size > 0 {
+    return "${t.mod_name}.${t.show()}"
+  }
+  t.show()
 }
 
 // A binding's signature as written: `(Int32, String): Int`.
