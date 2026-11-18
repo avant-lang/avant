@@ -4754,6 +4754,7 @@ One blocking request at a time. Redirects are followed (at most five), chunked r
 import std.http
 
 fn main {
+        0
   if resp = http.get("http://127.0.0.1:8080/") {
     puts(resp.status)
     puts(resp.headers().get("Content-Type") ?? "")
