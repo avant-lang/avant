@@ -3383,6 +3383,27 @@ fn main {
 }
 ```
 
+A field `message: Int8[504]` is C's `char message[504]` (C's order, `T[N]`: `T` a C scalar, a `Ptr` or a layout, `N` an integer literal or a module constant written as one): it takes C's room and alignment, so the fields after it sit where C puts them. It is no value: `e.message[i]` reads or writes one element (checked against `N`), `e.message.size` is `N`, and an `Int8` or `UInt8` array's `e.message.to_s()` is its text up to the first NUL (at most `N` bytes).
+
+```avant
+lib c {
+  struct Err {
+    code: Int32
+    tag: UInt8[4]
+    next: Int32
+  }
+  fun calloc(n: Int, size: Int): Ptr(Err)
+}
+
+fn main {
+  e = c.calloc(1, Err.size)
+  e.tag[0] = 111
+  e.tag[1] = 107
+  e.next = 7
+  puts("${e.tag.to_s()} ${e.tag.size} ${Err.size}")   // => ok 4 12
+}
+```
+
 `Ptr(T)?` is the nullable pointer: one word, `nil` is C's NULL, in a `fun` result or parameter, a layout's field, and anywhere in Avant code. Declare it where C may give NULL (a failed `malloc`, the end of a list) and test it as any optional:
 
 ```avant

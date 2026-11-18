@@ -153,6 +153,10 @@ pub class Checker {
   // name: an unknown name there that names a type leaves the type's name
   // in recv_type for the caller's message.
   pub recv_name: Bool = false
+  // The C array field the next field read names (`r.vtype`, a `T[N]`) is
+  // allowed: its reader is `r.vtype[i]`, `r.vtype.size` or
+  // `r.vtype.to_s()`, which sets this for its own object only.
+  pub carray_ok: Bool = false
   pub recv_type: String = ""
   pub self_name: String = ""
   pub pending: Array(Function)
@@ -1766,7 +1770,9 @@ pub class Checker {
       }
       if target.kind == ex_index() {
         if arr = target.left, ix = target.right {
+          self.carray_ok = true
           container = check_expr(arr)
+          self.carray_ok = false
           if container.is_agg() {
             if user_op(container, "[]=") {
               // `c[i] = v` is the call `c.[]=(i, v)`.
@@ -2025,6 +2031,9 @@ pub class Checker {
 
   pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
+    // Only the expression a C array's reader names directly may be one.
+    carray_flag = self.carray_ok
+    self.carray_ok = false
     if k == ex_field() && layout_size_form(expr) {
       return check_integer(expr, has_want, want)
     }
@@ -2077,6 +2086,7 @@ pub class Checker {
       }
       at = expr.bare_name
       written = expr.ident
+      self.carray_ok = carray_flag
       got_field = check_field(expr)
       if b0 = at, member_is_call(expr) {
         bare_call(expr, b0, written)
@@ -2612,6 +2622,10 @@ pub class Checker {
   // call becomes: `n.to_s` is the interpolation "${n}"), or marked it
   // one; a builtin read-only property (`size`, `bytes`) is not one.
   pub fn member_is_call(expr: Expr): Bool {
+    if expr.kind == ex_int() {
+      // A C array's `.size`, written in place as its constant.
+      return false
+    }
     if expr.kind != ex_field() {
       return true
     }
@@ -2648,6 +2662,8 @@ pub class Checker {
   }
 
   pub fn check_field(expr: Expr): Ty {
+    carray_here = self.carray_ok
+    self.carray_ok = false
     if obj = expr.object {
       // An enum's member (`Tok.eof`): a value of the enum, marked
       // type_call for the lowering.
@@ -2690,8 +2706,21 @@ pub class Checker {
       mark = err_count()
       self.recv_name = obj.kind == ex_name()
       self.recv_type = ""
+      self.carray_ok = expr.ident == "size"
       object = check_expr(obj)
+      self.carray_ok = false
       self.recv_name = false
+      if object.is_carray() {
+        if expr.ident == "size" {
+          // `r.vtype.size`: N, a constant.
+          expr.kind = ex_int()
+          expr.int_bits = object.count.to_u64()
+          expr.object = nil
+          return t_int()
+        }
+        fail(expr.loc, "${object.show()} is a C array: read it with [i] and .size (.to_s() reads an Int8 or UInt8 array as text)")
+        return t_int()
+      }
       if self.recv_type.size > 0 {
         fail_no_type_fn(expr.loc, obj, self.recv_type, expr.ident)
         return t_int()
@@ -2952,10 +2981,10 @@ pub class Checker {
         return t_int()
       }
       if object.is_ptr() {
-        return check_ptr_member(expr, object)
+        return carray_member(expr, check_ptr_member(expr, object), carray_here)
       }
       if object.is_clayout() {
-        return check_clayout_member(expr, object)
+        return carray_member(expr, check_clayout_member(expr, object), carray_here)
       }
       if object.is_module() {
         // A qualified name that is no function, constant or type of the
@@ -3091,6 +3120,16 @@ pub class Checker {
     t_int()
   }
 
+  // A field of C memory that is a C array (`T[N]`) is read only by its
+  // readers (carray_ok); anywhere else it is refused, since it is no value.
+  pub fn carray_member(expr: Expr, got: Ty, ok: Bool): Ty {
+    if got.is_carray() && !ok {
+      fail(expr.loc, "${expr.ident} is a C array (${got.show()}), not a value: read its elements with .${expr.ident}[i], its length with .${expr.ident}.size, an Int8 or UInt8 array's text with .${expr.ident}.to_s()")
+      return t_int()
+    }
+    got
+  }
+
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
     owner = method_owner_name(object)
     pointee = object
@@ -3198,7 +3237,19 @@ pub class Checker {
           ix.proven = true
         }
       }
+      self.carray_ok = true
       container = check_expr(arr)
+      self.carray_ok = false
+      if container.is_carray() {
+        got = check_expr_as(ix, t_int())
+        if !got.is_int() {
+          fail(ix.loc, "a C array's index must be Int, got ${got.show()}")
+        }
+        if ce = container.inner {
+          return ty_c_view(ce)
+        }
+        return t_int()
+      }
       if container.is_agg() && user_op(container, "[]") {
         // `c[i]` is the call `c.[](i)`.
         rewrite_op_call(expr, arr, "[]", index_args(expr))
@@ -5678,7 +5729,9 @@ pub class Checker {
     if tn.size == 0 {
       self.recv_name = recv.kind == ex_name()
       self.recv_type = ""
+      self.carray_ok = expr.callee == "to_s" && expr.args.size == 0
       object = check_expr(recv)
+      self.carray_ok = false
       self.recv_name = false
       tn = self.recv_type
     }
@@ -5687,6 +5740,18 @@ pub class Checker {
         check_expr(a)
       }
       fail_no_type_fn(expr.loc, recv, tn, expr.callee)
+      return t_int()
+    }
+    if object.is_carray() {
+      // `r.message.to_s()`: a C char array's text, up to its first NUL
+      // or its N bytes.
+      if ce = object.inner, ce.c_scalar == cs_int8() || ce.c_scalar == cs_uint8() {
+        if expr.callee == "to_s" && expr.args.size == 0 {
+          expr.resolved = "carray.to_s"
+          return t_string()
+        }
+      }
+      fail(expr.loc, "${object.show()} is a C array: read it with [i] and .size (.to_s() reads an Int8 or UInt8 array as text)")
       return t_int()
     }
     if new_err_since(mark) && is_ident_chain(recv) {

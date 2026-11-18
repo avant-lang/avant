@@ -89,7 +89,12 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   names: Array(String) = []
   j = 0
   while j < t.fields.size {
-    ft = lw.field_mty(t.fields[j].ty, loc)
+    ft = -1
+    if t.fields[j].ty.is_carray() {
+      ft = lw.carray_mty(t.fields[j].ty, loc)
+    } else {
+      ft = lw.field_mty(t.fields[j].ty, loc)
+    }
     if t.fields[j].ty.c_scalar > 0 {
       ft = lw.c_scalar_mty(t.fields[j].ty.c_scalar)
     }
@@ -108,6 +113,36 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   lw.lw_busy[name] = 0
   lw.lw_m.types.set_fields(id, fields, names)
   id
+}
+
+// A C array field `T[N]`: a `carray` layout of N elements (C's
+// `T name[N]`: N times the element's room, its alignment), the element a
+// C scalar at its C width, a pointer, or a C layout by value.
+pub fn (lw: MirLower) carray_mty(t: Ty, loc: Location): Int {
+  if e = t.inner {
+    et = -1
+    if e.is_clayout() {
+      l = lw.clayout_layout(e, loc)
+      if l < 0 {
+        return -1
+      }
+      et = lw.lw_m.types.agg(l)
+    } else {
+      et = lw.c_elem_mty(e, loc)
+    }
+    if lw.failed() || et < 0 {
+      return -1
+    }
+    fs: Array(Int) = []
+    ns: Array(String) = []
+    for i in 0..t.count {
+      fs.push(et)
+      ns.push("")
+    }
+    return lw.lw_m.types.agg(lw.lw_b.note_layout("carray(${lw.lw_m.types.text(et)}x${t.count})", mlk_carray(), fs, ns))
+  }
+  lw.refuse(loc, "a C array without an element type")
+  -1
 }
 
 // ---- calls into C
@@ -698,8 +733,8 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
 // through a Ptr), else 0.
 pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
   if e.kind == ex_index() {
-    // An element through a Ptr: its pointee's kind.
-    if l = e.left, lt = l.ty, lt.is_ptr() {
+    // An element through a Ptr or of a C array: its element's kind.
+    if l = e.left, lt = l.ty, lt.is_ptr() || lt.is_carray() {
       if inner = lt.inner {
         return inner.c_scalar
       }
@@ -820,6 +855,22 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
 pub fn (lw: MirLower) ptr_index_place(e: Expr): MPlace {
   b = lw.lw_b
   if arr = e.left, ix = e.right, at = arr.ty {
+    if at.is_carray() {
+      // A C array field: its place (through the pointer, NULL
+      // checked), the index checked against N.
+      p = lw.place_of(arr)
+      if lw.failed() {
+        return b.pl(0)
+      }
+      i0 = lw.lower_expr(ix)
+      if lw.failed() {
+        return b.pl(0)
+      }
+      lw.at(e.loc)
+      k0 = lw.hold(i0, mt_int())
+      b.check_bounds(b.copy_local(k0), b.c_i64(at.count))
+      return b.index(p, b.copy_local(k0))
+    }
     o = lw.lower_expr(arr)
     if lw.failed() {
       return b.pl(0)
@@ -860,6 +911,36 @@ pub fn (lw: MirLower) lower_ptr_index_read(e: Expr): MOperand {
     return lw.from_c_scalar(raw, ck)
   }
   lw.tmp(ty, b.rv_use(b.copy(p)))
+}
+
+// `r.message.to_s()` on a C char array (Int8 or UInt8, `T[N]`): its
+// bytes up to the first NUL, at most N (libc's strnlen), copied as a
+// String (avant_str_from_c).
+pub fn (lw: MirLower) lower_carray_to_s(e: Expr, recv: Expr): MOperand {
+  b = lw.lw_b
+  if rt = recv.ty {
+    p = lw.place_of(recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    a0 = lw.tmp(b.types.ptr_to(lw.carray_mty(rt, e.loc)), b.rv_addr(p))
+    a = lw.hold(lw.tmp(mt_ptr(), b.rv_cast(a0, mt_ptr())), mt_ptr())
+    ps: Array(Int) = []
+    ps.push(mt_ptr())
+    ps.push(mt_u64())
+    sig = b.sig(ps, mt_u64(), false)
+    x = b.extern_c("strnlen", sig)
+    n = b.temp(mt_u64())
+    st = b.call(n, "strnlen", lw.two(b.copy_local(a), b.c_u64(rt.count)))
+    if b.module.externs[x].sig != sig {
+      st.sig = sig
+    }
+    n64 = lw.tmp(mt_int(), b.rv_cast(b.copy_local(n), mt_int()))
+    return lw.call_to(mt_str(), "avant_str_from_c", lw.two(b.copy_local(a), n64))
+  }
+  lw.refuse(e.loc, "this C array's text")
+  b.c_i32(0)
 }
 
 // `String.from_c(p, n)`, `Bytes.from_c(p, n)`: p as an untyped pointer

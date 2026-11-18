@@ -141,8 +141,17 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
 // the element type (E5).
 fn ll_layouts(e: LlEmit, out: Buf) {
   n = 0
+  // C's arrays (`T name[N]`) first: an array type is no struct, so a
+  // struct that holds one may not name it before its definition.
   for l in e.ts.layouts {
-    if l.kind != mlk_elems() {
+    if l.kind == mlk_carray() {
+      out.push_str("${ll_type_name(l.name)} = type [${l.fields.size} x ${e.llt(l.fields[0])}]\n")
+      n += 1
+    }
+  }
+  for l in e.ts.layouts {
+    if l.kind == mlk_carray() {
+    } else if l.kind != mlk_elems() {
       out.push_str("${ll_type_name(l.name)} = type {")
       for j in 0..l.fields.size {
         if j > 0 {

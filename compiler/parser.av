@@ -1509,6 +1509,12 @@ pub class Parser {
         fail(field.loc, "C layout fields have no defaults")
         break
       }
+      if self.current().kind == tk_l_bracket() {
+        // `vtype: UInt8[4]`, C's `uint8_t vtype[4]`.
+        self.bump()
+        field.count = self.parse_prefix()
+        expect(tk_r_bracket())
+      }
       layout.fields.push(field)
       if new_err_since(mark0) {
         break

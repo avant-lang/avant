@@ -1456,7 +1456,7 @@ pub fn c_field_ok(ty: Ty): Bool {
     // NULL reads as nil, nil stores NULL.
     return true
   }
-  if ty.is_clayout() {
+  if ty.is_clayout() || ty.is_carray() {
     return true
   }
   if r = ty_opt_ref(ty), r.is_ptr() {
@@ -1468,6 +1468,37 @@ pub fn c_field_ok(ty: Ty): Bool {
     return true
   }
   false
+}
+
+// The N of a C array field `T[N]`: an integer literal, or a constant of
+// the layout's module written as one (`const msg_len = 504`); 0 after an
+// error.
+pub fn clayout_count(resolver: TypeResolver, cx: Expr, mod_name: String): Int {
+  lit = cx
+  if cx.kind == ex_name() {
+    found = false
+    if p = resolver.program {
+      for cd in p.consts {
+        if cd.name == cx.ident && cd.mod_name == mod_name {
+          lit = cd.value
+          found = true
+        }
+      }
+    }
+    if !found {
+      resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant; ${cx.ident} is neither")
+      return 0
+    }
+  }
+  if lit.kind != ex_int() {
+    resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant whose value is one")
+    return 0
+  }
+  if lit.int_bits < 1u64 || lit.int_bits > 16777216u64 {
+    resolver.fail(cx.loc, "a C array's length is 1 to 16777216, not ${lit.int_bits}")
+    return 0
+  }
+  lit.int_bits.to_i()
 }
 
 pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(String, Int)) {
@@ -1494,6 +1525,18 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
         resolver.fail(field.loc, "${ty.name} is not a complete C layout yet")
         return
       }
+    }
+    if cx = field.count {
+      // `T[N]`: N elements of T, C's room and alignment.
+      if !(ptr_elem_ok(ty) || ty.is_clayout()) {
+        resolver.fail(field.loc, "a C array field holds C scalars, pointers or C layouts, not ${ty.show()}")
+        return
+      }
+      n = clayout_count(resolver, cx, layout.mod_name)
+      if n < 1 {
+        return
+      }
+      ty = ty_carray(ty, n)
     }
     if !c_field_ok(ty) {
       resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show()}")

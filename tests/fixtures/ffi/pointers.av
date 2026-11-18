@@ -3,7 +3,16 @@
 // ones read as their Avant view and are range-checked on the way back) and
 // for pointers (`T **`: `Ptr(Ptr(T)?)`, each element tested for NULL).
 // C gives no length, so the counts below are the arrays' own. `L.size` is
-// a layout's C size, a constant that takes its place's type.
+// a layout's C size, a constant that takes its place's type. `&x` passes a
+// local's address to C, which writes it (an out-parameter: `int *`,
+// `T **`); the local holds C's value after the call, a narrow one
+// range-checked on the way in. `String.from_c(p, n)` and
+// `Bytes.from_c(p, n)` copy n bytes of C memory, NULs kept. A layout's
+// `T[N]` field is C's `T name[N]`: indexed (checked against N), sized
+// (`.size`), and read as text (`.to_s()`) when it holds chars; the fields
+// after it sit where C puts them.
+
+const msg_len = 504
 
 lib pt {
   struct Pair {
@@ -46,6 +55,31 @@ lib pt {
   fun pt_out_f32(f: Ptr(Float32))
   fun pt_out_two(a: Ptr(Int), d: Ptr(Float64)): Int
   fun pt_blob: Ptr(UInt8)
+  struct Reply {
+    kind: Int32
+    integer: Int
+    dval: Float64
+    len: UInt64
+    str: String?
+    vtype: Int8[4]
+    elements: UInt64
+    element: Ptr(Ptr(Reply)?)?
+  }
+  struct Err {
+    domain: UInt32
+    code: UInt32
+    message: Int8[msg_len]
+  }
+  struct Grid {
+    cells: Int32[3]
+    pairs: Pair[2]
+    tail: UInt8
+  }
+  fun pt_reply_at: Ptr(Reply)
+  fun pt_err_at: Ptr(Err)
+  fun pt_grid_at: Ptr(Grid)
+  fun pt_grid_sum(g: Ptr(Grid)): Int
+  fun pt_sizeof_arrays(which: Int32): Int
   fun pt_none: Ptr(Int8)?
   fun free(p: Ptr(Pair))
 }
@@ -151,4 +185,23 @@ fn main {
   puts(String.from_c(pt.pt_none(), 0).size)
   four = Bytes.from_c(pt.pt_ints_at(), 4)
   puts("${four.size} ${four[0]}")
+  r = pt.pt_reply_at()
+  puts("${r.vtype.to_s()} ${r.vtype.size} ${r.vtype[0]} ${r.elements}")
+  r.vtype[3] = 33
+  puts(r.vtype.to_s())
+  e = pt.pt_err_at()
+  puts("${e.domain} ${e.code} ${e.message.to_s()} ${e.message.size}")
+  e.message[0] = 66
+  e.message[1] += 1
+  puts(e.message.to_s())
+  g = pt.pt_grid_at()
+  sum: Int32 = 0
+  for i in 0..g.cells.size {
+    sum += g.cells[i]
+  }
+  puts("${sum} ${g.pairs[1].a} ${g.tail}")
+  g.cells[2] = 30
+  g.pairs[1].b = 80
+  puts(pt.pt_grid_sum(g))
+  puts("${Reply.size} ${pt.pt_sizeof_arrays(0)} ${pt.pt_sizeof_arrays(2)} ${Err.size} ${pt.pt_sizeof_arrays(1)} ${Grid.size} ${pt.pt_sizeof_arrays(3)}")
 }

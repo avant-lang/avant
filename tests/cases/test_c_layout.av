@@ -40,7 +40,7 @@ fn test_release_errors(c: Checks, compiler: String) {
 // the printed line lost when stdout is a file) and a NULL String field
 // read as "".
 fn null_src(body: String): String {
-  "lib e {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  struct H {\n    name: String\n    note: String?\n    at: Pair\n  }\n  fun malloc(size: Int): Ptr(Pair)\n  fun calloc(n: Int, size: Int): Ptr(H)\n  fun realloc(p: Ptr(Void)?, size: Int): Ptr(Int32)\n  fun strdup(s: String): Ptr(UInt8)\n}\nfn main {\n  puts(\"before\")\n${body}}\n"
+  "lib e {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  struct H {\n    name: String\n    note: String?\n    at: Pair\n  }\n  fun malloc(size: Int): Ptr(Pair)\n  fun calloc(n: Int, size: Int): Ptr(H)\n  fun realloc(p: Ptr(Void)?, size: Int): Ptr(Int32)\n  fun strdup(s: String): Ptr(UInt8)\n  struct Arr {\n    xs: Int32[2]\n  }\n  fun aligned_alloc(al: Int, size: Int): Ptr(Arr)\n}\nfn main {\n  puts(\"before\")\n${body}}\n"
 }
 
 fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String, status: Int, want: String) {
@@ -63,18 +63,19 @@ fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String,
 fn test_null_traps(c: Checks, compiler: String) {
   stamp = now_ms()
   site = "c_layout-${stamp}-null-"
-  null_trap(c, compiler, stamp, "read", "  p = e.malloc(1 << 62)\n  puts(p.a)\n", 1, "before\navant runtime: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...) at ${site}read.av:19:")
+  null_trap(c, compiler, stamp, "read", "  p = e.malloc(1 << 62)\n  puts(p.a)\n", 1, "before\navant runtime: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...) at ${site}read.av:23:")
   null_trap(c, compiler, stamp, "write", "  p = e.malloc(1 << 62)\n  p.b = 7\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
   null_trap(c, compiler, stamp, "compound", "  p = e.malloc(1 << 62)\n  p.b += 1\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
   null_trap(c, compiler, stamp, "nested", "  h = e.calloc(1, 1 << 62)\n  puts(h.at.a)\n", 1, "before\navant runtime: the field at read or written through a NULL Ptr(H)")
-  null_trap(c, compiler, stamp, "string-field", "  h = e.calloc(1, 32)\n  puts(h.note ?? \"no note\")\n  puts(h.name.size)\n", 1, "before\nno note\navant runtime: the C field H.name is NULL (declare it String? to read NULL as nil) at ${site}string-field.av:20:")
+  null_trap(c, compiler, stamp, "string-field", "  h = e.calloc(1, 32)\n  puts(h.note ?? \"no note\")\n  puts(h.name.size)\n", 1, "before\nno note\navant runtime: the C field H.name is NULL (declare it String? to read NULL as nil) at ${site}string-field.av:24:")
   null_trap(c, compiler, stamp, "string-interp", "  h = e.calloc(1, 32)\n  puts(\"name \${h.name}\")\n", 1, "avant runtime: the C field H.name is NULL")
   null_trap(c, compiler, stamp, "released", "  h = e.calloc(1, 32)\n  h.name = \"x${1}\"\n  puts(h.name)\n  release(h.name)\n  puts(h.name)\n", 1, "before\nx1\navant runtime: the C field H.name is NULL")
-  null_trap(c, compiler, stamp, "index-read", "  q = e.realloc(nil, 1 << 62)\n  puts(q[1])\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32) (a pointer C may leave NULL is declared Ptr(Int32)? and tested: if p = ...) at ${site}index-read.av:19:")
+  null_trap(c, compiler, stamp, "index-read", "  q = e.realloc(nil, 1 << 62)\n  puts(q[1])\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32) (a pointer C may leave NULL is declared Ptr(Int32)? and tested: if p = ...) at ${site}index-read.av:23:")
   null_trap(c, compiler, stamp, "index-write", "  q = e.realloc(nil, 1 << 62)\n  q[0] = 5\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32)")
   null_trap(c, compiler, stamp, "index-range", "  u = e.strdup(\"ab\")\n  puts(u[0])\n  u[1] = u[0] + 200\n", 1, "before\n97\navant runtime: 297 out of range for the C type UInt8 (0..255)")
-  null_trap(c, compiler, stamp, "from-c-null", "  q = e.realloc(nil, 1 << 62)\n  puts(String.from_c(q, 3))\n", 1, "before\navant runtime: String.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL at ${site}from-c-null.av:19:")
+  null_trap(c, compiler, stamp, "from-c-null", "  q = e.realloc(nil, 1 << 62)\n  puts(String.from_c(q, 3))\n", 1, "before\navant runtime: String.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL at ${site}from-c-null.av:23:")
   null_trap(c, compiler, stamp, "from-c-negative", "  u = e.strdup(\"ab\")\n  puts(Bytes.from_c(u, -1).size)\n", 1, "before\navant runtime: Bytes.from_c needs a length of 0 or more")
+  null_trap(c, compiler, stamp, "c-array-bounds", "  a = e.aligned_alloc(8, Arr.size)\n  a.xs[1] = 5\n  i = 2\n  puts(a.xs[i])\n", 1, "before\navant runtime: index 2 out of bounds (size 2)")
   null_trap(c, compiler, stamp, "task", "  t = spawn {\n    q = e.malloc(1 << 62)\n    q.a.to_i()\n  }\n  if v = t.join() {\n    puts(v)\n  } else err {\n    puts(\"task: \${err.what}\")\n  }\n  puts(\"after\")\n", 0, "task: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...)\nafter\n")
 }
 

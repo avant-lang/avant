@@ -1160,8 +1160,39 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
     *align = (int)al;
     return 1;
   }
-  if (t.kind == CXType_ConstantArray || t.kind == CXType_IncompleteArray || t.kind == CXType_VariableArray) {
-    snprintf(reason, reason_n, "array field; skipped");
+  if (t.kind == CXType_ConstantArray) {
+    /* C's `T name[N]` is the field `name: T[N]`, T a C scalar, a pointer
+     * or a layout: N times the element's room, at its alignment. */
+    char elem[MAX_NAME];
+    int esize = 0;
+    int ealign = 1;
+    long long n = clang_getArraySize(t);
+    CXType et = unwrap(clang_getArrayElementType(t));
+    if (et.kind == CXType_ConstantArray) {
+      snprintf(reason, reason_n, "array of arrays field; skipped");
+      return 0;
+    }
+    if (is_char_type(et)) {
+      copy_name(elem, sizeof(elem), "Int8");
+      esize = 1;
+      ealign = 1;
+    } else if (!map_field_type(b, et, elem, sizeof(elem), &esize, &ealign, reason, reason_n)) {
+      return 0;
+    }
+    if (n < 1 || n > 16777216 || strcmp(elem, "String") == 0) {
+      snprintf(reason, reason_n, "array field of no Avant type; skipped");
+      return 0;
+    }
+    if (snprintf(avant, avant_n, "%s[%lld]", elem, n) >= (int)avant_n) {
+      snprintf(reason, reason_n, "array field type is too long; skipped");
+      return 0;
+    }
+    *size = (int)(esize * n);
+    *align = ealign;
+    return 1;
+  }
+  if (t.kind == CXType_IncompleteArray || t.kind == CXType_VariableArray) {
+    snprintf(reason, reason_n, "array field without a length; skipped");
     return 0;
   }
   spelling = clang_getTypeSpelling(t);

@@ -170,6 +170,11 @@ pub fn mir_mty(t: Ty): String {
   if t.is_enum() {
     return "${mir_module_part(t.mod_name)}.${t.name}"
   }
+  if t.is_carray() {
+    if ce = t.inner {
+      return "${mir_mty(ce)}[${t.count}]"
+    }
+  }
   if t.is_struct() || t.is_class() {
     // A generic instance: its template's name and the type arguments,
     // `main.Pair(Int,String)` (resolve.av instantiate_template: origin and
@@ -382,11 +387,11 @@ pub fn mir_c_view_mty(k: Int): Int {
   mt_i64()
 }
 
-// Whether e is `p[i]` through a Ptr.
+// Whether e is `p[i]` through a Ptr, or an element of a C array field.
 pub fn mir_ptr_index(e: Expr): Bool {
   if e.kind == ex_index() {
     if l = e.left, lt = l.ty {
-      return lt.is_ptr()
+      return lt.is_ptr() || lt.is_carray()
     }
   }
   false

@@ -1066,3 +1066,33 @@ int pt_names(char **argv, void **slots) { return argv != NULL && slots != NULL; 
 static const uint8_t pt_blob_bytes[5] = { 'a', 'b', 0, 'c', 'd' };
 const uint8_t *pt_blob(void) { return pt_blob_bytes; }
 const char *pt_none(void) { return NULL; }
+/* pointers.av: fixed arrays inside a layout (T[N]). */
+typedef struct PtReply {
+  int type;
+  long long integer;
+  double dval;
+  size_t len;
+  char *str;
+  char vtype[4];
+  size_t elements;
+  struct PtReply **element;
+} PtReply;
+static PtReply pt_reply = { 1, 7, 0.0, 3, "abc", "txt", 2, NULL };
+PtReply *pt_reply_at(void) { return &pt_reply; }
+typedef struct PtErr { uint32_t domain; uint32_t code; char message[504]; } PtErr;
+static PtErr pt_err = { 1, 2, "bad json at 3" };
+PtErr *pt_err_at(void) { return &pt_err; }
+typedef struct PtGrid { int32_t cells[3]; PtPair pairs[2]; uint8_t tail; } PtGrid;
+static PtGrid pt_grid = { { 1, 2, 3 }, { { 5, 6 }, { 7, 8 } }, 9 };
+PtGrid *pt_grid_at(void) { return &pt_grid; }
+int64_t pt_grid_sum(const PtGrid *g) {
+  return g->cells[0] + g->cells[1] + g->cells[2] + g->pairs[0].a + g->pairs[0].b + g->pairs[1].a + g->pairs[1].b + g->tail;
+}
+int64_t pt_sizeof_arrays(int which) {
+  switch (which) {
+  case 0: return (int64_t)sizeof(PtReply);
+  case 1: return (int64_t)sizeof(PtErr);
+  case 2: return (int64_t)offsetof(PtReply, elements);
+  default: return (int64_t)sizeof(PtGrid);
+  }
+}
