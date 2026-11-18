@@ -606,6 +606,13 @@ __attribute__((noreturn, cold)) void avant_trap_exit_status_at(avant_int status,
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_enum_at(int64_t value, const char *name, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_expect_at(const char *why, int32_t site);
+/* The constants computed before main: the one being computed (a trap
+ * names it), none, a value that is a failure; and the reference words of
+ * a constant's global slot (bit i: word i), made roots for good. */
+void avant_const_begin(const char *what);
+void avant_const_end(void);
+__attribute__((noreturn, cold)) void avant_trap_const_at(const char *what, int32_t site);
+void avant_const_ready(void *slot, uint64_t words);
 
 /* The size ceiling: a String,
  * Bytes or Buf holds at most AVANT_SIZE_MAX bytes and an Array at most

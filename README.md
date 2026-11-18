@@ -370,7 +370,7 @@ fn main {
 
 ### Constants
 
-`const` names a module-level value; `pub const` exports it. The name is snake_case. The value is a scalar (an integer, a `Float64`, a `Bool` or a [character literal](#literals)) computed at compile time from literals, constants and operators; each use is the value written in place, typed by its place as a literal is.
+`const` names a module-level value that never changes; `pub const` exports it. The name is snake_case. A scalar (an integer, a `Float64`, a `Bool` or a [character literal](#literals)) made of literals, such constants and operators is computed at compile time; each use is the value written in place, typed by its place as a literal is.
 
 ```avant
 const max_depth = 64
@@ -391,11 +391,41 @@ fn main {
 }
 ```
 
-- Overflow, division by zero, a shift outside the width, or a non-scalar value (a `String`, an array, a call; constant strings and tables are not built yet) is a compile error at the constant. A constant whose value does not fit its place gets the literal's error, naming it (`the constant big = 3000000000 does not fit in Int32`).
-- Constants may use each other in any order; one that refers to itself is an error.
-- A constant may label a `switch` arm or bound a range label (`case max_depth`, `case lo..=hi`); any other name there is an error.
+- Overflow, division by zero or a shift outside the width is a compile error at the constant. A constant whose value does not fit its place gets the literal's error, naming it (`the constant big = 3000000000 does not fit in Int32`).
+- Such constants may use each other in any order; one that refers to itself is an error.
+- Such a constant may label a `switch` arm or bound a range label (`case max_depth`, `case lo..=hi`); any other name there is an error.
 - A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors); there is no `const` in a function. A parameter or a binding (`if v = ...`, `case n: Int`, a block's `|x|`) may take a constant's name in its body.
 - A bare name is, in order: a local or parameter, a field of the receiver, a method of the receiver, a constant, a function. Another module's `pub const` is reached bare or as `module.name`; two constants of one name a module sees (its own included) are ambiguous: qualify it ([Name clashes](#name-clashes)).
+
+Any other value (a `String`, an array, a hash or a `Set`, a struct or class value, a call) is computed once, before `main`, and each use reads it:
+
+```avant
+class Schema {
+  pub fields: Array(String) = []
+
+  pub fn str(name: String): Schema {
+    self.fields.push(name)
+    self
+  }
+}
+
+const names = ["ada", "bob", "cy"]
+const greeting = "hello, ${names[0]}"
+const ages = ["ada": 36, "bob": 41]
+const schema = Schema.new().str("body").str("title")
+const port = "8080".to_i()
+
+fn main {
+  puts(greeting)              // => hello, ada
+  puts(ages["bob"] ?? 0)      // => 41
+  puts(schema.fields.size)    // => 2
+  puts(port + 1)              // => 8081
+}
+```
+
+- **The order:** the values are computed in the order they are written, a module's after those of the modules it imports. A value that reads one computed after it, in its own expression or through the functions it calls, is a compile error naming both (`the value of constant a reads the constant b through make, and b is computed after it`); one that reads itself too.
+- **The cost:** a use is one load of the value from its slot, with no test that it is ready and no lock; the values cost their computation at start-up, paid only by a program that declares them. A program with only scalar constants compiles as before.
+- **A failure stops the program before `main`, naming the constant.** A value whose type can fail (`"8080".to_i()` is an `Int?`, a function that returns `T | E`) is its success; a failure is `avant runtime: the constant port has no value: computed before main, its value is a failure (Nil) at main.av:3:7`. A trap while computing one says which: `avant runtime: index 3 out of bounds (size 1) in pick (main.av:1:1), computing the constant bad (main.av:6:7) before main`.
 
 ### Functions
 
@@ -5233,7 +5263,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 
 | Missing | Status | Today |
 | --- | --- | --- |
-| Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |

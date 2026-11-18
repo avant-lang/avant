@@ -76,6 +76,9 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
   if o.kind == mok_fn() {
     return "const fn ${o.text}"
   }
+  if o.kind == mok_global() {
+    return "const global ${o.text}"
+  }
   if o.kind == mok_bool() {
     if o.ival != 0 {
       return "const bool true"
@@ -459,6 +462,12 @@ pub fn mir_print(m: MModule, with_locs: Bool): String {
     buf.push_str("\n")
     for ix in 0..m.strs.size {
       buf.push_str("const str.${ix} = \"${mir_escape(m.strs[ix])}\"\n")
+    }
+  }
+  if m.globals.size > 0 {
+    buf.push_str("\n")
+    for g in m.globals {
+      buf.push_str("global ${g.symbol}: ${ts.text(g.ty)} // the constant ${g.name}\n")
     }
   }
   buf.push_str("\n")

@@ -1,0 +1,402 @@
+// Module constants whose value is not a scalar computed when compiling.
+//
+// `const names = ["a", "b"]`, `const schema = Schema.new().str("body")`:
+// a constant whose value is not made of literals, other such constants
+// and operators (const_folds) is computed once, before `main`, and each
+// use reads it from a global slot (one load: no test that it is ready,
+// no lock). The values are computed in the start-up order: a module's
+// after those of the modules it imports, a module's own in the order
+// they are written (Program.startup_consts). A value that reads one
+// computed after it, directly or through the functions it calls, is a
+// compile error naming both (two that read each other are a cycle).
+// A value whose type is a union with failures (nil, an error) is its
+// success: a failure stops the program before `main`, naming the
+// constant.
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import typed_ir
+import checker.names
+import checker
+
+// ---- which constants are computed before main
+
+// The constant e names written in module m, without a message (the
+// fold reports what is wrong): its own or the pub one of a module it
+// imports; `module.name`.
+pub fn (checker_self: Checker) const_quiet(e: Expr, m: String): ConstVal? {
+  if e.kind == ex_name() && e.type_args.size == 0 {
+    if cv = checker_self.const_at(m, e.ident) {
+      return cv
+    }
+    for info in checker_self.program.mods {
+      if info.name == m {
+        for imp in info.imports {
+          if cv2 = checker_self.const_at(imp, e.ident), d = cv2.def, d.vis {
+            return cv2
+          }
+        }
+      }
+    }
+    return nil
+  }
+  if e.kind == ex_field() {
+    if obj = e.object, obj.kind == ex_name() {
+      return checker_self.const_at(obj.ident, e.ident)
+    }
+  }
+  nil
+}
+
+pub fn const_fold_op(op: Int): Bool {
+  for k in [tk_plus(), tk_minus(), tk_star(), tk_slash(), tk_percent(), tk_less_less(), tk_greater_greater(), tk_amp(), tk_pipe(), tk_caret(), tk_eq_eq(), tk_not_eq(), tk_less(), tk_less_eq(), tk_greater(), tk_greater_eq(), tk_amp_amp(), tk_pipe_pipe()] {
+    if op == k {
+      return true
+    }
+  }
+  false
+}
+
+// Whether e, written in module m, is a scalar constant's value: literals,
+// such constants and the operators a constant's value folds. A constant
+// asked again while it is being asked is a cycle, which the fold names.
+pub fn (checker_self: Checker) const_folds(e: Expr, m: String): Bool {
+  k = e.kind
+  if k == ex_int() || k == ex_float() || k == ex_bool() {
+    return true
+  }
+  if k == ex_unary() {
+    if inner = e.inner, e.op == tk_minus() || e.op == tk_bang() || e.op == tk_tilde() {
+      return checker_self.const_folds(inner, m)
+    }
+    return false
+  }
+  if k == ex_binary() {
+    if l = e.left, r = e.right, const_fold_op(e.op) {
+      return checker_self.const_folds(l, m) && checker_self.const_folds(r, m)
+    }
+    return false
+  }
+  if k == ex_name() || k == ex_field() {
+    if cv = checker_self.const_quiet(e, m) {
+      return checker_self.const_shape(cv)
+    }
+  }
+  false
+}
+
+// Whether cv is a scalar computed when compiling (memoized in cv.shape).
+pub fn (checker_self: Checker) const_shape(cv: ConstVal): Bool {
+  if cv.shape == 1 || cv.shape == 2 {
+    return true
+  }
+  if cv.shape == 3 {
+    return false
+  }
+  if d = cv.def {
+    cv.shape = 1
+    if checker_self.const_folds(d.value, d.mod_name) {
+      cv.shape = 2
+      return true
+    }
+    cv.shape = 3
+    d.startup = true
+    return false
+  }
+  true
+}
+
+// The modules in start-up order: each after the modules it imports (a
+// cycle of imports keeps the order the walk meets them in), the root
+// module last; a module no import reaches after them.
+pub fn (checker_self: Checker) const_module_order: Array(String) {
+  out: Array(String) = []
+  seen = Set(String).new()
+  checker_self.const_order_visit(checker_self.program.root_module, seen, out)
+  for info in checker_self.program.mods {
+    checker_self.const_order_visit(info.name, seen, out)
+  }
+  for d in checker_self.program.consts {
+    if !seen.has(d.mod_name) {
+      seen.add(d.mod_name)
+      out.push(d.mod_name)
+    }
+  }
+  out
+}
+
+pub fn (checker_self: Checker) const_order_visit(m: String, seen: Set(String), out: Array(String)) {
+  if !seen.add(m) {
+    return
+  }
+  for info in checker_self.program.mods {
+    if info.name == m {
+      for imp in info.imports {
+        checker_self.const_order_visit(imp, seen, out)
+      }
+    }
+  }
+  out.push(m)
+}
+
+// The global slot's symbol of the constant name of module m.
+pub fn const_slot_symbol(m: String, name: String): String {
+  "av.const.${m}.${name}"
+}
+
+// ---- the values, checked before every function's body
+
+pub fn (checker_self: Checker) check_const_inits {
+  if checker_self.const_list.size == 0 {
+    return
+  }
+  any = false
+  for d in checker_self.program.consts {
+    if d.startup {
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  n = 0
+  for m in checker_self.const_module_order() {
+    for d2 in checker_self.program.consts {
+      if d2.startup && d2.mod_name == m && d2.order < 0 {
+        d2.order = n
+        n += 1
+        d2.slot = const_slot_symbol(d2.mod_name, d2.name)
+        checker_self.program.startup_consts.push(d2)
+      }
+    }
+  }
+  for d3 in checker_self.program.startup_consts {
+    checker_self.check_const_init(d3)
+  }
+}
+
+pub fn (checker_self: Checker) check_const_init(d: ConstDef) {
+  fnn = Function.new(d.loc, "const ${d.name}")
+  fnn.mod_name = d.mod_name
+  fnn.emit_name = d.slot
+  fnn.body.push(stmt_expr(d.loc, d.value))
+  d.init = fnn
+  checker_self.const_checking = d.order
+  got = checker_self.check_const_value(fnn, d.value)
+  checker_self.const_checking = -1
+  if t = got {
+    checker_self.clear_poison()
+    vt = t
+    if t.is_union() {
+      if sp = ty_success_part(t) {
+        vt = sp
+      } else if !ty_has_success(t) {
+        checker_self.fail(d.loc, "the value of constant ${d.name} is a ${t.show()}, which holds no value but a failure")
+        return
+      }
+    }
+    if vt.is_void() || vt.is_nil() {
+      checker_self.fail(d.loc, "the value of constant ${d.name} gives nothing: a constant names a value")
+      return
+    }
+    d.ty = vt
+  }
+}
+
+// ---- a use
+
+// The startup constant e names where it stands, or nil.
+pub fn (checker_self: Checker) startup_const_named(e: Expr): ConstDef? {
+  if cv = checker_self.const_named(e), d = cv.def, d.startup {
+    return d
+  }
+  nil
+}
+
+// A read of a constant computed before main: e becomes its slot's read
+// (ex_const_ref), of the value's type; nil when e names none.
+pub fn (checker_self: Checker) const_read(e: Expr): Ty? {
+  if checker_self.const_list.size == 0 {
+    return nil
+  }
+  if d = checker_self.startup_const_named(e) {
+    if checker_self.const_checking >= 0 && d.order >= checker_self.const_checking {
+      if d.order == checker_self.const_checking {
+        checker_self.fail(e.loc, "the value of constant ${d.name} reads ${d.name} itself")
+      } else {
+        checker_self.fail(e.loc, "this value reads the constant ${d.name}, which is computed after it (${checker_self.const_where(d)}): constants are computed in the order they are written, a module's after those of the modules it imports")
+      }
+      return checker_self.t_int()
+    }
+    e.kind = ex_const_ref()
+    e.ident = d.name
+    e.mod_name = d.mod_name
+    e.resolved = d.slot
+    e.object = nil
+    if t = d.ty {
+      return t
+    }
+    // Its value was refused: what reads it adds nothing.
+    checker_self.read_failed_name()
+    return checker_self.t_int()
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) const_where(d: ConstDef): String {
+  "declared at ${d.loc.show()}"
+}
+
+// The type of a read already made (a node checked again).
+pub fn (checker_self: Checker) const_ref_ty(e: Expr): Ty {
+  for d in checker_self.program.startup_consts {
+    if d.slot == e.resolved {
+      if t = d.ty {
+        return t
+      }
+    }
+  }
+  checker_self.read_failed_name()
+  checker_self.t_int()
+}
+
+// ---- after every body: the order
+
+// Every statement and expression of a body, lambdas' included.
+pub fn const_flat(body: Array(Stmt), stmts: Array(Stmt), exprs: Array(Expr)) {
+  for st in body {
+    stmts.push(st)
+    for e in [st.expr, st.cond, st.target, st.value] {
+      if x = e {
+        const_flat_expr(x, stmts, exprs)
+      }
+    }
+    const_flat(st.pre, stmts, exprs)
+    const_flat(st.then_body, stmts, exprs)
+    const_flat(st.else_body, stmts, exprs)
+    const_flat(st.body, stmts, exprs)
+  }
+}
+
+pub fn const_flat_expr(e: Expr, stmts: Array(Stmt), exprs: Array(Expr)) {
+  exprs.push(e)
+  if b = e.block {
+    const_flat(b.body, stmts, exprs)
+  }
+  for cs in e.cases {
+    const_flat(cs.body, stmts, exprs)
+  }
+  const_flat(e.else_body, stmts, exprs)
+  for x in [e.inner, e.left, e.right, e.object, e.receiver, e.cond, e.size_expr] {
+    if y = x {
+      const_flat_expr(y, stmts, exprs)
+    }
+  }
+  for a in e.args {
+    const_flat_expr(a, stmts, exprs)
+  }
+  for a2 in e.elems {
+    const_flat_expr(a2, stmts, exprs)
+  }
+  for a3 in e.field_exprs {
+    const_flat_expr(a3, stmts, exprs)
+  }
+  for p in e.parts {
+    if y2 = p.expr {
+      const_flat_expr(y2, stmts, exprs)
+    }
+  }
+}
+
+// The order of the values, once every body is checked.
+pub fn (checker_self: Checker) check_const_values(fns: Array(Function)) {
+  if checker_self.program.startup_consts.size == 0 || checker_self.any_err() {
+    return
+  }
+  all: Array(Function) = []
+  for f in fns {
+    if !f.generic {
+      all.push(f)
+    }
+  }
+  all.concat(checker_self.pending)
+  by_name = Hash(String, Int).new()
+  for i in 0..all.size {
+    if all[i].emit_name.size > 0 && !by_name.has(all[i].emit_name) {
+      by_name[all[i].emit_name] = i
+    }
+  }
+  checker_self.check_const_order(all, by_name)
+}
+
+// Each value reads only values computed before it: the constants its
+// expression reads, and those the functions it calls read, at any depth
+// (a constructor's initialize and its fields' defaults included).
+pub fn (checker_self: Checker) check_const_order(all: Array(Function), by_name: Hash(String, Int)) {
+  for d in checker_self.program.startup_consts {
+    if f = d.init {
+      todo: Array(Function) = []
+      via: Array(String) = []
+      seen = Set(String).new()
+      todo.push(f)
+      via.push("")
+      i = 0
+      while i < todo.size {
+        g = todo[i]
+        how = via[i]
+        i += 1
+        stmts: Array(Stmt) = []
+        exprs: Array(Expr) = []
+        const_flat(g.body, stmts, exprs)
+        for e in exprs {
+          if e.kind == ex_const_ref() {
+            for d2 in checker_self.program.startup_consts {
+              if d2.slot == e.resolved && d2.order >= d.order {
+                checker_self.clear_poison()
+                if d2.order == d.order {
+                  checker_self.fail(d.loc, "the value of constant ${d.name} reads ${d.name} itself (through ${how})")
+                } else {
+                  checker_self.fail(d.loc, "the value of constant ${d.name} reads the constant ${d2.name} through ${how}, and ${d2.name} is computed after it (${checker_self.const_where(d2)}): constants are computed in the order they are written, a module's after those of the modules it imports")
+                }
+                return
+              }
+            }
+          }
+          callees: Array(String) = []
+          if e.resolved.size > 0 && e.kind != ex_const_ref() {
+            callees.push(e.resolved)
+          }
+          if e.kind == ex_call() && e.callee == "new" {
+            if t = e.ty, t.is_class() || t.is_struct() {
+              for g2 in all {
+                if g2.name == "initialize" && g2.owner == t.name && (g2.owner_mod == t.mod_name || g2.mod_name == t.mod_name) {
+                  callees.push(g2.emit_name)
+                }
+              }
+            }
+          }
+          for c in callees {
+            if seen.add(c) {
+              if ix = by_name.get(c) {
+                todo.push(all[ix])
+                shown = all[ix].name
+                if all[ix].owner.size > 0 {
+                  shown = "${all[ix].owner}.${all[ix].name}"
+                }
+                if how.size > 0 {
+                  via.push("${how}, ${shown}")
+                } else {
+                  via.push(shown)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

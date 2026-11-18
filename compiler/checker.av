@@ -193,6 +193,9 @@ pub class Checker {
   // there by module and name (const_slot).
   pub const_list: Array(ConstVal)
   pub const_vals: Hash(String, Int)
+  // The start-up order of the constant whose value is being checked
+  // (checker/const_values.av), -1 elsewhere.
+  pub const_checking: Int = -1
   pub current_fn: Function? = nil
   // The `Mutex(T).new(name)` calls of the function being checked, whose
   // names they consume (checker/guard.av check_consumes).
@@ -881,6 +884,42 @@ pub class Checker {
     self.self_ty = nil
     self.self_name = ""
     self.current_module = saved_mod
+  }
+
+  // The value of a module constant computed before main
+  // (checker/const_values.av), checked as the body of fnn, a function
+  // with no parameters whose result is the value's type: the state a
+  // function's check starts from, the value checked with no type
+  // expected. Its type, or nil after an error.
+  pub fn check_const_value(fnn: Function, value: Expr): Ty? {
+    self.clear_poison()
+    saved_mod = self.current_module
+    self.current_module = fnn.mod_name
+    self.return_type = t_void()
+    self.pending_handles = []
+    self.pending_arrays = []
+    memo = self.facts.reach_memo
+    self.facts = FlowFacts.new()
+    self.facts.reach_memo = memo
+    self.entry_void = false
+    self.self_ty = nil
+    self.self_name = ""
+    self.for_names = []
+    self.for_scopes = []
+    self.for_kinds = []
+    self.clear_places()
+    self.walk_texts = []
+    self.push_scope()
+    self.current_fn = fnn
+    mark = self.err_count()
+    got = check_expr(value)
+    self.current_fn = nil
+    self.pop_scope()
+    self.current_module = saved_mod
+    if new_err_since(mark) || self.has_err() {
+      return nil
+    }
+    got
   }
 
   // A result of a lambda whose result type is inferred: the first one
@@ -2230,6 +2269,9 @@ pub class Checker {
     if k == ex_enum_lit() {
       return check_enum_lit(expr, has_want, want)
     }
+    if k == ex_const_ref() {
+      return const_ref_ty(expr)
+    }
     if k == ex_lambda() {
       return check_lambda(expr, has_want, want)
     }
@@ -2252,6 +2294,9 @@ pub class Checker {
     if k == ex_field() {
       if inline_const(expr) {
         return check_expr_core(expr, has_want, want)
+      }
+      if ct = const_read(expr) {
+        return ct
       }
       if got = check_module_fn_value(expr, has_want, want) {
         return got
@@ -4412,6 +4457,10 @@ pub class Checker {
     // A module constant: its value, written as a literal.
     if inline_const(expr) {
       return check_expr_core(expr, has_want, want)
+    }
+    // One computed before main: a read of its slot.
+    if ct = const_read(expr) {
+      return ct
     }
     if has_want && want.is_fn() {
       return check_fn_ref(expr, want)

@@ -316,6 +316,13 @@ pub fn (checker_self: Checker) check: Program {
   if checker_self.any_err() {
     return checker_self.program
   }
+  // The constants computed before main, each value checked in the
+  // order they are computed, before any body reads one
+  // (checker/const_values.av).
+  checker_self.check_const_inits()
+  if checker_self.any_err() {
+    return checker_self.program
+  }
   has_entry = false
   for ix in 1..checker_self.functions.size {
     sig = checker_self.functions[ix]
@@ -380,6 +387,10 @@ pub fn (checker_self: Checker) check: Program {
   // is a copy (checker/places.av).
   checker_self.clear_poison()
   checker_self.check_copy_calls()
+  // A constant computed before main never changes, and reads only the
+  // values computed before it (checker/const_values.av).
+  checker_self.clear_poison()
+  checker_self.check_const_values(fns)
   checker_self.program
 }
 

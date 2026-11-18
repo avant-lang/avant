@@ -413,6 +413,7 @@ pub class MirLower {
       prewalk_function(fns[i])
       i += 1
     }
+    self.prewalk_startup_consts()
     if self.failed() {
       return
     }
@@ -438,6 +439,9 @@ pub class MirLower {
       i += 1
     }
     self.lw_cov.rank = 1000000
+    // The constants computed before main (lower_const.av).
+    self.lower_const_inits()
+    self.lower_pending_lambdas()
     self.lower_ctors()
     self.lower_pending_lambdas()
     // The spawn and .parallel thunks after the constructors (the old back
@@ -689,6 +693,9 @@ pub class MirLower {
     args.push(self.lw_b.copy_local(2))
     self.lw_b.call(-1, "avant_io_init_argv", args)
     self.cov_init()
+    if self.has_startup_consts() {
+      self.lw_b.call(-1, self.consts_symbol(), none)
+    }
   }
 
   // The end of a body that falls through: a void function returns (a

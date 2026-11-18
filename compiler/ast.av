@@ -49,6 +49,10 @@ pub fn ex_hash_lit: Int { 22 }
 // member of the enum expected where it stands (the checker sets ty),
 // lowered as the member read `E.write` is.
 pub fn ex_enum_lit: Int { 23 }
+// A read of a module constant computed before `main` (a value that is
+// not a scalar, checker/const_values.av): ident is the constant's name,
+// mod_name its module, resolved the global slot's symbol; one load.
+pub fn ex_const_ref: Int { 24 }
 
 pub fn st_expr: Int { 1 }
 pub fn st_return: Int { 2 }
@@ -654,6 +658,16 @@ pub class ConstDef {
   pub value: Expr
   pub vis: Bool = false
   pub mod_name: String = ""
+  // A value that is not a scalar computed when compiling: computed once
+  // before `main` (checker/const_values.av). ty is its type once its
+  // value is checked; init the function the value is checked and
+  // lowered as (never in the program's functions); order its place in
+  // the start-up order; slot the global's symbol.
+  pub startup: Bool = false
+  pub ty: Ty? = nil
+  pub init: Function? = nil
+  pub order: Int = -1
+  pub slot: String = ""
 
   fn initialize(loc: Location, name: String, value: Expr) {
     self.loc = loc
@@ -675,6 +689,10 @@ pub class ConstVal {
   pub uv: UInt64 = 0u64
   pub fv: Float64 = 0.0
   pub bv: Bool = false
+  // Whether the value is a scalar computed when compiling (checker/
+  // const_values.av const_folds): 0 not asked yet, 1 being asked, 2 it
+  // is, 3 it is computed before main.
+  pub shape: Int = 0
 }
 
 // `type Name = T`: a name for a type, a union above all (`type Ty = Scalar
@@ -710,6 +728,10 @@ pub class Program {
   pub interfaces: Array(InterfaceDef) = []
   pub opt_ins: Array(OptIn) = []
   pub consts: Array(ConstDef) = []
+  // The constants computed before `main`, in the order they are
+  // computed (the modules a module imports first, then its own in
+  // written order).
+  pub startup_consts: Array(ConstDef) = []
   pub aliases: Array(AliasDef) = []
   pub re2c_ids: Hash(String, Int)
   pub re2c_groups: Array(Int)

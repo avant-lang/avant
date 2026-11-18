@@ -79,6 +79,18 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     }
     out.push_str("\n")
   }
+  if m.globals.size > 0 {
+    // The slots of the constants computed before main: written once by
+    // the start-up, read by every use.
+    for g in m.globals {
+      al = e.ts.align_of(g.ty)
+      if al < 8 {
+        al = 8
+      }
+      out.push_str("${ll_sym(g.symbol)} = internal global ${ll_type_text(e.ts, g.ty)} zeroinitializer, align ${al}\n")
+    }
+    out.push_str("\n")
+  }
   if e.used_str_nil {
     out.push_str("@str.nil = private constant { i64, [1 x i8] } { i64 ${ll_str_header(0)}, [1 x i8] zeroinitializer }, align 8\n\n")
   }

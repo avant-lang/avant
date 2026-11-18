@@ -1673,6 +1673,12 @@ typedef struct GcHeap {
   /* The task roots (avant_gc_task_root_add): spawned
    * tasks' capture records, under the world lock. */
   AvantGcTaskRoot *task_roots;
+  /* The static roots (avant_const_ready): the reference words of the
+   * global slots of a program's constants computed before main, each
+   * registered once, read and rewritten like a task root. */
+  void ***static_roots;
+  uint32_t nstatic;
+  uint32_t static_cap;
 
   /* avant_gc_proof.c: the proof that the old heap is unchanged. */
   GcProof proof;
@@ -1834,12 +1840,19 @@ extern __thread GcThread gc_thread;
  * world lock the collector holds). Its object may
  * move like any rooted object (S+'s copy and defragmentation rewrite the
  * slot); until then it was PINNED while rooted, because the worker read
- * it while other threads collected. */
+ * it while other threads collected. The static roots (a constant's
+ * global slot, avant_const_ready) are visited with them: process-wide
+ * slots that live as long as the program. */
 #define EACH_TASK_ROOT(SLOT, BODY)                                       \
   do {                                                                   \
     AvantGcTaskRoot *etr_r_;                                             \
+    uint32_t etr_i_;                                                     \
     for (etr_r_ = gc_heap.task_roots; etr_r_; etr_r_ = etr_r_->next) {   \
       void **SLOT = &etr_r_->obj;                                        \
+      BODY;                                                              \
+    }                                                                    \
+    for (etr_i_ = 0; etr_i_ < gc_heap.nstatic; etr_i_++) {               \
+      void **SLOT = gc_heap.static_roots[etr_i_];                        \
       BODY;                                                              \
     }                                                                    \
   } while (0)

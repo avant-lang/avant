@@ -85,6 +85,19 @@ void avant_exit_claim(void) {
   }
 }
 
+/* The constant being computed before main (avant_const_begin): its name
+ * and place, as a string object of the program's image; NULL once main
+ * runs. A trap meanwhile names it after its own text. */
+static const char *g_const_what;
+
+void avant_const_begin(const char *what) {
+  g_const_what = what;
+}
+
+void avant_const_end(void) {
+  g_const_what = NULL;
+}
+
 __attribute__((noreturn)) static void trap_tail(void) {
   const char *site = g_trap_loc;
   g_trap_loc = NULL;
@@ -97,6 +110,11 @@ __attribute__((noreturn)) static void trap_tail(void) {
   fputs(g_trap_text, stderr);
   if (site) {
     fprintf(stderr, " at %s", site);
+  }
+  if (g_const_what) {
+    size_t n;
+    const char *d = avant_str_bytes(g_const_what, &n);
+    fprintf(stderr, ", computing %.*s before main", (int)n, d);
   }
   fputc('\n', stderr);
   exit(1);
@@ -524,6 +542,20 @@ void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
   trap_out("%lld is not a member of %s", (long long)value, name);
+  trap_tail();
+}
+
+/* A constant computed before main whose value is a failure (nil, an
+ * error): what names it. */
+void avant_trap_const_at(const char *what, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  {
+    size_t n;
+    const char *d = avant_str_bytes(what, &n);
+    trap_out("%.*s", (int)n, d);
+  }
+  g_const_what = NULL;
   trap_tail();
 }
 

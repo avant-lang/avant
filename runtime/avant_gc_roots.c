@@ -675,6 +675,28 @@ void avant_release_range(void *lo, uint64_t n) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* The constants computed before main (avant_rt.h). The reference words
+ * of a constant's global slot (bit i of words: the slot's word i) become
+ * static roots for good, read and rewritten with the task roots
+ * (EACH_TASK_ROOT). It allocates nothing on the heap and never
+ * collects. */
+void avant_const_ready(void *slot, uint64_t words) {
+  void **base = (void **)slot;
+  uint32_t i;
+  gc_init();
+  pthread_mutex_lock(&gc_heap.world);
+  for (i = 0; i < 64; i++) {
+    if (words & (1ull << i)) {
+      if (gc_heap.nstatic == gc_heap.static_cap) {
+        gc_heap.static_cap = gc_heap.static_cap ? gc_heap.static_cap * 2 : 16;
+        gc_heap.static_roots = (void ***)gc_xrealloc(gc_heap.static_roots, gc_heap.static_cap * sizeof(void **));
+      }
+      gc_heap.static_roots[gc_heap.nstatic++] = base + i;
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
 /* Task roots (avant_gc.h): traced from
  * gc_heap.task_roots and rewritten when the record moves (before the
  * safepoint handshake the record was PINNED while rooted). */

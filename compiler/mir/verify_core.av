@@ -203,6 +203,20 @@ pub class MVerifier {
       err(20, b, i, loc, "const fn ${o.text} names no function")
       return -1
     }
+    if o.kind == mok_global() {
+      for g in self.m.globals {
+        if g.symbol == o.text {
+          // Its address, or the same as a raw pointer for the runtime
+          // (avant_const_ready).
+          if o.ty == mt_ptr() {
+            return mt_ptr()
+          }
+          return self.ts.addr_of(g.ty)
+        }
+      }
+      err(20, b, i, loc, "const global ${o.text} names no global")
+      return -1
+    }
     if o.kind == mok_null() {
       if !self.ts.is_refkind(o.ty) && !self.ts.is_ptr(o.ty) {
         err(6, b, i, loc, "null constant of type ${tx(o.ty)}")

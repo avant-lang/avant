@@ -80,6 +80,9 @@ pub fn mok_bool: Int { 4 }
 pub fn mok_null: Int { 5 }
 pub fn mok_str: Int { 6 }
 pub fn mok_fn: Int { 7 }
+// The address of a module's global slot (MGlobal): text the symbol, ty
+// `addr T`.
+pub fn mok_global: Int { 8 }
 
 // Projection kinds.
 pub fn mpk_deref: Int { 1 }
@@ -341,6 +344,21 @@ pub class MFunc {
   }
 }
 
+// A global slot of the module: a constant computed before main
+// (checker/const_values.av), of MIR type ty; name is the constant's,
+// for the text.
+pub class MGlobal {
+  pub symbol: String = ""
+  pub ty: Int = 0
+  pub name: String = ""
+
+  fn initialize(symbol: String, ty: Int, name: String) {
+    self.symbol = symbol
+    self.ty = ty
+    self.name = name
+  }
+}
+
 // A declared external; cls is the call-table class (runtime.av).
 pub class MExtern {
   pub name: String = ""
@@ -381,6 +399,7 @@ pub class MModule {
   // a program that does not spawn too.
   pub elem_holds: Bool = false
   pub files: Array(String) = []
+  pub globals: Array(MGlobal) = []
   pub types: MTypes
   pub strs: Array(String)
   pub str_index: Hash(String, Int)
