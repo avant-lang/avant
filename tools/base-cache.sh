@@ -51,6 +51,13 @@
 #                         instructions:u` (a count: the machine's load does
 #                         not change it), with an empty environment but
 #                         PATH and HOME
+#   refused.txt           only when this tree's C' refuses some of the
+#                         stitched programs (the caller's harness writes its
+#                         tasks in a spelling this tree does not know):
+#                         `refused<TAB>N<TAB>OF` and `first<TAB>PROGRAM<TAB>
+#                         its first error line`; their ins.tsv lines read
+#                         compile-failed. The part is complete all the same:
+#                         tools/neutral.sh reads them as not comparable
 #   COMPLETE
 # Used by tools/neutral.sh (a base given as an entry), tools/change-check.sh
 # and tools/wave-final.sh (WAVE_BASE). Every compiler and program runs
@@ -168,7 +175,28 @@ EOF
   (cd "$p/avant" && find langarena/tasks -name '*.av' | LC_ALL=C sort) > "$p/tasks-list.txt"
   timeout -k 10 1800 sh "$here/ll-digests.sh" "$e/avant" "$p/tasks-list.txt" "$p/tasks.tsv" "$p/avant" < /dev/null >> "$log" 2>&1 || fail "$log" "the task files' __emit-ll failed"
   t2=$(now); echo "ll: $(secs "$t1" "$t2") s" >> "$p/MANIFEST"
-  timeout -k 10 3600 sh "$here/la-count.sh" "$e/avant" "$p" "$p/ins.tsv" < /dev/null >> "$log" 2>&1 || fail "$log" "the instruction counts failed"
+  if ! timeout -k 10 3600 sh "$here/la-count.sh" "$e/avant" "$p" "$p/ins.tsv" < /dev/null >> "$log" 2>&1; then
+    # A program this tree's C' refuses (its __emit-ll in ll.tsv failed too:
+    # the caller's harness writes its tasks in a spelling this older tree
+    # does not know) is recorded, in refused.txt, not a failure of the part;
+    # any other (a program that failed to run, or to compile when its
+    # __emit-ll did not) still is.
+    [ -f "$p/ins.tsv" ] || fail "$log" "the instruction counts failed"
+    awk -F'\t' 'FILENAME == ARGV[1] { s = $1; sub(/\.av$/, "", s); rc[s] = $2; next }
+      $2 == "compile-failed" && rc[$1] != 0 { next }
+      $2 == "compile-failed" || $4 != 0 { print; bad = 1 } END { exit bad }' "$p/ll.tsv" "$p/ins.tsv" > "$p/count-failures.txt" \
+      || { cat "$p/count-failures.txt" >> "$log"; fail "$log" "the instruction counts failed"; }
+  fi
+  rm -f "$p/count-failures.txt"
+  nref=$(awk -F'\t' '$2 != 0' "$p/ll.tsv" | wc -l)
+  if [ "$nref" -gt 0 ]; then
+    first=$(awk -F'\t' '$2 != 0 { print $1; exit }' "$p/ll.tsv")
+    msg=$(cd "$tmp" && env -u AVANT_ROOT timeout -k 5 300 "$e/avant/bin/avant-c-llvm" __emit-ll "$first" "$p/.refused.ll" < /dev/null 2>&1)
+    rm -f "$p/.refused.ll"
+    msg=$(printf '%s\n' "$msg" | sed "s#$tmp/##g; s#$e/avant#@ROOT@#g" | grep -m 1 -i error || printf '%s\n' "$msg" | head -n 1)
+    printf 'refused\t%s\t%s\nfirst\t%s\t%s\n' "$nref" "$(wc -l < "$p/ll.tsv")" "$first" "$(printf '%s' "$msg" | tr '\t' ' ')" > "$p/refused.txt"
+    echo "refused: $nref of $(wc -l < "$p/ll.tsv") programs by this tree's C' (refused.txt)" >> "$p/MANIFEST"
+  fi
   t3=$(now); echo "instructions: $(secs "$t2" "$t3") s" >> "$p/MANIFEST"
   : > "$p/COMPLETE"
 }

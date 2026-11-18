@@ -38,7 +38,13 @@
 #     counts the moved LangArena programs, their output the same; a
 #     runtime change counts every LangArena program without moving a .ll;
 #     a failing touched test makes the line and the status say so;
-#     check-worktree: the work tree is gone afterwards.
+#     check-worktree: the work tree is gone afterwards;
+#   cache-la-base-refuses, neutral-base-refuses, check-base-refuses: the
+#     caller's LangArena tasks in a spelling the base's compiler refuses:
+#     the part is complete with refused.txt (how many, the first message),
+#     tools/neutral.sh reads the tasks `not-comparable` with a summary line
+#     saying so and status 0, the sources still judged; change-check reads
+#     their counts as new, not as a failure.
 # Where `perf stat -e instructions:u` cannot count (a container without
 # the counters), the LangArena part and change-check cannot be built: their
 # checks print `skip: NAME: why`. Prints one line per check, `ok: NAME`,
@@ -80,8 +86,12 @@ __emit-ll)
   if grep -q REFUSE "$1"; then echo "error: refused: $(pwd -P)/$1"; exit 1; fi
   # a location under its own checkout written relative to it, as the real compiler does
   me=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
+  # a spelling only a checkout with lib/spell knows (an older tree refuses it)
+  if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
   { echo "; compiler $V"; echo "; source $(pwd -P)/$1"; sed "s#^// file: $me/#// file: #" "$1"; } > "$2" ;;
 compile)
+  me=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
+  if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
   printf '#!/bin/sh\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(cksum < "$1" | cut -d' ' -f1)" "$R" > "$2"
   chmod +x "$2" ;;
 test)
@@ -171,7 +181,8 @@ perf_ok=0
 perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -q '^[0-9]' "$w/perf.txt" && perf_ok=1
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
-  skip cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree
+  skip cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
+    cache-la-base-refuses neutral-base-refuses check-base-refuses
   echo done; exit 0
 fi
 
@@ -224,4 +235,25 @@ say check-runtime $? "$(row 'the runtime changed')"
 [ $rc -eq 1 ] && row 'a test fails' | grep -q '| FAILED (rc=1) 1 failed, 0 passed: test_m |'
 say check-failed $? "rc=$rc $(row 'a test fails') $(tail -n 3 "$w/cc.log" | tr '\n' ';')"
 [ ! -e "$w/cc/work" ] && [ "$(git -C "$r" worktree list | wc -l)" = 1 ]; say check-worktree $? "$(git -C "$r" worktree list | tr '\n' ';')"
+
+# 7. A base that refuses the caller's LangArena tasks: the tasks gain a
+# spelling only a tree with lib/spell knows, and the head adds lib/spell.
+nb=$(git -C "$r" rev-parse HEAD)
+for x in a b; do echo NEWSPELL >> "$r/langarena/tasks/$x.av"; done
+: > "$r/lib/spell"; g add -A && g commit -q -m 'a new spelling'
+lap=$(cd "$r" && sh tools/base-cache.sh --la "$nb" 2> "$w/la-refused.err" < /dev/null); rc=$?
+[ $rc -eq 0 ] && [ -f "$lap/COMPLETE" ] && grep -q '^refused	2	2$' "$lap/refused.txt" \
+  && grep -q '^first	a.av	error: unknown spelling NEWSPELL in a.av$' "$lap/refused.txt" && [ "$(grep -c '	compile-failed	' "$lap/ins.tsv")" = 2 ]
+say cache-la-base-refuses $? "rc=$rc $(tr '\n' ';' < "$lap/refused.txt" 2>/dev/null) $(tail -n 3 "$w/la-refused.err" | tr '\n' ';')"
+(cd "$r" && sh tools/letters.sh > /dev/null 2>&1 < /dev/null)
+git -C "$r" diff --name-only "$nb" HEAD > "$w/changed2.txt"
+NEUTRAL_CHANGED="$w/changed2.txt" sh "$r/tools/neutral.sh" "$(dirname "$lap")" "$r" "$w/neutral3" < /dev/null > "$w/neutral3.log" 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -q '^sources: files 13 ll-same 10 LL-DIFF 0 refused-same 1 refused-msg 0 STATUS 0 new 0 changed 0 not-comparable 2 ' "$w/neutral3/summary.txt" \
+  && grep -q '^langarena: files 2 ll-same 0 LL-DIFF 0 refused-same 0 refused-msg 0 STATUS 0 new 0 changed 0 not-comparable 2 ' "$w/neutral3/summary.txt" \
+  && grep -qx 'langarena: not comparable: the base refuses 2 of 2 (first message: a.av: error: unknown spelling NEWSPELL in a.av); the sources corpus is judged alone' "$w/neutral3/summary.txt" \
+  && [ "$(grep -c '^not-comparable ' "$w/neutral3/la-result.txt")" = 2 ]
+say neutral-base-refuses $? "rc=$rc $(tr '\n' ';' < "$w/neutral3/summary.txt" 2>/dev/null) $(tail -n 2 "$w/neutral3.log" | tr '\n' ';')"
+(cd "$r" && sh tools/change-check.sh "$nb" HEAD "$w/cc2" < /dev/null > "$w/cc2.log" 2>&1); rc=$?
+[ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc2/table.md" | grep -q '| 2: a.av, b.av | a new (the base refused it), b new (the base refused it) |'
+say check-base-refuses $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc2/table.md" 2>/dev/null) $(tail -n 3 "$w/cc2.log" | tr '\n' ';')"
 echo done

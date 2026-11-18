@@ -49,6 +49,14 @@
 # run the two-checkout form to see both). Its LangArena part must be the
 # one of NEW's harness (base-cache.sh --la from NEW).
 #
+# A base cache entry whose LangArena part records programs the base's C'
+# refuses (its refused.txt: NEW's harness writes the tasks in a spelling
+# the base does not know): those NEW compiles, and the task files alone
+# (langarena/tasks/) that only NEW compiles, read `not-comparable`, do not
+# make the status 1, and the summary gains a line `langarena: not
+# comparable: the base refuses N of M (first message: ...)`; the sources
+# corpus is judged as ever.
+#
 # NEUTRAL_CHANGED=FILE (both forms): FILE lists the paths the change being
 # judged edited, one per line (`git diff --name-only BASE HEAD`). A program
 # in it (compiler/main.av too when a compiler/ path is in it) that reads
@@ -135,6 +143,17 @@ if [ $cached = 1 ]; then
   ls "$lap/avant/langarena/tmp" | grep -v '\.cfg\.av$' | grep '\.av$' | LC_ALL=C sort > "$OUT/la-list.txt"
   LL_JOBS=$jobs LL_KEEP="$OUT/b/keep-la" sh "$here/ll-digests.sh" "$NW" "$OUT/la-list.txt" "$OUT/la-b.tsv" "$lap/avant/langarena/tmp" < /dev/null
   compare "$lap/ll.tsv" "$OUT/la-b.tsv" > "$OUT/la-result.txt"
+  # The programs the base's C' refuses and NEW's compiles (the part's
+  # refused.txt: NEW's harness writes its tasks in a spelling the base does
+  # not know) cannot be compared: read `not-comparable`, apart.
+  if [ -s "$lap/refused.txt" ]; then
+    awk '$1 == "STATUS" && $2 ~ /->0$/ { print "not-comparable " $NF; next } { print }' "$OUT/la-result.txt" > "$OUT/la-result.part" \
+      && mv "$OUT/la-result.part" "$OUT/la-result.txt"
+    # The task files alone, in the sources corpus, likewise.
+    awk '$1 == "STATUS" && $2 ~ /->0$/ && $NF ~ /^langarena\/tasks\// { print "not-comparable " $NF; next } { print }' "$OUT/result.txt" > "$OUT/result.part" \
+      && mv "$OUT/result.part" "$OUT/result.txt"
+    cp "$lap/refused.txt" "$OUT/la-refused.txt"
+  fi
   # Keep NEW's .ll and messages of the programs that differ only.
   for r in result la-result; do
     k=keep; [ $r = la-result ] && k=keep-la
@@ -177,11 +196,15 @@ fi
 count() { grep -c "^$1" "$2"; }
 line() { # NAME RESULT LIST DIGESTS
   grep '^ll-same' "$2" | LC_ALL=C sort -k3 | awk '{ print $2 "  " $3 }' > "$4"
-  echo "$1: files $(wc -l < "$3") ll-same $(count ll-same "$2") LL-DIFF $(count LL-DIFF "$2") refused-same $(count refused-same "$2") refused-msg $(count refused-msg "$2") STATUS $(count STATUS "$2") new $(count 'new ' "$2")$([ -n "${NEUTRAL_CHANGED:-}" ] && echo " changed $(count changed "$2")") digest-of-digests $(sha256sum < "$4" | cut -c1-64)"
+  echo "$1: files $(wc -l < "$3") ll-same $(count ll-same "$2") LL-DIFF $(count LL-DIFF "$2") refused-same $(count refused-same "$2") refused-msg $(count refused-msg "$2") STATUS $(count STATUS "$2") new $(count 'new ' "$2")$([ -n "${NEUTRAL_CHANGED:-}" ] && echo " changed $(count changed "$2")")$([ -s "$OUT/la-refused.txt" ] && echo " not-comparable $(count not-comparable "$2")") digest-of-digests $(sha256sum < "$4" | cut -c1-64)"
 }
 {
   line sources "$OUT/result.txt" "$OUT/list.txt" "$OUT/ll-digests.txt"
   line langarena "$OUT/la-result.txt" "$OUT/la-list.txt" "$OUT/la-digests.txt"
+  if [ -s "$OUT/la-refused.txt" ]; then
+    awk -F'\t' '$1 == "refused" { n = $2; of = $3 } $1 == "first" { f = $2; m = $3 }
+      END { printf "langarena: not comparable: the base refuses %d of %d (first message: %s: %s); the sources corpus is judged alone\n", n, of, f, m }' "$OUT/la-refused.txt"
+  fi
   [ -s "$OUT/la-list.txt" ] || echo "langarena: no stitched program in $LA (run the harness once: its prod or test run stitches every task)"
 } | tee "$OUT/summary.txt"
 rmdir "$OUT/a" "$OUT/b" 2>/dev/null
