@@ -603,6 +603,66 @@ pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
   r
 }
 
+// call avant_buf_push_byte(_b, _c): the runtime's fast path in place
+// (runtime/avant_buf.c): a Buf (AvantBuf: its data, its size, its
+// capacity) with room stores the byte at its size and counts it; one
+// that is full, has no storage yet or is null calls the runtime, which
+// grows it (and may collect: the MIR's call is a collecting one, so what
+// is live across it is in a slot either way). The byte is in 0..255
+// already (the lowering checks one that is not a literal). The call form
+// when inline fast paths are off.
+pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need("avant_buf_push_byte")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  b = e.value(args[0])
+  v = e.value(args[1])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${b}, null")
+  test = e.part("bufroom")
+  fast = e.part("bufput")
+  slow = e.part("bufgrow")
+  done = e.part("bufpushed")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${b}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${b}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${b}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load i32, ptr ${cp}, align 4, !tbaa !7")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  room = e.tmp()
+  e.line("${room} = icmp slt i32 ${sz}, ${cap}")
+  both = e.tmp()
+  e.line("${both} = and i1 ${hasd}, ${room}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${both}, i1 true)")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${w}")
+  t = e.tmp()
+  e.line("${t} = trunc i64 ${v} to i8")
+  e.line("store i8 ${t}, ptr ${ep}, align 1, !tbaa !3")
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, 1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  e.line("br label %${done}")
+  e.block(slow)
+  e.line("call void @avant_buf_push_byte(ptr ${b}, i64 ${v})")
+  e.line("br label %${done}")
+  e.block(done)
+  ""
+}
+
 // Whether the string object at Q (not null) is a view: its header's type
 // id (the 16 bits at Q - 4) is 1020; expected false.
 fn ll_str_is_view(e: LlEmit, q: String): String {
