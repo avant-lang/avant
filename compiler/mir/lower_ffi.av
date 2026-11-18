@@ -1105,6 +1105,15 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
 }
 
 pub fn (lw: MirLower) unpin(h: Int) {
+  if !lw.open_now() {
+    // A deferred block before this entry ended the program.
+    return
+  }
+  if h <= mir_defer_base() {
+    // A deferred block (lower_stmt.av lower_defer).
+    lw.run_defer(lw.lw_ffi.defers[mir_defer_base() - h])
+    return
+  }
   args: Array(MOperand) = []
   if h < -1 {
     // A `Mutex.with` block's lock, its mutex in local -2 - h

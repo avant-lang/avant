@@ -62,6 +62,9 @@ pub fn st_pin: Int { 9 }
 pub fn st_release: Int { 10 }
 // `gc.hold { body }` (std.gc): body only.
 pub fn st_hold: Int { 11 }
+// `defer { body }`: body runs on every way out of the enclosing block
+// (its end, return, `?`, break, continue), the latest first.
+pub fn st_defer: Int { 12 }
 
 pub class TypeName {
   pub loc: Location
@@ -372,6 +375,11 @@ pub class Stmt {
   // values: the checker sets it, and the function's value is the
   // branch's (mir lower_body).
   pub tail_value: Bool = false
+  // A `for` loop whose body holds a `defer`: its body's last latch
+  // statements are the step to the next value, where `continue` goes
+  // (mir lower_while), after the deferred blocks of the body have run;
+  // its `continue`s get no step of their own (parser for_advance).
+  pub latch: Int = 0
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -1207,6 +1215,7 @@ pub fn clone_stmt(s: Stmt): Stmt {
   }
   out.for_kind = s.for_kind
   out.step = s.step
+  out.latch = s.latch
   out.lead = s.lead
   if t = s.declared {
     out.declared = clone_type_name(t)

@@ -157,7 +157,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
       lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.body, encl)
-    } else if k == st_pin() || k == st_hold() {
+    } else if k == st_pin() || k == st_hold() || k == st_defer() {
       lw.prewalk_opt(st.expr, encl)
       lw.prewalk_stmts(st.body, encl)
     } else if k == st_release() {
@@ -556,8 +556,10 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   if lw.failed() {
     return zero
   }
-  lam = MirLam.new(e, sym)
-  lw.lw_cl.pending.push(lam)
+  if !lw.lw_cl.queued.has(sym) {
+    lw.lw_cl.queued.add(sym)
+    lw.lw_cl.pending.push(MirLam.new(e, sym))
+  }
   fty = b.types.agg(l)
   if e.cap_names.size == 0 {
     lw.at(e.loc)

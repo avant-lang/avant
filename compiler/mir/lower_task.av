@@ -249,7 +249,10 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   if got = lw.lw_task.index.get(sym) {
     idx = got
   }
-  lw.lw_task.pending.push(MirTask.new(e, sym, false, idx))
+  if !lw.lw_task.queued.has(sym) {
+    lw.lw_task.queued.add(sym)
+    lw.lw_task.pending.push(MirTask.new(e, sym, false, idx))
+  }
   arg = b.c_null(mt_ref())
   if e.cap_names.size > 0 {
     l = lw.task_layout(e, sym, false)
@@ -535,7 +538,10 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   if got = lw.lw_task.index.get(sym) {
     idx = got
   }
-  lw.lw_task.pending.push(MirTask.new(e, sym, true, idx))
+  if !lw.lw_task.queued.has(sym) {
+    lw.lw_task.queued.add(sym)
+    lw.lw_task.pending.push(MirTask.new(e, sym, true, idx))
+  }
   aty = lw.ety(recv)
   oty = lw.ety(e)
   if lw.failed() {
@@ -866,6 +872,24 @@ pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
 // emit_parallel_thunk, emit_mutex_with: the last value is not a counted
 // statement).
 pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
+  mark = lw.lw_ffi.pins.size
+  got = lw.task_value_in(bl, want)
+  if lw.lw_ffi.pins.size == mark || lw.failed() {
+    return got
+  }
+  // The block's deferred blocks run once its value is computed.
+  if v = got, !want.is_void() && lw.open_now() {
+    ty = lw.ty_at(want, bl.loc, "a block's value")
+    if lw.failed() {
+      return nil
+    }
+    return lw.scope_value(v, ty, mark)
+  }
+  lw.scope_end(mark)
+  got
+}
+
+pub fn (lw: MirLower) task_value_in(bl: Block, want: Ty): MOperand? {
   if bl.paren && bl.returns {
     mty = mt_void()
     if !want.is_void() {

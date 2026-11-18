@@ -16,8 +16,16 @@ import mir.lower_ty
 import mir.lower
 
 // A function body: the last statement of a function with a result is
-// its value when it is an expression (the old emit_stmt's at_tail).
+// its value when it is an expression (the old emit_stmt's at_tail). The
+// deferred blocks of the body run after that value is computed, before
+// the function returns.
 pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
+  mark = lw.lw_ffi.pins.size
+  lw.lower_body_in(body)
+  lw.scope_end(mark)
+}
+
+pub fn (lw: MirLower) lower_body_in(body: Array(Stmt)) {
   i = 0
   while i < body.size {
     if lw.failed() || !lw.open_now() {
@@ -49,7 +57,10 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
         }
         lw.at(st.loc)
         lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
-        lw.ret_fn()
+        lw.unpin_all()
+        if lw.open_now() {
+          lw.ret_fn()
+        }
         return
       }
     }
@@ -58,7 +69,17 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
   }
 }
 
+// A block's statements: the deferred blocks its `defer` statements
+// leave run at its end, the latest first, when the end is reached.
 pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
+  mark = lw.lw_ffi.pins.size
+  lw.lower_stmts_in(body)
+  lw.scope_end(mark)
+}
+
+// A block's statements, its deferred blocks left waiting (the caller
+// runs them with scope_end once the block's value is computed).
+pub fn (lw: MirLower) lower_stmts_in(body: Array(Stmt)) {
   i = 0
   while i < body.size {
     if lw.failed() || !lw.open_now() {
@@ -104,6 +125,9 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
     }
     lw.at(st.loc)
     lw.unpin_loop()
+    if !lw.open_now() {
+      return
+    }
     if k == st_break() {
       lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
     } else {
@@ -117,6 +141,10 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
   }
   if k == st_hold() {
     lw.lower_hold(st)
+    return
+  }
+  if k == st_defer() {
+    lw.lower_defer(st)
     return
   }
   if k == st_release() {
@@ -272,7 +300,9 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
       lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
     }
     lw.unpin_all()
-    lw.ret_fn()
+    if lw.open_now() {
+      lw.ret_fn()
+    }
     return
   }
   lw.at(st.loc)
@@ -280,7 +310,67 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
     lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
   }
   lw.unpin_all()
-  lw.ret_fn()
+  if lw.open_now() {
+    lw.ret_fn()
+  }
+}
+
+// `defer { body }`: the body waits on the pin stack, as a pin's unpin
+// does, and runs on every way out of the block that holds the statement:
+// at its end (lower_stmts, scope_end), before a return or a `?` that
+// returns (unpin_all), before a break or continue of a loop opened
+// outside it (unpin_loop), and before a lambda's return when a builtin
+// inlines the lambda (lam_return). A return's value is computed (and
+// written to its place) first; the deferred code cannot change it. Each
+// way out lowers its own copy of the body.
+pub fn (lw: MirLower) lower_defer(st: Stmt) {
+  j = lw.lw_ffi.defers.size
+  lw.lw_ffi.defers.push(st)
+  lw.lw_ffi.pins.push(mir_defer_base() - j)
+  lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
+}
+
+// The end of a block whose entries began at mark: the deferred blocks
+// still waiting there run, the latest first, when the end is reached;
+// they are dropped either way.
+pub fn (lw: MirLower) scope_end(mark: Int) {
+  while lw.lw_ffi.pins.size > mark {
+    top = lw.lw_ffi.pins.size - 1
+    h = lw.lw_ffi.pins[top]
+    lw.lw_ffi.pins.pop()
+    lw.lw_ffi.pin_depth.pop()
+    if h <= mir_defer_base() {
+      st = lw.lw_ffi.defers[mir_defer_base() - h]
+      lw.lw_ffi.defers.pop()
+      if !lw.failed() && lw.open_now() {
+        lw.run_defer(st)
+      }
+    }
+  }
+}
+
+// A value v of MIR type ty, the last of a block whose entries began at
+// mark: when deferred blocks wait there, v is kept in a temporary first,
+// so they run after it is computed and cannot change it.
+pub fn (lw: MirLower) scope_value(v: MOperand, ty: Int, mark: Int): MOperand {
+  if lw.lw_ffi.pins.size == mark {
+    return v
+  }
+  t = lw.tmp(ty, lw.lw_b.rv_use(v))
+  lw.scope_end(mark)
+  t
+}
+
+// One copy of a deferred block. The boxes its own variables need are
+// made in each copy (a copy on another way out does not pass through
+// this one).
+pub fn (lw: MirLower) run_defer(st: Stmt) {
+  ready = Set(String).new()
+  for key in lw.lw_cl.box_ready {
+    ready.add(key)
+  }
+  lw.lower_stmts(st.body)
+  lw.lw_cl.box_ready = ready
 }
 
 pub fn (lw: MirLower) lower_if(st: Stmt) {
@@ -348,11 +438,46 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   } else {
     lw.lw_b.goto(body)
   }
+  if st.latch > 0 && (st.for_kind == 1 || st.for_kind == 2) {
+    lw.lower_latched(st, head, body, exit)
+    return
+  }
   lw.lw_heads.push(head)
   lw.lw_exits.push(exit)
   lw.lw_b.at(body)
   lw.cov_branch(st.loc)
   lw.lower_stmts(st.body)
+  lw.goto_if_open(head, st.loc)
+  lw.lw_heads.pop()
+  lw.lw_exits.pop()
+  lw.lw_b.at(exit)
+}
+
+// The body of a `for` whose body holds a `defer` (parser parse_for): the
+// body's own statements as a block, whose deferred blocks run at its end
+// and at each `continue`, which goes to the latch, the step to the next
+// value (the body's last st.latch statements), then the head.
+pub fn (lw: MirLower) lower_latched(st: Stmt, head: Int, body: Int, exit: Int) {
+  latch = lw.lw_b.block()
+  own: Array(Stmt) = []
+  step: Array(Stmt) = []
+  i = 0
+  while i < st.body.size {
+    if i < st.body.size - st.latch {
+      own.push(st.body[i])
+    } else {
+      step.push(st.body[i])
+    }
+    i += 1
+  }
+  lw.lw_heads.push(latch)
+  lw.lw_exits.push(exit)
+  lw.lw_b.at(body)
+  lw.cov_branch(st.loc)
+  lw.lower_stmts(own)
+  lw.goto_if_open(latch, st.loc)
+  lw.lw_b.at(latch)
+  lw.lower_stmts(step)
   lw.goto_if_open(head, st.loc)
   lw.lw_heads.pop()
   lw.lw_exits.pop()
@@ -672,6 +797,13 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
     lw.lower_stmts(body)
     return
   }
+  // The arm's deferred blocks run once its value is in dest.
+  mark = lw.lw_ffi.pins.size
+  lw.lower_arm_in(body, dest, sw)
+  lw.scope_end(mark)
+}
+
+pub fn (lw: MirLower) lower_arm_in(body: Array(Stmt), dest: Int, sw: Expr) {
   i = 0
   while i < body.size {
     if lw.failed() || !lw.open_now() {

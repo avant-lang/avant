@@ -154,6 +154,16 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
   lw.lw_exits.pop()
 }
 
+// The statements before a value block's last, its deferred blocks left
+// waiting until the value is computed (lower_stmt.av scope_end).
+pub fn (lw: MirLower) block_head(stmts: Array(Stmt), cont: Int, exit: Int) {
+  lw.lw_heads.push(cont)
+  lw.lw_exits.push(exit)
+  lw.lower_stmts_in(stmts)
+  lw.lw_heads.pop()
+  lw.lw_exits.pop()
+}
+
 // A value block (emit_pred_block, emit_cmp_block): every statement but
 // the last, then the last one's expression (a trailing `return e` yields
 // e there, as in the old back end).
@@ -175,12 +185,14 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
     head.push(bl.body[i])
     i += 1
   }
-  lw.block_body(head, cont, exit)
+  mark = lw.lw_ffi.pins.size
+  lw.block_head(head, cont, exit)
   if lw.failed() {
     return b.c_bool(false)
   }
   if !lw.open_now() {
     // Every path left the block: the value is never used.
+    lw.scope_end(mark)
     return b.c_bool(false)
   }
   last = bl.body[bl.body.size - 1]
@@ -190,7 +202,9 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
       return b.c_bool(false)
     }
     lw.at(x.loc)
-    return lw.tmp(mt_bool(), b.rv_use(v))
+    r = lw.tmp(mt_bool(), b.rv_use(v))
+    lw.scope_end(mark)
+    return r
   }
   lw.refuse(last.loc, "a block that does not end with a value")
   b.c_bool(false)
@@ -276,7 +290,8 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     first.push(bl.body[j])
     j += 1
   }
-  lw.block_body(first, step, exit)
+  mark = lw.lw_ffi.pins.size
+  lw.block_head(first, step, exit)
   if lw.failed() {
     return zero
   }
@@ -301,6 +316,7 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
       return zero
     }
   }
+  lw.scope_end(mark)
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
@@ -738,7 +754,9 @@ pub fn (lw: MirLower) lam_return(st: Stmt) {
     lw.unpin(lw.lw_ffi.pins[i])
     i -= 1
   }
-  b.goto(lw.lw_lam_ends[top])
+  if lw.open_now() {
+    b.goto(lw.lw_lam_ends[top])
+  }
 }
 
 // The body of an inlined walk (`each`) with `break` to exit and `next`
@@ -765,6 +783,7 @@ pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: 
   }
   end = b.block()
   lw.lam_open(end, slot, want)
+  mark = lw.lw_ffi.pins.size
   if bl.body.size > 0 {
     head: Array(Stmt) = []
     j = 0
@@ -772,7 +791,7 @@ pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: 
       head.push(bl.body[j])
       j += 1
     }
-    lw.lam_stmts(head, cont, exit)
+    lw.lam_head(head, cont, exit)
     if !lw.failed() && lw.open_now() {
       last = bl.body[bl.body.size - 1]
       if x = last.expr, last.kind == st_expr() && slot >= 0 {
@@ -787,6 +806,7 @@ pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: 
       }
     }
   }
+  lw.scope_end(mark)
   lw.lam_close()
   if lw.failed() {
     return nil
@@ -809,6 +829,16 @@ pub fn (lw: MirLower) lam_stmts(stmts: Array(Stmt), cont: Int, exit: Int) {
   lw.block_body(stmts, cont, exit)
 }
 
+// The statements before such a body's last, its deferred blocks left
+// waiting (lam_value runs them once the value is in the slot).
+pub fn (lw: MirLower) lam_head(stmts: Array(Stmt), cont: Int, exit: Int) {
+  if cont < 0 {
+    lw.lower_stmts_in(stmts)
+    return
+  }
+  lw.block_head(stmts, cont, exit)
+}
+
 // The value of a lambda an array verb inlines (find, index_of, min_by,
 // max_by, delete_if), of type want: the lambda's own result slot when a
 // `return` in it ends its run, else its last expression.
@@ -826,8 +856,10 @@ pub fn (lw: MirLower) verb_value(bl: Block, want: Ty, mty: Int, cont: Int, exit:
     head.push(bl.body[i])
     i += 1
   }
-  lw.block_body(head, cont, exit)
+  mark = lw.lw_ffi.pins.size
+  lw.block_head(head, cont, exit)
   if lw.failed() || !lw.open_now() || bl.body.size == 0 {
+    lw.scope_end(mark)
     return b.c_i32(0)
   }
   last = bl.body[bl.body.size - 1]
@@ -837,7 +869,9 @@ pub fn (lw: MirLower) verb_value(bl: Block, want: Ty, mty: Int, cont: Int, exit:
       return b.c_i32(0)
     }
     lw.at(x.loc)
-    return lw.tmp(mty, b.rv_use(v))
+    r = lw.tmp(mty, b.rv_use(v))
+    lw.scope_end(mark)
+    return r
   }
   lw.refuse(last.loc, "a lambda that does not end with a value")
   b.c_i32(0)

@@ -736,7 +736,9 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
         lw.unpin(lw.lw_ffi.pins[i])
         i -= 1
       }
-      b.goto(lw.lw_lam_ends[top])
+      if lw.open_now() {
+        b.goto(lw.lw_lam_ends[top])
+      }
       b.at(bok)
       return lw.unwrap(src, uty, success, e.loc)
     }
@@ -749,7 +751,9 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
       b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
     }
     lw.unpin_all()
-    b.ret()
+    if lw.open_now() {
+      b.ret()
+    }
     b.at(bok)
     return lw.unwrap(src, uty, success, e.loc)
   }
@@ -922,6 +926,14 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
     lw.lower_stmts(body)
     return
   }
+  // The branch's deferred blocks run once its value is in dest (or
+  // returned).
+  mark = lw.lw_ffi.pins.size
+  lw.lower_branch_in(body, mode, dest, want)
+  lw.scope_end(mark)
+}
+
+pub fn (lw: MirLower) lower_branch_in(body: Array(Stmt), mode: Int, dest: Int, want: Ty?) {
   b = lw.lw_b
   i = 0
   while i < body.size {
@@ -945,7 +957,10 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
             }
             lw.at(st.loc)
             b.assign(b.pl(0), b.rv_use(v))
-            lw.ret_fn()
+            lw.unpin_all()
+            if lw.open_now() {
+              lw.ret_fn()
+            }
             return
           }
           v2 = lw.lower_expr(e)

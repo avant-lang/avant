@@ -306,6 +306,7 @@ pub class Expander {
     if k == st_while() {
       out = Stmt.new(st_while(), s.loc)
       out.for_kind = s.for_kind
+      out.latch = s.latch
       if c = s.cond {
         out.cond = fill_expr(c)
       }
@@ -332,7 +333,7 @@ pub class Expander {
       }
       return out
     }
-    if k == st_pin() || k == st_hold() {
+    if k == st_pin() || k == st_hold() || k == st_defer() {
       out = Stmt.new(k, s.loc)
       if e = s.expr {
         out.expr = fill_expr(e)
@@ -772,7 +773,7 @@ pub class Expander {
         collect_introduced(s.body, into)
       } else if k == st_quote() {
         collect_introduced(s.body, into)
-      } else if k == st_pin() || k == st_hold() {
+      } else if k == st_pin() || k == st_hold() || k == st_defer() {
         // The names a `pin` block assigns are the quote's too (a
         // `gc.hold` block's as well).
         if pe = s.expr {
@@ -955,6 +956,7 @@ pub class Expander {
     if k == st_while() {
       out = Stmt.new(st_while(), s.loc)
       out.for_kind = s.for_kind
+      out.latch = s.latch
       if c = s.cond {
         out.cond = rename_expr(c, map)
       }
@@ -988,7 +990,7 @@ pub class Expander {
       }
       return out
     }
-    if k == st_pin() || k == st_hold() {
+    if k == st_pin() || k == st_hold() || k == st_defer() {
       // Before, a `pin` block kept its names, so a quote's local inside
       // it captured the paste site's.
       out = Stmt.new(k, s.loc)
@@ -1188,13 +1190,14 @@ pub class Expander {
       } else if k == st_while() {
         n = Stmt.new(st_while(), s.loc)
         n.for_kind = s.for_kind
+        n.latch = s.latch
         n.cond = s.cond
         n.expr = s.expr
         n.op = s.op
         n.pre = expand_stmt_list(s.pre)
         n.body = expand_stmt_list(s.body)
         out.push(n)
-      } else if k == st_pin() || k == st_hold() {
+      } else if k == st_pin() || k == st_hold() || k == st_defer() {
         n = Stmt.new(k, s.loc)
         n.expr = s.expr
         n.body = expand_stmt_list(s.body)

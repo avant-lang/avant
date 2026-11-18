@@ -1,0 +1,159 @@
+import harness
+import backends
+import std.fs
+import std.process
+
+// `defer { ... }`, scoped to its block: the deferred block runs on every
+// way out of the block that holds it (its end, return, `?`, break,
+// continue), the latest first, after a returned value or a block's value
+// is computed; never on a trap or `exit`; and it cannot leave its own
+// block. tests/fixtures/syntax/defer.av walks the ways out and prints its
+// run golden, here with the collector's checks too; the cases below
+// compile in parallel: a refused one must leave no binary, say the
+// expected words and point at the expected line and column; an accepted
+// one must exit with the expected status and print what it should.
+
+class DCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+  pub code: Int = 0
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): DCase {
+  f = DCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): DCase {
+  f = DCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+// A program that stops with status code; want is in its stderr.
+fn stops(tag: String, src: String, err: String, code: Int): DCase {
+  f = accepted(tag, src, err)
+  f.code = code
+  f
+}
+
+fn cases: Array(DCase) {
+  xs: Array(DCase) = []
+  leave = "the block runs on the way out of the block around the defer and cannot leave it"
+  opt = "fn g: Int? {\n  nil\n}\n"
+  xs.push(refused("return", "fn f: Int {\n  defer { return 1 }\n  2\n}\nfn main {\n  puts(f())\n}\n", "return inside a deferred block: ${leave}", "2:11"))
+  xs.push(refused("question", opt + "fn f: Int? {\n  defer {\n    x = g()?\n    puts(x)\n  }\n  2\n}\nfn main {\n  puts(f() ?? 0)\n}\n", "postfix ? inside a deferred block: ${leave}", "6:12"))
+  xs.push(refused("else-return", opt + "fn f: Int? {\n  defer {\n    x = g() ?? return nil\n    puts(x)\n  }\n  2\n}\nfn main {\n  puts(f() ?? 0)\n}\n", "return inside a deferred block: ${leave}", "6:16"))
+  xs.push(refused("break", "fn main {\n  for i in 0..3 {\n    defer { break }\n    puts(i)\n  }\n}\n", "break inside a deferred block: ${leave}", "3:13"))
+  xs.push(refused("continue", "fn main {\n  i = 0\n  while i < 3 {\n    i += 1\n    defer {\n      if i == 2 {\n        continue\n      }\n    }\n    puts(i)\n  }\n}\n", "continue inside a deferred block: ${leave}", "7:9"))
+  xs.push(refused("last", "fn main {\n  puts(1)\n  defer { puts(2) }\n}\n", "a defer as its block's last statement runs at once", "3:3"))
+  xs.push(refused("as-name", "fn main {\n  defer = 3\n  puts(1)\n}\n", "defer takes a block, `defer { ... }`, run on every way out of the block around it; `defer` is a keyword and cannot be a name", "2:3"))
+  xs.push(refused("as-param", "fn f(defer: Int) {\n  puts(defer)\n}\nfn main {\n  f(1)\n}\n", "expected a name, found `defer`", "1:6"))
+  xs.push(accepted("loop-inside", "fn main {\n  defer {\n    for i in 0..5 {\n      if i == 2 {\n        break\n      }\n      puts(i)\n    }\n  }\n  puts(\"body\")\n}\n", "body\n0\n1\n"))
+  xs.push(accepted("lambda-inside", "fn main {\n  defer {\n    first = (xs: Array(Int)): Int? {\n      for x in xs {\n        return x\n      }\n      nil\n    }\n    puts(first([4, 5]) ?? 0)\n  }\n  puts(\"body\")\n}\n", "body\n4\n"))
+  xs.push(accepted("return-value", "fn f: Int {\n  n = 1\n  defer { n = 50 }\n  if n > 0 {\n    return n + 1\n  }\n  n\n}\nfn main {\n  puts(f())\n}\n", "2\n"))
+  xs.push(accepted("for-counter", "fn main {\n  for i in 0..3 {\n    defer { puts(\"end \${i}\") }\n    if i == 1 {\n      continue\n    }\n    puts(i)\n  }\n}\n", "0\nend 0\nend 1\n2\nend 2\n"))
+  // A size proven where the defer is written may not hold when its
+  // block runs: the index is checked there.
+  xs.push(stops("no-stale-proof", "fn main {\n  xs = [1, 2, 3]\n  i = 2\n  if i < xs.size {\n    defer { puts(xs[i]) }\n    xs.clear()\n  }\n}\n", "index 2 out of bounds (size 0)", 1))
+  xs.push(stops("not-on-exit", "fn main {\n  defer { puts(\"deferred\") }\n  exit(3)\n}\n", "", 3))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(DCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/df-${f.tag}.av"
+    _ = fs.write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/df-${f.tag}.bin", "${dir}/df-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "df-${f2.tag}.bin", "df-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/df-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, f3.code, "${f3.tag}: exit ${f3.code}")
+      if f3.code == 0 {
+        c.eq_str(log_text("${dir}/df-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      } else {
+        c.eq_str(log_text("${dir}/df-${f3.tag}.run.out"), "", "${f3.tag}: no deferred block printed")
+        if f3.want.size > 0 {
+          c.expect(log_text("${dir}/df-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+        }
+      }
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/df-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("df-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+}
+
+// The fixture: its run golden, plainly and under each collector setting.
+fn run_fixture(c: Checks, compiler: String, root: String, dir: String) {
+  p = "tests/fixtures/syntax/defer.av"
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/${p}", "${dir}/df-fixture.bin", "${dir}/df-fixture.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "${p}: compiles")
+  envs = gc_envs()
+  runs: Array(HJob) = []
+  runs.push(run_job(dir, "df-fixture.bin", "df-fixture.b"))
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "df-fixture.bin", "df-fixture.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  want = golden_out(root, p)
+  c.eq_int(runs[0].code, golden_status(root, p), "${p}: the golden exit status")
+  c.eq_str(log_text("${dir}/df-fixture.b.out"), want, "${p}: the golden stdout")
+  for e2 in 0..envs.size {
+    c.eq_int(runs[1 + e2].code, 0, "${p} under ${envs[e2]}: exit 0")
+    c.eq_str(log_text("${dir}/df-fixture.g${e2}.out"), want, "${p} under ${envs[e2]}: the golden stdout")
+    c.eq_str(log_text("${dir}/df-fixture.g${e2}.err"), "", "${p} under ${envs[e2]}: no verifier report")
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_defer.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    dir = scratch_dir()
+    run_fixture(c, compiler, avant_test_root(), dir)
+    run_cases(c, compiler, dir, cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

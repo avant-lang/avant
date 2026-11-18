@@ -73,6 +73,10 @@ pub class MirClosures {
   pub cap_at: Hash(String, Int) = Hash(String, Int).new()
   pub cap_tys: Array(Ty) = []
   pub pending: Array(MirLam) = []
+  // The thunks already queued, by symbol: a deferred block lowered on
+  // several ways out lowers its lambdas there several times, and each
+  // thunk is made once.
+  pub queued: Set(String) = Set(String).new()
   pub lam_n: Hash(String, Int) = Hash(String, Int).new()
 }
 
@@ -110,6 +114,9 @@ pub class MirFfi {
   pub ukey_seen: Set(String) = Set(String).new()
   pub pins: Array(Int) = []
   pub pin_depth: Array(Int) = []
+  // The `defer` statements whose blocks wait, innermost last: entry j's
+  // pin entry is mir_defer_base() - j (lower_stmt.av lower_defer).
+  pub defers: Array(Stmt) = []
   // A `Mutex.with` block's pin entry is -2 - h, h the local holding the
   // mutex; this is the index of its gate field (lower_task.av).
   pub with_gate: Hash(Int, Int) = Hash(Int, Int).new()
@@ -117,7 +124,14 @@ pub class MirFfi {
   pub fn reset_pins {
     self.pins = []
     self.pin_depth = []
+    self.defers = []
   }
+}
+
+// The pin entry of the deferred block j is mir_defer_base() - j, below
+// every other entry (a `Mutex.with`'s is -2 - h, h a local).
+pub fn mir_defer_base: Int {
+  -1099511627776
 }
 
 // A spawn or `.parallel` thunk waiting to be lowered (lower_task.av): the
@@ -143,6 +157,8 @@ pub class MirTask {
 // mutex, the cell's field index), innermost last.
 pub class MirTasks {
   pub pending: Array(MirTask) = []
+  // The thunks already queued, by symbol (MirClosures.queued).
+  pub queued: Set(String) = Set(String).new()
   pub done: Int = 0
   pub count: Int = 0
   pub n: Hash(String, Int) = Hash(String, Int).new()

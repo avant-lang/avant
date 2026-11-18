@@ -129,6 +129,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [while](#while)
   - [for](#for)
   - [switch](#switch)
+  - [defer](#defer)
 - [Enums](#enums)
 - [Nil and unions](#nil-and-unions):
   - [opening an optional](#opening-an-optional)
@@ -935,6 +936,48 @@ fn main {
 - Over an enum, a union (its failures too) or a `Bool`, a switch without `else` names every member (`true` and `false` for a `Bool`), as a statement and as a value, so a new member is reported at each switch that misses it (`switch over Tok does not cover name, number: name them or add else`); an `else` beside every member is refused. Over other types, a switch used as a value needs `else`; as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
 - As a statement, a switch's arms are statements, as an `if`'s: an arm's final value is dropped, unless it can be an error ([Errors cannot be dropped](#errors-cannot-be-dropped)).
+
+### Defer
+
+`defer { ... }` runs its block on every way out of the block that holds it: its end, `return`, `?`, `break` and `continue`. A release written once, beside what it releases, then holds on every path:
+
+```avant
+fn total(name: String, xs: Array(Int)): Int {
+  puts("open ${name}")
+  defer { puts("close ${name}") }
+  sum = 0
+  for x in xs {
+    if x < 0 {
+      return -1
+    }
+    sum += x
+  }
+  sum
+}
+
+fn main {
+  puts(total("a", [1, 2]))
+  puts(total("b", [3, -1]))
+}
+```
+
+<!-- check: output -->
+```text
+open a
+close a
+3
+open b
+close b
+-1
+```
+
+- **Scope:** the block that holds the `defer`, as in Swift, Zig and Odin (not the whole function, as in Go). In a loop body it runs at the end of each iteration, on `continue` and on `break`, before the step to the next value; in an `if` branch or a `switch` arm, when the branch ends. A block's deferred blocks run the latest first.
+- **Order:** a returned value, and the value of a block that gives one (a function's last expression, an `if` or `switch` used as a value), is computed first, then the deferred blocks run: they cannot change it (`return n` with `defer { n = 0 }` still returns the old `n`), as in Swift and Zig.
+- **What it sees:** the names assigned before the `defer`, with their values when it runs. A size or a bound proven before it is checked again inside it, since the code between may change it.
+- **Not on a trap or `exit`:** a trap stops the program (or the task) and `exit` ends it; neither runs deferred blocks.
+- **It cannot leave its block:** `return`, `?` (and `?? return`), and a `break` or `continue` of a loop outside it are compile errors there (`return inside a deferred block: the block runs on the way out of the block around the defer and cannot leave it ...`); a loop or a lambda inside it uses them for itself. A `defer` as its block's last statement would run at once and is refused.
+- **Lambdas and tasks:** a lambda is a function of its own: a `defer` in it runs when that run of the lambda ends, and a `return` in it runs only its own. A `spawn` block is the task's: the spawning function's deferred blocks do not run in the task, and the block's own run when the task's block ends.
+- **Cost:** each way out holds its own copy of the deferred statements (code size), and nothing else runs; a program without `defer` compiles as before. `defer` is a keyword, so it cannot be a name. There is no `errdefer` (a deferred block for the error paths only).
 
 ## Enums
 

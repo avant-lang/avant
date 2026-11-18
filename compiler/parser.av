@@ -97,6 +97,9 @@ pub class Parser {
   // The step of the range whose body for_advance walks (`by k`; 1
   // without one).
   for_by: UInt64 = 1u64
+  // The `defer` statements parsed so far: a `for` whose body holds one
+  // has a latch (parse_for).
+  defers_seen: Int = 0
   // The nesting bound: depth counts the blocks, expressions and type
   // names open on the parser's stack; peak is the deepest level the
   // expression being parsed reaches, which a chain built in a loop
@@ -541,6 +544,10 @@ pub class Parser {
         }
       }
       i += 1
+    }
+    if stmts.size > 0 && stmts[stmts.size - 1].kind == st_defer() {
+      // Nothing follows it in its block: it would run at once.
+      fail(stmts[stmts.size - 1].loc, "a defer as its block's last statement runs at once, when the block ends; write its statements without defer, or move the defer before the statements it should follow")
     }
   }
 
@@ -2053,6 +2060,9 @@ pub class Parser {
     if k == tk_release() {
       return self.parse_release()
     }
+    if k == tk_defer() {
+      return self.parse_defer()
+    }
     if k == tk_for() {
       return self.parse_for()
     }
@@ -2360,6 +2370,25 @@ pub class Parser {
     s
   }
 
+  // `defer { body }`: the body runs on every way out of the block that
+  // holds the statement (checker check_defer, mir lower_defer).
+  pub fn parse_defer: Stmt {
+    loc = self.bump().loc
+    self.skip_newlines()
+    if self.current().kind != tk_l_brace() {
+      fail(loc, "defer takes a block, `defer { ... }`, run on every way out of the block around it; `defer` is a keyword and cannot be a name")
+      while self.current().kind != tk_newline() && self.current().kind != tk_eof() && self.current().kind != tk_r_brace() {
+        self.bump()
+      }
+      return stmt_expr(loc, Expr.new(ex_nil(), loc))
+    }
+    body = self.parse_block()
+    self.defers_seen += 1
+    s = Stmt.new(st_defer(), loc)
+    s.body = body
+    s
+  }
+
   // `release(place)`: a statement, the shape of `pin(x)` without a
   // block.
   pub fn parse_release: Stmt {
@@ -2575,6 +2604,7 @@ pub class Parser {
         self.skip_newlines()
       }
       by = rb.by
+      seen_range = self.defers_seen
       raw_body = self.parse_block()
       end_name = "__for${id}_end"
       pending = false
@@ -2582,7 +2612,7 @@ pub class Parser {
         pending = true
       }
       if rb.down || pending {
-        return range_loop(loc, var_tok.value, first, end_expr, end_name, incl, rb, raw_body)
+        return range_loop(loc, var_tok.value, first, end_expr, end_name, incl, rb, raw_body, self.defers_seen > seen_range)
       }
       s = Stmt.new(st_while(), loc)
       s.for_kind = 1
@@ -2596,8 +2626,17 @@ pub class Parser {
       }
       s.cond = for_binary(loc, op, for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
       self.for_by = by
-      s.body = for_advance(raw_body, var_tok.value, loc)
-      for_step(loc, var_tok.value, s.body)
+      if self.defers_seen > seen_range {
+        // A body with a defer: its deferred blocks run before the step,
+        // which `continue` reaches as the body's end does.
+        s.body = raw_body
+        n_range = s.body.size
+        for_step(loc, var_tok.value, s.body)
+        s.latch = s.body.size - n_range
+      } else {
+        s.body = for_advance(raw_body, var_tok.value, loc)
+        for_step(loc, var_tok.value, s.body)
+      }
       self.for_last = ""
       self.for_by = 1u64
       return s
@@ -2606,6 +2645,7 @@ pub class Parser {
       fail(self.current().loc, "for ... by takes a range (for i in a..b by 2); to visit every k-th element, walk the positions: for i in 0..xs.size by k")
       self.bump()
     }
+    seen_walk = self.defers_seen
     raw_body2 = self.parse_block()
     self.for_last = ""
     xs_name = "__for${id}_xs"
@@ -2628,14 +2668,23 @@ pub class Parser {
     elem_set = for_assign(loc, var_tok.value, elem_expr)
     elem_set.for_kind = 4
     s2.body.push(elem_set)
-    adv = for_advance(raw_body2, idx_name, loc)
-    s2.body.concat(adv)
+    latched = self.defers_seen > seen_walk
+    if latched {
+      s2.body.concat(raw_body2)
+    } else {
+      adv = for_advance(raw_body2, idx_name, loc)
+      s2.body.concat(adv)
+    }
+    n_walk = s2.body.size
     if pos_name.size > 0 {
       // A step, as a range's: a lambda that captures the position keeps
       // that iteration's value.
       for_step(loc, idx_name, s2.body)
     } else {
       s2.body.push(for_inc(loc, idx_name))
+    }
+    if latched {
+      s2.latch = s2.body.size - n_walk
     }
     s2
   }
@@ -4455,7 +4504,7 @@ pub fn range_kind_pending: Int { 10 }
 // value is computed only for a range that is not empty, so an empty one
 // computes nothing that traps; the loop runs while the range is not
 // empty and leaves by its step's break at the start.
-pub fn range_loop(loc: Location, var: String, first: Expr, end_expr: Expr, end_name: String, incl: Bool, rb: RangeBy, raw_body: Array(Stmt)): Stmt {
+pub fn range_loop(loc: Location, var: String, first: Expr, end_expr: Expr, end_name: String, incl: Bool, rb: RangeBy, raw_body: Array(Stmt), latched: Bool): Stmt {
   s = Stmt.new(st_while(), loc)
   s.pre.push(range_assign(loc, var, first))
   s.pre.push(range_assign(loc, end_name, end_expr))
@@ -4473,19 +4522,26 @@ pub fn range_loop(loc: Location, var: String, first: Expr, end_expr: Expr, end_n
     yes.bool_val = true
     s.cond = yes
     s.body = raw_body
+    // A body with a defer takes its step as a latch (below); 1 marks it
+    // until the step is built.
+    s.latch = if latched { 1 } else { 0 }
     return s
   }
-  range_build(s, loc, var, end_name, incl, rb.by, rb.down, raw_body)
+  range_build(s, loc, var, end_name, incl, rb.by, rb.down, raw_body, latched)
   s
 }
 
 // Fills s (a range loop with its two set-up stores) with the loop of
 // step `by` (down when `down`): the same loop the parser builds for a
 // literal step.
-pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: Bool, by: UInt64, down: Bool, raw_body: Array(Stmt)) {
+// A body with a defer (latched) keeps its `continue`s as written: the
+// step is the body's last statements, its latch, where `continue` goes
+// after the body's deferred blocks have run.
+pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: Bool, by: UInt64, down: Bool, raw_body: Array(Stmt), latched: Bool) {
   s.for_kind = 1
   s.expr = nil
   s.op = 0
+  s.latch = 0
   rs = RangeStep.new()
   rs.by = by
   op = if incl { tk_less_eq() } else { tk_less() }
@@ -4494,8 +4550,7 @@ pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: 
       rs.last = end_name
     }
     s.cond = range_binary(loc, op, range_name(loc, var), range_name(loc, end_name))
-    s.body = range_advance(rs, raw_body, var, loc)
-    range_step_into(rs, loc, var, s.body)
+    range_body(s, rs, raw_body, var, loc, latched)
     return
   }
   lo_name = "${end_name}_lo"
@@ -4527,6 +4582,17 @@ pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: 
   first_set.then_body.push(range_assign(loc, var, start))
   s.pre.push(first_set)
   s.cond = range_binary(loc, op, range_name(loc, lo_name), range_name(loc, end_name))
+  range_body(s, rs, raw_body, var, loc, latched)
+}
+
+pub fn range_body(s: Stmt, rs: RangeStep, raw_body: Array(Stmt), var: String, loc: Location, latched: Bool) {
+  if latched {
+    s.body = raw_body
+    n = s.body.size
+    range_step_into(rs, loc, var, s.body)
+    s.latch = s.body.size - n
+    return
+  }
   s.body = range_advance(rs, raw_body, var, loc)
   range_step_into(rs, loc, var, s.body)
 }

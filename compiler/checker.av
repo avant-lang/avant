@@ -79,6 +79,20 @@ pub class FlowFacts {
   pub reach_memo: Hash(String, Bool) = Hash(String, Bool).new()
 }
 
+// The context of a deferred block's statements (Checker.try_in).
+pub fn defer_context: String {
+  "a deferred block"
+}
+
+// The refusal of what would leave a deferred block.
+pub fn defer_exit_message(what: String): String {
+  way = "a loop or a lambda inside it may use them for itself"
+  if what == "postfix ?" {
+    way = "handle the failure there with if-assign or ??"
+  }
+  "${what} inside a deferred block: the block runs on the way out of the block around the defer and cannot leave it (return, ?, and a break or continue of a loop outside the deferred block are refused there); ${way}"
+}
+
 pub class Checker {
   source: Source
   pub program: Program
@@ -963,6 +977,40 @@ pub class Checker {
     self.weak_at = saved_weak
   }
 
+  // `defer { body }`: the body runs later, on the way out of the block
+  // around it, so it is checked where it is written without the flow
+  // facts of the code around it (a size or a bound proven there may not
+  // hold by then), as a block that cannot leave: `return`, `?`, and a
+  // `break` or `continue` of a loop outside it are refused (try_in and
+  // loop_depth, which a lambda or a task inside it sets for itself).
+  // What the body changes reaches the code around it as a statement's
+  // changes do: the loop around it reads the containers it shrinks, and
+  // the names its lambdas assign carry no fact after it.
+  pub fn check_defer(stmt: Stmt) {
+    saved_try = self.try_in
+    saved_loops = self.loop_depth
+    outer = self.facts
+    inner = FlowFacts.new()
+    inner.reach_memo = outer.reach_memo
+    inner.lam_written.concat(outer.lam_written)
+    known = inner.lam_written.size
+    self.facts = inner
+    self.try_in = defer_context()
+    self.loop_depth = 0
+    check_block(stmt.body, t_void(), false)
+    self.try_in = saved_try
+    self.loop_depth = saved_loops
+    self.facts = outer
+    outer.kill_cont.concat(inner.kill_cont)
+    if inner.lam_written.size > known {
+      written: Array(String) = []
+      for wi in known..inner.lam_written.size {
+        written.push(inner.lam_written[wi])
+      }
+      lambda_writes(written)
+    }
+  }
+
   pub fn fallthrough(body: Array(Stmt)): Bool {
     if body.size == 0 {
       return true
@@ -998,6 +1046,10 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
+      if self.try_in == defer_context() {
+        fail(stmt.loc, defer_exit_message("return"))
+        return
+      }
       if self.try_in == "a spawn block" || self.try_in == "a parallel block" {
         // A spawn or `.parallel` block cannot return: its value is its
         // last expression. Before, its statements were checked against
@@ -1137,6 +1189,10 @@ pub class Checker {
       }
       return
     }
+    if k == st_defer() {
+      check_defer(stmt)
+      return
+    }
     if k == st_hold() {
       check_hold(stmt)
       check_block(stmt.body, expected, false)
@@ -1259,7 +1315,9 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        if self.inline_what.size > 0 {
+        if self.try_in == defer_context() {
+          fail(stmt.loc, defer_exit_message("break"))
+        } else if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("break", self.inline_what))
         } else if self.in_build > 0 {
           fail(stmt.loc, "break inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
@@ -1274,7 +1332,9 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        if self.inline_what.size > 0 {
+        if self.try_in == defer_context() {
+          fail(stmt.loc, defer_exit_message("continue"))
+        } else if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("continue", self.inline_what))
         } else if self.in_build > 0 {
           fail(stmt.loc, "continue inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
@@ -2421,6 +2481,10 @@ pub class Checker {
   // function, and the failure was whichever member the result type
   // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.try_in == defer_context() {
+      fail(loc, defer_exit_message("postfix ?"))
+      return t_int()
+    }
     if self.try_in == "a spawn block" || self.try_in == "a parallel block" || self.try_in == "a lambda given to parallel" {
       // A spawn block's `?` ends the task with the failure, which the
       // join gives: the block's value becomes a union with it (a
