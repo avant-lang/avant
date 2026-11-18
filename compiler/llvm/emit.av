@@ -1236,10 +1236,11 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
 
 // The function's arithmetic trap when c holds: every overflow check of
 // a source line branches to that line's one trap.ovf.N block, every
-// division by zero to its trap.div0.N, so LLVM keeps folding a
-// statement's checks into one branch (a block per check, or a phi of
-// the checks' sites, kept it from that: +7% instructions on
-// Maze::AStar); the block names the function and the line.
+// division by zero to its trap.div0.N, so LLVM keeps folding a line's
+// checks into one branch (a block per check kept it from that: +7%
+// instructions on Maze::AStar). The line blocks only pass their site to
+// the function's one trap call (ll_arith_block): a call per line made
+// small functions too costly to inline (+12% on Maze::AStar).
 fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
   name = "ovf"
   if div_zero {
@@ -1277,25 +1278,34 @@ fn ll_fn_site(e: LlEmit): String {
   ll_fn_site_at(e, loc.file(), loc.line(), loc.col())
 }
 
-// The function's arithmetic trap blocks (ll_arith_trap), each calling
-// its kind's stub with its line's site.
+// The function's arithmetic trap blocks (ll_arith_trap): each line's
+// block jumps to its kind's one block, which calls the stub with the
+// line's site (a phi).
 fn ll_arith_block(e: LlEmit) {
   if !e.trap_ovf && !e.trap_div0 {
     return
   }
-  i = 0
-  while i < e.arith_keys.size {
-    parts = e.arith_keys[i].split(" ")
-    kind = parts[0]
-    site = ll_fn_site_at(e, parts[1].to_i() ?? -1, parts[2].to_i() ?? 0, e.arith_cols[i])
-    e.block("trap.${kind}.${i}")
-    suf = "#to"
-    if kind == "div0" {
-      suf = "#td"
+  kinds = ["ovf", "div0"]
+  sufs = ["#to", "#td"]
+  for k, kind in kinds {
+    incoming: Array(String) = []
+    i = 0
+    while i < e.arith_keys.size {
+      parts = e.arith_keys[i].split(" ")
+      if parts[0] == kind {
+        site = ll_fn_site_at(e, parts[1].to_i() ?? -1, parts[2].to_i() ?? 0, e.arith_cols[i])
+        e.block("trap.${kind}.${i}")
+        e.line("br label %trap.${kind}")
+        incoming.push("[ ${site}, %trap.${kind}.${i} ]")
+      }
+      i += 1
     }
-    e.line("call void ${ll_stub(e, suf)}(i32 ${site})")
-    e.line("unreachable")
-    i += 1
+    if incoming.size > 0 {
+      e.block("trap.${kind}")
+      e.line("%trap.${kind}.site = phi i32 ${incoming.join(", ")}")
+      e.line("call void ${ll_stub(e, sufs[k])}(i32 %trap.${kind}.site)")
+      e.line("unreachable")
+    }
   }
 }
 
