@@ -64,7 +64,7 @@ fn test_nesting(c: Checks) {
         c.expect(!fs.exists(bin), "${kind}: ${n} levels: no program")
         err = read_text(log)
         c.expect(err.contains("error[E2000]: this program nests deeper than 1000 levels"), "${kind}: ${n} levels: the error states the bound")
-        c.eq_int(count_of(err, "error["), 1, "${kind}: ${n} levels: one error")
+        c.eq_int(err.count("error["), 1, "${kind}: ${n} levels: one error")
       }
     }
     // A string interpolation inside another one: two levels compile and
@@ -88,10 +88,10 @@ fn test_nesting(c: Checks) {
           continue
         }
         c.eq_int(code, 1, "interpolation ${n} levels: ${cmd} refuses it (status 1), not a crash")
-        c.eq_int(count_of(err, "this program nests string interpolations deeper than 1000 levels"), 1, "interpolation ${n} levels: ${cmd} gives one error")
+        c.eq_int(err.count("this program nests string interpolations deeper than 1000 levels"), 1, "interpolation ${n} levels: ${cmd} gives one error")
         c.expect(err.contains("${src}:3:3008"), "interpolation ${n} levels: ${cmd} points at the 1,001st string")
         if cmd == "compile" {
-          c.eq_int(count_of(err, "error["), 1, "interpolation ${n} levels: no other error follows")
+          c.eq_int(err.count("error["), 1, "interpolation ${n} levels: no other error follows")
         }
       }
     }
@@ -122,20 +122,6 @@ fn compile_nest(compiler: String, src: String, bin: String, log: String): Int {
   }
   args = ["-u", "AVANT_GC_STRESS", compiler, "compile", src, bin, "--debug"]
   run_out("/usr/bin/env", args, log) ?? -1
-}
-
-fn count_of(hay: String, needle: String): Int {
-  n = 0
-  i = 0
-  while i + needle.size <= hay.size {
-    if hay[i..i + needle.size] == needle {
-      n += 1
-      i += needle.size
-    } else {
-      i += 1
-    }
-  }
-  n
 }
 
 fn read_text(path: String): String {

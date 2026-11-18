@@ -494,17 +494,17 @@ pub fn pkg_c_flag(f: String): Bool {
   if f.size < 3 {
     return f == "-w"
   }
-  if str_starts(f, "-D") || str_starts(f, "-U") || str_starts(f, "-W") {
-    return !str_starts(f, "-Wl,") && !str_starts(f, "-Wa,") && !str_starts(f, "-Wp,")
+  if f.starts_with("-D") || f.starts_with("-U") || f.starts_with("-W") {
+    return !f.starts_with("-Wl,") && !f.starts_with("-Wa,") && !f.starts_with("-Wp,")
   }
-  if str_starts(f, "-std=") {
+  if f.starts_with("-std=") {
     return true
   }
   if f == "-O0" || f == "-O1" || f == "-O2" || f == "-O3" || f == "-Os" {
     return true
   }
-  if str_starts(f, "-f") {
-    return !str_starts(f, "-fplugin") && !str_starts(f, "-fprofile") && !str_starts(f, "-fdump")
+  if f.starts_with("-f") {
+    return !f.starts_with("-fplugin") && !f.starts_with("-fprofile") && !f.starts_with("-fdump")
   }
   false
 }
@@ -536,7 +536,7 @@ pub fn pkg_apply_c(m: PkgManifest, key: String, val: String, path: String, line_
   }
   for item in list.items {
     if k == "sources" {
-      if !pkg_inside_path(item) || !str_ends(item, ".c") {
+      if !pkg_inside_path(item) || !item.ends_with(".c") {
         m.err = "${path}:${line_no}: c source ${item} must be a .c file inside the package (a relative path without ..)"
         return false
       }
@@ -683,7 +683,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         dep_idx = -1
         continue
       }
-      if str_starts(inner, "dependencies.") {
+      if inner.starts_with("dependencies.") {
         dname = str_slice(inner, 13, inner.size).strip()
         if dname.size == 0 {
           m.err = "${path}:${line_no}: bad dependency section"
@@ -902,7 +902,7 @@ pub fn pkg_parse_lock(text: String): PkgLock {
 pub fn pkg_lock_push(lock: PkgLock, name: String, source: String, rev: String) {
   git = source
   sha = ""
-  if str_starts(source, "git+") {
+  if source.starts_with("git+") {
     rest = str_slice(source, 4, source.size)
     h = rest.size - 1
     while h >= 0 {
@@ -976,7 +976,7 @@ pub fn pkg_checkout_head(dir: String): String {
     // A .git file names the repository elsewhere (a worktree).
     if text = file_read(gd) {
       t = text.strip()
-      if str_starts(t, "gitdir: ") {
+      if t.starts_with("gitdir: ") {
         p = str_slice(t, 8, t.size).strip()
         if p.size > 0 && p[0] == 47 {
           gd = p
@@ -999,7 +999,7 @@ pub fn pkg_checkout_head(dir: String): String {
   if pkg_is_sha(head) {
     return head
   }
-  if !str_starts(head, "ref: ") {
+  if !head.starts_with("ref: ") {
     return ""
   }
   ref = str_slice(head, 5, head.size).strip()

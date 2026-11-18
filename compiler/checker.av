@@ -482,7 +482,7 @@ pub class Checker {
 
   pub fn names_missing(message: String): Bool {
     for w in ["unknown name ", "unknown function ", "unknown type ", "unknown module "] {
-      if message.size > w.size && str_slice(message, 0, w.size) == w {
+      if message.size > w.size && message.starts_with(w) {
         return true
       }
     }
@@ -5515,7 +5515,7 @@ pub class Checker {
       return check_call(expr, has_want, want)
     }
     if recv.kind == ex_name() {
-      if cdef = find_class_template(recv.ident, recv.mod_name), recv.mod_name.size > 0 || cdef.mod_name == self.current_module || !str_starts(cdef.mod_name, "std.") {
+      if cdef = find_class_template(recv.ident, recv.mod_name), recv.mod_name.size > 0 || cdef.mod_name == self.current_module || !cdef.mod_name.starts_with("std.") {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name

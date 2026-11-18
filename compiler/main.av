@@ -110,7 +110,7 @@ fn spawns_children(command: String): Bool {
   if command == "compile" || command == "c" || command == "fetch" || command == "bind" || command == "b" {
     return true
   }
-  str_ends(command, ".av")
+  command.ends_with(".av")
 }
 
 // The .av files under dir (format's directory argument), walked like
@@ -127,10 +127,10 @@ fn format_walk(dir: String, into: Array(String)) {
       continue
     }
     path = "${dir}/${name}"
-    if str_ends(dir, "/") {
+    if dir.ends_with("/") {
       path = "${dir}${name}"
     }
-    if str_ends(name, ".av") {
+    if name.ends_with(".av") {
       into.push(path)
     } else if file_exists("${path}/.") && !path_is_link(path) {
       format_walk(path, into)
@@ -184,7 +184,7 @@ pub fn driver_format(args: Array(String)) {
     for a in args {
       if a == "--check" || a == "--calls" {
         format_usage_error("format --lambdas writes the files it changes; it takes no ${a}")
-      } else if a != "--lambdas" && a != "--write" && str_starts(a, "-") {
+      } else if a != "--lambdas" && a != "--write" && a.starts_with("-") {
         format_usage_error("unknown format argument ${a}")
       } else if a != "--lambdas" && a != "--write" {
         lfiles.push(a)
@@ -198,7 +198,7 @@ pub fn driver_format(args: Array(String)) {
     for a in args {
       if a == "--check" {
         format_usage_error("format --calls writes the files it changes; it takes no --check")
-      } else if a != "--calls" && a != "--write" && str_starts(a, "-") {
+      } else if a != "--calls" && a != "--write" && a.starts_with("-") {
         format_usage_error("unknown format argument ${a}")
       } else if a != "--calls" && a != "--write" {
         files.push(a)
@@ -218,7 +218,7 @@ pub fn driver_format(args: Array(String)) {
       check = true
     } else if a == "--write" {
       write = true
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       format_usage_error("unknown format argument ${a}")
     } else {
       inputs.push(a)
@@ -236,7 +236,7 @@ pub fn driver_format(args: Array(String)) {
   while i < inputs.size {
     p = inputs[i]
     i += 1
-    if str_ends(p, ".av") {
+    if p.ends_with(".av") {
       paths.push(p)
     } else if file_exists("${p}/.") {
       dirs = true
@@ -630,10 +630,10 @@ pub fn driver_bind(args: Array(String)) {
       }
       lib_name = args[i + 1]
       i += 2
-    } else if str_starts(arg, "--lib=") {
+    } else if arg.starts_with("--lib=") {
       lib_name = str_slice(arg, 6, arg.size)
       i += 1
-    } else if str_starts(arg, "-") {
+    } else if arg.starts_with("-") {
       puts("unknown bind argument ${arg}")
       show_usage()
       return
@@ -685,7 +685,7 @@ pub fn driver_fetch(args: Array(String)) {
     if arg == "--update" {
       update = true
       i += 1
-    } else if str_starts(arg, "-") {
+    } else if arg.starts_with("-") {
       diag_puts("unknown fetch argument ${arg}")
       show_usage()
       diag_exit(1)
@@ -718,7 +718,7 @@ fn driver_llvm_obj(args: Array(String)) {
       codegen = "debug"
     } else if a == "--release" {
       codegen = "release"
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       diag_puts("__llvm-obj: unknown flag ${a}")
       diag_exit(1)
     } else {
@@ -768,7 +768,7 @@ fn driver_mir_build(args: Array(String)) {
     } else if a == "--emit-ll" && i + 1 < args.size {
       job.keep_ll = args[i + 1]
       i += 1
-    } else if str_starts(a, "--emit-ll=") {
+    } else if a.starts_with("--emit-ll=") {
       job.keep_ll = str_slice(a, 10, a.size)
     } else if a == "--object" {
       object = true
@@ -776,7 +776,7 @@ fn driver_mir_build(args: Array(String)) {
       job.inline_fast = false
     } else if a == "--time" {
       timed = true
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       diag_puts("__mir-build: unknown flag ${a}")
       diag_exit(1)
     } else {
@@ -852,11 +852,11 @@ fn driver_version(args: Array(String)) {
   commit = ""
   dirty = false
   for line in text.split("\n") {
-    if str_starts(line, "version: ") {
+    if line.starts_with("version: ") {
       version = str_slice(line, 9, line.size)
-    } else if str_starts(line, "tag: v") {
+    } else if line.starts_with("tag: v") {
       tag = str_slice(line, 6, line.size)
-    } else if str_starts(line, "avant: ") {
+    } else if line.starts_with("avant: ") {
       commit = str_slice(line, 7, line.size)
     } else if line == "dirty: yes" {
       dirty = true
@@ -880,7 +880,7 @@ fn driver_version(args: Array(String)) {
 }
 
 fn driver_emit_ll(args: Array(String)) {
-  if args.size != 2 || !str_ends(args[0], ".av") {
+  if args.size != 2 || !args[0].ends_with(".av") {
     diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
     diag_exit(1)
   }
@@ -998,7 +998,7 @@ fn main {
     mir_selftest()
     return
   }
-  if str_ends(command, ".av") {
+  if command.ends_with(".av") {
     driver_run(args)
     return
   }

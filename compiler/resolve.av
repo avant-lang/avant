@@ -273,7 +273,7 @@ pub class TypeResolver {
       return
     }
     if mod_name.size > 0 {
-      if t0 = get_named(tn.name), t0.mod_name != mod_name && str_starts(t0.mod_name, "std.") {
+      if t0 = get_named(tn.name), t0.mod_name != mod_name && t0.mod_name.starts_with("std.") {
         fail(tn.loc, std_bare_text(tn.name, t0.mod_name))
         return
       }
@@ -351,7 +351,7 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == self.scope_mod {
           for imp in info.imports {
-            if imp != self.scope_mod && !str_starts(imp, "std.") && template_in(imp, name) && type_is_pub(p, imp, name) {
+            if imp != self.scope_mod && !imp.starts_with("std.") && template_in(imp, name) && type_is_pub(p, imp, name) {
               out.push(imp)
             }
           }
@@ -383,12 +383,12 @@ pub class TypeResolver {
   pub fn std_owner_of(name: String, from: String): String {
     if p = self.program {
       for sdef in p.structs {
-        if sdef.name == name && sdef.mod_name != from && str_starts(sdef.mod_name, "std.") {
+        if sdef.name == name && sdef.mod_name != from && sdef.mod_name.starts_with("std.") {
           return sdef.mod_name
         }
       }
       for cdef in p.classes {
-        if cdef.name == name && cdef.mod_name != from && str_starts(cdef.mod_name, "std.") {
+        if cdef.name == name && cdef.mod_name != from && cdef.mod_name.starts_with("std.") {
           return cdef.mod_name
         }
       }
@@ -420,7 +420,7 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == mod_name {
           for imp in info.imports {
-            if imp != mod_name && !str_starts(imp, "std.") && type_is_pub(p, imp, name) {
+            if imp != mod_name && !imp.starts_with("std.") && type_is_pub(p, imp, name) {
               if t2 = get_named_in(imp, name) {
                 out.push(imp)
               }
@@ -789,7 +789,7 @@ pub class TypeResolver {
         fail(tn.loc, "${tn.name} needs type arguments")
         return self.t_int
       }
-      if tn.mod_name.size == 0 && self.scope_mod.size > 0 && found.mod_name != self.scope_mod && str_starts(found.mod_name, "std.") {
+      if tn.mod_name.size == 0 && self.scope_mod.size > 0 && found.mod_name != self.scope_mod && found.mod_name.starts_with("std.") {
         fail(tn.loc, std_bare_text(tn.name, found.mod_name))
         return self.t_int
       }

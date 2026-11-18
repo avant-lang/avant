@@ -188,7 +188,7 @@ fn ll_declarations(e: LlEmit, out: Buf) {
     if x = e.m.ext(name) {
       // A libm row called as its intrinsic (ll_call), and a bit operation
       // written as an instruction, need no declaration.
-      if ll_math_intrinsic(e.ts, x).size == 0 && !str_starts(name, "avant_bits_") {
+      if ll_math_intrinsic(e.ts, x).size == 0 && !name.starts_with("avant_bits_") {
         if ll_cabi_needed(e.ts, x.sig) {
           out.push_str(ll_cabi_declare(e.ts, name, x.sig))
         } else {
@@ -326,7 +326,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   // A C callback thunk (`#cb`) has the C boundary's types (`zeroext`
   // on Bool).
-  c_abi = str_ends(f.symbol, "#cb")
+  c_abi = f.symbol.ends_with("#cb")
   rtext = e.llt(s.ret)
   if c_abi {
     rtext = ll_c_type(e.ts, s.ret)
@@ -507,7 +507,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)
-      if x.noreturn && str_starts(x.name, "avant_trap_") {
+      if x.noreturn && x.name.starts_with("avant_trap_") {
         // A trap the lowering raises: its sited form, with the site's
         // text last.
         e.need("${x.name}_at")
@@ -567,7 +567,7 @@ fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
 // count (llvm.ctpop, llvm.ctlz, llvm.cttz, defined at zero: the width)
 // or a bitcast between a Float64 and a UInt64. "" for another name.
 fn ll_bits_op(e: LlEmit, name: String, args: Array(MOperand)): String {
-  if !str_starts(name, "avant_bits_") || args.size != 1 {
+  if !name.starts_with("avant_bits_") || args.size != 1 {
     return ""
   }
   x = e.value(args[0])
@@ -582,12 +582,12 @@ fn ll_bits_op(e: LlEmit, name: String, args: Array(MOperand)): String {
     return t2
   }
   w = "i64"
-  if str_ends(name, "_i32") {
+  if name.ends_with("_i32") {
     w = "i32"
   }
   op = ""
   for o in ["ctpop", "ctlz", "cttz"] {
-    if str_starts(name, "avant_bits_${o}_") {
+    if name.starts_with("avant_bits_${o}_") {
       op = o
     }
   }
@@ -946,7 +946,7 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
   flag = "nsw"
-  if str_starts(name, "u") {
+  if name.starts_with("u") {
     flag = "nuw"
   }
   v = e.tmp()

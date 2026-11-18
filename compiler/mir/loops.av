@@ -138,12 +138,12 @@ fn lv_stmt_copy(st: MStmt): MStmt {
 pub fn mir_lv_keeps_sizes(name: String): Bool {
   // A key's own hash and == run inside these entries, and the program's
   // code may change any Array there.
-  if str_starts(name, "avant_hash_") && str_ends(name, "_uk") {
+  if name.starts_with("avant_hash_") && name.ends_with("_uk") {
     return false
   }
   pre = ["avant_str_", "avant_checksum_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_wide_", "avant_now_", "avant_clock_", "avant_puts_", "avant_is_", "avant_hash_", "avant_hasher_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_", "avant_bits_"]
   for st in pre {
-    if str_starts(name, st) {
+    if name.starts_with(st) {
       return true
     }
   }
@@ -230,7 +230,7 @@ fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): 
   if i = m.func_index.get(st.callee) {
     return keep[i]
   }
-  if str_starts(st.callee, "av.") {
+  if st.callee.starts_with("av.") {
     return false
   }
   mir_lv_keeps_sizes(st.callee)

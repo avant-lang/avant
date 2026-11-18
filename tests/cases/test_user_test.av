@@ -34,10 +34,6 @@ fn ut_has(hay: String, needle: String): Bool {
   false
 }
 
-fn ut_starts(s: String, prefix: String): Bool {
-  s.size >= prefix.size && s[..prefix.size] == prefix
-}
-
 fn ut_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
   _ = fs.write(script, body) ?? return 1
@@ -72,21 +68,6 @@ fn ut_sh(body: String, rc_path: String): Int {
     }
   }
   1
-}
-
-fn ut_index(hay: String, needle: String): Int {
-  if needle.size == 0 || needle.size > hay.size {
-    return -1
-  }
-  last = hay.size - needle.size
-  i = 0
-  while i <= last {
-    if hay[i..i + needle.size] == needle {
-      return i
-    }
-    i += 1
-  }
-  -1
 }
 
 fn ut_read_ms(path: String): Int {
@@ -479,7 +460,7 @@ fn test_user_test(c: Checks) {
     v_args = ["version"]
     c.eq_int(run_out(vexe, v_args, "${vdir}/none.log") ?? -1, 0, "version: avant version without a record exits 0")
     v_none = fs.read("${vdir}/none.log") ?? ""
-    c.expect(ut_starts(v_none, "avant (version unknown: no versions.txt beside ") && ut_has(v_none, "/version/avant)\n"), "version: without a record avant version says the version is unknown and where it looked")
+    c.expect(v_none.starts_with("avant (version unknown: no versions.txt beside ") && ut_has(v_none, "/version/avant)\n"), "version: without a record avant version says the version is unknown and where it looked")
     _ = fs.write("${vdir}/versions.txt", "tag: v9.8.7\navant: 0123456789abcdef0123456789abcdef01234567\nllvm: 20.1.2\nglibc-floor: 2.38\n")
     _ = run_out(vexe, v_args, "${vdir}/archive.log")
     c.eq_str(fs.read("${vdir}/archive.log") ?? "", "avant 9.8.7 (commit 0123456789abcdef0123456789abcdef01234567)\n", "version: a release archive's versions.txt gives the tag and the commit")
@@ -495,12 +476,12 @@ fn test_user_test(c: Checks) {
     if fs.exists("${compiler}.versions.txt") {
       toml_version = ""
       for line in (fs.read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
-        if toml_version.size == 0 && ut_starts(line, "version = \"") && line.size > 12 {
+        if toml_version.size == 0 && line.starts_with("version = \"") && line.size > 12 {
           toml_version = line[11..line.size - 1]
         }
       }
       _ = run_out(compiler, v_args, "${vdir}/self.log")
-      c.expect(toml_version.size > 0 && ut_starts(fs.read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "version: the compiler under test prints avant.toml's version (${toml_version})")
+      c.expect(toml_version.size > 0 && (fs.read("${vdir}/self.log") ?? "").starts_with("avant ${toml_version} (commit "), "version: the compiler under test prints avant.toml's version (${toml_version})")
     }
 
     // A compiler copied outside a checkout reads the
@@ -685,8 +666,8 @@ fn test_user_test(c: Checks) {
     if ot = fs.read("${root}/order.log") {
       order_text = ot
     }
-    zi = ut_index(order_text, "ok tests/test_z.av")
-    ai = ut_index(order_text, "FAIL tests/test_a.av")
+    zi = order_text.index_of("ok tests/test_z.av") ?? -1
+    ai = order_text.index_of("FAIL tests/test_a.av") ?? -1
     c.expect(zi >= 0 && ai > zi, "a first file runs before a later file compiles")
 
     nofirst = "${root}/nofirst"

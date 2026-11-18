@@ -120,7 +120,7 @@ pub fn (checker_self: Checker) refuse_for_outer_name(stmt: Stmt) {
     }
     if stmt.pre.size > 1 {
       // `for i, x in xs`: the position is the loop's own too.
-      if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+      if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
         checker_self.refuse_for_name(stmt, pi.ident)
       }
     }
@@ -414,7 +414,7 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
       return ""
     }
     pos = ""
-    if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+    if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
       pos = pi.ident
     }
     if pty.is_array() && pos.size == 0 {
@@ -525,7 +525,7 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
       return false
     }
     pos = ""
-    if !str_starts(pi.ident, "__for") {
+    if !pi.ident.starts_with("__for") {
       pos = pi.ident
     }
     base = str_slice(pt.ident, 0, pt.ident.size - 2)
@@ -866,7 +866,7 @@ pub fn (checker_self: Checker) note_for_position(stmt: Stmt) {
   if stmt.for_kind != 2 || stmt.pre.size < 2 {
     return
   }
-  if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+  if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
     i = checker_self.for_names.size - 1
     while i >= 0 {
       if checker_self.for_names[i] == pi.ident {

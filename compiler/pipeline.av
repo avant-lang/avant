@@ -194,27 +194,9 @@ pub class RunSplit {
   pub err: String = ""
 }
 
-pub fn str_contains(s: String, needle: String): Bool {
-  if needle.size == 0 {
-    return true
-  }
-  if needle.size > s.size {
-    return false
-  }
-  i = 0
-  last = s.size - needle.size
-  while i <= last {
-    if str_slice(s, i, i + needle.size) == needle {
-      return true
-    }
-    i += 1
-  }
-  false
-}
-
 pub fn drop_av_suffix(path: String): String {
   base = path_basename(path)
-  if str_ends(base, ".av") {
+  if base.ends_with(".av") {
     return str_slice(base, 0, base.size - 3)
   }
   base
@@ -845,7 +827,7 @@ pub fn pkg_c_headers(unit: PkgCUnit): String {
     full = join_dir(unit.dir, d)
     names = dir_walk(full) ?? []
     for n in names {
-      if str_ends(n, ".h") {
+      if n.ends_with(".h") {
         text = file_read(join_dir(full, n)) ?? ""
         b.push_str("${d}/${n} ${sha256(text)}\n")
       }
@@ -904,10 +886,10 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
       has_opt = false
       has_std = false
       for f in unit.flags {
-        if str_starts(f, "-O") {
+        if f.starts_with("-O") {
           has_opt = true
         }
-        if str_starts(f, "-std=") {
+        if f.starts_with("-std=") {
           has_std = true
         }
       }
@@ -1033,7 +1015,7 @@ pub fn re2c_bin: String {
     return v
   }
   exe = self_exe_path()
-  if str_contains(exe, "/") {
+  if exe.contains("/") {
     beside = "${path_dirname(exe)}/re2c"
     if file_exists(beside) {
       return beside
@@ -1096,7 +1078,7 @@ pub fn compile_c_file(path: String): String {
   }
   base = path_basename(path)
   name = base
-  if str_ends(base, ".c") {
+  if base.ends_with(".c") {
     name = str_slice(base, 0, base.size - 2)
   }
   obj = "${tmp_new_dir()}/${name}.o"
@@ -1122,7 +1104,7 @@ pub fn link_lib(job: LinkJob, v: String): String {
   if v.size == 0 {
     return "--lib needs a name or a library's path"
   }
-  if str_contains(v, "/") || str_ends(v, ".a") || str_ends(v, ".so") || str_contains(v, ".so.") {
+  if v.contains("/") || v.ends_with(".a") || v.ends_with(".so") || v.contains(".so.") {
     if !file_exists(v) || dir_exists(v) {
       return "--lib ${v}: no such library file"
     }
@@ -1159,7 +1141,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       job.codegen = "release"
       i += 1
-    } else if arg == "--cpu" || str_starts(arg, "--cpu=") {
+    } else if arg == "--cpu" || arg.starts_with("--cpu=") {
       v = ""
       if arg == "--cpu" {
         if i + 1 >= args.size {
@@ -1191,7 +1173,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
         return job
       }
       i += 2
-    } else if str_starts(arg, "--lib=") {
+    } else if arg.starts_with("--lib=") {
       job.err = link_lib(job, str_slice(arg, 6, arg.size))
       if job.err.size > 0 {
         return job
@@ -1209,7 +1191,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       job.objects.push(obj)
       i += 2
-    } else if str_starts(arg, "--cc=") {
+    } else if arg.starts_with("--cc=") {
       obj = compile_c_file(str_slice(arg, 5, arg.size))
       if obj == "" {
         job.err = "failed to compile C"
@@ -1217,7 +1199,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       job.objects.push(obj)
       i += 1
-    } else if str_starts(arg, "-l") {
+    } else if arg.starts_with("-l") {
       if arg.size > 2 {
         job.flags.push(arg)
         i += 1
@@ -1225,7 +1207,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
         job.err = "unknown link argument ${arg}"
         return job
       }
-    } else if str_ends(arg, ".c") {
+    } else if arg.ends_with(".c") {
       obj = compile_c_file(arg)
       if obj == "" {
         job.err = "failed to compile C"
@@ -1233,7 +1215,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       job.objects.push(obj)
       i += 1
-    } else if str_ends(arg, ".o") {
+    } else if arg.ends_with(".o") {
       job.objects.push(arg)
       i += 1
     } else {
@@ -1262,7 +1244,7 @@ pub fn split_run_args(args: Array(String)): RunSplit {
   split.has_dash = seen
   files = 0
   for j in 0..left.size {
-    if str_ends(left[j], ".av") {
+    if left[j].ends_with(".av") {
       files += 1
       split.file = left[j]
     } else {
@@ -1281,7 +1263,7 @@ pub fn take_av_files(args: Array(String)): CliSplit {
   split = CliSplit.new()
   i = 0
   while i < args.size {
-    if str_ends(args[i], ".av") {
+    if args[i].ends_with(".av") {
       split.paths.push(args[i])
       i += 1
     } else {
@@ -1302,17 +1284,17 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     return split
   }
   first = args[0]
-  if str_starts(first, "-") {
+  if first.starts_with("-") {
     split.paths.push(drop_av_suffix(source))
     split.rest.concat(args)
     return split
   }
-  if str_ends(first, ".c") {
+  if first.ends_with(".c") {
     split.paths.push(drop_av_suffix(source))
     split.rest.concat(args)
     return split
   }
-  if str_ends(first, ".o") {
+  if first.ends_with(".o") {
     split.paths.push(drop_av_suffix(source))
     split.rest.concat(args)
     return split

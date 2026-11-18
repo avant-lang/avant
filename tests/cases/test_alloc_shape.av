@@ -68,10 +68,6 @@ fn ll_fn(ll: String, sym: String): String {
   ""
 }
 
-fn count_of(hay: String, needle: String): Int {
-  hay.split(needle).size - 1
-}
-
 fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   src = "${root}/tests/fixtures/llvm/alloc_shape.av"
   ll = "${dir}/alloc_shape.ll"
@@ -85,7 +81,7 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   for g in ["avant_gc_bump", "avant_gc_limit", "avant_gc_top"] {
     c.expect(text.contains("@${g} = external thread_local(localexec) global "), "thread-locals: @${g} is declared local-exec")
   }
-  c.eq_int(count_of(text, " thread_local global "), 0, "thread-locals: no thread-local is declared without a model")
+  c.eq_int(text.count(" thread_local global "), 0, "thread-locals: no thread-local is declared without a model")
   fnode = ll_fn(text, "av.alloc_shape/Node.new")
   c.expect(fnode.contains("load ptr, ptr @avant_gc_bump") && fnode.contains("load ptr, ptr @avant_gc_limit"), "thread-locals: Node.new allocates inline (it reads the bump cursor and the limit)")
 
@@ -97,17 +93,17 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   for g in ["g_avant_shared", "avant_gc_fast_ok", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_limit_mt", "avant_g_stats", "avant_since_gc", "avant_nursery_held", "avant_inline_allocs"] {
     c.expect(!text.contains("@${g}"), "inline path: an unshared module's .ll does not name @${g}")
   }
-  c.eq_int(count_of(fnode, " = icmp "), 1, "inline path: Node.new's inline path has one compare, the cursor's new end against the limit")
+  c.eq_int(fnode.count(" = icmp "), 1, "inline path: Node.new's inline path has one compare, the cursor's new end against the limit")
   c.expect(fnode.contains(" = icmp ule i64 "), "inline path: the limit compare is unsigned at-or-below")
   c.expect(fnode.contains("call ptr @__avant_alloc_slow(") && !fnode.contains("@avant_alloc("), "slow call: Node.new's slow call is the module's __avant_alloc_slow")
   c.expect(text.contains("%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)") && text.contains("%again = icmp eq ptr %s, null") && text.contains("%bump = load ptr, ptr @avant_gc_bump, align 8"), "slow call: __avant_alloc_slow calls the runtime's avant_alloc_slow and, on its null answer, reads the cursor again for the inline allocation")
   c.expect(text.contains("define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline "), "slow call: __avant_alloc_slow is one function of the module, never inlined")
-  c.eq_int(count_of(fnode, " = and i1 "), 0, "inline path: Node.new's inline path joins no two conditions")
-  c.eq_int(count_of(fnode, "load ptr, ptr @"), 2, "inline path: Node.new's inline path loads two globals, the cursor and the limit")
-  c.eq_int(count_of(fnode, ", ptr @avant_gc_bump, align 8"), 2, "inline path: Node.new's inline path names the cursor twice, its load and its store")
+  c.eq_int(fnode.count(" = and i1 "), 0, "inline path: Node.new's inline path joins no two conditions")
+  c.eq_int(fnode.count("load ptr, ptr @"), 2, "inline path: Node.new's inline path loads two globals, the cursor and the limit")
+  c.eq_int(fnode.count(", ptr @avant_gc_bump, align 8"), 2, "inline path: Node.new's inline path names the cursor twice, its load and its store")
   c.expect(!fnode.contains(", i64 32\n"), "inline path: Node.new's inline path keeps no copy of the cursor in the block's record (no address at offset 32)")
-  c.eq_int(count_of(fnode, " = load i64, "), 0, "inline path: Node.new's inline path reads no counter and no start word")
-  c.eq_int(count_of(fnode, " = lshr i64 ") + count_of(fnode, " = shl i64 "), 0, "start bits: Node.new's inline path computes no start bit")
+  c.eq_int(fnode.count(" = load i64, "), 0, "inline path: Node.new's inline path reads no counter and no start word")
+  c.eq_int(fnode.count(" = lshr i64 ") + fnode.count(" = shl i64 "), 0, "start bits: Node.new's inline path computes no start bit")
   // A shared module's path reads its own limit and sets the start bit
   // itself (the late start bits are the single mutator's).
   ts = "${root}/tests/fixtures/threads/fresh.av"
@@ -167,18 +163,18 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   // The constructor at its call site, no barrier on the fresh object.
   tinit = ll_fn(text, "av.alloc_shape/Tree.initialize")
   c.expect(tinit.size > 0, "fresh stores: Tree.initialize is defined")
-  c.eq_int(count_of(tinit, "@avant_barrier"), 0, "fresh stores: Tree.initialize stores into its new object with no barrier test")
+  c.eq_int(tinit.count("@avant_barrier"), 0, "fresh stores: Tree.initialize stores into its new object with no barrier test")
   ninit = ll_fn(text, "av.alloc_shape/Named.initialize")
-  c.eq_int(count_of(ninit, "call void @avant_barrier(ptr"), 1, "fresh stores: Named.initialize keeps one barrier test, the store after its collecting call")
+  c.eq_int(ninit.count("call void @avant_barrier(ptr"), 1, "fresh stores: Named.initialize keeps one barrier test, the store after its collecting call")
   pbody = ll_fn(text, "av.alloc_shape/pair")
   c.expect(pbody.contains("load ptr, ptr @avant_gc_bump") && pbody.contains("call void @\"av.alloc_shape/Tree.initialize\"(") && !pbody.contains("@\"av.alloc_shape/Tree.new\""), "fresh stores: pair allocates inline and calls Tree.initialize, not Tree.new")
-  c.eq_int(count_of(pbody, "call void @avant_barrier(ptr"), 1, "fresh stores: pair barriers the allocation's slow-path result once (the birth barrier)")
+  c.eq_int(pbody.count("call void @avant_barrier(ptr"), 1, "fresh stores: pair barriers the allocation's slow-path result once (the birth barrier)")
 
   // One masked compare.
   lbody = ll_fn(text, "av.alloc_shape/link")
   c.expect(lbody.contains(" = and i16 ") && lbody.contains(", -32720") && lbody.contains(" = icmp ugt i16 ") && lbody.contains(", -32768"), "barrier test: link's barrier test is flags & 0x8030 compared above 0x8000")
-  c.eq_int(count_of(lbody, " = and i16 "), 1, "barrier test: link's barrier test has one mask, not two")
-  c.eq_int(count_of(lbody, " = and i1 "), 0, "barrier test: link's barrier test joins no two conditions")
+  c.eq_int(lbody.count(" = and i16 "), 1, "barrier test: link's barrier test has one mask, not two")
+  c.eq_int(lbody.count(" = and i1 "), 0, "barrier test: link's barrier test joins no two conditions")
 
   // The fresh exemption at run time, plainly and under the collector's environments.
   fsrc = "${root}/tests/fixtures/llvm/fresh_init.av"
