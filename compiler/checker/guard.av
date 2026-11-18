@@ -268,7 +268,7 @@ pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
     checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the mutex takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock")
     return
   }
-  checker_self.fail(e.loc, "Mutex.with: ${role} is the guarded value or a reference reached from it (${shown}); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends")
+  checker_self.fail(e.loc, "sync.Mutex.with: ${role} is the guarded value or a reference reached from it (${shown}); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends")
 }
 
 // A value stored into the guarded value (or, before `Mutex(T).new`
@@ -292,7 +292,7 @@ pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
     checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so this value stored into ${w.place} (${shown}) must be new (a constructor call or a literal) or plain: a reference kept elsewhere would reach the guarded value without the lock")
     return
   }
-  checker_self.fail(value.loc, "Mutex.with: this value stored into the guarded value (${shown}) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock")
+  checker_self.fail(value.loc, "sync.Mutex.with: this value stored into the guarded value (${shown}) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock")
 }
 
 // Whether e makes a value no other reference reaches: a plain value,
@@ -779,7 +779,7 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
       checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${e.ident} (at ${w.call_at}), so ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the mutex has taken it")
       return
     }
-    checker_self.fail(e.loc, "Mutex.with: the guarded value ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the lock is released")
+    checker_self.fail(e.loc, "sync.Mutex.with: the guarded value ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the lock is released")
     return
   }
   if w.is_reached(e.ident) && !checker_self.guard_plain(e) {
@@ -1210,14 +1210,14 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
           break
         }
       }
-      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(arg.loc, "sync.Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.send_crosses(t) {
-      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task: a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
+      checker_self.fail(arg.loc, "sync.Channel.send: a ${t.show()} cannot cross to another task: a mutable object reaches another task only inside a Mutex; send plain values, or a sync.Mutex(${t.show()}) shared by both tasks")
       return
     }
-    checker_self.note_handles(t, arg.loc, "Channel.send cannot send this ${t.show()}")
+    checker_self.note_handles(t, arg.loc, "sync.Channel.send cannot send this ${t.show()}")
   }
 }
 
@@ -1365,7 +1365,7 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location, by: String) {
     for ms in checker_self.methods {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
         w = ClassWalk.new()
-        w.mutex = "Mutex(${t.show()})"
+        w.mutex = "sync.Mutex(${t.show()})"
         if by == "spawn" {
           w.mutex = "spawn's move of ${t.show()}"
           w.task = true

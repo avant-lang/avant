@@ -377,11 +377,11 @@ fn route_serving_cases(c: Checks, root: String) {
     // a trap that ends the program.
     limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative", "idle-big"]
     lines = [
-      "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\nanswered 500\n",
-      "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\nanswered 500\n",
-      "avant runtime: Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
-      "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n",
-      "avant runtime: Server.idle_timeout(14280001): a limit is 0 (off) to 14280000\n"
+      "avant runtime: http.Server.head_timeout called while the server is serving: set every limit before serve\nanswered 500\n",
+      "avant runtime: http.Server.min_rate called while the server is serving: set every limit before serve\nanswered 500\n",
+      "avant runtime: http.Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
+      "avant runtime: http.Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n",
+      "avant runtime: http.Server.idle_timeout(14280001): a limit is 0 (off) to 14280000\n"
     ]
     for i in 0..limits.size {
       log = "${scratch()}/http-route-serving-${stamp}-${limits[i]}.log"
@@ -422,16 +422,16 @@ fn header_split_cases(c: Checks, root: String) {
     status_rule = "is not 200 to 599: a handler gives the final answer, never an interim 1xx (RFC 9110)"
     kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "status-100", "status-101", "status-199", "ok", "status-200", "status-599"]
     lines = [
-      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
-      "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
-      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
-      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
-      "avant runtime: Response.header value of X-A holds a control character (byte 0 at 1): ${value_rule}\n",
-      "avant runtime: Response.header value of X-A holds a control character (byte 127 at 1): ${value_rule}\n",
-      "avant runtime: Response.header name \"X-A: 1\\r\\nSet-Cookie\" ${name_rule}\n",
-      "avant runtime: Response.header name \"X A\" ${name_rule}\n",
-      "avant runtime: Response.header name \"X-A:\" ${name_rule}\n",
-      "avant runtime: Response.header name \"\" ${name_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 0 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header value of X-A holds a control character (byte 127 at 1): ${value_rule}\n",
+      "avant runtime: http.Response.header name \"X-A: 1\\r\\nSet-Cookie\" ${name_rule}\n",
+      "avant runtime: http.Response.header name \"X A\" ${name_rule}\n",
+      "avant runtime: http.Response.header name \"X-A:\" ${name_rule}\n",
+      "avant runtime: http.Response.header name \"\" ${name_rule}\n",
       "avant runtime: a response's status 99 ${status_rule}\n",
       "avant runtime: a response's status 600 ${status_rule}\n",
       "avant runtime: a response's status -200 ${status_rule}\n",
@@ -511,7 +511,7 @@ fn response_literal_cases(c: Checks) {
         c.eq_int(code, 0, "a response built by Response.text and header compiles")
       } else {
         c.expect(code != 0, "Response.head outside std.http (${names[i]}): a compile error")
-        c.expect(text.contains("field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
+        c.expect(text.contains("field head of http.Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
       }
     }
   } else {
@@ -1253,10 +1253,10 @@ fn handler_trap_cases(c: Checks, root: String) {
           "push on an array a running task reads",
           "a store on a hash a running task reads",
           "a response's status 99 is not 200 to 599",
-          "Response.header value of X-A holds a control character (byte 13 at 1)",
+          "http.Response.header value of X-A holds a control character (byte 13 at 1)",
           "route GET /late registered while the server is serving",
           "index 9 out of bounds (size 3)",
-          "Mutex.with on a poisoned mutex",
+          "sync.Mutex.with on a poisoned mutex",
           "index 8 out of bounds (size 3)",
           "index 7 out of bounds (size 3)",
           "index 7 out of bounds (size 3)",

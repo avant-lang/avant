@@ -478,14 +478,46 @@ pub class Ty {
     self.name == other.name
   }
 
+  // The type as a message names it: a std module's type with the
+  // module's last name (sync.Mutex(Int), json.Json), as a program
+  // writes it.
   pub fn show: String {
+    self.show_as(true)
+  }
+
+  // The type with every name bare (Mutex(Int)): the compiler's own keys,
+  // orders and symbols, which messages never change.
+  pub fn show_bare: String {
+    self.show_as(false)
+  }
+
+  pub fn show_as(q: Bool): String {
+    if q && str_starts(self.mod_name, "std.") {
+      last = std_last_name(self.mod_name)
+      if self.origin.size > 0 && self.ty_args.size > 0 {
+        buf = buf_new()
+        buf.push_str(last)
+        buf.push_str(".")
+        buf.push_str(self.origin)
+        buf.push_str("(")
+        for i in 0..self.ty_args.size {
+          if i > 0 {
+            buf.push_str(", ")
+          }
+          buf.push_str(self.ty_args[i].show_as(q))
+        }
+        buf.push_str(")")
+        return buf.to_s()
+      }
+      return "${last}.${self.name}"
+    }
     if self.label.size > 0 {
       return self.label
     }
     k = self.kind
     if k == tyk_carray() {
       if e = self.inner {
-        return "${e.show()}[${self.count}]"
+        return "${e.show_as(q)}[${self.count}]"
       }
     }
     if k == tyk_int() {
@@ -534,14 +566,14 @@ pub class Ty {
       buf = buf_new()
       buf.push_str("Array(")
       if e = self.inner {
-        buf.push_str(e.show())
+        buf.push_str(e.show_as(q))
       }
       buf.push_str(")")
       return buf.to_s()
     }
     if k == tyk_hash() && self.name == "Set" {
       if ke = self.key {
-        return "Set(${ke.show()})"
+        return "Set(${ke.show_as(q)})"
       }
       return "Set"
     }
@@ -549,11 +581,11 @@ pub class Ty {
       buf = buf_new()
       buf.push_str("Hash(")
       if ke = self.key {
-        buf.push_str(ke.show())
+        buf.push_str(ke.show_as(q))
       }
       buf.push_str(", ")
       if va = self.val {
-        buf.push_str(va.show())
+        buf.push_str(va.show_as(q))
       }
       buf.push_str(")")
       return buf.to_s()
@@ -562,7 +594,7 @@ pub class Ty {
       buf = buf_new()
       buf.push_str("Ptr(")
       if e = self.inner {
-        buf.push_str(e.show())
+        buf.push_str(e.show_as(q))
       }
       buf.push_str(")")
       return buf.to_s()
@@ -571,21 +603,25 @@ pub class Ty {
       buf = buf_new()
       buf.push_str("JoinHandle(")
       if e = self.inner {
-        buf.push_str(e.show())
+        buf.push_str(e.show_as(q))
       }
       buf.push_str(")")
       return buf.to_s()
     }
     if k == tyk_union() {
-      return self.show_union()
+      return self.show_union_as(q)
     }
     if k == tyk_fn() {
-      return self.show_fn()
+      return self.show_fn_as(q)
     }
     self.name
   }
 
   pub fn show_fn: String {
+    self.show_fn_as(true)
+  }
+
+  pub fn show_fn_as(q: Bool): String {
     buf = buf_new()
     buf.push_str("fn(")
     i = 0
@@ -593,12 +629,12 @@ pub class Ty {
       if i > 0 {
         buf.push_str(", ")
       }
-      buf.push_str(self.members[i].show())
+      buf.push_str(self.members[i].show_as(q))
       i += 1
     }
     buf.push_str("): ")
     if r = self.inner {
-      buf.push_str(r.show())
+      buf.push_str(r.show_as(q))
     } else {
       buf.push_str("Void")
     }
@@ -606,15 +642,19 @@ pub class Ty {
   }
 
   pub fn show_union: String {
+    self.show_union_as(true)
+  }
+
+  pub fn show_union_as(q: Bool): String {
     if self.is_nilable() {
       non_nil = ty_without_nil(self)
       buf = buf_new()
       if non_nil.is_union() || non_nil.is_fn() {
         buf.push_str("(")
-        buf.push_str(non_nil.show())
+        buf.push_str(non_nil.show_as(q))
         buf.push_str(")?")
       } else {
-        buf.push_str(non_nil.show())
+        buf.push_str(non_nil.show_as(q))
         buf.push_str("?")
       }
       return buf.to_s()
@@ -625,11 +665,22 @@ pub class Ty {
       if i > 0 {
         buf.push_str(" | ")
       }
-      buf.push_str(self.members[i].show())
+      buf.push_str(self.members[i].show_as(q))
       i += 1
     }
     buf.to_s()
   }
+}
+
+// The last name of a module's whole name (sync of std.sync).
+pub fn std_last_name(mod_name: String): String {
+  at = 0
+  for i in 0..mod_name.size {
+    if mod_name[i] == 46 {
+      at = i + 1
+    }
+  }
+  str_slice(mod_name, at, mod_name.size)
 }
 
 // The C scalar types: the C width and signedness of a `fun` parameter or result or a C layout's field, seen in Avant
@@ -1100,8 +1151,8 @@ pub fn ty_member_before(a: Ty, b: Ty): Bool {
   if a.is_void() || b.is_void() {
     return a.is_void() && !b.is_void()
   }
-  sa = a.show()
-  sb = b.show()
+  sa = a.show_bare()
+  sb = b.show_bare()
   if str_lt(sa, sb) {
     return true
   }
@@ -1187,7 +1238,7 @@ pub fn ty_qual_key(ty: Ty): String {
     buf.push_str(")")
     return buf.to_s()
   }
-  buf.push_str(ty.show())
+  buf.push_str(ty.show_bare())
   buf.to_s()
 }
 

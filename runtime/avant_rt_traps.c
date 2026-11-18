@@ -210,7 +210,7 @@ void avant_trap_frozen_hash(int32_t op) {
  * on it. */
 void avant_trap_poisoned(void) {
   trap_head();
-  trap_out("Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
+  trap_out("sync.Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
   trap_tail();
 }
 

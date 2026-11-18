@@ -180,7 +180,7 @@ fn regex_try_forms(c: Checks) {
   re = regex.Regex.compile(pat, match_limit: 1000) ?? return c.expect(false, "compile the try_ pattern")
   ok = "ab-ab-x"
   bad = "ab-ab-" + repeated("a", 20, "c b")
-  limit = "error match_limit: Regex.try_"
+  limit = "error match_limit: regex.Regex.try_"
   c.eq_str(count_of(re.try_count(ok)), "count 2", "try_count counts")
   c.eq_str(count_of(re.try_count("")), "count 0", "try_count of no match is 0")
   c.eq_str(count_of(re.try_count(bad)), "${limit}count: match limit exceeded (PCRE2 error -47)", "try_count at the limit is a RegexError")
@@ -201,12 +201,12 @@ fn regex_try_forms(c: Checks) {
   c.eq_str(parts_of(re.try_split(ok)), "parts |-|-x", "try_split splits")
   c.eq_str(parts_of(re.try_split(bad)), "${limit}split: match limit exceeded (PCRE2 error -47)", "try_split at the limit is a RegexError")
   c.eq_str(walk_of(re.try_matches(ok)), " 0..2 3..5 end", "try_matches walks")
-  c.eq_str(walk_of(re.try_matches(bad)), " 0..2 3..5 error match_limit: Regex.try_matches: match limit exceeded (PCRE2 error -47)", "try_matches gives the matches before the failure, then the RegexError")
+  c.eq_str(walk_of(re.try_matches(bad)), " 0..2 3..5 error match_limit: regex.Regex.try_matches: match limit exceeded (PCRE2 error -47)", "try_matches gives the matches before the failure, then the RegexError")
   it = re.try_matches(bad)
   _ = walk_of(it)
   c.eq_str(kind_of(it.next()), "nil", "a walk ends after its RegexError")
   c.eq_str(kind_of(re.try_find(bad, 6)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "try_find keeps its own name")
-  c.eq_str(message_of(re.try_find(bad, 6)), "Regex.try_find: match limit exceeded (PCRE2 error -47)", "try_find's message")
+  c.eq_str(message_of(re.try_find(bad, 6)), "regex.Regex.try_find: match limit exceeded (PCRE2 error -47)", "try_find's message")
   re.close()
 }
 
@@ -276,7 +276,7 @@ fn regex_limits(c: Checks) {
   bt = must_compile(c, bt_pat, false, "backtracking")
   wild = repeated("a", 40, "b aaa")
   c.eq_str(kind_of(bt.try_find(wild)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "try_find past the match limit is a RegexError of kind match_limit")
-  c.eq_str(message_of(bt.try_find(wild)), "Regex.try_find: match limit exceeded (PCRE2 error -47)", "its message names the operation and PCRE2's reason")
+  c.eq_str(message_of(bt.try_find(wild)), "regex.Regex.try_find: match limit exceeded (PCRE2 error -47)", "its message names the operation and PCRE2's reason")
   c.eq_str(kind_of(bt.try_find("xaay")), "nil", "try_find without a match is nil")
   c.eq_str(kind_of(bt.try_find("baa")), "match 1..3", "try_find with a match is the Match")
   c.eq_str(kind_of(bt.try_find("baa", 2)), "match 2..3", "try_find from an offset")
@@ -601,7 +601,7 @@ fn test_std_regex(c: Checks) {
     _ = fs.write(csrc, copies)
     c.eq_int(compile_av(compiler, csrc, cbin, "${scratch()}/regex-${stamp}-copies.log"), 0, "compile closed-copies")
     chmod_x(cbin)
-    trap = "avant runtime: Regex used after close"
+    trap = "avant runtime: regex.Regex used after close"
     regex_trap_run(c, cbin, stamp, "copy-find", one_arg("copy-find"), "closed true\n", trap)
     regex_trap_run(c, cbin, stamp, "uncached", one_arg("uncached"), "closed true\n", trap)
     regex_trap_run(c, cbin, stamp, "copy-close", one_arg("copy-close"), "closed true\n", trap)
@@ -625,11 +625,11 @@ fn test_std_regex(c: Checks) {
     c.eq_int(compile_av(compiler, lsrc, lbin, "${scratch()}/regex-${stamp}-limits.log"), 0, "compile limits")
     chmod_x(lbin)
     said = "match limit exceeded (PCRE2 error -47)"
-    regex_trap_run(c, lbin, stamp, "limit-find", one_arg("find"), "start\n", "avant runtime: Regex.find: ${said}")
-    regex_trap_run(c, lbin, stamp, "limit-count", one_arg("count"), "start\n", "avant runtime: Regex.count: ${said}")
-    regex_trap_run(c, lbin, stamp, "limit-replace", one_arg("replace"), "start\n", "avant runtime: Regex.replace: ${said}")
-    regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: Regex.split: ${said}")
-    regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: Regex.matches: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-find", one_arg("find"), "start\n", "avant runtime: regex.Regex.find: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-count", one_arg("count"), "start\n", "avant runtime: regex.Regex.count: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-replace", one_arg("replace"), "start\n", "avant runtime: regex.Regex.replace: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: regex.Regex.split: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: regex.Regex.matches: ${said}")
 
     // A limit below 1 is a program error: compile traps, naming it.
     bad = "import std.regex\n\nfn main {\n  mode = process.args()[1]\n  puts(\"start\")\n  if mode == \"match\" {\n    _ = regex.Regex.compile(\"a+\", match_limit: 0)\n  }\n  if mode == \"depth\" {\n    _ = regex.Regex.compile(\"a+\", depth_limit: -3)\n  }\n  if mode == \"heap\" {\n    _ = regex.Regex.compile(\"a+\", false, 10, 10, 0)\n  }\n}\nimport std.process\n"
@@ -638,9 +638,9 @@ fn test_std_regex(c: Checks) {
     _ = fs.write(bsrc, bad)
     c.eq_int(compile_av(compiler, bsrc, bbin, "${scratch()}/regex-${stamp}-badlimits.log"), 0, "compile bad limits")
     chmod_x(bbin)
-    regex_trap_run(c, bbin, stamp, "bad-match-limit", one_arg("match"), "start\n", "avant runtime: Regex.compile: match_limit must be at least 1 (got 0)")
-    regex_trap_run(c, bbin, stamp, "bad-depth-limit", one_arg("depth"), "start\n", "avant runtime: Regex.compile: depth_limit must be at least 1 (got -3)")
-    regex_trap_run(c, bbin, stamp, "bad-heap-limit", one_arg("heap"), "start\n", "avant runtime: Regex.compile: heap_limit must be at least 1 (got 0)")
+    regex_trap_run(c, bbin, stamp, "bad-match-limit", one_arg("match"), "start\n", "avant runtime: regex.Regex.compile: match_limit must be at least 1 (got 0)")
+    regex_trap_run(c, bbin, stamp, "bad-depth-limit", one_arg("depth"), "start\n", "avant runtime: regex.Regex.compile: depth_limit must be at least 1 (got -3)")
+    regex_trap_run(c, bbin, stamp, "bad-heap-limit", one_arg("heap"), "start\n", "avant runtime: regex.Regex.compile: heap_limit must be at least 1 (got 0)")
 
     // A literal pattern with limits, named or not, is still re2c's
     // scanner (no note that it stays on PCRE2), and runs as without them.

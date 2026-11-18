@@ -359,7 +359,7 @@ avant_int avant_regex_cache_holds(const char *pat, avant_int flags) {
 static uint32_t re_limit(const char *name, avant_int v) {
   if (v < 1) {
     char text[160];
-    snprintf(text, sizeof text, "Regex.compile: %s must be at least 1 (got %lld)", name, (long long)v);
+    snprintf(text, sizeof text, "regex.Regex.compile: %s must be at least 1 (got %lld)", name, (long long)v);
     avant_trap_text(text);
   }
   return v > (avant_int)UINT32_MAX ? UINT32_MAX : (uint32_t)v;
@@ -633,7 +633,7 @@ static __thread int g_re_match_err;
  * (std.regex's RegexErrorKind: 3 the match limit, 4 the depth limit, 5
  * the heap limit, 2 no memory, 6 anything else), and PCRE2's words for
  * it with the try_ operation `op` (0 try_find, 1 try_replace, 2
- * try_split, 3 try_matches, 4 try_count: "Regex.try_find: match limit
+ * try_split, 3 try_matches, 4 try_count: "regex.Regex.try_find: match limit
  * exceeded (PCRE2 error -47)"). */
 avant_int avant_regex_failure_kind(void) {
   switch (g_re_match_err) {
@@ -652,9 +652,9 @@ avant_int avant_regex_failure_kind(void) {
 
 /* gc-lint: holds nothing (C memory only). */
 char *avant_regex_failure_text(avant_int op) {
-  static const char *const names[] = {"Regex.try_find", "Regex.try_replace",
-                                      "Regex.try_split", "Regex.try_matches",
-                                      "Regex.try_count"};
+  static const char *const names[] = {"regex.Regex.try_find", "regex.Regex.try_replace",
+                                      "regex.Regex.try_split", "regex.Regex.try_matches",
+                                      "regex.Regex.try_count"};
   PCRE2_UCHAR msg[160];
   char buf[224];
   int n;
@@ -679,8 +679,8 @@ char *avant_regex_failure_text(avant_int op) {
 }
 
 void avant_regex_failed(avant_int op) {
-  static const char *const names[] = {"Regex.find", "Regex.replace",
-                                      "Regex.split", "Regex.matches"};
+  static const char *const names[] = {"regex.Regex.find", "regex.Regex.replace",
+                                      "regex.Regex.split", "regex.Regex.matches"};
   re_trap(names[op >= 0 && op < 4 ? op : 0], g_re_match_err);
 }
 
@@ -691,7 +691,7 @@ int64_t avant_regex_span_at(void *handle, const char *s, avant_int from,
                             avant_int i) {
   int64_t whole = avant_regex_find(handle, s, from);
   if (whole == -2) {
-    re_trap("Match.span", g_re_match_err);
+    re_trap("regex.Match.span", g_re_match_err);
   }
   if (whole < 0) {
     return -1;
@@ -832,7 +832,7 @@ static inline __attribute__((always_inline)) avant_int re_count(void *handle, co
         g_re_match_err = PCRE2_ERROR_NOMEMORY;
         return -1;
       }
-      re_trap("Regex.count", PCRE2_ERROR_NOMEMORY);
+      re_trap("regex.Regex.count", PCRE2_ERROR_NOMEMORY);
     }
     got = avant_re2c_count((int32_t)(uintptr_t)handle, re_text_obj(&txt, s));
     re_text_free(&txt);
@@ -855,7 +855,7 @@ static inline __attribute__((always_inline)) avant_int re_count(void *handle, co
         g_re_match_err = PCRE2_ERROR_NOMEMORY;
         return -1;
       }
-      re_trap("Regex.count", PCRE2_ERROR_NOMEMORY);
+      re_trap("regex.Regex.count", PCRE2_ERROR_NOMEMORY);
     }
     md = own;
     jit = 0;
@@ -891,7 +891,7 @@ static inline __attribute__((always_inline)) avant_int re_count(void *handle, co
           g_re_match_err = rc;
           return -1;
         }
-        re_trap("Regex.count", rc);
+        re_trap("regex.Regex.count", rc);
       }
       break;
     }
@@ -941,5 +941,5 @@ avant_int avant_regex_error_offset(void) {
 /* A Regex used after close: a program error, not an honest "no match".
  * A trap (re_trap's path). */
 void avant_regex_closed(void) {
-  avant_trap_text("Regex used after close");
+  avant_trap_text("regex.Regex used after close");
 }

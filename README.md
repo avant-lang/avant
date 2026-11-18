@@ -3339,7 +3339,7 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with (x) { … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
+- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `sync.Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with (x) { … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
 - Each `Channel` the block captured is closed, which wakes a task waiting on it in `recv` or `send`.
 - Each `Array` and `Hash` the block captured is thawed, as at the task's normal end.
 
@@ -4159,7 +4159,7 @@ fn main {
 }
 ```
 
-An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"`, `"rename"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. `IoError` and `ProcessError` are the prelude's, since [`read_line`](#input) gives an `IoError` too: they are named bare, and a program that uses neither `read_line`, `std.fs` nor `std.process` may declare its own. The module's names are also reached bare (`read(path)`), so a function of the program with one of them and the same parameters makes a bare call ambiguous: `fs.read` names the module's.
+An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"`, `"rename"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. `IoError` and `ProcessError` are the prelude's, since [`read_line`](#input) gives an `IoError` too: they are named bare, and a program that uses neither `read_line`, `std.fs` nor `std.process` may declare its own. The module's functions are named only with its name (`fs.read`, never a bare `read`), so a program's own `read` beside the import is its own.
 
 ### Processes and environment
 
@@ -4288,10 +4288,10 @@ fn main {
 | `set(name, v)`, `set_null(name)` | `name: String`, `v` (below) | the builder | — | a member of the open object |
 | `add(v)`, `null` | `v` (below) | the builder | — | an element of the open array |
 | `key(name)`, then `obj`, `arr` or `value(v)` | `name: String`, `v` (below) | the builder | `key` outside an object traps | a member that is itself a container or a value |
-| `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
-| `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
+| `end` | — | the builder | `end` with nothing open traps (`avant runtime: json.JsonBuilder.end: nothing open`) | closes the innermost open object or array |
+| `to_s` | — | `String`: the text | `to_s` with containers open traps (`json.JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: JsonBuilder.value: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: json.JsonBuilder.value: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 
@@ -4318,7 +4318,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 | --- | --- | --- | --- | --- |
 | `regex.Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, an `Int?`, `nil` for a failed match; `e.kind` is `regex.RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
 | `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none; a limit reached traps | |
-| `re.try_find(text, from = 0)` | `text: String`, `from: Int` | `Match? \| RegexError`: `find`'s answer, or why there is none | a limit reached is a `RegexError` (`Regex.try_find: match limit exceeded (PCRE2 error -47)`; `e.kind`: `match_limit`, `depth_limit`, `heap_limit`, `memory` or `failed`) | for a pattern or a text from outside |
+| `re.try_find(text, from = 0)` | `text: String`, `from: Int` | `Match? \| RegexError`: `find`'s answer, or why there is none | a limit reached is a `RegexError` (`regex.Regex.try_find: match limit exceeded (PCRE2 error -47)`; `e.kind`: `match_limit`, `depth_limit`, `heap_limit`, `memory` or `failed`) | for a pattern or a text from outside |
 | `m.start`, `m.end` | — | `Int`: the match's bounds, in bytes | — | a `Match` is a value: there are no global match cursors |
 | `m.group(i)`, `m.group("name")` | `i: Int`, or a group's name | `String?`: a group's text | `nil` when it did not take part | |
 | `m.span(i)`, `m.group_count()` | `i: Int` | a group's bounds (`Span?` with `lo` and `hi`); the number of groups | — | |
@@ -4326,14 +4326,14 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 | `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last; a limit reached traps | `for m in re.matches(text) { ... }` |
 | `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | a limit reached traps | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
 | `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | a limit reached traps | |
-| `re.try_count(text)`, `re.try_replace(text, repl)`, `re.try_replace_into(buf, text, repl)`, `re.try_split(text)`, `re.try_matches(text)` | as their plain twins | `Int \| RegexError`, `String \| RegexError`, `RegexError?`, `Array(String) \| RegexError`; `try_matches`'s `next` is `Match? \| RegexError` | a limit reached is a `RegexError`, as from `try_find` (`Regex.try_split: match limit exceeded (PCRE2 error -47)`) | `try_replace_into` leaves its `Buf` as it was on an error; a walk ends after its error: `while m = it.next() { ... } else e { ... }` |
+| `re.try_count(text)`, `re.try_replace(text, repl)`, `re.try_replace_into(buf, text, repl)`, `re.try_split(text)`, `re.try_matches(text)` | as their plain twins | `Int \| RegexError`, `String \| RegexError`, `RegexError?`, `Array(String) \| RegexError`; `try_matches`'s `next` is `Match? \| RegexError` | a limit reached is a `RegexError`, as from `try_find` (`regex.Regex.try_split: match limit exceeded (PCRE2 error -47)`) | `try_replace_into` leaves its `Buf` as it was on an error; a walk ends after its error: `while m = it.next() { ... } else e { ... }` |
 | `re.close()`, `re.is_closed()`, `re.scoped (r) { ... }` | a lambda for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
 
-**After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A `Regex` that is dropped without `close` keeps its compiled pattern until the program ends (the collector runs no finalizer), but not its place in the cache: compiling new patterns stays cached.
+**After close.** Any operation on a closed `Regex` traps (`avant runtime: regex.Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A `Regex` that is dropped without `close` keeps its compiled pattern until the program ends (the collector runs no finalizer), but not its place in the cache: compiling new patterns stays cached.
 
 **Limits.** Each `Regex` has its own, set at `compile` (`regex.Regex.compile(p, match_limit: 100000, heap_limit: 1 << 20)`): `match_limit` bounds the backtracking steps of one match (the default, ten million, is reached in about 40 ms by `(a+)+$` on the JIT), `depth_limit` the interpreter's backtracking depth, and `heap_limit` the bytes one deep match may take (256 MiB by default: the JIT's larger stack and the interpreter's frames). Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it within `heap_limit`. A limit past what PCRE2 holds (32 bits; `heap_limit` in KiB) is the largest it holds. A literal pattern on re2c's scanner never backtracks; its `count` runs on PCRE2 and keeps the limits. A pattern may have any number of groups PCRE2 accepts.
 
-**At a limit a match is never "no match"**: `find`, `count`, `replace`, `split` and `matches` trap with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`), and their `try_` twins (`try_find`, `try_count`, `try_replace`, `try_replace_into`, `try_split`, `try_matches`) return a `RegexError`. Server code, and any code that matches a pattern or a text from outside, sets the limits and uses the `try_` forms: one request must not end the program.
+**At a limit a match is never "no match"**: `find`, `count`, `replace`, `split` and `matches` trap with the operation and PCRE2's reason (`avant runtime: regex.Regex.replace: match limit exceeded (PCRE2 error -47)`), and their `try_` twins (`try_find`, `try_count`, `try_replace`, `try_replace_into`, `try_split`, `try_matches`) return a `RegexError`. Server code, and any code that matches a pattern or a text from outside, sets the limits and uses the `try_` forms: one request must not end the program.
 
 **Two engines.** re2c compiles a string-literal pattern with at most one capture group and no named groups to a native scanner. Any other pattern runs on PCRE2's JIT; a literal one (with a literal `caseless`, if given) gets a note on stderr, so `avant run`'s stdout stays the program's. Both ship inside the release. Without a `re2c` binary literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary. PCRE2 backtracks: adversarial patterns and texts can be catastrophic.
 
@@ -4393,11 +4393,11 @@ fn main {
 | `server.port()` | — | `Int`: the bound port | — | |
 | `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler, a lambda | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming: a framework routes from the fallback. Register every route, WebSocket ones too, the fallback, timers and hooks, before `serve` |
 | `fallback((req) { ... })` | the handler, a lambda | the `Server` | as a route | **the fallback**: every request no route names by its method and path goes to it (without one, the server answers 404), so a framework's router gets every request (`/messages/42`); a second call replaces the first |
-| `every(ms, () { ... })` | `ms: Int` (1 or more), a lambda | the `Server` | a period under 1 traps (`avant runtime: Server.every(0): a period is 1 ms or more`) | runs every `ms` while serving, the first time `ms` after `serve` starts, on the server's first loop thread; like a handler it must not block, and a trap in it is printed and the server goes on |
+| `every(ms, () { ... })` | `ms: Int` (1 or more), a lambda | the `Server` | a period under 1 traps (`avant runtime: http.Server.every(0): a period is 1 ms or more`) | runs every `ms` while serving, the first time `ms` after `serve` starts, on the server's first loop thread; like a handler it must not block, and a trap in it is printed and the server goes on |
 | `on_close(() { ... })` | a lambda | the `Server` | as a route | runs once when the server stops, on the thread that called `serve`, after its loops stopped and before `serve` returns (in `close` for a server never served); hooks run in their order |
 | a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
 | `http.Response.text(body, status = 200)`, `http.Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
-| `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
+| `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: http.Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers()`: a response's are those received, or for one built in code those it will send (its `Content-Type` first; `Content-Length` and `Connection` are the server's); `for name, value in req.headers() { ... }` walks a `Headers` value in wire order, duplicates included |
 | `req.param(name)`, `req.params()`, `http.Params.parse(text)` | `name`, `text: String` | `String?`, a `Params` | — | **query parameters**, decoded as a form is (`+` a space, `%XX` a byte, a `%` without two hex digits kept, bytes that are not UTF-8 read as U+FFFD); names exact, order and repeats kept. A `Params` has `get`, `has`, `get_all`, `count`, `name_at`, `value_at` as headers do; `http.Params.parse(String.from_utf8(req.body()) ?? "")` reads a form body |
 | `http.decode_component(text)` | `text: String` | `String` | — | a path segment percent-decoded (`+` stays `+`), for a router |
@@ -4413,7 +4413,7 @@ fn main {
 | a chunked request body | 411 |
 | a malformed request; more than one `Content-Length` value (two lines, or a list in one, even agreeing); an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port) | 400 |
 
-**Limits** are on by default and set like routes, before `serve` (one set while serving traps: `avant runtime: Server.head_timeout called while the server is serving: set every limit before serve`); each setter returns the `Server`, 0 turns its limit off, and a negative value traps:
+**Limits** are on by default and set like routes, before `serve` (one set while serving traps: `avant runtime: http.Server.head_timeout called while the server is serving: set every limit before serve`); each setter returns the `Server`, 0 turns its limit off, and a negative value traps:
 
 | Limit | Default | When it is passed |
 | --- | --- | --- |
@@ -4957,6 +4957,8 @@ avant run prog.av -- hello
 ### Compile errors
 
 Compile errors go to stderr with a stable code, the offending line and a caret; the compiler exits non-zero.
+
+A message names a type as a program writes it: a `std` module's type with the module's name (`cannot assign sync.Mutex(Int) to String`, `json.JsonBuilder.end: nothing open`), the prelude's types bare.
 
 <!-- check: error -->
 ```avant

@@ -3848,7 +3848,7 @@ __attribute__((noreturn, cold)) void avant_http_trap(const char *message) {
 
 __attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *name) {
   char msg[160];
-  snprintf(msg, sizeof msg, "Server.%s called while the server is serving: set every limit before serve", name);
+  snprintf(msg, sizeof msg, "http.Server.%s called while the server is serving: set every limit before serve", name);
   avant_trap_text(msg);
 }
 
@@ -3866,10 +3866,10 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
   if (a < 0 || b < 0 || a > top || b > INT32_MAX) {
     char msg[200];
     if (which == 2) {
-      snprintf(msg, sizeof msg, "Server.%s(%lld, %lld): a limit is 0 (off) to %lld", name, (long long)a,
+      snprintf(msg, sizeof msg, "http.Server.%s(%lld, %lld): a limit is 0 (off) to %lld", name, (long long)a,
                (long long)b, top);
     } else {
-      snprintf(msg, sizeof msg, "Server.%s(%lld): a limit is 0 (off) to %lld", name, (long long)a, top);
+      snprintf(msg, sizeof msg, "http.Server.%s(%lld): a limit is 0 (off) to %lld", name, (long long)a, top);
     }
     avant_trap_text(msg);
   }
@@ -3982,7 +3982,7 @@ void avant_http_header_check(const char *name, const char *value) {
   if (nn == 0 || http_token_end(name, nn) < nn) {
     escape_into(esc, name, nn);
     snprintf(msg, sizeof msg,
-             "Response.header name \"%s\" is not a token: a header name is letters, digits and !#$%%&'*+-.^_`|~ (RFC 9110)",
+             "http.Response.header name \"%s\" is not a token: a header name is letters, digits and !#$%%&'*+-.^_`|~ (RFC 9110)",
              esc);
     avant_trap_text(msg);
   }
@@ -3990,7 +3990,7 @@ void avant_http_header_check(const char *name, const char *value) {
   if (i < vn) {
     escape_into(esc, name, nn);
     snprintf(msg, sizeof msg,
-             "Response.header value of %s holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)",
+             "http.Response.header value of %s holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)",
              esc, (unsigned)(unsigned char)value[i], i);
     avant_trap_text(msg);
   }
