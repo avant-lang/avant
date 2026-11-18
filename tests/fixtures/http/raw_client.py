@@ -24,6 +24,12 @@ def get(path, extra=""):
 def read_answers(s, want):
     """Reads `want` answers framed by Content-Length; returns their
     (status, body) pairs, fewer when the server closes first."""
+    return read_answers_rest(s, want)[0]
+
+
+def read_answers_rest(s, want):
+    """read_answers, and the bytes read past the last answer (what the
+    server sent behind them, which may have come in the same read)."""
     buf = b""
     out = []
     while len(out) < want:
@@ -46,7 +52,7 @@ def read_answers(s, want):
         if not chunk:
             break
         buf += chunk
-    return out
+    return out, buf
 
 
 def ping_ok():
@@ -84,11 +90,10 @@ def pipeline_mix():
     batch = get("/ping") * 3 + get("/echo-size?70000") + get("/ping") * 12
     up = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
     s.sendall(batch + up)
-    got = read_answers(s, 16)
+    got, buf = read_answers_rest(s, 16)
     want = [(200, b"pong")] * 3 + [(200, b"x" * 70000)] + [(200, b"pong")] * 12
     if got != want:
         return "answers %r" % [(st, len(b)) for st, b in got]
-    buf = b""
     while b"\r\n\r\n" not in buf:
         chunk = s.recv(4096)
         if not chunk:
