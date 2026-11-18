@@ -2,15 +2,31 @@
 #include "avant_gc.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <zlib.h>
 
-/* 0 ok, 1 bad input, 2 any other zlib failure. Thread-local so a
+/* 0 ok, 1 bad input, 2 the result would pass the size limit (memory
+ * running out inside zlib stops the program: zlib_out_of_memory). Thread-local so a
  * returning call can hand back the bytes and the status separately. */
 static __thread int32_t g_zlib_status;
 
 static void set_status(int32_t code) {
   g_zlib_status = code;
+}
+
+/* zlib could not allocate its own state (Z_MEM_ERROR, from compress or
+ * uncompress): memory ran out, which stops the program as any allocation
+ * of the runtime's does, one line after what the program printed, status
+ * 1. It is not a failure of the data: too_large and invalid_data are for
+ * the data alone. */
+__attribute__((noreturn, cold)) static void zlib_out_of_memory(const char *call) {
+  avant_exit_claim();
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: out of memory: zlib's %s could not allocate its state\n", call);
+  avant_tmp_on_crash();
+  _exit(1);
 }
 
 avant_int avant_zlib_take_status(void) {
@@ -47,6 +63,7 @@ char *avant_zlib_compress(const char *s) {
   uLong bound = compressBound((uLong)n);
   uLong dest_len = bound;
   char *out;
+  int rc;
   set_status(0);
   /* RC1: the text is a handle across the allocation. */
   AVANT_GC_SCOPE(1);
@@ -54,7 +71,11 @@ char *avant_zlib_compress(const char *s) {
   avant_size_check((uint64_t)bound + 4, AVANT_SIZE_STRING);
   out = (char *)avant_alloc((uint64_t)bound + 5, AVANT_TYPE_BYTES);
   write_len((uint8_t *)out, n);
-  if (compress((Bytef *)(out + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
+  rc = compress((Bytef *)(out + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n);
+  if (rc == Z_MEM_ERROR) {
+    zlib_out_of_memory("compress");
+  }
+  if (rc != Z_OK) {
     set_status(2);
     return avant_str_empty();
   }
@@ -68,6 +89,7 @@ char *avant_zlib_uncompress(const char *s) {
   uint32_t orig;
   uLong dest_len;
   char *out;
+  int rc;
   set_status(0);
   if (n < 4) {
     set_status(1);
@@ -92,7 +114,11 @@ char *avant_zlib_uncompress(const char *s) {
     avant_str_tag(out);
     return out;
   }
-  if (uncompress((Bytef *)out, &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
+  rc = uncompress((Bytef *)out, &dest_len, p + 4, (uLong)(n - 4));
+  if (rc == Z_MEM_ERROR) {
+    zlib_out_of_memory("uncompress");
+  }
+  if (rc != Z_OK || dest_len != orig) {
     set_status(1);
     return avant_str_empty();
   }
@@ -108,6 +134,7 @@ avant_int avant_zlib_compress_into(const char *s, void *buf) {
   int32_t at;
   int32_t need;
   uint8_t *data;
+  int rc;
   set_status(0);
   if (!buf) {
     set_status(2);
@@ -133,7 +160,11 @@ avant_int avant_zlib_compress_into(const char *s, void *buf) {
     return 2;
   }
   write_len(data + at, n);
-  if (compress((Bytef *)(data + at + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
+  rc = compress((Bytef *)(data + at + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n);
+  if (rc == Z_MEM_ERROR) {
+    zlib_out_of_memory("compress");
+  }
+  if (rc != Z_OK) {
     set_status(2);
     return 2;
   }
@@ -149,6 +180,7 @@ avant_int avant_zlib_uncompress_into(const char *s, void *buf) {
   int32_t at;
   int32_t need;
   uint8_t *data;
+  int rc;
   set_status(0);
   if (!buf || n < 4) {
     set_status(1);
@@ -177,7 +209,11 @@ avant_int avant_zlib_uncompress_into(const char *s, void *buf) {
     set_status(2);
     return 2;
   }
-  if (uncompress((Bytef *)(data + at), &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
+  rc = uncompress((Bytef *)(data + at), &dest_len, p + 4, (uLong)(n - 4));
+  if (rc == Z_MEM_ERROR) {
+    zlib_out_of_memory("uncompress");
+  }
+  if (rc != Z_OK || dest_len != orig) {
     set_status(1);
     return 1;
   }

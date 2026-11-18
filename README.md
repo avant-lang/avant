@@ -4550,6 +4550,8 @@ fn main {
 | `bytes.uncompress` | — | `Bytes \| ZlibError` | a `ZlibError` | |
 | `compress_into(buf)`, `uncompress_into(buf)` | `buf: Buf` | `ZlibError?` | a `ZlibError` | write into a `Buf` |
 
+`ZlibError` is `invalid_data` (not zlib's format, or a length that does not match) or `too_large` (the result would pass a `Buf`'s size limit). Memory running out inside zlib is no `ZlibError`: it stops the program, as any allocation does.
+
 ### std.base64
 
 ```avant
