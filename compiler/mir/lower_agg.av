@@ -564,22 +564,14 @@ pub fn (lw: MirLower) recv_store_check(p: MPlace, loc: Location) {
     return
   }
   b = lw.lw_b
-  b.call(-1, "avant_array_recv_store", lw.two(b.copy_local(lw.lw_self), b.str_const(mir_site_short(loc))))
+  b.call(-1, "avant_array_recv_store", lw.two(b.copy_local(lw.lw_self), b.str_const(lw.site_text(loc))))
 }
 
-// FILE:LINE:COL with the file's own name, not its path: the message is
-// the same from any directory.
-pub fn mir_site_short(loc: Location): String {
-  base = loc.path
-  i = loc.path.size - 1
-  while i >= 0 {
-    if loc.path[i] == 47 {
-      base = str_slice(loc.path, i + 1, loc.path.size)
-      break
-    }
-    i -= 1
-  }
-  "${base}:${loc.line()}:${loc.column()}"
+// FILE:LINE:COL as every trap names its site (the file relative to the
+// program's directory or the compiler's root, rel_path), so the message
+// is the same from any directory.
+pub fn (lw: MirLower) site_text(loc: Location): String {
+  "${lw.rel_path(loc.path)}:${loc.line()}:${loc.column()}"
 }
 
 // A store into a C layout's C scalar field: the value in its Avant view,
@@ -830,7 +822,7 @@ pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: Strin
   hargs.push(slot)
   hargs.push(lw.elem_size(aty))
   hargs.push(b.str_const(name))
-  hargs.push(b.str_const(e.loc.show()))
+  hargs.push(b.str_const(lw.site_text(e.loc)))
   b.call(-1, "avant_array_hold", hargs)
   all: Array(MOperand) = []
   all.push(r)
