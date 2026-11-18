@@ -81,12 +81,13 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   n
 }
 
-// A public function of another module with the same name and parameters:
-// both take their module in their emit name, which stays unique.
+// A public function of another module with the same name and parameters,
+// or parameters whose names read the same (two modules' C types of one
+// name): both take their module in their emit name, which stays unique.
 pub fn (checker_self: Checker) pub_twin_elsewhere(sig: FuncSig): Bool {
   for i in 1..checker_self.functions.size {
     other = checker_self.functions[i]
-    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && params_same(other.params, sig.params) {
+    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && (params_same(other.params, sig.params) || sig_mangle("", other.params) == sig_mangle("", sig.params)) {
       return true
     }
   }
@@ -590,6 +591,19 @@ pub fn c_sigs_same(ap: Array(Ty), ar: Ty, bp: Array(Ty), br: Ty): Bool {
     i += 1
   }
   true
+}
+
+// `is GOT, expected WANT` of an argument's message; when the two read the
+// same (two modules' C types of one name), each C type is named with its
+// module.
+pub fn (checker_self: Checker) arg_is_text(got: Ty, want: Ty): String {
+  g = got.show()
+  w = want.show()
+  if g == w {
+    g = c_ty_text_mod(got)
+    w = c_ty_text_mod(want)
+  }
+  "is ${g}, expected ${w}"
 }
 
 // A binding's signature with each C layout and opaque C type named by

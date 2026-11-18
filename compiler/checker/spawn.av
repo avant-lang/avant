@@ -295,6 +295,10 @@ pub fn (checker_self: Checker) ptr_crosses_here(ty: Ty): Bool {
     if !(p.is_opaque() || p.is_clayout()) {
       return false
     }
+    if p.mod_name.size > 0 && p.mod_name != checker_self.current_module {
+      // Another module's C type of the same name.
+      return false
+    }
     for lb in checker_self.program.libs {
       if lb.mod_name == checker_self.current_module && lib_declares(lb, p.name, p.is_clayout()) {
         return true

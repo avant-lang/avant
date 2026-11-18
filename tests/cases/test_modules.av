@@ -474,6 +474,7 @@ fn test_modules(c: Checks) {
     test_c_binding_twice(c, compiler, dir)
     test_ptr_crossing(c, compiler, dir)
     test_layout_twins(c, compiler, dir)
+    test_opaque_twins(c, compiler, dir)
     test_last_name(c, compiler, dir)
     test_std_qualified(c, compiler, dir)
   } else {
@@ -644,6 +645,25 @@ fn test_ptr_crossing(c: Checks, compiler: String, dir: String) {
   write_av(dir, "xpkg", "// A package that binds C memory and shares it with its own tasks: a\n// Ptr to a C layout this module's lib block declares crosses here.\nlib ptrpkg {\n  struct Cell {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Cell)\n  fun free(p: Ptr(Cell))\n  fun malloc(n: Int): Ptr(Void)\n}\n\npub fn shared_sum(k: Int): Int {\n  p = ptrpkg.calloc(1, Cell.size)\n  p.n = 41\n  h = spawn { p.n.to_i() + k }\n  r = h.join() ?? -1\n  ptrpkg.free(p)\n  r\n}\n\npub fn handed: Ptr(Cell) {\n  q = ptrpkg.calloc(1, Cell.size)\n  q.n = 7\n  h = spawn { q }\n  h.join() ?? q\n}\n")
   write_av(dir, "xuser", "import xpkg\n\nfn main {\n  p = xpkg.handed()\n  h = spawn { p.n.to_i() }\n  puts(h.join() ?? -1)\n}\n")
   mod_fails(c, compiler, dir, "xuser", "spawn cannot capture p: its type, Ptr(Cell), holds C memory, which crosses to another task only in the module whose lib block declares its C type", "a Ptr crosses a task only in its lib's module")
+}
+
+// Opaque C types are their module's, as C layouts are: two packages that
+// both write Ptr(Ctx) have two types, so one's handle is not the other's;
+// a module without a lib block that writes Ctx means the one package's
+// Ctx, and with two such packages it names the module (Ptr(opqpa.Ctx)).
+fn test_opaque_twins(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "opqpa", "lib opqa {\n  fun malloc(n: Int): Ptr(Ctx)\n  fun free(p: Ptr(Ctx))\n}\n\npub fn open: Ptr(Ctx) {\n  opqa.malloc(8)\n}\n\npub fn close(p: Ptr(Ctx)) {\n  opqa.free(p)\n}\n")
+  write_av(dir, "opqpb", "lib opqb {\n  fun calloc(n: Int, size: Int): Ptr(Ctx)\n}\n\npub fn open: Ptr(Ctx) {\n  opqb.calloc(1, 16)\n}\n\npub fn close(p: Ptr(Ctx)) {\n}\n")
+  write_av(dir, "opqmix", "import opqpa\nimport opqpb\n\nfn main {\n  p = opqpa.open()\n  opqpb.close(p)\n  puts(\"closed by the other package\")\n}\n")
+  mod_fails(c, compiler, dir, "opqmix", "argument 1 of close is Ptr(opqpa.Ctx), expected Ptr(opqpb.Ctx)", "one package's opaque handle is not another's")
+  write_av(dir, "opqone", "import opqpa\n\nfn keep(p: Ptr(Ctx)): Ptr(Ctx) {\n  p\n}\n\nfn main {\n  p = keep(opqpa.open())\n  opqpa.close(p)\n  puts(\"ok\")\n}\n")
+  mod_runs(c, compiler, dir, "opqone", "ok\n", "a client's Ptr(Ctx) is the one package's")
+  write_av(dir, "opqtwo", "import opqpa\nimport opqpb\n\nfn keep(p: Ptr(opqpa.Ctx)): Ptr(opqpa.Ctx) {\n  p\n}\n\nfn bad(p: Ptr(Ctx)) {\n}\n\nfn main {\n  opqpa.close(keep(opqpa.open()))\n  opqpb.close(opqpb.open())\n  puts(\"ok\")\n}\n")
+  mod_fails(c, compiler, dir, "opqtwo", "Ctx is an opaque C type of modules opqpa and opqpb, each its own: write the module's name (Ptr(module.Ctx))", "a client's Ptr(Ctx) beside two packages names the module")
+  write_av(dir, "opqqual", "import opqpa\nimport opqpb\n\nfn keep(p: Ptr(opqpa.Ctx)): Ptr(opqpa.Ctx) {\n  p\n}\n\nfn main {\n  opqpa.close(keep(opqpa.open()))\n  opqpb.close(opqpb.open())\n  puts(\"ok\")\n}\n")
+  mod_runs(c, compiler, dir, "opqqual", "ok\n", "Ptr(opqpa.Ctx) names one package's opaque type")
+  write_av(dir, "opqcross", "import opqpa\n\nlib cm {\n  fun getpid: Ptr(Ctx)\n}\n\nfn main {\n  p = opqpa.open()\n  h = spawn {\n    opqpa.close(p)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n")
+  mod_fails(c, compiler, dir, "opqcross", "spawn cannot capture p: its type, Ptr(Ctx), holds C memory, which crosses to another task only in the module whose lib block declares its C type", "another module's opaque type of a name this module's lib block writes does not cross here")
 }
 
 // Two modules' C layouts of one name: a method of one module's Ptr(Pair)

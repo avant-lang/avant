@@ -1489,7 +1489,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
       got = checker_self.fit_call_arg(expr.args[ai], arg_tys[ai], sig.params[ai])
       if !ty_assignable(got, sig.params[ai]) {
         an = ai + 1
-        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show()}.${expr.callee} is ${got.show()}, expected ${sig.params[ai].show()}")
+        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show()}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[ai])}")
       }
     }
   }
@@ -1501,7 +1501,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
       dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
       if !ty_assignable(dgot, sig.params[di]) {
         dn = di + 1
-        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show()}.${expr.callee} is ${dgot.show()}, expected ${sig.params[di].show()}")
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show()}.${expr.callee} ${checker_self.arg_is_text(dgot, sig.params[di])}")
       }
     }
   }
@@ -1548,7 +1548,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }
@@ -1722,7 +1722,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       got = checker_self.check_fn_arg(expr.args[i], pty)
       if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${pty.show()}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, pty)}")
         return checker_self.t_int()
       }
     }
@@ -1768,7 +1768,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       }
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
     }
     i += 1
@@ -1879,7 +1879,7 @@ pub fn (checker_self: Checker) dispatch_method_of(expr: Expr, object: Ty, expect
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }

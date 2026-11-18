@@ -43,7 +43,15 @@ pub class HashKeyUse {
 pub class TypeResolver {
   pub named: Hash(String, Int)
   pub collide: Hash(String, Int)
+  // The opaque C types, by type_key(module, name): one per module that
+  // writes the name (a module's lib block, else its other declarations
+  // when no lib block writes it), so two packages' Ptr(Ctx) are two
+  // types; opaque_mod is a name's first module, opaque_n its count of
+  // modules and opaque_text them all ("a and b").
   opaques: Hash(String, Int)
+  opaque_mod: Hash(String, String)
+  opaque_n: Hash(String, Int)
+  opaque_text: Hash(String, String)
   interned: Array(Ty)
   failed: Bool = false
   err: CompileError? = nil
@@ -88,6 +96,12 @@ pub class TypeResolver {
     self.collide = col
     o = Hash(String, Int).new()
     self.opaques = o
+    om = Hash(String, String).new()
+    self.opaque_mod = om
+    on = Hash(String, Int).new()
+    self.opaque_n = on
+    ot = Hash(String, String).new()
+    self.opaque_text = ot
     inn: Array(Ty) = []
     inn.push(ty_void())
     self.interned = inn
@@ -404,11 +418,61 @@ pub class TypeResolver {
     get_named(name)
   }
 
-  pub fn get_opaque(name: String): Ty? {
-    if id = self.opaques.get(name) {
+  // The opaque C type name of module mod_name, or nil.
+  pub fn get_opaque_in(mod_name: String, name: String): Ty? {
+    if id = self.opaques.get(type_key(mod_name, name)) {
       return ty_at(id)
     }
     nil
+  }
+
+  // The opaque C type a use of name means: the module qual's when the
+  // use qualifies it (Ptr(net.Ctx)), else the current module's own
+  // (scope_mod), else the one module's that writes it; nil when none
+  // does, or when several do (opaque_ambiguous).
+  pub fn get_opaque_for(qual: String, name: String): Ty? {
+    if qual.size > 0 {
+      return get_opaque_in(qual, name)
+    }
+    if self.scope_mod.size > 0 {
+      if own = get_opaque_in(self.scope_mod, name) {
+        return own
+      }
+    }
+    if n = self.opaque_n.get(name), n == 1 {
+      if m = self.opaque_mod.get(name) {
+        return get_opaque_in(m, name)
+      }
+    }
+    nil
+  }
+
+  // The modules that write the opaque C type name, when more than one
+  // does and the use is in none of them: "" otherwise.
+  pub fn opaque_ambiguous(name: String): String {
+    if n = self.opaque_n.get(name), n > 1 {
+      return self.opaque_text.get(name) ?? ""
+    }
+    ""
+  }
+
+  // A new opaque C type name of module mod_name.
+  pub fn add_opaque(mod_name: String, name: String) {
+    if have = get_opaque_in(mod_name, name) {
+      return
+    }
+    opq = ty_named(tyk_opaque(), name)
+    opq.mod_name = mod_name
+    id = intern(opq)
+    self.opaques[type_key(mod_name, name)] = id
+    if n = self.opaque_n.get(name) {
+      self.opaque_n[name] = n + 1
+      self.opaque_text[name] = (self.opaque_text.get(name) ?? "") + " and " + mod_name
+    } else {
+      self.opaque_n[name] = 1
+      self.opaque_mod[name] = mod_name
+      self.opaque_text[name] = mod_name
+    }
   }
 
   pub fn resolve_value(tn: TypeName): Ty {
@@ -673,8 +737,15 @@ pub class TypeResolver {
     if al = find_alias(tn) {
       return resolve_alias(al, tn)
     }
-    if opq = get_opaque(tn.name) {
+    if opq = get_opaque_for(tn.mod_name, tn.name) {
       return opq
+    }
+    if tn.mod_name.size == 0 {
+      both = opaque_ambiguous(tn.name)
+      if both.size > 0 {
+        fail(tn.loc, "${tn.name} is an opaque C type of modules ${both}, each its own: write the module's name (Ptr(module.${tn.name}))")
+        return self.t_int
+      }
     }
     fail(tn.loc, "unknown type ${tn.name}${type_hint(tn.name)}")
     self.t_int
@@ -1341,25 +1412,30 @@ pub class TypeResolver {
   }
 }
 
-pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
+// The opaque C types a type name of module mod_name writes
+// (`Ptr(Ctx)` with no type Ctx declared): in a lib block (in_lib) each is
+// the module's own; elsewhere, only a name no lib block writes is (a
+// module's Ptr(Ctx) beside a package's lib that writes Ctx means the
+// package's: collect_opaques reads the lib blocks first).
+pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int), mod_name: String, in_lib: Bool) {
   if r = tn.ret {
-    note_ptr_opaque_skip(r, resolver, skip)
+    note_ptr_opaque_skip(r, resolver, skip, mod_name, in_lib)
   }
   for arg in tn.args {
-    note_ptr_opaque_skip(arg, resolver, skip)
+    note_ptr_opaque_skip(arg, resolver, skip, mod_name, in_lib)
   }
   i = 0
   while i < tn.members.size {
-    note_ptr_opaque_skip(tn.members[i], resolver, skip)
+    note_ptr_opaque_skip(tn.members[i], resolver, skip, mod_name, in_lib)
     i += 1
   }
   for bound in tn.bounds {
-    note_ptr_opaque_skip(bound, resolver, skip)
+    note_ptr_opaque_skip(bound, resolver, skip, mod_name, in_lib)
   }
   if tn.name == "Ptr" {
     if tn.args.size == 1 {
       inner = tn.args[0]
-      if inner.args.size == 0 {
+      if inner.args.size == 0 && inner.mod_name.size == 0 {
         if type_is_builtin(inner.name) {
           return
         }
@@ -1369,40 +1445,36 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
         if skipped = skip.get(inner.name) {
           return
         }
-        if already = resolver.get_opaque(inner.name) {
-          return
+        if !in_lib {
+          if n = resolver.opaque_n.get(inner.name) {
+            return
+          }
         }
-        opq = ty_named(tyk_opaque(), inner.name)
-        id = resolver.intern(opq)
-        resolver.opaques[inner.name] = id
+        resolver.add_opaque(mod_name, inner.name)
       }
     }
   }
 }
 
-pub fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
+pub fn note_type_name(tn: TypeName, resolver: TypeResolver, mod_name: String, in_lib: Bool) {
   empty = Hash(String, Int).new()
-  note_ptr_opaque_skip(tn, resolver, empty)
-}
-
-pub fn note_type_name(tn: TypeName, resolver: TypeResolver) {
-  note_ptr_opaque(tn, resolver)
+  note_ptr_opaque_skip(tn, resolver, empty, mod_name, in_lib)
 }
 
 pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   for lib_def in program.libs {
     for cfun in lib_def.funs {
       for param in cfun.params {
-        note_type_name(param.type, resolver)
+        note_type_name(param.type, resolver, lib_def.mod_name, true)
       }
       if ret = cfun.return_type {
-        note_type_name(ret, resolver)
+        note_type_name(ret, resolver, lib_def.mod_name, true)
       }
     }
     for lay in lib_def.layouts {
       k = 0
       while k < lay.fields.size {
-        note_type_name(lay.fields[k].type, resolver)
+        note_type_name(lay.fields[k].type, resolver, lib_def.mod_name, true)
         k += 1
       }
     }
@@ -1410,14 +1482,14 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   for sdef in program.structs {
     j = 0
     while j < sdef.fields.size {
-      note_type_name(sdef.fields[j].type, resolver)
+      note_type_name(sdef.fields[j].type, resolver, sdef.mod_name, false)
       j += 1
     }
   }
   for cdef in program.classes {
     j = 0
     while j < cdef.fields.size {
-      note_type_name(cdef.fields[j].type, resolver)
+      note_type_name(cdef.fields[j].type, resolver, cdef.mod_name, false)
       j += 1
     }
   }
@@ -1429,13 +1501,13 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
       skip[name] = 1
     }
     for param in fnn.params {
-      note_ptr_opaque_skip(param.type, resolver, skip)
+      note_ptr_opaque_skip(param.type, resolver, skip, fnn.mod_name, false)
     }
     if recv = fnn.receiver {
-      note_ptr_opaque_skip(recv.type, resolver, skip)
+      note_ptr_opaque_skip(recv.type, resolver, skip, fnn.mod_name, false)
     }
     if ret = fnn.return_type {
-      note_ptr_opaque_skip(ret, resolver, skip)
+      note_ptr_opaque_skip(ret, resolver, skip, fnn.mod_name, false)
     }
   }
 }

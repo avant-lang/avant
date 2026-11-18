@@ -3678,7 +3678,7 @@ lib img {
 
 ### Layouts and Ptr
 
-A `struct` inside a `lib` block is a C layout (C's size, alignment and field offsets), not an Avant value: it is never built with `{ }`; its fields are read and written through a `Ptr(T)`, and its methods take a `Ptr(T)` receiver.
+A `struct` inside a `lib` block is a C layout (C's size, alignment and field offsets), not an Avant value: it is never built with `{ }`; its fields are read and written through a `Ptr(T)`, and its methods take a `Ptr(T)` receiver. A C layout, and an opaque C type (a name a `lib` block writes in `Ptr(Ctx)` without declaring it), is its module's: two packages' `Pair` or `Ctx` are two types, so one's pointer is not the other's. A module that uses the name without writing it in a `lib` block of its own means the one module's that does; when two do, it names the module (`Ptr(net.Ctx)`).
 
 ```avant
 lib c {

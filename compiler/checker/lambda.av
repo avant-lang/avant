@@ -497,7 +497,7 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
       got = checker_self.check_fn_arg(expr.args[i], pty)
       if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${pty.show()}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} ${checker_self.arg_is_text(got, pty)}")
       }
     }
     i += 1
@@ -535,7 +535,7 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
       dgot = checker_self.fit_call_arg(expr.args[di], dgot, sig.params[di])
       if !ty_assignable(dgot, sig.params[di]) {
         dn = di + 1
-        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${expr.callee} is ${dgot.show()}, expected ${sig.params[di].show()}")
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${expr.callee} ${checker_self.arg_is_text(dgot, sig.params[di])}")
       }
     }
   }
@@ -889,7 +889,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
           got = checker_self.resolve_in_module(ann)
           checker_self.pull_resolve()
           if !got.same_as(pty) {
-            checker_self.fail(b.loc, "lambda parameter is ${got.show()}, expected ${pty.show()}")
+            checker_self.fail(b.loc, "lambda parameter ${checker_self.arg_is_text(got, pty)}")
           }
           pty = got
         }
