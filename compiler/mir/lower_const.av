@@ -10,7 +10,8 @@
 // meanwhile names it. A value whose type is a union with failures stops
 // the program on a failure (avant_trap_const), naming the constant; its
 // success is stored. avant_const_ready then makes the slot's reference
-// words roots for good (runtime/avant_gc_roots.c). A program with no such
+// words roots for good and freezes, for good, every Array and Hash the
+// value reaches (runtime/avant_gc_roots.c). A program with no such
 // constant has no slot, no start-up function and no call of it.
 
 import location
@@ -82,6 +83,50 @@ pub fn (lw: MirLower) lower_const_ref(e: Expr): MOperand {
 // their start-up.
 pub fn (lw: MirLower) has_startup_consts: Bool {
   lw.lw_prog.startup_consts.size > 0
+}
+
+// Before any function is lowered: a constant that holds an Array makes
+// the element stores test the freeze (lower_arr.av frozen_check).
+pub fn (lw: MirLower) note_startup_consts {
+  for d in lw.lw_prog.startup_consts {
+    if t = d.ty {
+      seen = Set(String).new()
+      if mir_const_holds_array(t, seen) {
+        lw.lw_m.const_arrays = true
+      }
+    }
+  }
+}
+
+pub fn mir_const_holds_array(t: Ty, seen: Set(String)): Bool {
+  if t.is_array() {
+    return true
+  }
+  if t.is_hash() {
+    if v = t.val {
+      return mir_const_holds_array(v, seen)
+    }
+    return false
+  }
+  if t.is_union() {
+    for m in t.members {
+      if mir_const_holds_array(m, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() || t.is_class() {
+    if !seen.add("${t.mod_name}.${t.show()}") {
+      return false
+    }
+    for f in t.fields {
+      if mir_const_holds_array(f.ty, seen) {
+        return true
+      }
+    }
+  }
+  false
 }
 
 // The lambdas of the values get their symbols with the functions'.

@@ -193,9 +193,34 @@ static const char *frozen_op(int32_t op) {
   return op >= 0 && op <= 12 ? names[op] : "a change";
 }
 
+/* Whether a constant computed before main froze an array or a hash
+ * (avant_const_ready, avant_gc_roots.c): a freeze is then a constant's
+ * when no second thread ever ran (no task could have taken one), and
+ * either one's otherwise. */
+static int g_const_frozen;
+
+void avant_trap_note_const_frozen(void) {
+  g_const_frozen = 1;
+}
+
+/* 0: a task's freeze, 1: a constant's, 2: either. */
+static int frozen_by(void) {
+  if (!g_const_frozen) {
+    return 0;
+  }
+  return atomic_load(&g_avant_shared) ? 2 : 1;
+}
+
 void avant_trap_frozen(int32_t op) {
+  int by = frozen_by();
   trap_head();
-  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
+  if (by == 1) {
+    trap_out("%s on an array a constant holds: a constant's value never changes, at any depth; change a copy (clone())", frozen_op(op));
+  } else if (by == 2) {
+    trap_out("%s on an array a constant holds or a running task reads: a constant's value never changes, at any depth, and a spawn or .parallel that captured an array keeps it unchanged until the task ends; change a copy (clone()), or join the task before changing the array", frozen_op(op));
+  } else {
+    trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
+  }
   trap_tail();
 }
 
@@ -221,7 +246,16 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
 
 void avant_trap_frozen_hash(int32_t op) {
   static const char *names[] = {"a store", "delete", "clear"};
+  int by = frozen_by();
   trap_head();
+  if (by == 1) {
+    trap_out("%s on a hash a constant holds: a constant's value never changes, at any depth; change a copy (clone())", op >= 0 && op <= 2 ? names[op] : "a change");
+    trap_tail();
+  }
+  if (by == 2) {
+    trap_out("%s on a hash a constant holds or a running task reads: a constant's value never changes, at any depth, and a spawn or .parallel that captured a hash keeps it unchanged until the task ends; change a copy (clone()), or join the task before changing the hash", op >= 0 && op <= 2 ? names[op] : "a change");
+    trap_tail();
+  }
   trap_out("%s on a hash a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the hash", op >= 0 && op <= 2 ? names[op] : "a change");
   trap_tail();
 }

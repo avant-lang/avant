@@ -678,8 +678,93 @@ void avant_release_range(void *lo, uint64_t n) {
 /* The constants computed before main (avant_rt.h). The reference words
  * of a constant's global slot (bit i of words: the slot's word i) become
  * static roots for good, read and rewritten with the task roots
- * (EACH_TASK_ROOT). It allocates nothing on the heap and never
+ * (EACH_TASK_ROOT); then every Array and Hash the value reaches, at any
+ * depth, is frozen for good (the freeze a task's capture takes, never
+ * thawed), so no path changes it. The walk follows each object's
+ * reference words by its type map, once per object (a set of the
+ * objects met); a static object (a literal) is no heap object and holds
+ * nothing of the heap. It allocates nothing on the heap and never
  * collects. */
+typedef struct ConstSeen {
+  void **v;
+  size_t cap;
+  size_t n;
+} ConstSeen;
+
+static int const_seen_add(ConstSeen *s, void *p) {
+  size_t i;
+  if (s->n * 2 >= s->cap) {
+    ConstSeen g;
+    g.cap = s->cap ? s->cap * 2 : 64;
+    g.n = 0;
+    g.v = (void **)calloc(g.cap, sizeof(void *));
+    if (!g.v) {
+      gc_die("out of memory");
+    }
+    for (i = 0; i < s->cap; i++) {
+      if (s->v[i]) {
+        (void)const_seen_add(&g, s->v[i]);
+      }
+    }
+    free(s->v);
+    *s = g;
+  }
+  i = (size_t)(((uintptr_t)p >> 3) * 0x9e3779b97f4a7c15ull) & (s->cap - 1);
+  while (s->v[i]) {
+    if (s->v[i] == p) {
+      return 0;
+    }
+    i = (i + 1) & (s->cap - 1);
+  }
+  s->v[i] = p;
+  s->n += 1;
+  return 1;
+}
+
+/* avant_rt_traps.c: a frozen array's or hash's trap then names a
+ * constant. */
+void avant_trap_note_const_frozen(void);
+
+static void const_freeze(void *root) {
+  ConstSeen seen = {NULL, 0, 0};
+  void **stack = NULL;
+  size_t n = 0;
+  size_t cap = 0;
+  if (!root || !gc_is_heap_payload(root, NULL, NULL) || !const_seen_add(&seen, root)) {
+    free(seen.v);
+    return;
+  }
+  stack = (void **)malloc(64 * sizeof(void *));
+  if (!stack) {
+    gc_die("out of memory");
+  }
+  cap = 64;
+  stack[n++] = root;
+  while (n > 0) {
+    void *obj = stack[--n];
+    uint32_t id = avant_header(obj)->type_id;
+    if (id == AVANT_TYPE_ARRAY_OBJ) {
+      avant_value_freeze(obj, 1, 0);
+      avant_trap_note_const_frozen();
+    } else if (id == AVANT_TYPE_HASH) {
+      avant_value_freeze(obj, 1, 1);
+      avant_trap_note_const_frozen();
+    }
+    EACH_REF_SLOT(obj, slot, {
+      void *q = *slot;
+      if (q && gc_is_heap_payload(q, NULL, NULL) && const_seen_add(&seen, q)) {
+        if (n == cap) {
+          cap *= 2;
+          stack = (void **)gc_xrealloc(stack, cap * sizeof(void *));
+        }
+        stack[n++] = q;
+      }
+    });
+  }
+  free(stack);
+  free(seen.v);
+}
+
 void avant_const_ready(void *slot, uint64_t words) {
   void **base = (void **)slot;
   uint32_t i;
@@ -695,6 +780,11 @@ void avant_const_ready(void *slot, uint64_t words) {
     }
   }
   pthread_mutex_unlock(&gc_heap.world);
+  for (i = 0; i < 64; i++) {
+    if (words & (1ull << i)) {
+      const_freeze(base[i]);
+    }
+  }
 }
 
 /* Task roots (avant_gc.h): traced from

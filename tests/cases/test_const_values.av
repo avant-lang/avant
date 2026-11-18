@@ -8,7 +8,12 @@ import std.process
 // computed once before main, in the order they are written (a module's
 // after those of the modules it imports), and read from its slot; a
 // failure while computing one stops the program before main naming it;
-// one that reads a value computed after it is refused. Each program is compiled in parallel; a refused
+// one that reads a value computed after it is refused. The value never
+// changes at any depth: a change written through the constant is
+// refused at the use, a Mutex, a Channel, a Buf or a function value in
+// it at the declaration, a class whose field is assigned outside its
+// initialize at the declaration, and a change through another path
+// stops the program. Each program is compiled in parallel; a refused
 // one must say the expected words at the expected line and column, an
 // accepted one print what it should, a stopped one exit 1 saying the
 // expected words.
@@ -63,6 +68,29 @@ fn value_cases: Array(KCase) {
   xs.push(accepted("objects", "${schema_src()}${point_src()}\nfn main {\n  puts(schema.has(\"title\"))\n  puts(schema.fields.size)\n  puts(origin.len2())\n  puts(origin.x + origin.y)\n  p = origin\n  p.bump()\n  puts(p.x)\n  puts(origin.x)\n}\n", "true\n2\n25\n7\n4\n3\n"))
   xs.push(accepted("order", "const first = [\"a\", \"b\"]\nconst second = first.size + 1\nconst third = make()\n\nfn make: String {\n  \"\${first[0]}\${second}\"\n}\n\nfn main {\n  puts(third)\n}\n", "a3\n"))
   xs.push(accepted("tasks", "const nums = [3, 1, 2]\n\nfn work(n: Int): Int {\n  nums[0] * n\n}\n\nfn main {\n  hs = [1, 2, 3].parallel (n) { work(n) + nums.size }\n  puts(hs[2])\n  h = spawn { nums[1] + nums[2] }\n  puts(h.join() ?? 0)\n}\n", "12\n3\n"))
+  xs
+}
+
+fn freeze_cases: Array(KCase) {
+  xs: Array(KCase) = []
+  xs.push(refused("push", "const names = [\"x\"]\n\nfn main {\n  names.push(\"y\")\n}\n", "push would change the constant names: a constant's value never changes, at any depth", "4:8"))
+  xs.push(refused("index-store", "const names = [\"x\"]\n\nfn main {\n  names[0] = \"y\"\n}\n", "this changes the constant names: a constant's value never changes, at any depth", "4:8"))
+  xs.push(refused("hash-delete", "const ages = [\"ada\": 36]\n\nfn main {\n  ages.delete(\"ada\")\n}\n", "delete would change the constant ages", "4:7"))
+  xs.push(refused("hash-store", "const ages = [\"ada\": 36]\n\nfn main {\n  ages[\"bob\"] = 1\n}\n", "this changes the constant ages", "4:7"))
+  xs.push(refused("struct-field", "${point_src()}\nfn main {\n  origin.x = 1\n}\n", "this changes the constant origin", "17:9"))
+  xs.push(refused("struct-method", "${point_src()}\nfn main {\n  origin.bump()\n}\n", "bump would change the constant origin", "17:9"))
+  xs.push(refused("class-method", "${schema_src()}\nfn main {\n  schema.str(\"x\")\n}\n", "str would change the constant schema", "17:9"))
+  xs.push(refused("class-inner-push", "${schema_src()}\nfn main {\n  schema.fields.push(\"x\")\n}\n", "push would change the constant schema", "17:16"))
+  xs.push(refused("class-field-assigned", "class Box {\n  pub n: Int = 0\n}\n\nconst boxes = [Box.new()]\n\nfn main {\n  b = boxes[0]\n  b.n = 5\n}\n", "the constant boxes never changes, so it cannot hold a Box: its field n is assigned at", "5:7"))
+  xs.push(refused("mutex", "import std.sync\n\nclass Holder {\n  pub lock: sync.Mutex(Int)\n\n  fn initialize {\n    self.lock = sync.Mutex(Int).new(0)\n  }\n}\n\nconst h = Holder.new()\n\nfn main {\n  puts(1)\n}\n", "the constant h never changes, so it cannot hold a sync.Mutex(Int) (h.lock): a Mutex or a Channel is for a value that changes", "11:7"))
+  xs.push(refused("channel", "import std.sync\n\nconst cs = [sync.Channel(Int).new(1)]\n\nfn main {\n  puts(1)\n}\n", "so it cannot hold a sync.Channel(Int) (an element of cs)", "3:7"))
+  xs.push(refused("buf", "const b = Buf.new()\n\nfn main {\n  puts(1)\n}\n", "the constant b never changes, so it cannot hold a Buf (b), which changes in place: use Bytes", "1:7"))
+  xs.push(refused("fn-value", "fn twice(n: Int): Int {\n  n * 2\n}\n\nconst f = [twice]\n\nfn main {\n  puts(1)\n}\n", "so it cannot hold a function value", "5:7"))
+  xs.push(stopped("alias-push", "const words = [\"x\", \"y\"]\n\nfn main {\n  xs = words\n  xs.push(\"z\")\n}\n", "push on an array a constant holds: a constant's value never changes, at any depth; change a copy (clone()) at "))
+  xs.push(stopped("alias-store", "const words = [\"x\", \"y\"]\n\nfn set(xs: Array(String)) {\n  xs[0] = \"z\"\n}\n\nfn main {\n  set(words)\n}\n", "an element store on an array a constant holds"))
+  xs.push(stopped("alias-method", "${schema_src()}\nfn main {\n  s = schema\n  s.str(\"x\")\n}\n", "push on an array a constant holds"))
+  xs.push(stopped("alias-hash", "const ages = [\"ada\": 36]\n\nfn main {\n  h = ages\n  h[\"bob\"] = 1\n}\n", "a store on a hash a constant holds"))
+  xs.push(accepted("copy-changes", "const words = [\"x\", \"y\"]\n\nfn main {\n  xs = words.clone()\n  xs.push(\"z\")\n  puts(xs.size)\n  puts(words.size)\n}\n", "3\n2\n"))
   xs
 }
 
@@ -141,6 +169,7 @@ fn test_main(c: Checks) {
     dir = scratch_dir()
     all: Array(KCase) = []
     all.concat(value_cases())
+    all.concat(freeze_cases())
     all.concat(start_cases())
     run_cases(c, compiler, dir, all)
     check_modules(c, compiler, dir)

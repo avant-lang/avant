@@ -608,7 +608,8 @@ __attribute__((noreturn, cold)) void avant_trap_enum_at(int64_t value, const cha
 __attribute__((noreturn, cold)) void avant_trap_expect_at(const char *why, int32_t site);
 /* The constants computed before main: the one being computed (a trap
  * names it), none, a value that is a failure; and the reference words of
- * a constant's global slot (bit i: word i), made roots for good. */
+ * a constant's global slot (bit i: word i), made roots for good, with
+ * every Array and Hash the value reaches frozen for good. */
 void avant_const_begin(const char *what);
 void avant_const_end(void);
 __attribute__((noreturn, cold)) void avant_trap_const_at(const char *what, int32_t site);

@@ -570,7 +570,7 @@ pub fn mir_frozen_store: Int {
 // not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
   holds = lw.lw_m.elem_holds
-  if !lw.lw_m.shared && (!holds || op == mir_frozen_store()) {
+  if !lw.lw_m.shared && !lw.lw_m.const_arrays && (!holds || op == mir_frozen_store()) {
     return
   }
   b = lw.lw_b
@@ -593,7 +593,7 @@ pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
 // Any other program's code is unchanged: there only a method call on an
 // element freezes an array, and the runtime's trap names that call.
 pub fn (lw: MirLower) mutator_frozen_check(h: Int, op: Int, loc: Location) {
-  if lw.lw_m.shared {
+  if lw.lw_m.shared || lw.lw_m.const_arrays {
     lw.at(loc)
     lw.frozen_check(h, op, loc)
   }
