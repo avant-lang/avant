@@ -601,7 +601,9 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
     checker_self.fail(expr.loc, "${expr.ident} is ${shown.to_s()}, expected ${want.show()}: a fn type matches only itself")
     return checker_self.t_int()
   }
-  checker_self.fail_hint(expr.loc, "unknown function ${expr.ident}", checker_self.fn_hint(expr.ident))
+  if !checker_self.refuse_std_bare(expr.loc, expr.ident) {
+    checker_self.fail_hint(expr.loc, "unknown function ${expr.ident}", checker_self.fn_hint(expr.ident))
+  }
   checker_self.t_int()
 }
 
@@ -633,6 +635,9 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
   }
   if saw_generic {
     checker_self.fail(expr.loc, "generic function is not a value")
+    return checker_self.t_int()
+  }
+  if checker_self.refuse_std_bare(expr.loc, expr.ident) {
     return checker_self.t_int()
   }
   nil

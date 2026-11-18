@@ -183,14 +183,16 @@ fn loop_cases(xs: Array(IoCase)) {
 }
 
 // std.fs and std.process beside what moved there: append, rename,
-// env_set, the qualifier reached bare, and the prelude's old names
-// refused with the new spelling.
+// env_set, the whole name, a bare name refused (a std module's functions
+// take its name), and the prelude's old names refused with the new
+// spelling.
 fn moved_cases(xs: Array(IoCase)) {
   xs.push(accepted("fs-append", "import std.fs\n\nfn main {\n  _ = fs.append(\"ap.txt\", \"one\\n\")\n  n = fs.append(\"ap.txt\", \"two\\n\") ?? -1\n  puts(n)\n  puts(fs.read(\"ap.txt\") ?? \"?\")\n  if e = fs.append(\"no/such/dir/x\", \"z\") {\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "4\none\ntwo\n\ncannot write no/such/dir/x: No such file or directory\n"))
   xs.push(accepted("fs-rename", "import std.fs\n\nfn main {\n  _ = fs.write(\"rn-a.txt\", \"moved\")\n  fs.rename(\"rn-a.txt\", \"rn-b.txt\") else e {\n    puts(\"\${e}\")\n    return\n  }\n  puts(\"\${fs.exists(\"rn-a.txt\")} \${fs.read(\"rn-b.txt\") ?? \"?\"}\")\n  fs.rename(\"rn-none.txt\", \"rn-c.txt\") else e {\n    puts(\"\${e.op}: \${e}\")\n    return\n  }\n}\n", "false moved\nrename: cannot rename rn-none.txt: No such file or directory\n"))
   xs.push(accepted("process-env-set", "import std.process\n\nfn main {\n  puts(process.env(\"IO_SET_X\") ?? \"unset\")\n  process.env_set(\"IO_SET_X\", \"one two\")\n  puts(process.env(\"IO_SET_X\") ?? \"unset\")\n  r = process.output(\"sh\", [\"-c\", \"echo $IO_SET_X\"]) ?? return\n  print(r.stdout)\n  puts(process.args().size)\n}\n", "unset\none two\none two\n1\n"))
   xs.push(with_err_has(with_status(accepted("process-env-set-bad", "import std.process\n\nfn main {\n  process.env_set(\"A=B\", \"x\")\n  puts(\"set\")\n}\n", ""), 1), "avant runtime: process.env_set(name, value) needs a name without = or a zero byte, got \"A=B\""))
-  xs.push(accepted("fs-bare", "import std.fs\n\nfn main {\n  _ = write(\"bare.txt\", \"hi\")\n  puts(read(\"bare.txt\") ?? \"?\")\n  puts(std.fs.exists(\"bare.txt\"))\n}\n", "hi\ntrue\n"))
+  xs.push(accepted("fs-whole", "import std.fs\n\nfn main {\n  _ = std.fs.write(\"bare.txt\", \"hi\")\n  puts(std.fs.read(\"bare.txt\") ?? \"?\")\n  puts(std.fs.exists(\"bare.txt\"))\n}\n", "hi\ntrue\n"))
+  xs.push(refused("fs-bare", "import std.fs\n\nfn main {\n  _ = write(\"bare.txt\", \"hi\")\n}\n", "write needs its module's name: write fs.write; a std module's functions are not named bare", "4:7"))
   xs.push(refused("moved-file-read", "fn main {\n  puts(file_read(\"x\") ?? \"\")\n}\n", "file_read is now fs.read(path): import std.fs", "2:8"))
   xs.push(refused("moved-argv", "fn main {\n  puts(argv().size)\n}\n", "argv is now process.args(): import std.process", "2:8"))
   xs.push(refused("moved-env-get", "fn main {\n  puts(env_get(\"HOME\") ?? \"\")\n}\n", "env_get is now process.env(name): import std.process", "2:8"))

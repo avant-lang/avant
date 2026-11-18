@@ -925,7 +925,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       checker_self.fail_no_fit(loc, shown, all, arg_tys)
     } else if checker_self.call_mod.size > 0 {
       checker_self.fail_hint(loc, "unknown function ${shown}", checker_self.module_name_hint(checker_self.call_mod, name))
-    } else {
+    } else if !checker_self.refuse_std_bare(loc, name) {
       checker_self.fail_hint(loc, "unknown function ${shown}", checker_self.fn_hint(name))
     }
     return nil
@@ -1530,7 +1530,9 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
     }
   }
   if !visible {
-    checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
+    if !checker_self.refuse_std_bare(expr.loc, expr.callee) {
+      checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
+    }
     return checker_self.t_int()
   }
   if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc, checker_self.int_literal_flags(expr.args)) {

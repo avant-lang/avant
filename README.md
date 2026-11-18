@@ -3027,6 +3027,7 @@ A module importing only one names it bare. Generic types alike: two modules may 
 - Functions with different parameter types still meet as one overload set across modules: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments.
 - A qualified call reaches only that module's `pub` functions. A module may qualify its own names (`main.helper()`).
 - A nested module is qualified by its whole name, `http.server.Server`, or by its last name, `server.Server`, as Go's packages are: after `import std.time`, `time.now()` is `std.time.now()`. A local or a field of that name is the local or the field; a module whose whole name it is (`import time` beside `import std.time`) is that module; two imports that end in it (`a.util` and `b.util`) make `util.f()` an error that asks for the whole name.
+- A `std` module's functions are written only with its name, as Go's are: `import std.fs` gives `fs.read`, never a bare `read`, so a program's own `read` beside the import is its own and never ambiguous. A bare use of one says so: `read needs its module's name: write fs.read; a std module's functions are not named bare`. A program's own modules keep their bare names, and a `std` module's types are named bare (`Json`, `JsonBuilder`, `Time`) or qualified (`fs.Reader`).
 
 ## Packages
 
@@ -3486,7 +3487,7 @@ fn main {
 The pool runs at most `N` tasks at once, its size; further tasks queue. `N` is the number of CPUs the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), unless one of these sets it:
 
 - `--avant-threads=N` on **your program's** command line, `N` from 1 to 1,024. The runtime takes it out before `process.args()` sees it; a bare `--avant-threads` or a bad value stops the program before `main` with one line on standard error and status 1 (`avant runtime: --avant-threads=0: the thread pool's size is --avant-threads=N, N from 1 to 1024`). Every other argument, `--threads` included, is the program's. After a literal `--` nothing is taken.
-- `set_pool_size(n)` from `std.sync`, for a program with its own option (a `--threads`, a config file); `pool_size()` reads the size.
+- `sync.set_pool_size(n)` from `std.sync`, for a program with its own option (a `--threads`, a config file); `sync.pool_size()` reads the size.
 
 <!-- check: run args=--threads,2 -->
 ```avant
@@ -3496,15 +3497,15 @@ import std.process
 fn main {
   args = process.args()
   if args.size >= 3 && args[1] == "--threads" {
-    set_pool_size(args[2].to_i() ?? 1)
+    sync.set_pool_size(args[2].to_i() ?? 1)
   }
-  puts(pool_size())                        // => 2
+  puts(sync.pool_size())                   // => 2
   squares = [1, 2, 3, 4].parallel (x) { x * x }
   puts(squares[3])                         // => 16
 }
 ```
 
-The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `Http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
+The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `Http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `sync.set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
 
 A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--avant-threads=2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
 

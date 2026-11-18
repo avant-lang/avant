@@ -219,6 +219,19 @@ pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): B
 }
 
 pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): Bool {
+  checker_self.fn_is_visible_q(fnn, from_mod, checker_self.call_mod)
+}
+
+// A std module's functions are written with its name, as Go's are:
+// `import std.fs` gives `fs.read`, never a bare `read`, so a program's own
+// `read` is never ambiguous with it. Another module sees a pub function of
+// a std module only at a call or a function value qualified by that
+// module (qual); a program's own modules keep their bare names.
+pub fn std_needs_qualifier(mod_name: String): Bool {
+  str_starts(mod_name, "std.")
+}
+
+pub fn (checker_self: Checker) fn_is_visible_q(fnn: Function, from_mod: String, qual: String): Bool {
   if fnn.mod_name == from_mod {
     return true
   }
@@ -229,9 +242,58 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
     return true
   }
   if fnn.vis {
+    if std_needs_qualifier(fnn.mod_name) && qual != fnn.mod_name {
+      return false
+    }
     return checker_self.imported_by(from_mod, fnn.mod_name)
   }
   false
+}
+
+// The qualified spelling of a std module's function the current module
+// imports and names bare (`fs.read` for `read` after `import std.fs`;
+// the whole name when another import ends in the same last name); ""
+// when no imported std module has a pub function of that name.
+pub fn (checker_self: Checker) std_bare_spelling(name: String): String {
+  from_mod = checker_self.current_module
+  for i in checker_self.fn_indices_named(name) {
+    sig = checker_self.functions[i]
+    m = sig.node.mod_name
+    if sig.name == name && sig.node.vis && m != from_mod && std_needs_qualifier(m) && checker_self.imported_by(from_mod, m) && !checker_self.sig_is_instance(sig) {
+      last = module_last_name(m)
+      if last.size > 0 && checker_self.last_name_unique(last, from_mod) {
+        return "${last}.${name}"
+      }
+      return "${m}.${name}"
+    }
+  }
+  ""
+}
+
+// Whether exactly one import of from_mod ends in the last name q.
+fn (checker_self: Checker) last_name_unique(q: String, from_mod: String): Bool {
+  n = 0
+  for info in checker_self.program.mods {
+    if info.name == from_mod {
+      for imp in info.imports {
+        if imp == q || module_last_name(imp) == q {
+          n += 1
+        }
+      }
+    }
+  }
+  n == 1
+}
+
+// A bare name of an imported std module's function: refused with its
+// qualified spelling; true when refused.
+pub fn (checker_self: Checker) refuse_std_bare(loc: Location, name: String): Bool {
+  spelled = checker_self.std_bare_spelling(name)
+  if spelled.size == 0 {
+    return false
+  }
+  checker_self.fail(loc, "${name} needs its module's name: write ${spelled}; a std module's functions are not named bare")
+  true
 }
 
 // Functions are scoped per module. A candidate at an unqualified call is a
@@ -242,7 +304,7 @@ pub fn (checker_self: Checker) fn_candidate_q(fnn: Function, qual: String): Bool
   if qual.size > 0 && fnn.mod_name != qual {
     return false
   }
-  checker_self.fn_is_visible(fnn, checker_self.current_module)
+  checker_self.fn_is_visible_q(fnn, checker_self.current_module, qual)
 }
 
 pub fn (checker_self: Checker) fn_candidate(fnn: Function): Bool {

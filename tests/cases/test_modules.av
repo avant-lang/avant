@@ -475,6 +475,7 @@ fn test_modules(c: Checks) {
     test_ptr_crossing(c, compiler, dir)
     test_layout_twins(c, compiler, dir)
     test_last_name(c, compiler, dir)
+    test_std_qualified(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -630,7 +631,7 @@ fn test_same_name_derived(c: Checks, compiler: String, dir: String) {
 // beside std.sync's, and two modules' bindings; each call goes through its
 // own. Before, the second was refused as already bound.
 fn test_c_binding_twice(c: Checks, compiler: String, dir: String) {
-  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == pool_size())\n}\n")
+  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == sync.pool_size())\n}\n")
   mod_runs(c, compiler, dir, "cbsync", "true\n", "a program binds a C function std.sync binds, with its signature")
   write_av(dir, "cbother", "lib oc {\n  fun abs(n: Int32): Int32\n}\n\npub fn mag(n: Int): Int {\n  oc.abs(n.to_i32()).to_i()\n}\n")
   write_av(dir, "cbmain", "// Two modules of the program bind one C function, each with the same\n// signature.\nimport cbother\n\nlib c {\n  fun abs(n: Int32): Int32\n}\n\nfn main {\n  puts(\"\${c.abs(-3)} \${cbother.mag(-4)}\")\n}\n")
@@ -681,6 +682,24 @@ fn test_last_name(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, "${dir}/ln", "bothok", "3\n", "last name clash: the whole names still work")
   write_av(dir, "ln/unimported", "import a.util\n\nfn main {\n  puts(tool.who())\n}\n")
   mod_fails(c, compiler, "${dir}/ln", "unimported", "unknown name tool", "last name: a module not imported is not reached")
+}
+
+// A std module's functions are written with its name only (fs.read,
+// std.fs.is_dir): a program's own function of the same name beside the
+// import is its own, and a bare use of the module's is refused with the
+// qualified spelling, at a call and as a function value.
+fn test_std_qualified(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "stdown", "import std.fs\n\nfn read(path: String): String {\n  \"own \${path}\"\n}\n\nfn main {\n  puts(read(\"x\"))\n  puts(fs.read(\"/no/such/file\") ?? \"none\")\n  puts(std.fs.is_dir(\"/\"))\n  f = read\n  puts(f(\"y\"))\n  g = fs.is_dir\n  puts(g(\"/\"))\n}\n")
+  mod_runs(c, compiler, dir, "stdown", "own x\nnone\ntrue\nown y\ntrue\n", "std qualifier: a program's own read beside import std.fs is its own; fs.read is the module's")
+  write_av(dir, "stdbare", "import std.fs\n\nfn main {\n  puts(read(\"/\") ?? \"?\")\n}\n")
+  mod_fails(c, compiler, dir, "stdbare", "stdbare.av:4:8", "std qualifier: the error points at the bare name")
+  mod_fails(c, compiler, dir, "stdbare", "read needs its module's name: write fs.read; a std module's functions are not named bare", "std qualifier: a bare call is refused with fs.read")
+  write_av(dir, "stdbareval", "import std.fs\n\nfn main {\n  f = is_dir\n  puts(f(\"/\"))\n}\n")
+  mod_fails(c, compiler, dir, "stdbareval", "is_dir needs its module's name: write fs.is_dir", "std qualifier: a bare function value is refused")
+  write_av(dir, "stdbareproc", "import std.process\n\nfn main {\n  puts(args().size)\n}\n")
+  mod_fails(c, compiler, dir, "stdbareproc", "args needs its module's name: write process.args", "std qualifier: process.args, not a bare args")
+  write_av(dir, "stdbaresync", "import std.sync\n\nfn main {\n  puts(pool_size())\n}\n")
+  mod_fails(c, compiler, dir, "stdbaresync", "pool_size needs its module's name: write sync.pool_size", "std qualifier: sync.pool_size, not a bare pool_size")
 }
 
 fn main: Int {
