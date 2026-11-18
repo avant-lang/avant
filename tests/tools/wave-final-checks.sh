@@ -44,7 +44,8 @@
 #   lock-old-form, lock-old-form-runner, lock-new-form-quiet: inside an
 #     exclusive `ledger run` (LEDGER_LOCK_HELD) the lock line and the first
 #     line on stdout say it is the old form, with or without WAVE_RUNNER;
-#     outside, nothing is said;
+#     outside, nothing is said, nor under another lock file (LEDGER_LOCK
+#     naming another path than the one held: lock-other-file);
 #   group-one-call, group-lines: with WAVE_GROUP=1 the shared steps are one
 #     runner call (`final: shared steps`), the harness build and the timing
 #     as before; every step's line is in SUMMARY.txt, and a `shared steps:`
@@ -254,6 +255,9 @@ has '^lock: through WAVE_RUNNER (sh .*runner): shared for every step but the Lan
 say lock-old-form-runner $? "$(line lock: "$w/oldform-runner.out/SUMMARY.txt")"
 ! has 'the old form' "$w/runner.out/SUMMARY.txt" && ! grep -q 'old form' "$w/runner.out.log"
 say lock-new-form-quiet $? "$(line lock: "$w/runner.out/SUMMARY.txt")"
+final "$f" "$w/otherlock.out" WAVE_TMP="$w/tmp1" LEDGER_LOCK_HELD="exclusive:$w/machine.lock" LEDGER_LOCK="$w/another.lock"
+! has 'the old form' "$w/otherlock.out/SUMMARY.txt"
+say lock-other-file $? "$(line lock: "$w/otherlock.out/SUMMARY.txt")"
 
 # 11. WAVE_GROUP=1: the shared steps in one runner call, the LangArena
 # timing still alone and --timed, every step's line as before.

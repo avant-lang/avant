@@ -269,8 +269,11 @@ trap 'on_signal HUP 1' HUP
 # (the old form, the whole run under `ledger run --timed`) holds the whole
 # machine for every step, gate and goldens included, which the steps' own
 # runner calls cannot undo. It still runs, and says so first.
+# (A run under another lock file, LEDGER_LOCK set to another path than the
+# one held, is not inside it: the runner takes that other lock.)
 held_mode=""
 case "${LEDGER_LOCK_HELD:-}" in exclusive:*|shared:*|slot:*) held_mode=${LEDGER_LOCK_HELD%%:*} ;; esac
+[ -n "${LEDGER_LOCK:-}" ] && [ "$(realpath -m "$LEDGER_LOCK")" != "$(realpath -m "${LEDGER_LOCK_HELD#*:}")" ] && held_mode=""
 if [ -n "$runner" ]; then
   lock_line="lock: through WAVE_RUNNER ($runner): shared for every step but the LangArena timing, the whole machine for that"
   [ "${WAVE_GROUP:-0}" = 1 ] && lock_line="$lock_line; the shared steps from the cases to the neutrality in one runner call (WAVE_GROUP=1)"
@@ -344,6 +347,9 @@ if [ -n "${WAVE_BASE:-}" ]; then
   curname="base cache"
   if lk shared "base cache" sh -c 'sh tools/base-cache.sh "$1" > "$2/base-cache.txt" 2> "$2/base-cache.log" < /dev/null' base-cache "$wbase" "$out"; then
     entry=$(cat "$out/base-cache.txt")
+    # Held shared while the steps read it: tools/base-cache.sh --prune
+    # removes no entry a run holds.
+    exec 7>> "$entry.lock" && flock -s 7
   else entry_why="tools/base-cache.sh $wbase failed (base-cache.log)"; fi
   curname=gcstats
 fi
