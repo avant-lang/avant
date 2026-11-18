@@ -129,11 +129,12 @@ void avant_trap_text(const char *what) {
 }
 
 /* Integer overflow and division by zero raised by the generated code: fn names
- * the function and where it starts
- * ("Heap.pop (heap.av:12:3)"). Every check of a function shares one cold
- * block (identical bounds traps stay identical), so LLVM can merge and
- * fold them as before; the function is the site it can name without
- * costing the hot path. */
+ * the function and the check's line ("Heap.pop (heap.av:14:9)"; the
+ * line alone, "Heap.pop (heap.av:14)", when the line has several
+ * checks). The checks of one line share one cold block, so LLVM can
+ * merge and fold a statement's checks as before. An index out of bounds
+ * names the function and where it starts: its checks share one block a
+ * function. */
 void avant_trap_overflow_in(int32_t fn) {
   trap_head();
   trap_out("integer overflow in %s", site_or(fn));

@@ -2673,11 +2673,12 @@ The line, written after stdout is flushed, is `avant runtime: WHAT` and where:
 
 | Where the trap is | The line names | Example |
 | --- | --- | --- |
-| at one operation: `panic`, `expect` on `nil`, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: xs has an element at main.av:7:15` |
-| an index out of bounds, an integer overflow, a division by zero | the function, and where it starts | `avant runtime: integer overflow in twice (main.av:9:1)` |
-| inside a runtime function: a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8 | the operation and its values; no position yet | `avant runtime: slice 4..2 out of range (size 5)` |
+| at one operation: `panic`, `expect` on `nil`, the number conversions, shifts, `buf[i] = n`, `buf.push_byte(n)`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: xs has an element at main.av:7:15` |
+| an integer overflow, a division by zero | the function and the operation's line, with its column when the line has one such operation | `avant runtime: integer overflow in twice (main.av:10:5)` |
+| an index out of bounds | the function, and where it starts | `avant runtime: index 5 out of bounds (size 3) in main (main.av:1:1)` |
+| inside a runtime function: a slice's bounds, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8 | the operation and its values; no position yet | `avant runtime: slice 4..2 out of range (size 5)` |
 
-The second row has no position so that hot loops stay fast.
+The second and third rows share one exit a line, or a function, so that hot loops stay fast: the checks of one line (or one function's indexing) still fold into one branch.
 
 **A broken precondition of a library function names the program's call**, not the line inside the library that checks it: `n.to_s(base)` with a base outside 2..36, `clamp` with `lo > hi`, `process.env_set` with a name holding `=`, `time.sleep_ms` with a negative time, `random.Random.int` with an empty range, `random.bytes` with a size out of range.
 

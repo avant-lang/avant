@@ -903,13 +903,23 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
 // drops it where v is known to be a byte).
 pub fn (lw: MirLower) byte_of(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
+  x = lw.byte_checked(v, loc)
+  lw.tmp(mt_u8(), b.rv_cast(x, mt_u8()))
+}
+
+// The Int v, after the same check: `buf.push_byte(v)`'s argument, so
+// its trap names the call's position (the runtime function checks again
+// for its other callers; LLVM drops this check where v is known to be a
+// byte).
+pub fn (lw: MirLower) byte_checked(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
   x = b.temp(mt_int())
   b.assign(b.pl(x), b.rv_use(v))
   u = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(x), mt_u64()))
   inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u64(255)))
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_byte", lw.one(b.copy_local(x)), loc)
-  lw.tmp(mt_u8(), b.rv_cast(b.copy_local(x), mt_u8()))
+  b.copy_local(x)
 }
 
 // ---- members

@@ -478,6 +478,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   e.trap_ovf = false
   e.trap_div0 = false
   e.trap_bounds = false
+  e.arith_reset()
   s = e.ts.sigs[f.sig]
   linkage = "internal "
   if f.external {
@@ -1233,12 +1234,12 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   v
 }
 
-// The function's arithmetic trap when c holds: every overflow site of
-// a function branches to its one trap.ovf block, every division by
-// zero to trap.div0, as before, so LLVM keeps folding a statement's
-// checks into one branch (a block per site, or a phi of the sites,
-// kept it from that: +7% instructions on Maze::AStar); the block names
-// the function and where it starts.
+// The function's arithmetic trap when c holds: every overflow check of
+// a source line branches to that line's one trap.ovf.N block, every
+// division by zero to its trap.div0.N, so LLVM keeps folding a
+// statement's checks into one branch (a block per check, or a phi of
+// the checks' sites, kept it from that: +7% instructions on
+// Maze::AStar); the block names the function and the line.
 fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
   name = "ovf"
   if div_zero {
@@ -1247,40 +1248,54 @@ fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
   } else {
     e.trap_ovf = true
   }
+  n = e.arith_block(name)
   ok = e.part("${name}.ok")
-  e.line("br i1 ${c}, label %trap.${name}, label %${ok}")
+  e.line("br i1 ${c}, label %trap.${name}.${n}, label %${ok}")
   e.block(ok)
 }
 
-// The function's own site, "Name (file:line:col)", for the traps that
-// name their function: arithmetic, bounds.
-fn ll_fn_site(e: LlEmit): String {
-  loc = e.f.loc
+// The function's name and a position, "Name (file:line:col)", for the
+// traps that name their function: arithmetic (the check's line, and its
+// column when the line has one check's), bounds (the function's start).
+fn ll_fn_site_at(e: LlEmit, file: Int, line: Int, col: Int): String {
   path = "?"
-  if loc.file() >= 0 && loc.file() < e.m.files.size {
-    path = e.m.files[loc.file()]
+  if file >= 0 && file < e.m.files.size {
+    path = e.m.files[file]
   }
   fname = e.f.source_name
   if fname.size == 0 {
     fname = e.f.symbol
   }
-  e.text_ref("${fname} (${path}:${loc.line()}:${loc.col()})")
+  if col < 0 {
+    return e.text_ref("${fname} (${path}:${line})")
+  }
+  e.text_ref("${fname} (${path}:${line}:${col})")
 }
 
-// The function's shared arithmetic trap blocks (ll_arith_trap).
+fn ll_fn_site(e: LlEmit): String {
+  loc = e.f.loc
+  ll_fn_site_at(e, loc.file(), loc.line(), loc.col())
+}
+
+// The function's arithmetic trap blocks (ll_arith_trap), each calling
+// its kind's stub with its line's site.
 fn ll_arith_block(e: LlEmit) {
   if !e.trap_ovf && !e.trap_div0 {
     return
   }
-  if e.trap_ovf {
-    e.block("trap.ovf")
-    e.line("call void ${ll_stub(e, "#to")}()")
+  i = 0
+  while i < e.arith_keys.size {
+    parts = e.arith_keys[i].split(" ")
+    kind = parts[0]
+    site = ll_fn_site_at(e, parts[1].to_i() ?? -1, parts[2].to_i() ?? 0, e.arith_cols[i])
+    e.block("trap.${kind}.${i}")
+    suf = "#to"
+    if kind == "div0" {
+      suf = "#td"
+    }
+    e.line("call void ${ll_stub(e, suf)}(i32 ${site})")
     e.line("unreachable")
-  }
-  if e.trap_div0 {
-    e.block("trap.div0")
-    e.line("call void ${ll_stub(e, "#td")}()")
-    e.line("unreachable")
+    i += 1
   }
 }
 
@@ -1290,29 +1305,30 @@ fn ll_stub(e: LlEmit, suf: String): String {
 }
 
 // The function's trap stubs: cold, never inlined, they call the
-// runtime's trap with the function's site (ll_fn_site), so the
-// function's own trap blocks keep the plain trap's arguments.
+// runtime's trap with a site: the bounds stub the function's own
+// (ll_fn_site), so its trap block keeps the plain trap's arguments; the
+// arithmetic stubs the site their line's block passes.
 fn ll_trap_stubs(e: LlEmit) {
   if !e.trap_ovf && !e.trap_div0 && !e.trap_bounds {
     return
   }
   e.used_stubs = true
-  fsite = ll_fn_site(e)
   o = e.out
   if e.trap_bounds {
+    fsite = ll_fn_site(e)
     e.need("avant_trap_bounds_in")
     o.push_str("define internal void ${ll_stub(e, "#tb")}(i64 %i, i64 %n) #1 {\n")
     o.push_str("  call void @avant_trap_bounds_in(i64 %i, i64 %n, i32 ${fsite})\n  unreachable\n}\n\n")
   }
   if e.trap_ovf {
     e.need("avant_trap_overflow_in")
-    o.push_str("define internal void ${ll_stub(e, "#to")}() #1 {\n")
-    o.push_str("  call void @avant_trap_overflow_in(i32 ${fsite})\n  unreachable\n}\n\n")
+    o.push_str("define internal void ${ll_stub(e, "#to")}(i32 %s) #1 {\n")
+    o.push_str("  call void @avant_trap_overflow_in(i32 %s)\n  unreachable\n}\n\n")
   }
   if e.trap_div0 {
     e.need("avant_trap_div_zero_in")
-    o.push_str("define internal void ${ll_stub(e, "#td")}() #1 {\n")
-    o.push_str("  call void @avant_trap_div_zero_in(i32 ${fsite})\n  unreachable\n}\n\n")
+    o.push_str("define internal void ${ll_stub(e, "#td")}(i32 %s) #1 {\n")
+    o.push_str("  call void @avant_trap_div_zero_in(i32 %s)\n  unreachable\n}\n\n")
   }
 }
 

@@ -50,6 +50,13 @@ pub class LlEmit {
   tloc_seen: Hash(String, Int)
   pub trap_ovf: Bool = false
   pub trap_div0: Bool = false
+  // The function's arithmetic trap blocks, one per kind and source line
+  // (ll_arith_trap): "ovf FILE LINE" or "div0 FILE LINE", the column of
+  // the line's first check (-1 when its checks have several), and the
+  // index of each key.
+  pub arith_keys: Array(String)
+  pub arith_cols: Array(Int)
+  arith_seen: Hash(String, Int)
   pub trap_bounds: Bool = false
   pub used_stubs: Bool = false
   pub rt_names: Array(String)
@@ -97,6 +104,33 @@ pub class LlEmit {
     self.frame_maps = []
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
+    self.arith_keys = []
+    self.arith_cols = []
+    self.arith_seen = Hash(String, Int).new()
+  }
+
+  // A new function: no arithmetic trap blocks yet.
+  pub fn arith_reset {
+    self.arith_keys = []
+    self.arith_cols = []
+    self.arith_seen = Hash(String, Int).new()
+  }
+
+  // The index of the arithmetic trap block of kind ("ovf", "div0") for
+  // the statement being emitted's line.
+  pub fn arith_block(kind: String): Int {
+    key = "${kind} ${self.cur_file} ${self.cur_line}"
+    if got = self.arith_seen.get(key) {
+      if self.arith_cols[got] != self.cur_col {
+        self.arith_cols[got] = -1
+      }
+      return got
+    }
+    n = self.arith_keys.size
+    self.arith_seen[key] = n
+    self.arith_keys.push(key)
+    self.arith_cols.push(self.cur_col)
+    n
   }
 
   // The source site of the statement being emitted, for a trap's
