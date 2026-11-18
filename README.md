@@ -2294,7 +2294,7 @@ fn main {
 
 ### Declaring an error
 
-An error type is a class or struct marked `: Error` with a `String` field `message` or a method `fn message: String`; `e.message` reads it and interpolation prints it.
+An error type is a class or struct marked `: Error` with a `String` field `message` or a method `fn message: String` (an enum, [below](#an-enum-as-an-error)); `e.message` reads the field, `e.message()` the method, and interpolation prints either.
 
 ```avant
 struct TooLong: Error {
