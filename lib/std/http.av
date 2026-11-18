@@ -11,6 +11,7 @@ lib httpc {
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
   fun avant_http_req_peer(req: Ptr(Void), which: Int): Int
   fun avant_http_peer_text(hi: Int, lo: Int): String
+  fun avant_http_headers_pack(block: String): Bytes
   fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
@@ -131,6 +132,30 @@ fn empty_headers: Headers {
   Headers { data: "".bytes }
 }
 
+// A header set from "Name: value\r\n" lines whose every line was checked
+// as Response.header checks it.
+fn headers_of(block: String): Headers {
+  Headers { data: httpc.avant_http_headers_pack(block) }
+}
+
+struct TargetParts {
+  path: String
+  query: String?
+}
+
+// A request target split at its first `?`: the path, and the query
+// without the `?` (nil when there is none).
+fn split_target(target: String): TargetParts {
+  q = 0
+  while q < target.size {
+    if target[q] == 63 {
+      return TargetParts { path: str_slice(target, 0, q), query: str_slice(target, q + 1, target.size) }
+    }
+    q += 1
+  }
+  TargetParts { path: target, query: nil }
+}
+
 // A received request. `method` and `path` are fields, read by every
 // route match; the rest is read through methods, so that what is read
 // lazily later changes no handler: `query()` is the raw query string
@@ -173,34 +198,63 @@ pub struct Request {
   pub fn peer: String {
     httpc.avant_http_peer_text(self.peer_hi, self.peer_lo)
   }
+
+  // A request built in memory, as the server would hand it to a handler:
+  // for a framework's or a program's tests, which call a handler or a
+  // router with it. `target` is the path with an optional query (`/a?b`);
+  // each header is checked as Response.header checks one (a name that is
+  // not a token, or a value with a control character but tab, traps).
+  // Its peer is "".
+  pub fn self.build(method: String, target: String, headers: Array(Header) = [], body: Bytes = "".bytes): Request {
+    block = buf_new()
+    for h in headers {
+      httpc.avant_http_header_check(h.name, h.value)
+      block.push_str("${h.name}: ${h.value}\r\n")
+    }
+    parts = split_target(target)
+    Request { method: method, path: parts.path, raw_query: parts.query, hs: headers_of(block.to_s()), data: body, peer_hi: 0, peer_lo: 0 }
+  }
 }
 
 // A response, in both directions: a handler returns one, and the
-// client returns one. `headers` is the received header set (empty for
-// a response built in code); headers set with `header` are kept
-// separately until the response is written. Content-Length and
-// Connection are managed by the server and the client; setting them
-// with `header` has no effect. A response has one Content-Type, `ctype`
-// (text/plain or application/octet-stream from `text` and `bytes`):
-// `header` replaces it, and an empty value sends none. The other header
-// lines set are kept in `head`. Both are private: a response is built by
-// `text` or `bytes` and `header`, so every line went through `header`'s
-// check, and a `Response { ... }` literal outside this module does not
-// compile. A handler's status outside 200-599 traps when the answer
-// is written: a 1xx is an interim answer, never a handler's.
+// client returns one. `headers()` is the received header set of a
+// response the client returns, and the header lines of one built in
+// code, the server's own Content-Length and Connection aside.
+// Content-Length and Connection are managed by the server and the
+// client; setting them with `header` has no effect. A response has one
+// Content-Type, `ctype` (text/plain or application/octet-stream from
+// `text` and `bytes`): `header` replaces it, and an empty value sends
+// none. The other header lines set are kept in `head`, the received set
+// in `hs`. All three are private: a response is built by `text` or
+// `bytes` and `header`, so every line went through `header`'s check, and
+// a `Response { ... }` literal outside this module does not compile. A
+// handler's status outside 200-599 traps when the answer is written: a
+// 1xx is an interim answer, never a handler's.
 pub struct Response {
   pub status: Int
-  pub headers: Headers
+  hs: Headers
   ctype: String
   head: String
   pub body: Bytes
 
+  // The response's headers: those received, or those a built response
+  // will send (its Content-Type first).
+  pub fn headers: Headers {
+    if self.ctype.size == 0 && self.head.size == 0 {
+      return self.hs
+    }
+    if self.ctype.size == 0 {
+      return headers_of(self.head)
+    }
+    headers_of("Content-Type: ${self.ctype}\r\n${self.head}")
+  }
+
   pub fn self.text(body: String, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes }
+    Response { status: status, hs: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes }
   }
 
   pub fn self.bytes(body: Bytes, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), ctype: "application/octet-stream", head: "", body: body }
+    Response { status: status, hs: empty_headers(), ctype: "application/octet-stream", head: "", body: body }
   }
 
   // A name that is not a token, or a value with a control character
@@ -214,9 +268,9 @@ pub struct Response {
       return self
     }
     if name.eq_ignore_ascii_case("content-type") {
-      return Response { status: self.status, headers: self.headers, ctype: value, head: self.head, body: self.body }
+      return Response { status: self.status, hs: self.hs, ctype: value, head: self.head, body: self.body }
     }
-    Response { status: self.status, headers: self.headers, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body }
+    Response { status: self.status, hs: self.hs, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body }
   }
 }
 
@@ -461,18 +515,9 @@ class HttpState {
 // first argument, in the shape the C callback rule allows.
 fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   target = httpc.avant_http_req_target(raw)
-  path = target
-  query: String? = nil
-  q = 0
-  while q < target.size {
-    if target[q] == 63 {
-      path = str_slice(target, 0, q)
-      query = str_slice(target, q + 1, target.size)
-      q = target.size
-    } else {
-      q += 1
-    }
-  }
+  parts = split_target(target)
+  path = parts.path
+  query = parts.query
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
   // to ordinary routing and its 404. The connection's C record keeps
@@ -1095,7 +1140,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     resp_headers = httpc.avant_http_resp_headers(raw)
     return Response {
       status: status,
-      headers: Headers { data: resp_headers },
+      hs: Headers { data: resp_headers },
       ctype: "",
       head: "",
       body: resp_body
@@ -1181,7 +1226,7 @@ pub class Http {
       if !follow || !redirect {
         return resp
       }
-      location = resp.headers.get("Location") ?? return resp
+      location = resp.headers().get("Location") ?? return resp
       hops += 1
       if hops > 5 {
         return HttpError.new("too many redirects")

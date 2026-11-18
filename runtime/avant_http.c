@@ -112,6 +112,54 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
   return out;
 }
 
+/* The packed form of a header block built in memory ("Name: value\r\n"
+ * lines, each checked as Response.header checks it): a Request made by
+ * Request.new, the headers of a Response built in code. */
+char *avant_http_headers_pack(const char *block) {
+  size_t n = avant_str_n(block);
+  size_t count = 0;
+  size_t i;
+  struct phr_header *hs;
+  char *out;
+  for (i = 0; i + 1 < n; i++) {
+    if (block[i] == '\r' && block[i + 1] == '\n') {
+      count++;
+    }
+  }
+  hs = (struct phr_header *)calloc(count ? count : 1, sizeof(struct phr_header));
+  if (!hs) {
+    avant_trap_text("out of memory building a header set");
+  }
+  {
+    size_t at = 0;
+    size_t k = 0;
+    while (at < n && k < count) {
+      size_t colon = at;
+      size_t end;
+      while (colon < n && block[colon] != ':') {
+        colon++;
+      }
+      end = colon;
+      while (end + 1 < n && !(block[end] == '\r' && block[end + 1] == '\n')) {
+        end++;
+      }
+      hs[k].name = block + at;
+      hs[k].name_len = colon - at;
+      at = colon + 1;
+      while (at < end && (block[at] == ' ' || block[at] == '\t')) {
+        at++;
+      }
+      hs[k].value = block + at;
+      hs[k].value_len = end > at ? end - at : 0;
+      k++;
+      at = end + 2;
+    }
+  }
+  out = build_packed_headers(hs, count, block, n);
+  free(hs);
+  return out;
+}
+
 static uint32_t packed_count(const char *data, size_t n) {
   if (!data || n < 4) {
     return 0;

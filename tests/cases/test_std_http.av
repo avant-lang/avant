@@ -48,13 +48,13 @@ fn client_round(port: Int, out: Channel(String)): Int {
     out.send("redir=ERR")
   }
   if resp = Http.get("${base}/old", false) {
-    loc = resp.headers.get("Location") ?? ""
+    loc = resp.headers().get("Location") ?? ""
     out.send("redir-off=${resp.status}:${loc}")
   } else {
     out.send("redir-off=ERR")
   }
   if resp = Http.get("${base}/meta") {
-    made = resp.headers.get("X-Made") ?? ""
+    made = resp.headers().get("X-Made") ?? ""
     out.send("meta=${resp.status}:${made}")
   } else {
     out.send("meta=ERR")
@@ -68,13 +68,13 @@ fn client_round(port: Int, out: Channel(String)): Int {
     out.send("peer=ERR")
   }
   if resp = Http.get("${base}/json") {
-    types = resp.headers.get_all("Content-Type")
+    types = resp.headers().get_all("Content-Type")
     out.send("json=${types.size}:${types.get(0) ?? ""}")
   } else {
     out.send("json=ERR")
   }
   if resp = Http.get("${base}/untyped") {
-    n = resp.headers.get_all("Content-Type").size
+    n = resp.headers().get_all("Content-Type").size
     out.send("untyped=${resp.status}:${n}")
   } else {
     out.send("untyped=ERR")
@@ -154,8 +154,40 @@ fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
   0
 }
 
+fn route_items(req: Request): Response {
+  who = req.header("authorization") ?? "nobody"
+  Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${String.from_utf8(req.body()) ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
+}
+
+// A request built in memory, handed to a handler as a framework's
+// router or its tests do, and the headers of the response the handler
+// built: neither had a form (Headers had one private field, and a built
+// response kept its header lines private).
+fn in_memory_cases(c: Checks) {
+  hs: Array(Header) = []
+  hs.push(Header { name: "Authorization", value: "Bearer t" })
+  hs.push(Header { name: "X-Dup", value: "a" })
+  hs.push(Header { name: "x-dup", value: "b" })
+  req = Request.build("POST", "/items?x=1&y", hs, "hi".bytes)
+  c.eq_str("${req.method} ${req.path} ${req.query() ?? "-"}", "POST /items x=1&y", "a built request's method, path and query")
+  c.eq_int(req.headers().count(), 3, "a built request's headers")
+  c.eq_int(req.headers().get_all("X-DUP").size, 2, "a built request's repeated header")
+  c.eq_str(req.header("x-dup") ?? "", "a", "a built request's first value")
+  c.eq_str(req.peer(), "", "a built request has no peer")
+  plain = Request.build("GET", "/")
+  c.eq_str("${plain.query() ?? "none"} ${plain.headers().count()} ${plain.body().size}", "none 0 0", "a built request with defaults")
+  resp = route_items(req)
+  c.eq_str(String.from_utf8(resp.body) ?? "", "POST /items x=1&y Bearer t hi", "a handler called with a built request")
+  rh = resp.headers()
+  c.eq_int(rh.count(), 2, "a built response's headers: its Content-Type and X-Seen")
+  c.eq_str("${rh.name_at(0) ?? ""}: ${rh.value_at(0) ?? ""}", "Content-Type: application/json", "a built response's Content-Type comes first, as sent")
+  c.eq_str(rh.get("x-seen") ?? "", "1", "a built response's header")
+  c.eq_int(Response.text("x").header("Content-Type", "").headers().count(), 0, "a response without a Content-Type")
+}
+
 fn test_std_http(c: Checks) {
   c.suite("tests/cases/test_std_http.av")
+  in_memory_cases(c)
 
   if e = Http.get("https://example.com/") {
     c.expect(false, "https is HttpError")

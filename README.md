@@ -4317,7 +4317,8 @@ fn main {
 | a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
 | `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
-| `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers` |
+| `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers()`: a response's are those received, or for one built in code those it will send (its `Content-Type` first; `Content-Length` and `Connection` are the server's) |
+| `Request.build(method, target, headers = [], body = "".bytes)` | `method`, `target: String` (a path with an optional `?query`), `headers: Array(Header)`, `body: Bytes` | a `Request`, as a handler would get it, with no peer (`""`) | a header that `.header` would refuse traps | **a request in memory**, for tests that call a handler or a framework's router with it |
 | `serve` | — | — | — | runs until `close` |
 | `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
 
@@ -4374,7 +4375,7 @@ import std.http
 fn main {
   if resp = Http.get("http://127.0.0.1:8080/") {
     puts(resp.status)
-    puts(resp.headers.get("Content-Type") ?? "")
+    puts(resp.headers().get("Content-Type") ?? "")
     puts(String.from_utf8(resp.body) ?? "")
   }
   if created = Http.post("http://127.0.0.1:8080/echo", "payload") {

@@ -805,6 +805,7 @@ char *avant_http_req_body(void *req);
 char *avant_http_req_headers(void *req);
 avant_int avant_http_req_peer(void *req, avant_int which);
 char *avant_http_peer_text(avant_int hi, avant_int lo);
+char *avant_http_headers_pack(const char *block);
 void avant_http_req_respond(void *req, avant_int status, const char *ctype,
                             const char *head, const char *body);
 void *avant_http_listen(const char *host, avant_int port, avant_int max_body, avant_int loops, avant_int max_message);
