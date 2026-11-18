@@ -1256,7 +1256,7 @@ fn main {
 }
 ```
 
-A float prints as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf`; JSON too (`null` for NaN and the infinities). For fixed decimals, `fmt_float(x, digits)` returns a `String` and `buf.push_fmt_f(x, digits)` appends to a buffer; `digits` outside 0 to 64 traps.
+A float prints as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf`; JSON writes a finite float the same way, and a `JsonBuilder` traps on NaN and the infinities, which JSON cannot write. For fixed decimals, `fmt_float(x, digits)` returns a `String` and `buf.push_fmt_f(x, digits)` appends to a buffer; `digits` outside 0 to 64 traps.
 
 ```avant
 fn main {
@@ -4271,7 +4271,7 @@ fn main {
 | `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: JsonBuilder.value: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 

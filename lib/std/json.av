@@ -446,13 +446,14 @@ pub class JsonBuilder {
   }
 
   pub fn value(v: Float64): JsonBuilder {
-    self.before_value()
     d = v - v
     if d != 0.0 {
-      self.buf.push_str("null")
-    } else {
-      self.buf.push_str("${v}")
+      // NaN and the infinities have no JSON text: writing null or nan
+      // would change the value or give text no reader takes.
+      jsonc.avant_json_misuse("JsonBuilder.value: ${v} is not a JSON number; write null or a string for it")
     }
+    self.before_value()
+    self.buf.push_str("${v}")
     self
   }
 
