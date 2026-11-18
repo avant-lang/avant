@@ -225,6 +225,11 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
   if l >= 0 {
     return l
   }
+  if t.rec {
+    // A recursive alias's union holds an array of itself: container_ty
+    // notes it ahead (union_ahead) and it is filled here.
+    lw.lw_busy[name] = 1
+  }
   payloads: Array(Int) = []
   nil_tag = -1
   i = 0
@@ -241,7 +246,51 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
     }
     i += 1
   }
+  if t.rec {
+    lw.lw_busy[name] = 0
+    ahead = lw.lw_m.types.layout_named(name)
+    if ahead >= 0 {
+      uf: Array(Int) = []
+      un: Array(String) = []
+      uf.push(mt_i32())
+      un.push("tag")
+      for j in 0..payloads.size {
+        uf.push(payloads[j])
+        un.push("m${j}")
+      }
+      lw.lw_m.types.set_fields(ahead, uf, un)
+      lw.lw_m.types.layouts[ahead].nil_tag = nil_tag
+      lw.fill_pending(name, ahead)
+      return ahead
+    }
+  }
   lw.lw_b.note_union(name, payloads, nil_tag)
+}
+
+// The layout of a recursive alias's union being laid out, for an array
+// of it inside itself: noted empty (once) and filled by union_layout.
+pub fn (lw: MirLower) union_ahead(name: String): Int {
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  f: Array(Int) = []
+  n: Array(String) = []
+  lw.lw_b.note_layout(name, mlk_union(), f, n)
+}
+
+// The element buffers of the struct or union name, noted while it was
+// laid out (empty then), completed with its layout.
+pub fn (lw: MirLower) fill_pending(name: String, layout: Int) {
+  for k in 0..lw.lw_pend_struct.size {
+    if lw.lw_pend_struct[k] == name {
+      ef: Array(Int) = []
+      ef.push(lw.lw_m.types.agg(layout))
+      en: Array(String) = []
+      en.push("")
+      lw.lw_m.types.set_fields(lw.lw_pend_elems[k], ef, en)
+    }
+  }
 }
 
 // ---- symbols

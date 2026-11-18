@@ -934,6 +934,16 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
   if !fnn.vis {
     return
   }
+  if ty.rec {
+    // A recursive alias is its members, each checked once.
+    if ty_walk_enter(ty, wk_pub()) {
+      for m in ty.members {
+        checker_self.ensure_pub_sig_ty(m, loc, fnn)
+      }
+      ty_walk_leave(ty, wk_pub())
+    }
+    return
+  }
   if ty.is_agg() {
     owner = fnn.mod_name
     if ty.mod_name.size > 0 {

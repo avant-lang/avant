@@ -77,6 +77,11 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
       // element buffer is completed when the struct is.
       et = lw.lw_m.types.agg(lw.struct_ahead(name))
       ahead = true
+    } else if e.rec && lw.struct_busy(name) {
+      // An array of a recursive alias inside its own union, completed
+      // as a struct's is (union_layout).
+      et = lw.lw_m.types.agg(lw.union_ahead(name))
+      ahead = true
     } else {
       et = lw.field_mty(e, loc)
     }

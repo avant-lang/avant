@@ -112,6 +112,15 @@ pub class Ty {
   // before the call picks its function: the literal may still become the
   // Set a parameter asks for (Checker.lit_set_fits).
   pub lit_arr: Bool = false
+  // A recursive alias's union (`type J = Int | Array(J)`): a union named
+  // by its alias (name, mod_name, label), whose members reach this same
+  // Ty again inside an Array's element or a Hash's value. It is one type
+  // by its name: equality, printing, mangling and layouts read the name
+  // where they meet it, so a walk over its parts ends.
+  pub rec: Bool = false
+  // The walks (wk_* below) inside this recursive union now: a walk that
+  // meets it again inside itself stops there.
+  pub walk_bits: Int = 0
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -338,6 +347,9 @@ pub class Ty {
       return self.name == other.name
     }
     if k == tyk_union() {
+      if self.rec && other.rec {
+        return self.name == other.name && self.mod_name == other.mod_name
+      }
       if self.members.size != other.members.size {
         return false
       }
@@ -822,6 +834,10 @@ pub fn ty_has_var(ty: Ty): Bool {
   if ty.is_var() {
     return true
   }
+  if ty.rec {
+    // An alias names no type parameter.
+    return false
+  }
   if inner = ty.inner, ty_has_var(inner) {
     return true
   }
@@ -921,6 +937,10 @@ pub fn mangle_ty(ty: Ty): String {
       buf.push_str(mangle_ty(va))
     }
     return buf.to_s()
+  }
+  if k == tyk_union() && ty.rec {
+    // A recursive alias by its module and name.
+    return "${mod_emit_prefix(ty.mod_name)}__${ty.name}"
   }
   if k == tyk_union() {
     buf = buf_new()
@@ -1048,8 +1068,11 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
   if v.is_nilable() {
     return "a Hash value cannot be optional (${v.show()}): h[k] is already nil for a missing key, so a stored nil could not be told from it; store ${ty_without_nil(v).show()}, and delete the key for nil"
   }
-  if !(v.is_integer() || v.is_bool() || v.is_float() || v.is_enum() || v.is_string() || v.is_class() || v.is_array() || v.is_hash() || v.is_bytes() || v.is_buf() || v.is_struct() || v.is_var()) {
-    return "Hash values of type ${v.show()} are not built yet: a value is a number, a Bool, an enum, a String, a class, an Array, a Hash, Bytes, a Buf or a struct; a Hash from the key to an index into an Array(${v.show()}) does the same"
+  if v.is_union() && v.includes_nil() {
+    return "a Hash value cannot hold nil (${v.show()}): h[k] is already nil for a missing key, so a stored nil could not be told from it; store a union without Nil, and delete the key for nil"
+  }
+  if !(v.is_integer() || v.is_bool() || v.is_float() || v.is_enum() || v.is_string() || v.is_class() || v.is_array() || v.is_hash() || v.is_bytes() || v.is_buf() || v.is_struct() || v.is_var() || v.is_union()) {
+    return "Hash values of type ${v.show()} are not built yet: a value is a number, a Bool, an enum, a String, a class, an Array, a Hash, Bytes, a Buf, a struct or a union of those; a Hash from the key to an index into an Array(${v.show()}) does the same"
   }
   ""
 }
@@ -1178,6 +1201,12 @@ fn ty_qual_list(buf: Buf, tys: Array(Ty), sep: String) {
 pub fn ty_qual_key(ty: Ty): String {
   k = ty.kind
   buf = buf_new()
+  if k == tyk_union() && ty.rec {
+    buf.push_str(ty.mod_name)
+    buf.push_str(".")
+    buf.push_str(ty.name)
+    return buf.to_s()
+  }
   if k == tyk_union() {
     ty_qual_list(buf, ty.members, "|")
     return buf.to_s()
@@ -1244,8 +1273,14 @@ pub fn ty_qual_key(ty: Ty): String {
 
 pub fn ty_union_build(types: Array(Ty)): Ty {
   flat: Array(Ty) = []
+  rec: Ty? = nil
+  has_rec = false
   i = 0
   while i < types.size {
+    if types[i].rec {
+      rec = types[i]
+      has_rec = true
+    }
     ty_flatten_into(types[i], flat)
     i += 1
   }
@@ -1282,9 +1317,108 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
   if uniq.size == 1 {
     return uniq[0]
   }
+  if r = rec, r.members.size == uniq.size {
+    // Every member is a recursive alias's (`J | Nil` of a J holding Nil,
+    // or J alone): the alias itself.
+    return r
+  }
+  if !has_rec {
+    // The members of a recursive alias gathered again (`J?` opened, a
+    // switch's other arms): the alias itself, as same_as reads it.
+    cands: Array(Ty) = []
+    for m in uniq {
+      ty_rec_parts(m, cands)
+    }
+    for c in cands {
+      if c.members.size == uniq.size && ty_members_cover(c, uniq) {
+        return c
+      }
+    }
+  }
   u = Ty.new(tyk_union())
   u.members = uniq
   u
+}
+
+// The recursive aliases t holds in its parts (an Array's element, a
+// Hash's key or value, a union's member), each once; not looking into one.
+pub fn ty_rec_parts(t: Ty, out: Array(Ty)) {
+  if t.rec {
+    for o in out {
+      if o == t {
+        return
+      }
+    }
+    out.push(t)
+    return
+  }
+  if t.is_array() || t.is_hash() || t.is_union() {
+    if i = t.inner {
+      ty_rec_parts(i, out)
+    }
+    if k = t.key {
+      ty_rec_parts(k, out)
+    }
+    if v = t.val {
+      ty_rec_parts(v, out)
+    }
+    for m in t.members {
+      ty_rec_parts(m, out)
+    }
+  }
+}
+
+// Whether every member of u is among ms.
+pub fn ty_members_cover(u: Ty, ms: Array(Ty)): Bool {
+  for m in u.members {
+    found = false
+    for x in ms {
+      if !found && x.same_as(m) {
+        found = true
+      }
+    }
+    if !found {
+      return false
+    }
+  }
+  true
+}
+
+// A recursive alias's union (Ty.rec), its members filled once its body
+// is resolved.
+pub fn ty_rec_union(name: String, mod_name: String): Ty {
+  t = Ty.new(tyk_union())
+  t.name = name
+  t.mod_name = mod_name
+  t.label = name
+  t.rec = true
+  t
+}
+
+// The walks that may meet a recursive union inside itself (Ty.walk_bits):
+// one bit each.
+pub fn wk_pub: Int { 1 }
+pub fn wk_clayout: Int { 2 }
+
+// Whether walk w may go into t: false when t is a recursive union walk w
+// is already inside (the walk stops there, its answer for the whole
+// read off the members it is walking); else t is marked until
+// ty_walk_leave.
+pub fn ty_walk_enter(t: Ty, w: Int): Bool {
+  if !t.rec {
+    return true
+  }
+  if (t.walk_bits & w) != 0 {
+    return false
+  }
+  t.walk_bits = t.walk_bits | w
+  true
+}
+
+pub fn ty_walk_leave(t: Ty, w: Int) {
+  if t.rec && (t.walk_bits & w) != 0 {
+    t.walk_bits = t.walk_bits - w
+  }
 }
 
 pub fn ty_nilable(inner: Ty): Ty {

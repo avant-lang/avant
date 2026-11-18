@@ -34,6 +34,10 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   if pattern.is_var() {
     return checker_self.subst_put(keys, vals, pattern.name, actual)
   }
+  if pattern.rec {
+    // A recursive alias holds no type parameter.
+    return ty_assignable(actual, pattern)
+  }
   if pattern.is_union() {
     return checker_self.unify_union(pattern, actual, keys, vals) == 1
   }

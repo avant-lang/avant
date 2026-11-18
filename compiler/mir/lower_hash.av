@@ -591,7 +591,7 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
   }
   if v = st.value {
     vty = lw.ty_at(mir_hash_val(ht), st.loc, "a hash value")
-    val = lw.snap(lw.snap(lw.lower_expr(v), ix), arr)
+    val = lw.snap(lw.snap(lw.hash_val_lowered(v, vty, ht), ix), arr)
     key = lw.snap(lw.lower_expr(ix), arr)
     h = lw.lower_expr(arr)
     if lw.failed() {
@@ -600,6 +600,16 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
     lw.at(st.loc)
     lw.hash_set(ht, h, key, val, vty, st.loc)
   }
+}
+
+// A value stored into the hash ht (of MIR type vty): converted to a
+// union value type when it is one of its members or a smaller union.
+pub fn (lw: MirLower) hash_val_lowered(v: Expr, vty: Int, ht: Ty): MOperand {
+  vt = mir_hash_val(ht)
+  if vt.is_union() {
+    return lw.lower_coerced(v, vty, vt)
+  }
+  lw.lower_expr(v)
 }
 
 // `h[k] = v` with its operands lowered: a reference value by set_ref
@@ -637,7 +647,7 @@ pub fn (lw: MirLower) lower_hash_lit(e: Expr): MOperand {
     i = 0
     while i + 1 < e.elems.size {
       key = lw.snap(lw.lower_expr(e.elems[i]), e.elems[i + 1])
-      val = lw.lower_expr(e.elems[i + 1])
+      val = lw.hash_val_lowered(e.elems[i + 1], vty, ht)
       if lw.failed() {
         return b.c_i32(0)
       }

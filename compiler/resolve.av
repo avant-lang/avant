@@ -86,6 +86,19 @@ pub class TypeResolver {
   aliases: Array(AliasDef)
   alias_ix: Hash(String, Int)
   alias_inflight: Array(String)
+  // For each alias in flight, how many Array elements and Hash values
+  // deep the resolution was when it began (in_container then): an alias
+  // met again deeper than that is a recursive alias.
+  alias_depth: Array(Int)
+  in_container: Int = 0
+  // The recursive aliases (Ty.rec) by type_key: made when the body first
+  // names the alias, filled when the body is resolved.
+  rec_aliases: Hash(String, Ty)
+  // A Hash whose value is a recursive alias still being resolved (its
+  // members unknown then): checked once the alias is.
+  rec_hash_at: Array(Location)
+  rec_hash_key: Array(Ty)
+  rec_hash_val: Array(Ty)
   pub bound_uses: Array(BoundUse)
   pub hash_key_uses: Array(HashKeyUse)
 
@@ -126,6 +139,12 @@ pub class TypeResolver {
     ai = Hash(String, Int).new()
     self.alias_ix = ai
     self.alias_inflight = []
+    self.alias_depth = []
+    ra = Hash(String, Ty).new()
+    self.rec_aliases = ra
+    self.rec_hash_at = []
+    self.rec_hash_key = []
+    self.rec_hash_val = []
     self.bound_uses = []
     self.hash_key_uses = []
     self.inst_depth = 0
@@ -654,7 +673,10 @@ pub class TypeResolver {
         fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
-      return ty_array(no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "an Array"))
+      self.in_container += 1
+      elem = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "an Array")
+      self.in_container -= 1
+      return ty_array(elem)
     }
     if tn.name == "Hash" {
       if tn.args.size != 2 {
@@ -662,7 +684,15 @@ pub class TypeResolver {
         return self.t_int
       }
       hk = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a Hash")
+      self.in_container += 1
       hv = no_hasher(resolve_value_uninline(tn.args[1]), tn.args[1], "a Hash")
+      self.in_container -= 1
+      if hv.rec && hv.members.size == 0 {
+        // A recursive alias in its own body: checked when it is known.
+        self.rec_hash_at.push(tn.loc)
+        self.rec_hash_key.push(hk)
+        self.rec_hash_val.push(hv)
+      }
       why = hash_type_problem(hk, hv)
       if why.size > 0 {
         fail(tn.loc, why)
@@ -778,6 +808,10 @@ pub class TypeResolver {
     }
     reject_args(tn)
     if tn.mod_name.size > 0 {
+      if al0 = find_alias(tn), alias_names_itself(al0) {
+        // A recursive alias pinned to its module (pin_type_name).
+        return resolve_alias(al0, tn)
+      }
       if found = get_named_in(tn.mod_name, tn.name) {
         if found.template {
           fail(tn.loc, "${tn.name} needs type arguments")
@@ -1231,19 +1265,37 @@ pub class TypeResolver {
   }
 
   // The type an alias names, resolved in the alias's own module. An alias
-  // that reaches itself before a struct or class names it is refused: a
-  // recursive type goes through a class, whose fields may name the alias.
+  // may name itself inside an Array's element or a Hash's value, directly
+  // in its own body (`type J = Int | Array(J)`): it is then a union named
+  // by the alias (ty_rec_union), made once. Any other way of reaching
+  // itself is refused: through a field of a struct or class, or that
+  // Array or Hash, a type may hold itself.
   pub fn resolve_alias(al: AliasDef, tn: TypeName): Ty {
     key = type_key(al.mod_name, al.name)
-    if self.alias_inflight.has(key) {
-      fail(tn.loc, "type ${al.name} names itself: a recursive type goes through a struct or class, whose field may hold a ${al.name}")
-      return self.t_int
-    }
     if tn.args.size > 0 {
       fail(tn.loc, "${tn.name} does not take type arguments")
       return self.t_int
     }
+    if done = self.rec_aliases.get(key) {
+      return done
+    }
+    at = self.alias_inflight.index_of(key) ?? -1
+    if at >= 0 {
+      last = self.alias_inflight.size - 1
+      if at == last && self.in_container > self.alias_depth[last] {
+        shell = ty_rec_union(al.name, al.mod_name)
+        self.rec_aliases[key] = shell
+        return shell
+      }
+      if at != last {
+        fail(tn.loc, "type ${al.name} names itself through type ${self.alias_name_of(self.alias_inflight[last])}: a recursive alias names itself in its own body, inside an Array's element or a Hash's value (type ${al.name} = Int | Array(${al.name})); write the other alias's members there, or let the recursion go through a struct or class")
+      } else {
+        fail(tn.loc, "type ${al.name} names itself outside an Array's element or a Hash's value: a recursive alias is a union holding itself there (type ${al.name} = Int | Array(${al.name})), or the recursion goes through a struct or class, whose field may hold a ${al.name}")
+      }
+      return self.t_int
+    }
     self.alias_inflight.push(key)
+    self.alias_depth.push(self.in_container)
     saved = self.scope_mod
     self.scope_mod = al.mod_name
     t = clone_type_name(al.target)
@@ -1251,7 +1303,41 @@ pub class TypeResolver {
     ty = resolve(t)
     self.scope_mod = saved
     self.alias_inflight.pop()
+    self.alias_depth.pop()
+    if shell = self.rec_aliases.get(key) {
+      // The body named the alias: the union it resolved to becomes the
+      // alias's own.
+      if !ty.is_union() || ty.rec {
+        fail(al.loc, "type ${al.name} names itself but is not a union: a recursive alias is a union of its members, one of them holding it (type ${al.name} = Int | Array(${al.name}))")
+        self.rec_aliases.delete(key)
+        return self.t_int
+      }
+      shell.members = ty.members
+      for i in 0..self.rec_hash_val.size {
+        if self.rec_hash_val[i] == shell {
+          why = hash_type_problem(self.rec_hash_key[i], shell)
+          if why.size > 0 {
+            fail(self.rec_hash_at[i], why)
+          }
+        }
+      }
+      return shell
+    }
     ty
+  }
+
+  // An alias's name from its type_key (`main.Json` gives Json).
+  pub fn alias_name_of(key: String): String {
+    if i = self.alias_ix.get(key), i >= 0 {
+      return self.aliases[i].name
+    }
+    key
+  }
+
+  // Whether an alias names itself in its own body (a recursive alias):
+  // such a name is not expanded in place, since its expansion holds it.
+  pub fn alias_names_itself(al: AliasDef): Bool {
+    type_name_mentions(al.target, al.name)
   }
 
   // tn, an alias's name, rewritten in place into the alias's type, its
@@ -1261,14 +1347,22 @@ pub class TypeResolver {
     if self.alias_inflight.has(key) {
       return
     }
+    if alias_names_itself(al) {
+      // A recursive alias stays its name, pinned to its module.
+      tn.mod_name = al.mod_name
+      tn.pinned = true
+      return
+    }
     t = clone_type_name(al.target)
     qualify_seen(t, al.mod_name)
     self.alias_inflight.push(key)
+    self.alias_depth.push(self.in_container)
     saved = self.scope_mod
     self.scope_mod = al.mod_name
     pin_type_name(t)
     self.scope_mod = saved
     self.alias_inflight.pop()
+    self.alias_depth.pop()
     tn.name = t.name
     tn.args = t.args
     tn.members = t.members
@@ -1887,3 +1981,23 @@ pub fn seal_one_emit(resolver: TypeResolver, mod_name: String, name: String) {
   }
 }
 
+// Whether the written type tn names `name` anywhere inside it.
+pub fn type_name_mentions(tn: TypeName, name: String): Bool {
+  if tn.name == name && !tn.fn_type && tn.members.size == 0 {
+    return true
+  }
+  for a in tn.args {
+    if type_name_mentions(a, name) {
+      return true
+    }
+  }
+  for m in tn.members {
+    if type_name_mentions(m, name) {
+      return true
+    }
+  }
+  if r = tn.ret {
+    return type_name_mentions(r, name)
+  }
+  false
+}

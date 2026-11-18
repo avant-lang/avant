@@ -1143,7 +1143,7 @@ fn main {
 
 ### Type aliases
 
-`type Name = T` names a type (the same type, not a new one), a union above all; the union's classes may hold the name in their fields, so a type can be recursive (a tree, a JSON value).
+`type Name = T` names a type (the same type, not a new one), a union above all; the union's classes may hold the name in their fields, so a type can be recursive (a tree, a JSON value), and so may the union itself, inside an `Array` or a `Hash` ([below](#a-recursive-alias)).
 
 ```avant
 type Expr = Num | Add
@@ -1180,7 +1180,7 @@ fn main {
 ```
 
 - An alias is private to its module unless `pub`, starts with a capital letter and takes no type parameters.
-- An alias may not reach itself except through a struct or class: `type Json = Int | Array(Json)` is refused; give the recursive part a class, as `Add` above.
+- An alias reaches itself only inside an `Array`'s element or a `Hash`'s value of its own union (below), or through a struct or class, as `Add` above: `type A = Int | A`, `type B = B?`, `type J = Array(J)` and two aliases naming each other are refused.
 - An alias stands where a type is written (a declaration, a field, a parameter, a type argument), and where a type is used as a value when it names one type: `Rx.compile(...)`, `P { x: 1 }`, `B.new()`, `Kind.obj` for `type Rx = regex.Regex`, `type P = Point`, `type B = Box`, `type Kind = json.JsonKind` (an enum's members, `from_name` and `members` read through the alias as through the enum's own name). An alias of a union builds nothing: a value is built with its member's own name (`Num.new(2)`, not `Expr.new()`).
 - A short alias suits a type a module uses often, from a `std` module above all: `type Rx = regex.Regex` and then `Rx.compile(...)`, `rs: Array(Rx)`. There is one spelling, `type Name = T`; `std` exports no alias of another module's type.
 - `type` is a keyword only at the start of a declaration; elsewhere it is a usable name.
@@ -1196,6 +1196,49 @@ fn main {
   }
 }
 ```
+
+#### A recursive alias
+
+A union may hold itself inside an `Array` or a `Hash`: a JSON-like value needs no class of its own.
+
+```avant
+type Json = Bool | Int | String | Array(Json) | Hash(String, Json)
+
+fn text(j: Json): String {
+  switch j {
+    case b: Bool { "${b}" }
+    case n: Int { "${n}" }
+    case s: String { s }
+    case xs: Array(Json) {
+      parts: Array(String) = []
+      for x in xs {
+        parts.push(text(x))
+      }
+      "[${parts.join(",")}]"
+    }
+    case h: Hash(String, Json) {
+      parts: Array(String) = []
+      for k, v in h {
+        parts.push("${k}:${text(v)}")
+      }
+      "{${parts.join(",")}}"
+    }
+  }
+}
+
+fn main {
+  xs: Array(Json) = [1, "a", true]
+  doc = Hash(String, Json).new()
+  doc["xs"] = xs
+  doc["n"] = 2
+  puts(text(doc))   // => {xs:[1,a,true],n:2}
+}
+```
+
+- The alias names itself in its own body, inside an `Array`'s element or a `Hash`'s value; the body is a union, so a value can end. It is one type by its name: a message shows `Json`, and a `pub` alias is the same type in every module that imports it.
+- It is a union like any other: built from its members' values, taken apart with `switch`, with no `==` and no printing of its own (switch on it and print the members).
+- A `Hash` value cannot hold `nil` ([Key and value types](#key-and-value-types)), so an alias that recurses through a `Hash` has no `Nil` member; an optional `Json?` outside it says "absent".
+- Two aliases that reach each other (`type P = Int | Array(Q)`, `type Q = String | Array(P)`) are refused: write the members in one alias.
 
 ### What an optional costs
 
@@ -1754,7 +1797,7 @@ fn main {
 
 ### Key and value types
 
-A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum, a `String`, or a struct whose fields are all of those (or such structs); a value any of those, a `Float64`, a class, an `Array`, a `Hash`, `Bytes`, a `Buf` or any struct. Numbers are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
+A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum, a `String`, or a struct whose fields are all of those (or such structs); a value any of those, a `Float64`, a class, an `Array`, a `Hash`, `Bytes`, a `Buf`, any struct, or a union of such types (`Hash(String, Int | String)`). Numbers are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
 
 ```avant
 enum Suit { clubs, hearts }
@@ -1801,7 +1844,7 @@ fn main {
 - A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `equals` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
-- A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
+- A value cannot be optional (`Hash(Int, String?)` is refused), nor a union that holds `Nil` (`Hash(Int, Nil | Int | String)`): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
 
 ```avant
 struct Ticket {

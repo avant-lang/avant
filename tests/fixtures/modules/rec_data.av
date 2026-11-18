@@ -1,0 +1,44 @@
+// A recursive alias published by a module: a JSON-like value whose
+// arrays and objects hold it again.
+pub type Data = Bool | Int | String | Array(Data) | Hash(String, Data)
+
+// A tree of the given depth: an object with a name and an array of
+// three children, an Int at the leaves.
+pub fn tree(depth: Int, tag: Int): Data {
+  if depth == 0 {
+    return tag
+  }
+  kids: Array(Data) = []
+  for i in 0..3 {
+    kids.push(tree(depth - 1, tag * 3 + i))
+  }
+  h = Hash(String, Data).new()
+  h["name"] = "n${depth}-${tag}"
+  h["kids"] = kids
+  h["leaf"] = false
+  h
+}
+
+// The number of values in d, and the sum of its Ints and its strings'
+// sizes: what a tree reads back as after the collector moved it.
+pub fn sum(d: Data): Int {
+  switch d {
+    case b: Bool { 1 }
+    case n: Int { 1 + n }
+    case s: String { 1 + s.size }
+    case xs: Array(Data) {
+      t = 1
+      for x in xs {
+        t += sum(x)
+      }
+      t
+    }
+    case h: Hash(String, Data) {
+      t = 1
+      for k, v in h {
+        t += k.size + sum(v)
+      }
+      t
+    }
+  }
+}

@@ -301,6 +301,14 @@ pub fn ty_may_reach(t: Ty, cty: Ty, seen: Array(String)): Bool {
     return true
   }
   if t.is_union() {
+    if t.rec {
+      // A recursive alias, followed once as a struct is.
+      rkey = mangle_ty(t)
+      if seen.has(rkey) {
+        return false
+      }
+      seen.push(rkey)
+    }
     for m in t.members {
       if ty_may_reach(m, cty, seen) {
         return true

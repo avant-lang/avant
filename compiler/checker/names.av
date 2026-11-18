@@ -290,6 +290,13 @@ pub fn binary_op_method_name(op: Int): String {
 }
 
 pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
+  if ty.rec {
+    // A recursive alias by its name, in its module.
+    rn = TypeName.new(loc, ty.name)
+    rn.mod_name = ty.mod_name
+    rn.pinned = true
+    return rn
+  }
   if ty.is_union() {
     if ty.is_nilable() {
       inner = ty_without_nil(ty)
@@ -447,6 +454,9 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
   }
   if a.kind != b.kind {
     return false
+  }
+  if a.rec || b.rec {
+    return a.same_as(b)
   }
   if a.is_fn() {
     if a.members.size != b.members.size {

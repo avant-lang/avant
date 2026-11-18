@@ -1009,7 +1009,12 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
     return b.copy_local(d)
   }
   l = b.types.layout_of(wty)
-  b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
+  if vt.is_union() {
+    // A union value (a Hash's) re-tagged into the optional.
+    b.assign(b.pl(d), b.rv_use(lw.coerce(v, vt, want, loc)))
+  } else {
+    b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
+  }
   b.goto(join)
   b.at(bf)
   b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
@@ -1117,6 +1122,10 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       // (`get` on an `Array(T?)`, the verifier refused the old
       // re-wrapping of the element as its own member).
       b.assign(b.pl(d), b.rv_use(v))
+    } else if elt.is_union() {
+      // An element that is a union of several types (`get` on an
+      // `Array(Int | String)`): re-tagged into the optional.
+      b.assign(b.pl(d), b.rv_use(lw.coerce(v, elt, t, e.loc)))
     } else {
       b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
     }

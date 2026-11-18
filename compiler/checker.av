@@ -3318,14 +3318,17 @@ pub class Checker {
       }
     }
     if ty.is_union() {
+      if !ty_walk_enter(ty, wk_clayout()) {
+        return ""
+      }
+      found = ""
       i = 0
-      while i < ty.members.size {
-        name = clayout_value_name(ty.members[i])
-        if name.size > 0 {
-          return name
-        }
+      while i < ty.members.size && found.size == 0 {
+        found = clayout_value_name(ty.members[i])
         i += 1
       }
+      ty_walk_leave(ty, wk_clayout())
+      return found
     }
     ""
   }
