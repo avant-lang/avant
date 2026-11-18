@@ -25,6 +25,9 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
   if checker_self.is_share_ty(ty) || checker_self.is_handle_class(ty) {
     return true
   }
+  if ty.is_struct() {
+    return checker_self.struct_crosses(ty)
+  }
   // A captured Array is shared with the task, frozen until the task
   // ends, so its elements cross in turn: an Array of a class would put
   // one mutable object in two tasks with no lock (send's rule,
@@ -44,6 +47,24 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
     return false
   }
   checker_self.copyable_bits(ty)
+}
+
+// A struct crosses as a copy when every field does: a value that holds
+// no reference to mutable state (copyable_bits), a Channel or a Mutex
+// (the copy shares the handle, as a captured Channel or Mutex does), or
+// such a struct in turn. A field of the copy assigned in one task is not
+// the other's.
+pub fn (checker_self: Checker) struct_crosses(ty: Ty): Bool {
+  for field in ty.fields {
+    if checker_self.is_share_ty(field.ty) || checker_self.copyable_bits(field.ty) {
+      continue
+    }
+    if field.ty.is_struct() && checker_self.struct_crosses(field.ty) {
+      continue
+    }
+    return false
+  }
+  true
 }
 
 // A class whose every field is a Channel or a Mutex: it crosses a task as

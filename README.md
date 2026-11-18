@@ -3455,7 +3455,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | A captured value that is | Crosses as |
 | --- | --- |
 | an integer, a `Bool`, a `Float64` | a copy |
-| a struct whose every field may cross | a copy |
+| a struct whose every field is a value of the rows above but an `Array`, a `Hash` or a class (a number, a `String`, a `Channel`, a `Mutex`, ...) | a copy; a `Channel` or `Mutex` in it is shared, as one captured alone is |
 | a `String` or `Bytes` | a shared pointer: it is immutable, and both tasks keep it alive |
 | an `Array` whose elements may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` copies it |
 | a `Hash` or `Set` whose keys are plain values (the rows above but an `Array`) and whose values may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` refuses it, and an `Array` holding one (a send copies arrays only) |
