@@ -18,7 +18,10 @@
 #   sh tools/test-map.sh --pick MAP BEFORE AFTER FILE...
 #
 # prints the test files of the map MAP whose hits meet the lines the change
-# BEFORE..AFTER makes in the FILEs (tools/change-check.sh's use).
+# BEFORE..AFTER makes in the FILEs (tools/change-check.sh's use). Every test
+# file imports the suite's helper, and compiling it runs much of the
+# compiler: a line more than TESTMAP_SHARE of the test files run (default
+# 0.5) tells no test file from another and picks none (said on stderr).
 #
 # How: a copy of the entry's checkout gets the compiler built as the
 # coverage job builds it (`AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=MAP`, C'
@@ -44,9 +47,9 @@ if [ "${1:-}" = --pick ]; then
   # --pick MAP BEFORE AFTER FILE...: the test files of MAP whose hits meet
   # the lines that the change BEFORE..AFTER makes in each FILE (read in
   # MAP's tree: the change's lines in BEFORE carried to that tree through
-  # `git diff` of the tree and BEFORE, each widened to the function or
-  # class it sits in, since a line that is not executable, a signature or
-  # a field, has no hits of its own). Prints one tests/cases/ path a line.
+  # `git diff` of the tree and BEFORE; a line no test file hits, not
+  # executable (a signature, a field), counts as the whole function or
+  # class it sits in). Prints one tests/cases/ path a line.
   m=$2 before=$3 after=$4; shift 4
   TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/test-map-pick.XXXXXX") || exit 2
   mt=$(sed -n 's/^tree: //p' "$m/MANIFEST" | head -n 1)
@@ -58,8 +61,9 @@ if [ "${1:-}" = --pick ]; then
         split($2, o, ","); a = substr(o[1], 2) + 0; b = (2 in o) ? o[2] + 0 : 1
         if (b == 0) { print a; print a + 1 } else for (i = a; i < a + b; i++) print i }' > "$TMPDIR/pick.lines.$$"
     [ -s "$TMPDIR/pick.lines.$$" ] || continue
-    # Carried to the map's tree, then widened to the block (a line at the
-    # left margin or two spaces in, starting fn, class or struct).
+    # Carried to the map's tree; beside each line, its block there (from a
+    # line at the left margin or two spaces in that starts fn, class or
+    # struct, to the next one).
     git diff -U0 "$mt" "$before" -- "$f" | awk '/^@@/ { print substr($2, 2) " " substr($3, 2) }' > "$TMPDIR/pick.hunks.$$"
     git show "$mt:$f" | awk '/^ {0,2}(pub +)?(fn|class|struct)[ (]/ { print NR }' > "$TMPDIR/pick.starts.$$"
     awk -v nl="$(git show "$mt:$f" | wc -l)" '
@@ -74,13 +78,20 @@ if [ "${1:-}" = --pick ]; then
         if (lo < 0) { lo = L - d; hi = lo }
         b = 1; e = nl
         for (j = 1; j <= ns; j++) { if (st[j] <= lo) b = st[j]; if (st[j] > hi) { e = st[j] - 1; break } }
-        print b " " e }' "$TMPDIR/pick.hunks.$$" "$TMPDIR/pick.starts.$$" "$TMPDIR/pick.lines.$$" > "$TMPDIR/pick.spans.$$"
-    for h in "$m"/hits/*.tsv; do
-      awk -F'\t' -v f="$f" 'FILENAME == ARGV[1] { split($0, q, " "); s[++n] = q[1]; e[n] = q[2]; next }
-        $1 == f { k = split($2, r, ","); for (i = 1; i <= k; i++) { split(r[i], x, "-"); a = x[1] + 0; z = (2 in x) ? x[2] + 0 : a
-          for (j = 1; j <= n; j++) if (a <= e[j] && z >= s[j]) { found = 1; exit } } }
-        END { exit !found }' "$TMPDIR/pick.spans.$$" "$h" && echo "tests/cases/$(basename "$h" .tsv).av"
-    done
+        print lo " " hi " " b " " e }' "$TMPDIR/pick.hunks.$$" "$TMPDIR/pick.starts.$$" "$TMPDIR/pick.lines.$$" > "$TMPDIR/pick.spans.$$"
+    # A test file is picked when its hits meet a changed line; a changed
+    # line no test file hits (not executable: a signature, a field, a
+    # comment) counts as its whole block instead.
+    awk -F'\t' -v f="$f" -v share="${TESTMAP_SHARE:-0.5}" -v all="$(ls "$m"/hits | wc -l)" '
+      FILENAME == ARGV[1] { split($0, q, " "); n++; lo[n] = q[1]; hi[n] = q[2]; b[n] = q[3]; e[n] = q[4]; next }
+      $1 == f { t = FILENAME; sub(/.*\//, "", t); sub(/\.tsv$/, "", t); seen[t] = 1
+        k = split($2, r, ","); for (i = 1; i <= k; i++) { split(r[i], x, "-"); a = x[1] + 0; z = (2 in x) ? x[2] + 0 : a
+          for (j = 1; j <= n; j++) { if (a <= hi[j] && z >= lo[j]) { ex[j, t] = 1; exn[j] = 1 }; if (a <= e[j] && z >= b[j]) wd[j, t] = 1 } } }
+      END { for (j = 1; j <= n; j++) { c = 0; for (t in seen) if ((exn[j] && ex[j, t]) || (!exn[j] && wd[j, t])) c++; cnt[j] = c }
+        for (t in seen) for (j = 1; j <= n; j++) if (cnt[j] <= share * all && ((exn[j] && ex[j, t]) || (!exn[j] && wd[j, t]))) { print "tests/cases/" t ".av"; break }
+        for (j = 1; j <= n; j++) if (cnt[j] > share * all) common++
+        if (common) printf "test-map.sh: %s: %d of %d changed lines run by more than %d%% of the test files (compiling their shared helpers runs them): no test file picked for those\n", f, common, n, share * 100 > "/dev/stderr" }' \
+      "$TMPDIR/pick.spans.$$" "$m"/hits/*.tsv
     rm -f "$TMPDIR/pick.lines.$$" "$TMPDIR/pick.hunks.$$" "$TMPDIR/pick.starts.$$" "$TMPDIR/pick.spans.$$"
   done | LC_ALL=C sort -u
   rm -rf "$TMPDIR"

@@ -57,7 +57,9 @@
 #     moved since the map's tree is carried back to that tree's lines and
 #     picks the test file that hit them; a changed line no test hits (a
 #     signature) picks those that hit its function; a file the map does
-#     not have picks none, and nothing is left in TMPDIR;
+#     not have picks none, and nothing is left in TMPDIR; map-pick-common:
+#     a line more than half the test files run (compiling the helper every
+#     test imports runs much of the compiler) picks none, said on stderr;
 #   check-map: change-check with TEST_MAP runs the map's test file beside
 #     those by name and names it apart in the line.
 # Where `perf stat -e instructions:u` cannot count (a container without
@@ -250,6 +252,11 @@ o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$pm" "$p2" HEAD compiler/x
 [ "$o" = tests/cases/test_b.av ]; say map-pick-widened $? "picked: $(echo "$o" | tr '\n' ' ')"
 o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$pm" "$p2" HEAD compiler/y.av lib/std/m.av < /dev/null 2>&1)
 [ -z "$o" ] && [ -z "$(ls -d "$w"/test-map-pick.* 2>/dev/null)" ]; say map-pick-unmapped $? "picked: $(echo "$o" | tr '\n' ' ')"
+# a line every test file runs (as compiling their shared helper does) picks none, said on stderr
+cp -r "$pm" "$w/pickmap3"; printf 'compiler/x.av\t1-6\n' > "$w/pickmap3/hits/test_c.tsv"; printf 'compiler/x.av\t1-6\n' > "$w/pickmap3/hits/test_a.tsv"
+o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$w/pickmap3" "$p1" "$p2" compiler/x.av < /dev/null 2> "$w/pick3.err")
+[ -z "$o" ] && grep -q '^test-map.sh: compiler/x.av: 1 of 1 changed lines run by more than 50% of the test files' "$w/pick3.err"
+say map-pick-common $? "picked: $(echo "$o" | tr '\n' ' '); $(cat "$w/pick3.err")"
 
 perf_ok=0
 perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -q '^[0-9]' "$w/perf.txt" && perf_ok=1
