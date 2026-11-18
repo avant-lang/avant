@@ -12,6 +12,10 @@ lib httpc {
   fun avant_http_req_peer(req: Ptr(Void), which: Int): Int
   fun avant_http_peer_text(hi: Int, lo: Int): String
   fun avant_http_headers_pack(block: String): Bytes
+  fun avant_http_params_pack(text: String): Bytes
+  fun avant_http_decode_component(text: String): String
+  fun avant_http_param_has(data: Bytes, name: String): Int
+  fun avant_http_param_at(data: Bytes, name: String, index: Int): String
   fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
@@ -128,6 +132,69 @@ pub struct Headers {
   }
 }
 
+// Parameters in the form of a query string or of a form body
+// (application/x-www-form-urlencoded): `a=1&b=x+y&c=%C3%A9`. Pieces are
+// separated by `&`, a name from its value by the first `=` (a piece
+// without one has an empty value), and empty pieces are skipped; `+` is
+// a space and `%XX` a byte, a `%` without two hex digits is kept as it
+// is, and bytes that are not UTF-8 read as U+FFFD (the WHATWG URL
+// standard's reading). Names are compared exactly; wire order and
+// repeats are kept.
+pub struct Params {
+  data: Bytes
+
+  pub fn self.parse(text: String): Params {
+    Params { data: httpc.avant_http_params_pack(text) }
+  }
+
+  pub fn count: Int {
+    httpc.avant_http_header_count(self.data)
+  }
+
+  pub fn has(name: String): Bool {
+    httpc.avant_http_param_has(self.data, name) != 0
+  }
+
+  // The first value of `name`, nil when there is none.
+  pub fn get(name: String): String? {
+    v = httpc.avant_http_param_at(self.data, name, 0)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn get_all(name: String): Array(String) {
+    out: Array(String) = []
+    i = 0
+    while true {
+      v = httpc.avant_http_param_at(self.data, name, i)
+      if httpc.avant_http_take_status() != 0 {
+        return out
+      }
+      out.push(v)
+      i += 1
+    }
+    out
+  }
+
+  pub fn name_at(index: Int): String? {
+    v = httpc.avant_http_header_name_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn value_at(index: Int): String? {
+    v = httpc.avant_http_header_value_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+}
+
 fn empty_headers: Headers {
   Headers { data: "".bytes }
 }
@@ -185,6 +252,18 @@ pub struct Request {
 
   pub fn headers: Headers {
     self.hs
+  }
+
+  // The query's parameters, decoded (Params); none without a query. The
+  // query is parsed on each call.
+  pub fn params: Params {
+    Params.parse(self.raw_query ?? "")
+  }
+
+  // The first decoded value of the query parameter `name`, nil when the
+  // query has none.
+  pub fn param(name: String): String? {
+    self.params().get(name)
   }
 
   pub fn body: Bytes {
@@ -1176,6 +1255,14 @@ pub class Http {
     state = HttpState.new()
     state.bound_port = httpc.avant_http_port(handle)
     Server { handle: handle, state: state }
+  }
+
+  // A URL component percent-decoded, as a router decodes a path segment
+  // (`caf%C3%A9` is `café`): `%XX` is a byte, `+` stays `+`, a `%`
+  // without two hex digits is kept, and bytes that are not UTF-8 read as
+  // U+FFFD. For a query or a form body, Params.parse.
+  pub fn self.decode_component(text: String): String {
+    httpc.avant_http_decode_component(text)
   }
 
   pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {

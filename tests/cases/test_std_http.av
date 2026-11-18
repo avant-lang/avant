@@ -185,9 +185,34 @@ fn in_memory_cases(c: Checks) {
   c.eq_int(Response.text("x").header("Content-Type", "").headers().count(), 0, "a response without a Content-Type")
 }
 
+// The query string was raw: no parameters and no percent-decoding. A
+// request's params() are the query decoded as a form is
+// (application/x-www-form-urlencoded); Params.parse reads a form body;
+// Http.decode_component decodes a path segment.
+fn param_cases(c: Checks) {
+  req = Request.build("GET", "/s?q=caf%C3%A9&tag=a&tag=b&x+y=1+2&empty&&bad=%zz%4&bin=%FF%41&Q=upper&eq=a=b")
+  c.eq_str(req.param("q") ?? "-", "café", "a percent-encoded parameter")
+  c.eq_int(req.params().get_all("tag").size, 2, "a repeated parameter")
+  c.eq_str(req.param("tag") ?? "-", "a", "a repeated parameter's first value")
+  c.eq_str(req.param("x y") ?? "-", "1 2", "a + is a space, in a name and a value")
+  c.eq_str("${req.params().has("empty")} [${req.param("empty") ?? "-"}]", "true []", "a parameter without = has an empty value")
+  c.eq_str(req.param("bad") ?? "-", "%zz%4", "a % without two hex digits is kept")
+  c.eq_str(req.param("bin") ?? "-", "\u{FFFD}A", "a byte that is not UTF-8 reads as U+FFFD")
+  c.eq_str("${req.param("q2") ?? "none"} ${req.param("Q") ?? "-"} ${req.param("q") ?? "-"}", "none upper café", "names are compared exactly")
+  c.eq_str(req.param("eq") ?? "-", "a=b", "the first = separates a name from its value")
+  p = req.params()
+  c.eq_int(p.count(), 9, "empty pieces are skipped")
+  c.eq_str("${p.name_at(3) ?? "-"}=${p.value_at(3) ?? "-"}", "x y=1 2", "parameters keep their order")
+  c.eq_int(Request.build("GET", "/s").params().count(), 0, "no query, no parameters")
+  form = Params.parse("name=Ada+Lovelace&lang=%E2%9C%93")
+  c.eq_str("${form.get("name") ?? "-"}|${form.get("lang") ?? "-"}", "Ada Lovelace|✓", "a form body")
+  c.eq_str(Http.decode_component("caf%C3%A9+x%2Fy%"), "café+x/y%", "a path segment: %XX decoded, + kept")
+}
+
 fn test_std_http(c: Checks) {
   c.suite("tests/cases/test_std_http.av")
   in_memory_cases(c)
+  param_cases(c)
 
   if e = Http.get("https://example.com/") {
     c.expect(false, "https is HttpError")

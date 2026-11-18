@@ -160,6 +160,132 @@ char *avant_http_headers_pack(const char *block) {
   return out;
 }
 
+static int hex_val(unsigned char ch) {
+  if (ch >= '0' && ch <= '9') { return ch - '0'; }
+  if (ch >= 'a' && ch <= 'f') { return ch - 'a' + 10; }
+  if (ch >= 'A' && ch <= 'F') { return ch - 'A' + 10; }
+  return -1;
+}
+
+static int ws_utf8_valid(const unsigned char *p, size_t n);
+
+/* Percent-decodes p[0..n) into out, which has room for 3 * n bytes;
+ * '+' is a space when plus is set (application/x-www-form-urlencoded).
+ * A '%' not followed by two hex digits is kept as it is. The decoded
+ * bytes are read as UTF-8, each byte that does not begin a valid
+ * sequence replaced by U+FFFD (three bytes). Returns the length. */
+static size_t pct_decode(const char *p, size_t n, char *out, int plus) {
+  unsigned char small[256];
+  unsigned char *raw = n <= sizeof small ? small : (unsigned char *)malloc(n);
+  size_t i = 0;
+  size_t r = 0;
+  size_t at = 0;
+  size_t m = 0;
+  if (!raw) {
+    avant_trap_text("out of memory decoding a URL component");
+  }
+  while (i < n) {
+    unsigned char ch = (unsigned char)p[i];
+    if (ch == '%' && i + 2 < n && hex_val((unsigned char)p[i + 1]) >= 0 &&
+        hex_val((unsigned char)p[i + 2]) >= 0) {
+      raw[r++] = (unsigned char)(hex_val((unsigned char)p[i + 1]) * 16 +
+                                 hex_val((unsigned char)p[i + 2]));
+      i += 3;
+    } else {
+      raw[r++] = ch == '+' && plus ? ' ' : ch;
+      i++;
+    }
+  }
+  while (at < r) {
+    unsigned char c0 = raw[at];
+    size_t len = c0 < 0x80                  ? 1
+                 : c0 >= 0xc2 && c0 <= 0xdf ? 2
+                 : c0 >= 0xe0 && c0 <= 0xef ? 3
+                 : c0 >= 0xf0 && c0 <= 0xf4 ? 4
+                                            : 0;
+    if (len == 1 || (len > 1 && at + len <= r && ws_utf8_valid(raw + at, len))) {
+      memcpy(out + m, raw + at, len);
+      m += len;
+      at += len;
+    } else {
+      out[m++] = (char)0xef;
+      out[m++] = (char)0xbf;
+      out[m++] = (char)0xbd;
+      at++;
+    }
+  }
+  if (raw != small) {
+    free(raw);
+  }
+  return m;
+}
+
+/* A query string's (or a form body's) parameters, decoded, in the packed
+ * form of a header set: '&' separates them, the first '=' a name from its
+ * value (none: an empty value), empty pieces are skipped. */
+char *avant_http_params_pack(const char *text) {
+  size_t n = avant_str_n(text);
+  size_t count = 0;
+  size_t i;
+  size_t at;
+  size_t m = 0;
+  struct phr_header *hs;
+  char *block;
+  char *out;
+  for (i = 0; i <= n; i++) {
+    if (i == n || text[i] == '&') {
+      count++;
+    }
+  }
+  hs = (struct phr_header *)calloc(count, sizeof(struct phr_header));
+  block = (char *)malloc(3 * n + 1);
+  if (!hs || !block) {
+    free(hs);
+    free(block);
+    avant_trap_text("out of memory parsing a query");
+  }
+  count = 0;
+  at = 0;
+  for (i = 0; i <= n; i++) {
+    if (i == n || text[i] == '&') {
+      size_t eq = at;
+      if (i > at) {
+        while (eq < i && text[eq] != '=') {
+          eq++;
+        }
+        hs[count].name = block + m;
+        hs[count].name_len = pct_decode(text + at, eq - at, block + m, 1);
+        m += hs[count].name_len;
+        hs[count].value = block + m;
+        hs[count].value_len = eq < i ? pct_decode(text + eq + 1, i - eq - 1, block + m, 1) : 0;
+        m += hs[count].value_len;
+        count++;
+      }
+      at = i + 1;
+    }
+  }
+  out = build_packed_headers(hs, count, block, m);
+  free(hs);
+  free(block);
+  return out;
+}
+
+/* A URL component percent-decoded (a path segment: '+' stays '+'), read
+ * as UTF-8 with U+FFFD for what is not. */
+char *avant_http_decode_component(const char *text) {
+  size_t n = avant_str_n(text);
+  char *buf = (char *)malloc(3 * n + 1);
+  size_t m;
+  char *out;
+  if (!buf) {
+    avant_trap_text("out of memory decoding a URL component");
+  }
+  m = pct_decode(text, n, buf, 0);
+  out = make_string(buf, m);
+  free(buf);
+  return out;
+}
+
 static uint32_t packed_count(const char *data, size_t n) {
   if (!data || n < 4) {
     return 0;
@@ -242,6 +368,49 @@ char *avant_http_header_at(const char *data, const char *name, avant_int index) 
         return make_string(raw + voff, vlen);
       }
       seen++;
+    }
+  }
+  set_status(1);
+  return avant_str_empty();
+}
+
+/* As avant_http_header_has and _at, with names compared exactly (a
+ * query parameter's name has a case). */
+avant_int avant_http_param_has(const char *data, const char *name) {
+  size_t name_len = avant_str_n(name);
+  uint32_t count = packed_count(data, avant_str_n(data));
+  const uint32_t *words = (const uint32_t *)(const void *)data;
+  const char *raw;
+  uint32_t i;
+  if (!data || count == 0) {
+    return 0;
+  }
+  raw = packed_raw(data, count);
+  for (i = 0; i < count; i++) {
+    if (words[1 + i * 4 + 1] == name_len && memcmp(raw + words[1 + i * 4], name, name_len) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+char *avant_http_param_at(const char *data, const char *name, avant_int index) {
+  size_t name_len = avant_str_n(name);
+  uint32_t count = packed_count(data, avant_str_n(data));
+  const uint32_t *words = (const uint32_t *)(const void *)data;
+  const char *raw;
+  uint32_t i;
+  int64_t seen = 0;
+  set_status(0);
+  if (data && count > 0) {
+    raw = packed_raw(data, count);
+    for (i = 0; i < count; i++) {
+      if (words[1 + i * 4 + 1] == name_len && memcmp(raw + words[1 + i * 4], name, name_len) == 0) {
+        if (seen == index) {
+          return make_string(raw + words[1 + i * 4 + 2], words[1 + i * 4 + 3]);
+        }
+        seen++;
+      }
     }
   }
   set_status(1);
