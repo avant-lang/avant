@@ -15,7 +15,12 @@
 #   lr-table.sh avant BIN_DIR RUN_JS OUT.tsv
 #       Re-measure the harness-built Avant binaries (BIN_DIR/<slug>, as left by
 #       `measure.cr -- prod` in langarena/tmp). Put OUT.tsv in the harness
-#       results directory as lr-avant.tsv.
+#       results directory as lr-avant.tsv. When BIN_DIR holds library.tsv
+#       (the harness's list of library-backed tasks and their pure-Avant
+#       twins), each twin's binary (BIN_DIR/<twin_slug>) is measured the
+#       same way, checked against its task's checksum in RUN_JS, into
+#       lr-avant-pure.tsv beside OUT.tsv (the same columns, the twin's name
+#       in the first), and library.tsv is copied beside OUT.tsv.
 #   lr-table.sh table REF_DIR AVANT [PUBLISHED.js]
 #       Markdown table on stdout. REF_DIR holds one <lang>.tsv per reference
 #       language, and optionally notes.txt ("Task<TAB>note" lines, shown in
@@ -24,6 +29,20 @@
 #       PUBLISHED.js (optional) is a LangArena results file; it adds an
 #       "estimated best" column for prod runs of languages not measured here,
 #       scaled per task by C/Clang's local (c_clang.tsv) / published ratio. Estimates never enter the measured best.
+#       When a library.tsv is beside the Avant input (in the results
+#       directory, or beside the tsv given), each library-backed row's Notes
+#       gain "library: <what>;", the first paragraph says how many of the
+#       rows rely on a library, and a line gives the "Avant as written" total
+#       (the wall sum of Avant's ok rows and their average MB). The Task
+#       cells are unchanged. Without library.tsv the output is as before.
+#   lr-table.sh pure REF_DIR AVANT [PUBLISHED.js]
+#       The same table for pure Avant: each task that has a pure-Avant twin
+#       (lr-avant-pure.tsv beside lr-avant.tsv, or runtime-pure.tsv beside
+#       the harness's runtime.tsv) is shown with its twin's numbers under
+#       its own task name, its Notes "pure twin of <library>;"; the other
+#       library-backed rows are noted "still on a library: <what>;". Both
+#       totals, "Avant as written" and "pure Avant", come first. Refused
+#       without library.tsv or without the twins' tsv.
 #   lr-table.sh rounds N RUN_JS OUT_DIR [OPTION...] [TASK...]
 #       Median-of-N with rotation (tools/rounds.py langarena; its --help has
 #       the method): one warm-up, then N rounds of every task's binary,
@@ -41,6 +60,7 @@
 #     AVANT_RESULTS_DIR=$R crystal run langarena/harness/measure.cr -- prod
 #   tools/lr-table.sh avant langarena/tmp ../LangArena/run.js $R/lr-avant.tsv
 #   tools/lr-table.sh table REFERENCE_DIR $R > table.md
+#   tools/lr-table.sh pure REFERENCE_DIR $R > table-pure.md
 #
 # TSV columns: task status wall_s rss_kb inprog_s exit  (status ok|err|fail),
 # then (since the counters) user_s sys_s nvcsw nivcsw outside_cpus attempts
@@ -63,7 +83,8 @@
 # neither a tsv nor a results directory holding lr-avant.tsv or
 # runtime.tsv, or a PUBLISHED.js that does not exist stops the script
 # with "lr-table.sh: ..." on stderr and status 1, and a table whose Avant
-# input has no task row is refused the same way. Before, a relative path
+# input has no task row is refused the same way, as is a pure table
+# without library.tsv or without its twins' tsv (or with no row in it). Before, a relative path
 # that did not resolve (../LangArena from a scratch worktree) wrote an
 # empty table and exited 0.
 set -u
@@ -187,9 +208,29 @@ avant)
     if [ $rc -ne 0 ]; then st=fail; elif [ "$got" = "$sum" ]; then st=ok; else st=err; fi
     printf '%s\t%s\t%s\t%s\t-\t%s\t%s\t%s\t%s\n' "$name" "$st" "$w" "$rss" "$rc" "$counters" "$attempts" "$und" >>"$out"
     echo "Avant $name $st $w s $rss KB ($und)" >&2
-  done ;;
-table)
-  [ $# -ge 2 ] && [ $# -le 3 ] || die "table needs REF_DIR AVANT [PUBLISHED.js]"
+  done
+  # the pure-Avant twins the harness listed, each against its task's checksum
+  lib=$bindir/library.tsv
+  if [ -f "$lib" ]; then
+    od=$(dirname "$out"); pout=$od/lr-avant-pure.tsv
+    praw="$pout.raw"; mkdir -p "$praw"
+    [ "$(realpath "$lib")" = "$(realpath -m "$od/library.tsv")" ] || cp "$lib" "$od/library.tsv"
+    header "Avant pure" >"$pout"
+    awk -F'\t' '$1 != "task" && $3 != "-" && $3 != "" { print $1 "\t" $3 "\t" $4 }' "$lib" |
+    while IFS="$(printf '\t')" read -r task name slug; do
+      sum=$(tasks "$runjs" | awk -F'\t' -v t="$task" '$1 == t { print $2; exit }')
+      if [ ! -x "$bindir/$slug" ] || [ -z "$sum" ]; then
+        printf '%s\tfail\t-\t-\t-\t-\n' "$name" >>"$pout"; continue
+      fi
+      timed "$bindir" "$praw" "$slug" "./$slug"
+      got=$(head -n 1 "$praw/$slug.out" | tr -d ' \r')
+      if [ $rc -ne 0 ]; then st=fail; elif [ "$got" = "$sum" ]; then st=ok; else st=err; fi
+      printf '%s\t%s\t%s\t%s\t-\t%s\t%s\t%s\t%s\n' "$name" "$st" "$w" "$rss" "$rc" "$counters" "$attempts" "$und" >>"$pout"
+      echo "Avant $name $st $w s $rss KB ($und)" >&2
+    done
+  fi ;;
+table|pure)
+  [ $# -ge 2 ] && [ $# -le 3 ] || die "$cmd needs REF_DIR AVANT [PUBLISHED.js]"
   refdir=$1 av=$2 pub=${3:-}
   need_dir REF_DIR "$refdir"
   ls "$refdir"/*.tsv >/dev/null 2>&1 || die "REF_DIR $refdir: no reference tsv"
@@ -199,21 +240,41 @@ table)
     [ -f "$av" ] || die "AVANT $av: no such file or directory"
   fi
   [ -z "$pub" ] || [ -f "$pub" ] || die "PUBLISHED.js $pub: no such file"
+  # the harness's library.tsv (library-backed tasks, their twins) beside the input
+  if [ -d "$av" ]; then libf=$av/library.tsv; else libf=$(dirname "$av")/library.tsv; fi
+  [ -f "$libf" ] || libf=/dev/null
+  puref=/dev/null
+  if [ "$cmd" = pure ]; then
+    [ "$libf" != /dev/null ] || die "AVANT $av: no library.tsv beside it (the pure table needs the harness's list of twins)"
+    if [ -d "$av" ]; then
+      if [ -f "$av/lr-avant.tsv" ]; then puref=$av/lr-avant-pure.tsv; else puref=$av/runtime-pure.tsv; fi
+    elif [ "$(basename "$av")" = runtime.tsv ]; then puref=$(dirname "$av")/runtime-pure.tsv
+    else puref=$(dirname "$av")/lr-avant-pure.tsv
+    fi
+    [ -f "$puref" ] || die "AVANT $av: no twins' tsv $puref"
+  fi
   avsrc=harness
   wd=$(mktemp -d); trap 'rm -rf "$wd"' EXIT
+  # harness runtime.tsv: name ... checksum_ok ... wall_s rss_mb (by header)
+  harness_tsv() { # RUNTIME.tsv OUT
+    awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+      { st = ($h["checksum_ok"] == "true") ? "ok" : "err"
+        printf "%s\t%s\t%s\t%d\t-\t%s\n", $h["name"], st, $h["wall_s"], $h["rss_mb"] * 1024, $h["exit_code"] }' "$1" >"$2"
+  }
   if [ -d "$av" ]; then
     if [ -f "$av/lr-avant.tsv" ]; then av="$av/lr-avant.tsv"; avsrc=lr
     else
-      # harness runtime.tsv: name ... checksum_ok ... wall_s rss_mb (by header)
-      tmp=$wd/avant.tsv; awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
-        { st = ($h["checksum_ok"] == "true") ? "ok" : "err"
-          printf "%s\t%s\t%s\t%d\t-\t%s\n", $h["name"], st, $h["wall_s"], $h["rss_mb"] * 1024, $h["exit_code"] }' "$av/runtime.tsv" >"$tmp"
+      tmp=$wd/avant.tsv; harness_tsv "$av/runtime.tsv" "$tmp"
       av=$tmp
     fi
+  elif [ "$cmd" = pure ] && [ "$(basename "$av")" = runtime.tsv ]; then
+    tmp=$wd/avant.tsv; harness_tsv "$av" "$tmp"; av=$tmp
   else
     avsrc=lr
   fi
+  case "$puref" in */runtime-pure.tsv) harness_tsv "$puref" "$wd/pure.tsv"; puref=$wd/pure.tsv ;; esac
   [ "$(rows "$av")" -gt 0 ] || die "AVANT $av: no task row"
+  [ "$puref" = /dev/null ] || [ "$(rows "$puref")" -gt 0 ] || die "AVANT: the twins' tsv has no row"
   pubtsv=/dev/null
   notes=/dev/null; [ -f "$refdir/notes.txt" ] && notes=$refdir/notes.txt
   if [ -n "$pub" ]; then
@@ -226,7 +287,7 @@ table)
     runsfile=$wd/runs.txt
     awk '/"runs": \{/ { r = 1; next } r && /\}/ { exit } r { gsub(/[",:]/, " "); print $1, $NF }' "$pub" >"$runsfile"
   fi
-  awk -v avsrc="$avsrc" -v pubtsv="$pubtsv" -v runsfile="${runsfile:-/dev/null}" -v notesfile="$notes" -F'\t' '
+  awk -v avsrc="$avsrc" -v pubtsv="$pubtsv" -v runsfile="${runsfile:-/dev/null}" -v notesfile="$notes" -v mode="$cmd" -v libfile="$libf" -v purefile="$puref" -F'\t' '
   function fmt(x) { return (x == "") ? "—" : sprintf("%.2f", x) }
   function mb(k) { return sprintf("%.1f", k / 1024) }
   FNR == 1 { file++; fname = FILENAME; sub(/.*\//, "", fname); sub(/\.tsv$/, "", fname) }
@@ -235,9 +296,23 @@ table)
   FILENAME == pubtsv { if ($1 == "t") pt[$2, $3] = $4; else pm[$2, $3] = $4; next }
   FILENAME == notesfile { if ($1 != "" && $1 !~ /^#/) note[$1] = $2; next }
   FILENAME == runsfile { if ($0 ~ / prod$/) { sub(/ prod$/, ""); prod[$0] = 1 }; next }
-  file == 1 { order[++n] = $1; ast[$1] = $2; aw[$1] = $3; ar[$1] = $4; if ($13 ~ /^no/) dist[$1] = dist[$1] " Avant: disturbed (" $12 " attempts);"; next }
+  FILENAME == libfile { if ($1 != "") { lib[$1] = $2; if ($3 != "-" && $3 != "") twin[$1] = $3 }; next }
+  FILENAME == purefile { pst[$1] = $2; pw[$1] = $3; pr[$1] = $4; if ($13 ~ /^no/) pdist[$1] = " Avant: disturbed (" $12 " attempts);"; next }
+  file == 1 { order[++n] = $1; ast[$1] = $2; aw[$1] = $3; ar[$1] = $4; if ($13 ~ /^no/) { adist[$1] = " Avant: disturbed (" $12 " attempts);"; dist[$1] = dist[$1] adist[$1] }; next }
   { lang = fname; langs[lang] = 1; st[lang, $1] = $2; w[lang, $1] = $3; r[lang, $1] = $4; if ($13 ~ /^no/) dist[$1] = dist[$1] " " lang ": disturbed;" }
   END {
+    haslib = (libfile != "/dev/null")
+    # the totals of Avant as written: its ok rows, then (pure) each task with
+    # a twin replaced by the twin; nl counts the rows on a library
+    nl = 0; ko = 0; ws = 0; ms = 0
+    for (i = 1; i <= n; i++) { t = order[i]; if (t in lib) nl++; if (ast[t] == "ok") { ko++; ws += aw[t]; ms += ar[t] } }
+    if (mode == "pure") {
+      np = 0; pko = 0; pws = 0; pms = 0
+      for (i = 1; i <= n; i++) { t = order[i]
+        if ((t in twin) && (twin[t] in pst)) { tt = twin[t]; ast[t] = pst[tt]; aw[t] = pw[tt]; ar[t] = pr[tt]
+          dist[t] = pdist[tt] substr(dist[t], length(adist[t]) + 1); rep[t] = 1; np++ }
+        if (ast[t] == "ok") { pko++; pws += aw[t]; pms += ar[t] } }
+    }
     for (i = 1; i <= n; i++) {
       t = order[i]; bt[t] = ""; br[t] = ""; miss[t] = ""
       for (L in langs) {
@@ -263,8 +338,19 @@ table)
       if (ast[t] != "ok") miss[t] = miss[t] " Avant: " ast[t] ";"
       if (t in note) miss[t] = miss[t] " " note[t]
       if (t in dist) miss[t] = miss[t] dist[t]
+      if (t in rep) miss[t] = miss[t] " pure twin of " lib[t] ";"
+      else if (t in lib) miss[t] = miss[t] (mode == "pure" ? " still on a library: " : " library: ") lib[t] ";"
     }
-    printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by GNU time; not the same method as the references)")
+    src = (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by GNU time; not the same method as the references)")
+    if (mode == "pure") {
+      printf "Pure Avant: each task that has a pure-Avant twin (%d of them) is shown with its twin'"'"'s numbers under its own name (Notes: pure twin of what the task calls); the other library-backed rows are still on a library.\n\n", np
+      printf "Avant as written: wall sum %.3f s over %d ok rows, average %.1f MB. Pure Avant: wall sum %.3f s over %d ok rows, average %.1f MB.\n\n", ws, ko, (ko ? ms / ko / 1024 : 0), pws, pko, (pko ? pms / pko / 1024 : 0)
+      printf "Avant source: %s, the twins from %s. %d of the %d rows still rely on a library (their Notes say which). Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src, (avsrc == "lr" ? "lr-avant-pure.tsv" : "harness runtime-pure.tsv"), nl - np, n
+    } else if (haslib) {
+      printf "Avant source: %s. %d of the %d rows rely on a library (their Notes say which). Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src, nl, n
+      printf "Avant as written: wall sum %.3f s over %d ok rows, average %.1f MB.\n\n", ws, ko, (ko ? ms / ko / 1024 : 0)
+    } else
+      printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src
     sec("Combined (worse of the two multipliers)", "both")
     sec("By time multiplier", "time")
     sec("By memory multiplier", "mem")
@@ -287,7 +373,7 @@ table)
     printf "\n"
   }
   function val(t, key) { return key == "both" ? worst[t] : (key == "time" ? (tm[t] == "" ? -1 : tm[t]) : (mm[t] == "" ? -1 : mm[t])) }
-  ' "$av" "$refdir"/*.tsv "$pubtsv" "${runsfile:-/dev/null}" "$notes"
+  ' "$av" "$refdir"/*.tsv "$pubtsv" "${runsfile:-/dev/null}" "$notes" "$libf" "$puref"
   ;;
 rounds)
   [ $# -ge 3 ] || die "rounds needs N RUN_JS OUT_DIR [OPTION...] [TASK...]"

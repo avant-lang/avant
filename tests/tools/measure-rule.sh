@@ -12,7 +12,9 @@
 # wall, so the rule calls every run of it disturbed, deterministically).
 # rounds.py measures both over two rounds with one retry; lr-table.sh
 # re-measures them with one retry and tables them against a fake
-# reference. Prints one line per check, `ok: NAME` or `FAIL: NAME: why`,
+# reference; a library.tsv names both as library-backed and gives the busy
+# one a pure twin (a copy of its binary), which the re-measure times beside
+# them and the table and pure table mark. Prints one line per check, `ok: NAME` or `FAIL: NAME: why`,
 # then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/measure-rule.sh WORK" >&2; exit 2; }
@@ -81,7 +83,10 @@ grep -q '^## Disturbed runs' "$w/rounds/rounds.md" && grep -q '^| x--fake_sleep 
 say rounds-table-lists $? "$(grep -c fake_sleep "$w/rounds/rounds.md" 2>/dev/null) lines"
 grep -q '^Fake::Sleep	disturbed	' "$w/rounds/x.lr-avant.tsv"; say rounds-lr-disturbed $? "$(grep Sleep "$w/rounds/x.lr-avant.tsv")"
 
-# 4. lr-table.sh: the re-measure's counters, one retry, the table's notes.
+# 4. lr-table.sh: the re-measure's counters, one retry, the table's notes;
+# the twin's row, the library marks and the pure table.
+cp "$w/bin/fake_busy" "$w/bin/fake_busy-pure"
+printf 'task\tlibrary\ttwin\ttwin_slug\nFake::Busy\tlibbusy (C)\tFake::Busy-Pure\tfake_busy-pure\nFake::Sleep\tlibsleep (C)\t-\t-\n' > "$w/bin/library.tsv"
 LR_RETRIES=1 sh "$root/tools/lr-table.sh" avant "$w/bin" "$w/run.js" "$w/lr/lr-avant.tsv" < /dev/null > "$w/lr.log" 2>&1 || mkdir -p "$w/lr"
 mkdir -p "$w/lr"
 awk -F'\t' '$1 == "task" { exit !(NF == 13 && $7 == "user_s" && $13 == "undisturbed") }' "$w/lr/lr-avant.tsv" \
@@ -95,6 +100,16 @@ printf '# label: Other\ntask\tstatus\twall_s\trss_kb\tinprog_s\texit\nFake::Busy
 sh "$root/tools/lr-table.sh" table "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/table.md" 2> "$w/table.err"
 grep 'Fake::Sleep' "$w/table.md" | head -n 1 | grep -q 'Avant: disturbed (2 attempts);'
 say lr-table-notes $? "$(grep -m 1 'Fake::Sleep' "$w/table.md")"
+awk -F'\t' '$1 == "Fake::Busy-Pure" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" && cmp -s "$w/bin/library.tsv" "$w/lr/library.tsv"
+say lr-pure-measured $? "$(grep Pure "$w/lr/lr-avant-pure.tsv" 2>/dev/null)"
+grep -q '^Avant source: .* 2 of the 2 rows rely on a library' "$w/table.md" && grep -q '^Avant as written: wall sum ' "$w/table.md" \
+  && grep 'Fake::Busy' "$w/table.md" | head -n 1 | grep -q '| Fake::Busy | .* library: libbusy (C); |$'
+say lr-table-library $? "$(head -n 3 "$w/table.md" | tr '\n' ' ')"
+sh "$root/tools/lr-table.sh" pure "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/pure.md" 2> "$w/pure.err"
+grep -q '^Avant as written: .* Pure Avant: wall sum ' "$w/pure.md" \
+  && grep 'Fake::Busy' "$w/pure.md" | head -n 1 | grep -q '| Fake::Busy | .* pure twin of libbusy (C); |$' \
+  && grep 'Fake::Sleep' "$w/pure.md" | head -n 1 | grep -q 'still on a library: libsleep (C); |$'
+say lr-table-pure $? "$(cat "$w/pure.err") $(grep -m 1 'Fake::Busy' "$w/pure.md")"
 mkdir -p "$w/refrun"
 sh "$root/tools/lr-table.sh" ref Fake "$w/bin" "$w/refrun/fake.tsv" "$w/run.js" /bin/echo < /dev/null > "$w/refrun.log" 2>&1
 grep -q "^cpu: $(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -n 1)\$" "$w/refrun/machine.txt" \
