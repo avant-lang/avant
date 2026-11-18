@@ -127,8 +127,23 @@ fn json_positions(c: Checks) {
   }
 }
 
+// A member is found by its name's bytes and size: a name holding a zero
+// byte is not cut at it (by strlen the lookup found "a"). f64 is nil for
+// anything but a number, a missing member included.
+fn json_lookups(c: Checks) {
+  doc = Json.parse("{\"a\\u0000b\": 1, \"a\": 2, \"s\": \"7\", \"i\": 3, \"n\": null}") ?? return c.expect(false, "lookups: parse")
+  c.eq_int(doc.int("a\0b") ?? -1, 1, "a name with a zero byte is found whole")
+  c.eq_int(doc.int("a") ?? -1, 2, "and the shorter name is another member")
+  c.expect((doc.f64("i") ?? -1.0) == 3.0, "f64 of an integer member")
+  c.expect((doc.f64("s") ?? -1.0) == -1.0, "f64 of a string is nil")
+  c.expect((doc.f64("n") ?? -1.0) == -1.0, "f64 of null is nil")
+  c.expect((doc.f64("missing") ?? -1.0) == -1.0, "f64 of a missing member is nil")
+  c.expect((doc.f64() ?? -1.0) == -1.0, "f64 of an object is nil")
+}
+
 fn test_std_json(c: Checks) {
   c.suite("tests/cases/test_std_json.av")
+  json_lookups(c)
   json_walks(c)
   json_positions(c)
   if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {

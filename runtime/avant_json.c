@@ -198,12 +198,18 @@ avant_int avant_json_kind(void *nodep) {
   return 0;
 }
 
+/* The member named key, by the key's bytes and size (avant_str_bytes):
+ * no strlen at each lookup, and a name holding a zero byte (\u0000 in
+ * JSON) is found whole. */
 void *avant_json_get(void *nodep, const char *key) {
   yyjson_val *v = (yyjson_val *)nodep;
+  const char *k;
+  size_t n;
   if (!v || !key || !yyjson_is_obj(v)) {
     return NULL;
   }
-  return yyjson_obj_get(v, key);
+  k = avant_str_bytes(key, &n);
+  return yyjson_obj_getn(v, k, n);
 }
 
 /* The value of an object's member i, in the document's order (the key
@@ -318,15 +324,6 @@ static avant_int node_int(yyjson_val *v) {
   return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
 
-static double node_f64(yyjson_val *v) {
-  if (!v || !yyjson_is_num(v)) {
-    set_status(1);
-    return 0.0;
-  }
-  set_status(0);
-  return yyjson_get_num(v);
-}
-
 static int32_t node_bool(yyjson_val *v) {
   if (!v || !yyjson_is_bool(v)) {
     set_status(1);
@@ -353,12 +350,22 @@ avant_int avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
 }
 
+/* A number's value, or NaN when the node is not a number: the reader
+ * refuses NaN and the infinities (flags 0), so a JSON number is never
+ * NaN, and Json.f64 reads the answer of one call. */
+static double node_f64_or_nan(yyjson_val *v) {
+  if (!v || !yyjson_is_num(v)) {
+    return __builtin_nan("");
+  }
+  return yyjson_get_num(v);
+}
+
 double avant_json_as_f64(void *nodep) {
-  return node_f64((yyjson_val *)nodep);
+  return node_f64_or_nan((yyjson_val *)nodep);
 }
 
 double avant_json_obj_f64(void *nodep, const char *key) {
-  return node_f64((yyjson_val *)avant_json_get(nodep, key));
+  return node_f64_or_nan((yyjson_val *)avant_json_get(nodep, key));
 }
 
 avant_int avant_json_as_bool(void *nodep) {

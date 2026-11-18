@@ -4,10 +4,10 @@ lib jsonc {
   fun avant_json_take_pool: Bytes
   fun avant_json_root(doc: Ptr(Void)): Ptr(Void)
   fun avant_json_kind(node: Ptr(Void)): Int
-  fun avant_json_get(node: Ptr(Void), key: String): Ptr(Void)
-  fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)
-  fun avant_json_first(node: Ptr(Void)): Ptr(Void)
-  fun avant_json_next(node: Ptr(Void)): Ptr(Void)
+  fun avant_json_get(node: Ptr(Void), key: String): Ptr(Void)?
+  fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)?
+  fun avant_json_first(node: Ptr(Void)): Ptr(Void)?
+  fun avant_json_next(node: Ptr(Void)): Ptr(Void)?
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
@@ -36,10 +36,6 @@ pub enum JsonKind {
   arr
   obj
 }
-
-// avant_json_kind of a node that is not there (a missing key, an index
-// past the end, the end of an iteration).
-const no_value = 0
 
 // A document that does not parse: the message says what yyjson found
 // and where ("invalid JSON at byte 7: unexpected character"); offset is
@@ -112,8 +108,8 @@ pub struct Json {
   }
 
   pub fn kind: JsonKind {
-    // A Json's node is a value (get, at and the iterator give nil for
-    // no_value), so the fallback is never taken.
+    // A Json's node is a value (get, at and the iterator give nil when
+    // the runtime finds no node), so the fallback is never taken.
     JsonKind.from_i(jsonc.avant_json_kind(self.node)) ?? JsonKind.null
   }
 
@@ -152,27 +148,20 @@ pub struct Json {
     jsonc.avant_json_len(self.node)
   }
 
+  // The runtime gives a null node for a member, an element or a value
+  // that is not there: Ptr(Void)?, nil.
   pub fn get(key: String): Json? {
-    child_node = jsonc.avant_json_get(self.node, key)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_get(self.node, key) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
   pub fn at(index: Int): Json? {
-    child_node = jsonc.avant_json_at(self.node, index)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_at(self.node, index) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
   pub fn first: Json? {
-    child_node = jsonc.avant_json_first(self.node)
-    if jsonc.avant_json_kind(child_node) == no_value {
-      return nil
-    }
+    child_node = jsonc.avant_json_first(self.node) ?? return nil
     Json { node: child_node, pool: self.pool }
   }
 
@@ -189,7 +178,7 @@ pub struct Json {
   // The elements of the member `key`, when it is there and is an array;
   // nil otherwise.
   pub fn arr(key: String): JsonIter? {
-    child_node = jsonc.avant_json_get(self.node, key)
+    child_node = jsonc.avant_json_get(self.node, key) ?? return nil
     if jsonc.avant_json_kind(child_node) != JsonKind.arr.to_i() {
       return nil
     }
@@ -220,9 +209,12 @@ pub struct Json {
     v
   }
 
+  // The runtime gives NaN for a value that is not a number: a JSON
+  // number is never NaN (the reader refuses NaN and the infinities), so
+  // one call answers, with no status to take.
   pub fn f64: Float64? {
     v = jsonc.avant_json_as_f64(self.node)
-    if jsonc.avant_json_take_status() != 0 {
+    if v != v {
       return nil
     }
     v
@@ -230,7 +222,7 @@ pub struct Json {
 
   pub fn f64(key: String): Float64? {
     v = jsonc.avant_json_obj_f64(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
+    if v != v {
       return nil
     }
     v
@@ -329,16 +321,16 @@ pub class JsonIter {
     if self.idx >= self.max {
       return nil
     }
+    step: Ptr(Void)? = nil
     if self.idx == 0 {
-      self.cur = jsonc.avant_json_first(self.arr)
+      step = jsonc.avant_json_first(self.arr)
     } else {
-      self.cur = jsonc.avant_json_next(self.cur)
+      step = jsonc.avant_json_next(self.cur)
     }
     self.idx += 1
-    if jsonc.avant_json_kind(self.cur) == no_value {
-      return nil
-    }
-    Json { node: self.cur, pool: self.pool }
+    node = step ?? return nil
+    self.cur = node
+    Json { node: node, pool: self.pool }
   }
 }
 
