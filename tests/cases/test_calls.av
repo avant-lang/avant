@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The spelling of calls and the optionals' forms. Every method call
 // takes parentheses, a builtin's without arguments too; a name without
@@ -136,7 +138,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/calls-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/calls-${f.tag}.bin", "${dir}/calls-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -163,7 +165,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
       c.expect(log_text("${dir}/calls-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: stderr says ${f3.want}")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/calls-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/calls-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("calls-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -178,48 +180,48 @@ fn check_format_calls(c: Checks, compiler: String, dir: String) {
   src = "${dir}/calls-format.av"
   before = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice + 1\n  }\n}\nfn main {\n  b = Box.new\n  xs = [3, 1, 2]\n  xs.sort\n  s = \"a b\"\n  h = Hash(String, Int).new\n  puts(b.more + b.n + s.size + s.bytes.size + s.strip.size + xs.size + h.keys.size)\n}\n"
   after = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice() + 1\n  }\n}\nfn main {\n  b = Box.new()\n  xs = [3, 1, 2]\n  xs.sort()\n  s = \"a b\"\n  h = Hash(String, Int).new()\n  puts(b.more() + b.n + s.size + s.bytes.size + s.strip().size + xs.size + h.keys().size)\n}\n"
-  _ = file_write(src, before)
+  _ = fs.write(src, before)
   args: Array(String) = []
   args.push("format")
   args.push("--calls")
   args.push(src)
-  code = process_run_out(compiler, args, "${dir}/calls-format.log") ?? -1
+  code = run_out(compiler, args, "${dir}/calls-format.log") ?? -1
   c.eq_int(code, 0, "format --calls: exits 0")
   c.eq_str(log_text(src), after, "format --calls: the parentheses written")
   c.eq_str(log_text("${dir}/calls-format.log"), "${src}: 7\n", "format --calls: names the file and the count")
-  code2 = process_run_out(compiler, args, "${dir}/calls-format2.log") ?? -1
+  code2 = run_out(compiler, args, "${dir}/calls-format2.log") ?? -1
   c.eq_int(code2, 0, "format --calls again: exits 0")
   c.eq_str(log_text(src), after, "format --calls again: changes nothing")
   c.eq_int(compile_av(compiler, src, "${dir}/calls-format.bin", "${dir}/calls-format.clog"), 0, "format --calls: the result compiles")
   // --write beside --calls (either side) asks for what --calls does: the
   // file is rewritten and nothing reads the flag as a file
-  _ = file_write(src, before)
+  _ = fs.write(src, before)
   wargs: Array(String) = []
   wargs.push("format")
   wargs.push("--calls")
   wargs.push("--write")
   wargs.push(src)
-  code3 = process_run_out(compiler, wargs, "${dir}/calls-format3.log") ?? -1
+  code3 = run_out(compiler, wargs, "${dir}/calls-format3.log") ?? -1
   c.eq_int(code3, 0, "format --calls --write: exits 0")
   c.eq_str(log_text(src), after, "format --calls --write: the parentheses written")
   c.eq_str(log_text("${dir}/calls-format3.log"), "${src}: 7\n", "format --calls --write: names the file and the count, no error")
-  _ = file_write(src, before)
+  _ = fs.write(src, before)
   vargs: Array(String) = []
   vargs.push("format")
   vargs.push("--write")
   vargs.push("--calls")
   vargs.push(src)
-  c.eq_int(process_run_out(compiler, vargs, "${dir}/calls-format4.log") ?? -1, 0, "format --write --calls: exits 0")
+  c.eq_int(run_out(compiler, vargs, "${dir}/calls-format4.log") ?? -1, 0, "format --write --calls: exits 0")
   c.eq_str(log_text(src), after, "format --write --calls: the parentheses written")
   // --check and an unknown flag are refused before any file is written
-  _ = file_write(src, before)
+  _ = fs.write(src, before)
   for bad in ["--check", "--quiet"] {
     bargs: Array(String) = []
     bargs.push("format")
     bargs.push("--calls")
     bargs.push(bad)
     bargs.push(src)
-    c.eq_int(process_run_out(compiler, bargs, "${dir}/calls-format-bad.log") ?? -1, 1, "format --calls ${bad}: exits 1")
+    c.eq_int(run_out(compiler, bargs, "${dir}/calls-format-bad.log") ?? -1, 1, "format --calls ${bad}: exits 1")
     c.expect(log_text("${dir}/calls-format-bad.log").contains(bad), "format --calls ${bad}: the message names the flag")
     c.eq_str(log_text(src), before, "format --calls ${bad}: the file is left as it was")
   }
@@ -227,7 +229,7 @@ fn check_format_calls(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_calls.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_format_calls(c, compiler, scratch_dir())
   } else {

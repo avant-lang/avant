@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn ut_quote(s: String): String {
   b = buf_new()
@@ -38,7 +40,7 @@ fn ut_starts(s: String, prefix: String): Bool {
 
 fn ut_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
-  _ = file_write(script, body) ?? return 1
+  _ = fs.write(script, body) ?? return 1
   chmod_x(script)
   // Bounded: timeout signals the script's whole
   // process group, so a child that loops fails its check instead of
@@ -49,8 +51,8 @@ fn ut_sh(body: String, rc_path: String): Int {
   sh_args.push("600")
   sh_args.push("/bin/sh")
   sh_args.push(script)
-  _ = process_run("/usr/bin/timeout", sh_args)
-  if text = file_read(rc_path) {
+  _ = process.run("/usr/bin/timeout", sh_args)
+  if text = fs.read(rc_path) {
     t = text.strip()
     n = 0
     i = 0
@@ -88,7 +90,7 @@ fn ut_index(hay: String, needle: String): Int {
 }
 
 fn ut_read_ms(path: String): Int {
-  if text = file_read(path) {
+  if text = fs.read(path) {
     return text.strip().to_i() ?? -1
   }
   -1
@@ -108,7 +110,7 @@ fn ut_fill(template: String, dir: String): String {
 
 fn test_user_test(c: Checks) {
   c.suite("tests/cases/test_user_test.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     compiler = compiler_abs("user_test", compiler)
     stamp = now_ms()
     root = "${scratch()}/user_test-user-${stamp}"
@@ -118,49 +120,49 @@ fn test_user_test(c: Checks) {
     mkdir_p("${root}/fetch")
 
     status_body = "fn main: Int {\n  7\n}\n"
-    _ = file_write("${root}/status.av", status_body)
+    _ = fs.write("${root}/status.av", status_body)
     status_log = "${root}/status.log"
     status_rc = "${root}/status.rc"
     status_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/status.av -- > ${ut_quote(status_log)} 2>&1; echo $? > ${ut_quote(status_rc)}\n"
     c.eq_int(ut_sh(status_sh, status_rc), 7, "fn main: Int is the process status")
 
     run_body = "fn run: Int {\n  5\n}\n"
-    _ = file_write("${root}/runint.av", run_body)
+    _ = fs.write("${root}/runint.av", run_body)
     run_rc = "${root}/runint.rc"
     run_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/runint.av -- > ${ut_quote(root)}/runint.log 2>&1; echo $? > ${ut_quote(run_rc)}\n"
     c.eq_int(ut_sh(run_sh, run_rc), 5, "fn run: Int is the process status")
 
     bad_body = "fn main: String {\n  \"no\"\n}\n"
-    _ = file_write("${root}/badret.av", bad_body)
+    _ = fs.write("${root}/badret.av", bad_body)
     bad_log = "${root}/badret.log"
     bad_args: Array(String) = []
     bad_args.push("run")
     bad_args.push("${root}/badret.av")
     bad_args.push("--")
-    bad_code = process_run_out(compiler, bad_args, bad_log) ?? -1
+    bad_code = run_out(compiler, bad_args, bad_log) ?? -1
     c.expect(bad_code != 0, "fn main: String is rejected")
-    if bad_text = file_read(bad_log) {
+    if bad_text = fs.read(bad_log) {
       c.expect(ut_has(bad_text, "an Int (the process status)"), "status error names Int")
     } else {
       c.expect(false, "status error names Int")
     }
 
     bare_body = "import std\nfn main {\n}\n"
-    _ = file_write("${root}/bare.av", bare_body)
+    _ = fs.write("${root}/bare.av", bare_body)
     bare_log = "${root}/bare.log"
     bare_args: Array(String) = []
     bare_args.push("run")
     bare_args.push("${root}/bare.av")
     bare_args.push("--")
-    bare_code = process_run_out(compiler, bare_args, bare_log) ?? -1
+    bare_code = run_out(compiler, bare_args, bare_log) ?? -1
     c.expect(bare_code != 0, "import std is rejected")
-    if bare_text = file_read(bare_log) {
+    if bare_text = fs.read(bare_log) {
       c.expect(ut_has(bare_text, "import std needs a module"), "import std names the module")
     } else {
       c.expect(false, "import std names the module")
     }
 
-    _ = file_write("${root}/empty/avant.toml", "[package]\nname = \"empty\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/empty/avant.toml", "[package]\nname = \"empty\"\nversion = \"0.1.0\"\n")
     empty_rc = "${root}/empty.rc"
     empty_sh = "#!/bin/sh\ncd ${ut_quote(root)}/empty && ${ut_quote(compiler)} test > ${ut_quote(root)}/empty.log 2>&1; echo $? > ${ut_quote(empty_rc)}\n"
     c.eq_int(ut_sh(empty_sh, empty_rc), 1, "empty selection exits 1")
@@ -173,46 +175,46 @@ fn test_user_test(c: Checks) {
     typo_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/status.av --relase > ${ut_quote(root)}/typo.log 2>&1; echo $? > ${ut_quote(typo_rc)}\n"
     c.eq_int(ut_sh(typo_sh, typo_rc), 1, "a mistyped run flag is an error")
 
-    _ = file_write("${root}/proj/vec.av", "pub fn origin: Int {\n  4\n}\nfn hidden: Int {\n  9\n}\n")
-    _ = file_write("${root}/proj/std/testing.av", "pub fn fake: Int {\n  1\n}\n")
-    _ = file_write("${root}/proj/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
+    _ = fs.write("${root}/proj/vec.av", "pub fn origin: Int {\n  4\n}\nfn hidden: Int {\n  9\n}\n")
+    _ = fs.write("${root}/proj/std/testing.av", "pub fn fake: Int {\n  1\n}\n")
+    _ = fs.write("${root}/proj/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
     imp_body = "import vec\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check_eq(origin(), 4, \"origin\")\n  t.finish()\n}\n"
-    _ = file_write("${root}/proj/tests/test_import.av", imp_body)
+    _ = fs.write("${root}/proj/tests/test_import.av", imp_body)
     imp_rc = "${root}/import.rc"
     imp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_import.av > ${ut_quote(root)}/import.log 2>&1; echo $? > ${ut_quote(imp_rc)}\n"
     c.eq_int(ut_sh(imp_sh, imp_rc), 0, "a test under tests/ imports the project")
-    if imp_text = file_read("${root}/import.log") {
+    if imp_text = fs.read("${root}/import.log") {
       c.expect(ut_has(imp_text, "PASS origin"), "imported pub name is visible")
     } else {
       c.expect(false, "imported pub name is visible")
     }
 
     hid_body = "import vec\nfn main: Int {\n  hidden()\n}\n"
-    _ = file_write("${root}/proj/tests/hidden.av", hid_body)
+    _ = fs.write("${root}/proj/tests/hidden.av", hid_body)
     hid_log = "${root}/hidden.log"
     hid_args: Array(String) = []
     hid_args.push("run")
     hid_args.push("${root}/proj/tests/hidden.av")
     hid_args.push("--")
-    hid_code = process_run_out(compiler, hid_args, hid_log) ?? -1
+    hid_code = run_out(compiler, hid_args, hid_log) ?? -1
     c.expect(hid_code != 0, "a test does not see a private name")
 
     miss_body = "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.golden(\"missing-want.txt\", \"x\")\n  t.finish()\n}\n"
-    _ = file_write("${root}/proj/tests/test_miss.av", miss_body)
+    _ = fs.write("${root}/proj/tests/test_miss.av", miss_body)
     miss_rc = "${root}/miss.rc"
     miss_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_miss.av > ${ut_quote(root)}/miss.log 2>&1; echo $? > ${ut_quote(miss_rc)}\n"
     c.eq_int(ut_sh(miss_sh, miss_rc), 1, "a missing golden file fails the test")
-    c.expect(!file_exists("${root}/proj/missing-want.txt"), "golden does not create the expected file")
+    c.expect(!fs.exists("${root}/proj/missing-want.txt"), "golden does not create the expected file")
 
     // A failed check fails the process, whatever
     // main returns and whether finish runs: a void main, a main that
     // returns 0, and a check that fails on another thread.
     mkdir_p("${root}/failcheck/tests")
-    _ = file_write("${root}/failcheck/avant.toml", "[package]\nname = \"failcheck\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${root}/failcheck/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
-    _ = file_write("${root}/failcheck/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
-    _ = file_write("${root}/failcheck/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new()\n    u.check(false, \"fails on a task\")\n    1\n  }\n  (h.join() ?? -1)\n  0\n}\n")
-    _ = file_write("${root}/failcheck/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
+    _ = fs.write("${root}/failcheck/avant.toml", "[package]\nname = \"failcheck\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/failcheck/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new()\n    u.check(false, \"fails on a task\")\n    1\n  }\n  (h.join() ?? -1)\n  0\n}\n")
+    _ = fs.write("${root}/failcheck/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new()\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
     failcheck_names = ["void", "zero", "task"]
     failcheck_fails = ["one is two", "one is two", "fails on a task"]
     i = 0
@@ -223,13 +225,13 @@ fn test_user_test(c: Checks) {
       d_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/failcheck-${nm}.xml > ${ut_quote(d_log)} 2>&1; echo $? > ${ut_quote(d_rc)}\n"
       c.eq_int(ut_sh(d_sh, d_rc), 1, "failed check: a failed check in tests/test_${nm}.av fails the run")
       d_text = ""
-      if t = file_read(d_log) {
+      if t = fs.read(d_log) {
         d_text = t
       }
       c.expect(ut_has(d_text, "FAIL ${failcheck_fails[i]}"), "failed check: tests/test_${nm}.av ran its failing check")
       c.expect(ut_has(d_text, "FAIL tests/test_${nm}.av") && ut_has(d_text, "1 failed, 0 passed"), "failed check: the runner reports tests/test_${nm}.av as failed")
       d_xml = ""
-      if t = file_read("${root}/failcheck-${nm}.xml") {
+      if t = fs.read("${root}/failcheck-${nm}.xml") {
         d_xml = t
       }
       c.expect(ut_has(d_xml, "failures=\"1\""), "failed check: the JUnit report counts tests/test_${nm}.av as a failure")
@@ -240,15 +242,15 @@ fn test_user_test(c: Checks) {
     // (a cycle) are skipped, and the run ends with the one real file.
     mkdir_p("${root}/links/tests/sub")
     mkdir_p("${root}/links-outside")
-    _ = file_write("${root}/links/avant.toml", "[package]\nname = \"links\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${root}/links/tests/sub/test_real.av", "fn main: Int {\n  0\n}\n")
-    _ = file_write("${root}/links-outside/test_outside.av", "fn main: Int {\n  1\n}\n")
-    _ = process_run("/bin/ln", ["-s", "${root}/links-outside", "${root}/links/tests/out"])
-    _ = process_run("/bin/ln", ["-s", "${root}/links/tests", "${root}/links/tests/sub/loop"])
+    _ = fs.write("${root}/links/avant.toml", "[package]\nname = \"links\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/links/tests/sub/test_real.av", "fn main: Int {\n  0\n}\n")
+    _ = fs.write("${root}/links-outside/test_outside.av", "fn main: Int {\n  1\n}\n")
+    _ = process.run("/bin/ln", ["-s", "${root}/links-outside", "${root}/links/tests/out"])
+    _ = process.run("/bin/ln", ["-s", "${root}/links/tests", "${root}/links/tests/sub/loop"])
     lk_rc = "${root}/links.rc"
     lk_sh = "#!/bin/sh\ncd ${ut_quote(root)}/links && ${ut_quote(compiler)} test > ${ut_quote(root)}/links.log 2>&1; echo $? > ${ut_quote(lk_rc)}\n"
     c.eq_int(ut_sh(lk_sh, lk_rc), 0, "test walk: links to directories are skipped, so the run passes")
-    lk_text = file_read("${root}/links.log") ?? ""
+    lk_text = fs.read("${root}/links.log") ?? ""
     c.expect(ut_has(lk_text, "0 failed, 1 passed"), "test walk: the one real test file runs (${lk_text.size} bytes of log)")
     // The runner's report on a standard output that fails (a full disk):
     // the run stops with status 1 and says why, never status 0 with the
@@ -256,17 +258,17 @@ fn test_user_test(c: Checks) {
     full_rc = "${root}/failcheck-full.rc"
     full_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > /dev/full 2> ${ut_quote(root)}/failcheck-full.err; echo $? > ${ut_quote(full_rc)}\n"
     c.eq_int(ut_sh(full_sh, full_rc), 1, "output: a report that cannot be written fails the run")
-    c.expect(ut_has(file_read("${root}/failcheck-full.err") ?? "", "cannot write to standard output: No space left on device"), "output: the failed write is reported on standard error")
+    c.expect(ut_has(fs.read("${root}/failcheck-full.err") ?? "", "cannot write to standard output: No space left on device"), "output: the failed write is reported on standard error")
     // compile's one line ("compiled to OUT"), the only thing it writes
-    _ = file_write("${root}/full-hello.av", "fn main {\n}\n")
+    _ = fs.write("${root}/full-hello.av", "fn main {\n}\n")
     fc_rc = "${root}/full-compile.rc"
     fc_sh = "#!/bin/sh\ncd ${ut_quote(root)} && ${ut_quote(compiler)} compile full-hello.av full-hello.bin --debug > /dev/full 2> ${ut_quote(root)}/full-compile.err; echo $? > ${ut_quote(fc_rc)}\n"
     c.eq_int(ut_sh(fc_sh, fc_rc), 1, "output: compile's line that cannot be written fails the compile")
-    c.expect(ut_has(file_read("${root}/full-compile.err") ?? "", "cannot write to standard output: No space left on device"), "output: compile's failed write is reported on standard error")
+    c.expect(ut_has(fs.read("${root}/full-compile.err") ?? "", "cannot write to standard output: No space left on device"), "output: compile's failed write is reported on standard error")
     // Every flag that takes a value takes it as --flag=V and as --flag V.
-    _ = file_write("${root}/vflags.av", "fn main {\n  puts(1)\n}\n")
+    _ = fs.write("${root}/vflags.av", "fn main {\n  puts(1)\n}\n")
     vf_forms = [["--cpu", "v2"], ["--lib", "m"], ["--cc", "${root}/vflags.c"]]
-    _ = file_write("${root}/vflags.c", "int vflags_c(void) { return 1; }\n")
+    _ = fs.write("${root}/vflags.c", "int vflags_c(void) { return 1; }\n")
     for fv in vf_forms {
       for joined in [true, false] {
         flag_text = "${fv[0]} ${ut_quote(fv[1])}"
@@ -299,28 +301,28 @@ fn test_user_test(c: Checks) {
       vn_rc = "${root}/vflags-name.rc"
       vn_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av ${flag_text} > ${ut_quote(root)}/vflags-name.log 2>&1; echo $? >> ${ut_quote(root)}/vflags-name.log; echo 0 > ${ut_quote(vn_rc)}\n"
       _ = ut_sh(vn_sh, vn_rc)
-      nm_logs.push(file_read("${root}/vflags-name.log") ?? "")
+      nm_logs.push(fs.read("${root}/vflags-name.log") ?? "")
     }
     c.eq_str(nm_logs[0], nm_logs[1], "value flags: test --name=V and --name V run the same")
     // AVANT_COMPILER: a value the user exported reaches the tests as it is;
     // without one, the tests get the runner's own path (the test writes
     // what it sees into the file ENVC_OUT names)
     mkdir_p("${root}/envc/tests")
-    _ = file_write("${root}/envc/avant.toml", "[package]\nname = \"envc\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${root}/envc/tests/test_env.av", "fn main: Int {\n  _ = file_write(env_get(\"ENVC_OUT\") ?? \"envc.out\", env_get(\"AVANT_COMPILER\") ?? \"none\")\n  0\n}\n")
+    _ = fs.write("${root}/envc/avant.toml", "[package]\nname = \"envc\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/envc/tests/test_env.av", "fn main: Int {\n  _ = fs.write(process.env(\"ENVC_OUT\") ?? \"envc.out\", process.env(\"AVANT_COMPILER\") ?? \"none\")\n  0\n}\nimport std.fs\nimport std.process\n")
     ec_rc = "${root}/envc-user.rc"
     ec_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-user.seen AVANT_COMPILER=/the/users/compiler ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-user.log 2>&1; echo $? > ${ut_quote(ec_rc)}\n"
     c.eq_int(ut_sh(ec_sh, ec_rc), 0, "AVANT_COMPILER: the run with the user's value passes")
-    c.eq_str(file_read("${root}/envc-user.seen") ?? "", "/the/users/compiler", "AVANT_COMPILER: the user's exported value reaches the tests")
+    c.eq_str(fs.read("${root}/envc-user.seen") ?? "", "/the/users/compiler", "AVANT_COMPILER: the user's exported value reaches the tests")
     er_rc = "${root}/envc-rel.rc"
     er_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-rel.seen AVANT_COMPILER=./rel/compiler ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-rel.log 2>&1; echo $? > ${ut_quote(er_rc)}\n"
     c.eq_int(ut_sh(er_sh, er_rc), 0, "AVANT_COMPILER: the run with a relative value passes")
-    er_seen = file_read("${root}/envc-rel.seen") ?? ""
+    er_seen = fs.read("${root}/envc-rel.seen") ?? ""
     c.expect(er_seen.size > 0 && er_seen[0] == 47 && ut_has(er_seen, "/envc/./rel/compiler"), "AVANT_COMPILER: a relative value reaches the tests made absolute from the runner's directory (${er_seen})")
     en_rc = "${root}/envc-none.rc"
     en_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-none.seen env -u AVANT_COMPILER ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-none.log 2>&1; echo $? > ${ut_quote(en_rc)}\n"
     c.eq_int(ut_sh(en_sh, en_rc), 0, "AVANT_COMPILER: the run without it passes")
-    c.eq_str(file_read("${root}/envc-none.seen") ?? "", compiler, "AVANT_COMPILER: unset, the tests get the runner's own path")
+    c.eq_str(fs.read("${root}/envc-none.seen") ?? "", compiler, "AVANT_COMPILER: unset, the tests get the runner's own path")
     dp_rc = "${root}/failcheck-pass.rc"
     dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/failcheck-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
     c.eq_int(ut_sh(dp_sh, dp_rc), 0, "failed check: a void main whose checks pass still passes")
@@ -331,11 +333,11 @@ fn test_user_test(c: Checks) {
     // say how it ended; a file whose parallel test was killed after the
     // serial part wrote a passing fragment is a failure in the report.
     mkdir_p("${root}/killed/tests")
-    _ = file_write("${root}/killed/avant.toml", "[package]\nname = \"killed\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/killed/avant.toml", "[package]\nname = \"killed\"\nversion = \"0.1.0\"\n")
     sig_lib = "lib c {\n  fun raise(sig: Int32): Int32\n}\n\n"
-    _ = file_write("${root}/killed/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish()\n}\n")
-    _ = file_write("${root}/killed/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  7\n}\n")
-    _ = file_write("${root}/killed/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish()\n}\n")
+    _ = fs.write("${root}/killed/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish()\n}\n")
+    _ = fs.write("${root}/killed/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  7\n}\n")
+    _ = fs.write("${root}/killed/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new()\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish()\n}\n")
     // The last run is test_sig's again, started with SIGPIPE ignored as a
     // CI runner starts its jobs: the test process still
     // dies by it, since the runtime resets SIGPIPE to the default before
@@ -352,9 +354,9 @@ fn test_user_test(c: Checks) {
       o_log = "${root}/killed-${i}-${nm}.log"
       o_sh = "#!/bin/sh\n${killed_pre[i]}cd ${ut_quote(root)}/killed && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/killed-${i}-${nm}.xml > ${ut_quote(o_log)} 2>&1; echo $? > ${ut_quote(o_rc)}\n"
       c.eq_int(ut_sh(o_sh, o_rc), 1, "killed test: tests/test_${nm}.av fails the run${killed_tag[i]}")
-      o_text = file_read(o_log) ?? ""
+      o_text = fs.read(o_log) ?? ""
       c.expect(ut_has(o_text, "FAIL tests/test_${nm}.av: ${killed_why[i]}\n"), "killed test: the FAIL line of tests/test_${nm}.av says how it ended (${killed_why[i]})${killed_tag[i]}")
-      o_xml = file_read("${root}/killed-${i}-${nm}.xml") ?? ""
+      o_xml = fs.read("${root}/killed-${i}-${nm}.xml") ?? ""
       c.expect(ut_has(nth_line(o_xml, 1), "<testsuites tests=") && ut_has(nth_line(o_xml, 1), "failures=\"1\""), "killed test: the JUnit report counts tests/test_${nm}.av as a failure${killed_tag[i]}")
       c.expect(ut_has(o_xml, "<failure message=\"${killed_xml[i]}\">"), "killed test: the JUnit failure of tests/test_${nm}.av says how it ended${killed_tag[i]}")
       i += 1
@@ -366,18 +368,18 @@ fn test_user_test(c: Checks) {
     // file without std.testing prints it and fails; Python's XML parser
     // must read the report and give the output back whole.
     mkdir_p("${root}/cdata/tests")
-    _ = file_write("${root}/cdata/avant.toml", "[package]\nname = \"cdata\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/cdata/avant.toml", "[package]\nname = \"cdata\"\nversion = \"0.1.0\"\n")
     cdata_line = "before ]]> middle <tag/> & ]]]> ]]>]]> after"
-    _ = file_write("${root}/cdata/tests/test_cdata.av", "fn main: Int {\n  puts(\"${cdata_line}\")\n  1\n}\n")
+    _ = fs.write("${root}/cdata/tests/test_cdata.av", "fn main: Int {\n  puts(\"${cdata_line}\")\n  1\n}\n")
     cdata_rc = "${root}/cdata.rc"
     cdata_sh = "#!/bin/sh\ncd ${ut_quote(root)}/cdata && ${ut_quote(compiler)} test tests/test_cdata.av --junit ${ut_quote(root)}/cdata.xml > ${ut_quote(root)}/cdata.log 2>&1; echo $? > ${ut_quote(cdata_rc)}\n"
     c.eq_int(ut_sh(cdata_sh, cdata_rc), 1, "cdata: a file whose output holds ]]> fails the run")
     cdata_py = "import sys, xml.etree.ElementTree as E\nf = E.parse(sys.argv[1]).find('.//failure')\nsys.stdout.write(f.text if f is not None else '(no failure element)')\n"
-    _ = file_write("${root}/cdata.py", cdata_py)
+    _ = fs.write("${root}/cdata.py", cdata_py)
     cdata_prc = "${root}/cdata-parse.rc"
     cdata_psh = "#!/bin/sh\n/usr/bin/python3 -I ${ut_quote(root)}/cdata.py ${ut_quote(root)}/cdata.xml > ${ut_quote(root)}/cdata-parse.out 2>&1; echo $? > ${ut_quote(cdata_prc)}\n"
     c.eq_int(ut_sh(cdata_psh, cdata_prc), 0, "cdata: an XML parser reads the JUnit report of an output holding ]]>")
-    c.expect(ut_has(file_read("${root}/cdata-parse.out") ?? "", "${cdata_line}\n"), "cdata: the failure's text is the file's output, ]]> included")
+    c.expect(ut_has(fs.read("${root}/cdata-parse.out") ?? "", "${cdata_line}\n"), "cdata: the failure's text is the file's output, ]]> included")
 
     // XML 1.0 refuses a control character, a
     // byte that is not UTF-8, U+FFFE and U+FFFF, in CDATA as in an
@@ -387,20 +389,20 @@ fn test_user_test(c: Checks) {
     // UTF-8 (é) stay as they are. Python's XML parser must read the
     // report, with the escapes visible.
     mkdir_p("${root}/ctlchar/tests")
-    _ = file_write("${root}/ctlchar/avant.toml", "[package]\nname = \"ctlchar\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/ctlchar/avant.toml", "[package]\nname = \"ctlchar\"\nversion = \"0.1.0\"\n")
     ctlchar_ctl = "fn main: Int {\n  b = buf_new()\n  b.push_str(\"before \")\n  b.push_byte(27)\n  b.push_str(\"[31mred\")\n  b.push_byte(27)\n  b.push_str(\"[0m bell\")\n  b.push_byte(7)\n  b.push_str(\" ff\")\n  b.push_byte(255)\n  b.push_str(\" fffe\")\n  b.push_byte(239)\n  b.push_byte(191)\n  b.push_byte(190)\n  b.push_str(\" tab\\tcaf\")\n  b.push_byte(195)\n  b.push_byte(169)\n  b.push_str(\" after\")\n  puts(b.to_s())\n  1\n}\n"
-    _ = file_write("${root}/ctlchar/tests/test_ctl.av", ctlchar_ctl)
+    _ = fs.write("${root}/ctlchar/tests/test_ctl.av", ctlchar_ctl)
     ctlchar_name = "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  b = buf_new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s())\n  t.finish()\n}\n"
-    _ = file_write("${root}/ctlchar/tests/test_name.av", ctlchar_name)
+    _ = fs.write("${root}/ctlchar/tests/test_name.av", ctlchar_name)
     ctlchar_rc = "${root}/ctlchar.rc"
     ctlchar_sh = "#!/bin/sh\ncd ${ut_quote(root)}/ctlchar && ${ut_quote(compiler)} test --junit ${ut_quote(root)}/ctlchar.xml > ${ut_quote(root)}/ctlchar.log 2>&1; echo $? > ${ut_quote(ctlchar_rc)}\n"
     c.eq_int(ut_sh(ctlchar_sh, ctlchar_rc), 1, "control characters: the two failing files fail the run")
     ctlchar_py = "import sys, xml.etree.ElementTree as E\nout = []\nfor tc in E.parse(sys.argv[1]).iter('testcase'):\n    out.append('case ' + tc.get('name'))\n    f = tc.find('failure')\n    if f is not None and f.text:\n        out.append('text ' + f.text)\nsys.stdout.buffer.write(('\\n'.join(out) + '\\n').encode('utf-8'))\n"
-    _ = file_write("${root}/ctlchar.py", ctlchar_py)
+    _ = fs.write("${root}/ctlchar.py", ctlchar_py)
     ctlchar_prc = "${root}/ctlchar-parse.rc"
     ctlchar_psh = "#!/bin/sh\n/usr/bin/python3 -I ${ut_quote(root)}/ctlchar.py ${ut_quote(root)}/ctlchar.xml > ${ut_quote(root)}/ctlchar-parse.out 2>&1; echo $? > ${ut_quote(ctlchar_prc)}\n"
     c.eq_int(ut_sh(ctlchar_psh, ctlchar_prc), 0, "control characters: an XML parser reads the JUnit report of an output and a name holding control characters")
-    ctlchar_got = file_read("${root}/ctlchar-parse.out") ?? ""
+    ctlchar_got = fs.read("${root}/ctlchar-parse.out") ?? ""
     ctlchar_text = buf_new()
     ctlchar_text.push_str("text before \\x1b[31mred\\x1b[0m bell\\x07 ff\\xff fffe\\xef\\xbf\\xbe tab\tcaf")
     ctlchar_text.push_byte(195)
@@ -417,8 +419,8 @@ fn test_user_test(c: Checks) {
     help_rc = "${root}/test-help.rc"
     help_sh = "#!/bin/sh\n${ut_quote(compiler)} test --help > ${ut_quote(root)}/test-help.log 2>&1; echo $? > ${ut_quote(help_rc)}\n"
     c.eq_int(ut_sh(help_sh, help_rc), 0, "help: avant test --help exits 0")
-    c.expect(ut_has(file_read("${root}/test-help.log") ?? "", "\n--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed\n"), "help: avant test --help says what --junit's cases are")
-    c.expect(ut_has(file_read("${root}/test-help.log") ?? "", "\n--name PATTERN   run only the checks, t.test bodies and t.parallel bodies whose names contain PATTERN\n"), "--name: avant test --help names --name")
+    c.expect(ut_has(fs.read("${root}/test-help.log") ?? "", "\n--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed\n"), "help: avant test --help says what --junit's cases are")
+    c.expect(ut_has(fs.read("${root}/test-help.log") ?? "", "\n--name PATTERN   run only the checks, t.test bodies and t.parallel bodies whose names contain PATTERN\n"), "--name: avant test --help names --name")
 
     // Seven writes of the compiler printed
     // `cannot write PATH` and dropped the reason; each now prints it
@@ -432,12 +434,12 @@ fn test_user_test(c: Checks) {
     mkdir_p("${w5}/p/tests")
     mkdir_p("${w5}/isdir")
     mkdir_p("${w5}/f/avant.lock")
-    _ = file_write("${w5}/p/avant.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${w5}/f/avant.toml", "[package]\nname = \"f\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
-    _ = file_write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
-    _ = file_write("${w5}/ok.av", "fn main {\n  puts(1)\n}\n")
-    _ = file_write("${w5}/fmt.av", "fn main {\n    puts(1)\n}\n")
+    _ = fs.write("${w5}/p/avant.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${w5}/f/avant.toml", "[package]\nname = \"f\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
+    _ = fs.write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
+    _ = fs.write("${w5}/ok.av", "fn main {\n  puts(1)\n}\n")
+    _ = fs.write("${w5}/fmt.av", "fn main {\n    puts(1)\n}\n")
     mkdir_p("${w5}/p/coverage/lcov.info")
     qc = ut_quote(compiler)
     qw = ut_quote(w5)
@@ -458,11 +460,11 @@ fn test_user_test(c: Checks) {
       } else {
         c.eq_int(w_code, 1, "failed write: a failed write of ${w5_what[i]} fails the command")
       }
-      w_text = file_read(w_log) ?? ""
+      w_text = fs.read(w_log) ?? ""
       c.expect(ut_has(w_text, w5_want[i]), "failed write: a failed write of ${w5_what[i]} names its reason: ${w5_want[i].strip()}")
       i += 1
     }
-    c.expect(ut_has(file_read("${w5}/w-2.log") ?? "", "re2c: cannot write "), "failed write: re2c's failed input names re2c")
+    c.expect(ut_has(fs.read("${w5}/w-2.log") ?? "", "re2c: cannot write "), "failed write: re2c's failed input names re2c")
 
     // `avant version` (and `--version`) prints
     // the version and the commit from the build's record beside the
@@ -475,30 +477,30 @@ fn test_user_test(c: Checks) {
     c.eq_int(copy_file(compiler, vexe), 0, "version: the compiler copied")
     chmod_x(vexe)
     v_args = ["version"]
-    c.eq_int(process_run_out(vexe, v_args, "${vdir}/none.log") ?? -1, 0, "version: avant version without a record exits 0")
-    v_none = file_read("${vdir}/none.log") ?? ""
+    c.eq_int(run_out(vexe, v_args, "${vdir}/none.log") ?? -1, 0, "version: avant version without a record exits 0")
+    v_none = fs.read("${vdir}/none.log") ?? ""
     c.expect(ut_starts(v_none, "avant (version unknown: no versions.txt beside ") && ut_has(v_none, "/version/avant)\n"), "version: without a record avant version says the version is unknown and where it looked")
-    _ = file_write("${vdir}/versions.txt", "tag: v9.8.7\navant: 0123456789abcdef0123456789abcdef01234567\nllvm: 20.1.2\nglibc-floor: 2.38\n")
-    _ = process_run_out(vexe, v_args, "${vdir}/archive.log")
-    c.eq_str(file_read("${vdir}/archive.log") ?? "", "avant 9.8.7 (commit 0123456789abcdef0123456789abcdef01234567)\n", "version: a release archive's versions.txt gives the tag and the commit")
-    _ = file_write("${vexe}.versions.txt", "version: 9.8.8\navant: fedcba9876543210fedcba9876543210fedcba98\ndirty: yes\nbuilt: tools/letters.sh c-llvm\n")
-    _ = process_run_out(vexe, v_args, "${vdir}/record.log")
-    c.eq_str(file_read("${vdir}/record.log") ?? "", "avant 9.8.8 (commit fedcba9876543210fedcba9876543210fedcba98, with uncommitted changes)\n", "version: the compiler's own record comes first and says when the tree was dirty")
-    _ = process_run_out(vexe, ["--version"], "${vdir}/dash.log")
-    c.eq_str(file_read("${vdir}/dash.log") ?? "", file_read("${vdir}/record.log") ?? "?", "version: avant --version prints what avant version prints")
-    c.eq_int(process_run_out(vexe, ["version", "extra"], "${vdir}/extra.log") ?? -1, 1, "version: avant version takes no arguments")
+    _ = fs.write("${vdir}/versions.txt", "tag: v9.8.7\navant: 0123456789abcdef0123456789abcdef01234567\nllvm: 20.1.2\nglibc-floor: 2.38\n")
+    _ = run_out(vexe, v_args, "${vdir}/archive.log")
+    c.eq_str(fs.read("${vdir}/archive.log") ?? "", "avant 9.8.7 (commit 0123456789abcdef0123456789abcdef01234567)\n", "version: a release archive's versions.txt gives the tag and the commit")
+    _ = fs.write("${vexe}.versions.txt", "version: 9.8.8\navant: fedcba9876543210fedcba9876543210fedcba98\ndirty: yes\nbuilt: tools/letters.sh c-llvm\n")
+    _ = run_out(vexe, v_args, "${vdir}/record.log")
+    c.eq_str(fs.read("${vdir}/record.log") ?? "", "avant 9.8.8 (commit fedcba9876543210fedcba9876543210fedcba98, with uncommitted changes)\n", "version: the compiler's own record comes first and says when the tree was dirty")
+    _ = run_out(vexe, ["--version"], "${vdir}/dash.log")
+    c.eq_str(fs.read("${vdir}/dash.log") ?? "", fs.read("${vdir}/record.log") ?? "?", "version: avant --version prints what avant version prints")
+    c.eq_int(run_out(vexe, ["version", "extra"], "${vdir}/extra.log") ?? -1, 1, "version: avant version takes no arguments")
     rm_f(vexe)
     // The compiler under test, when tools/letters.sh built it, prints
     // avant.toml's version.
-    if file_exists("${compiler}.versions.txt") {
+    if fs.exists("${compiler}.versions.txt") {
       toml_version = ""
-      for line in (file_read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
+      for line in (fs.read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
         if toml_version.size == 0 && ut_starts(line, "version = \"") && line.size > 12 {
           toml_version = str_slice(line, 11, line.size - 1)
         }
       }
-      _ = process_run_out(compiler, v_args, "${vdir}/self.log")
-      c.expect(toml_version.size > 0 && ut_starts(file_read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "version: the compiler under test prints avant.toml's version (${toml_version})")
+      _ = run_out(compiler, v_args, "${vdir}/self.log")
+      c.expect(toml_version.size > 0 && ut_starts(fs.read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "version: the compiler under test prints avant.toml's version (${toml_version})")
     }
 
     // A compiler copied outside a checkout reads the
@@ -514,12 +516,12 @@ fn test_user_test(c: Checks) {
     if lroot == "." {
       lroot = cwd_here()
     }
-    _ = file_write("${ldir}/b64.av", "import std.base64\n\nfn main {\n  puts(\"hi\".bytes.to_base64())\n}\n")
-    _ = file_write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${lroot}/lib\n")
-    c.eq_int(process_run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/own.log") ?? -1, 0, "copied compiler: a copy whose record names the checkout's lib/ reads std.base64 from it")
-    _ = file_write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${ldir}/gone/lib\n")
-    c.eq_int(process_run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/gone.log") ?? -1, 1, "copied compiler: a copy whose recorded library is gone fails")
-    c.expect(ut_has(file_read("${ldir}/gone.log") ?? "", "cannot find std.base64: ${lexe}.versions.txt names the library ${ldir}/gone/lib, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read"), "copied compiler: and says which record named which library")
+    _ = fs.write("${ldir}/b64.av", "import std.base64\n\nfn main {\n  puts(\"hi\".bytes.to_base64())\n}\n")
+    _ = fs.write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${lroot}/lib\n")
+    c.eq_int(run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/own.log") ?? -1, 0, "copied compiler: a copy whose record names the checkout's lib/ reads std.base64 from it")
+    _ = fs.write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${ldir}/gone/lib\n")
+    c.eq_int(run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/gone.log") ?? -1, 1, "copied compiler: a copy whose recorded library is gone fails")
+    c.expect(ut_has(fs.read("${ldir}/gone.log") ?? "", "cannot find std.base64: ${lexe}.versions.txt names the library ${ldir}/gone/lib, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read"), "copied compiler: and says which record named which library")
     rm_f(lexe)
 
     // `avant test FILE --name PATTERN` runs only the
@@ -530,9 +532,9 @@ fn test_user_test(c: Checks) {
     // `t.parallel` of each kind, each run is one selection.
     nm_dir = "${root}/namefilter"
     mkdir_p("${nm_dir}/tests")
-    _ = file_write("${nm_dir}/avant.toml", "[package]\nname = \"namefilter\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${nm_dir}/tests/test_pick.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"alpha check\")\n  t.check_eq(2, 2, \"beta check\")\n  t.test(\"gamma test\") {\n    t.check(true, \"inside gamma\")\n  }\n  t.test(\"delta test\") {\n    t.check(true, \"inside delta\")\n  }\n  t.parallel(\"epsilon par\") {\n    t.check(true, \"inside epsilon\")\n  }\n  t.parallel(\"zeta par\") {\n    t.check(true, \"inside zeta\")\n  }\n  t.finish()\n}\n")
-    _ = file_write("${nm_dir}/tests/test_other.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"other check\")\n  t.finish()\n}\n")
+    _ = fs.write("${nm_dir}/avant.toml", "[package]\nname = \"namefilter\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${nm_dir}/tests/test_pick.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"alpha check\")\n  t.check_eq(2, 2, \"beta check\")\n  t.test(\"gamma test\") {\n    t.check(true, \"inside gamma\")\n  }\n  t.test(\"delta test\") {\n    t.check(true, \"inside delta\")\n  }\n  t.parallel(\"epsilon par\") {\n    t.check(true, \"inside epsilon\")\n  }\n  t.parallel(\"zeta par\") {\n    t.check(true, \"inside zeta\")\n  }\n  t.finish()\n}\n")
+    _ = fs.write("${nm_dir}/tests/test_other.av", "import std.testing\n\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"other check\")\n  t.finish()\n}\n")
     nm_pats = ["alpha", "gamma", "epsilon", "check"]
     nm_want = ["alpha check", "inside gamma", "inside epsilon", "alpha check beta check"]
     nm_what = ["one check", "one t.test body", "one t.parallel body", "every name that contains the pattern"]
@@ -543,8 +545,8 @@ fn test_user_test(c: Checks) {
       nm_xml = "${nm_dir}/run-${k}.xml"
       nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} test tests/test_pick.av --name ${ut_quote(nm_pats[k])} --junit ${ut_quote(nm_xml)} > ${ut_quote(nm_log)} 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
       c.eq_int(ut_sh(nm_sh, nm_rc), 0, "--name: --name ${nm_pats[k]} (${nm_what[k]}) passes")
-      nm_text = file_read(nm_log) ?? ""
-      nm_report = file_read(nm_xml) ?? ""
+      nm_text = fs.read(nm_log) ?? ""
+      nm_report = fs.read(nm_xml) ?? ""
       wants = " ${nm_want[k]} "
       shown = true
       hidden = true
@@ -567,7 +569,7 @@ fn test_user_test(c: Checks) {
     nm_rc = "${nm_dir}/two.rc"
     nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} test --name=gamma > ${ut_quote(nm_dir)}/two.log 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
     c.eq_int(ut_sh(nm_sh, nm_rc), 0, "--name: --name=PATTERN over a walk passes")
-    nm_text = file_read("${nm_dir}/two.log") ?? ""
+    nm_text = fs.read("${nm_dir}/two.log") ?? ""
     c.expect(ut_has(nm_text, "ok tests/test_pick.av\n") && !ut_has(nm_text, "tests/test_other.av") && ut_has(nm_text, "0 failed, 1 passed\n"), "--name: a file where nothing matches is not reported or counted")
     // The errors: a pattern that matches nothing, in one file and in a
     // walk; a missing, an empty and a repeated --name.
@@ -579,11 +581,11 @@ fn test_user_test(c: Checks) {
       nm_log = "${nm_dir}/err-${k}.log"
       nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} ${nm_errs[k]} > ${ut_quote(nm_log)} 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
       c.eq_int(ut_sh(nm_sh, nm_rc), 1, "--name: ${nm_err_what[k]} is an error")
-      c.expect(ut_has(file_read(nm_log) ?? "", nm_err_want[k]), "--name: ${nm_err_what[k]} says ${nm_err_want[k].strip()}")
+      c.expect(ut_has(fs.read(nm_log) ?? "", nm_err_want[k]), "--name: ${nm_err_what[k]} says ${nm_err_want[k].strip()}")
     }
 
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
-    _ = file_write("${root}/fetch/avant.toml", fetch_body)
+    _ = fs.write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"
     fetch_sh = "#!/bin/sh\n${ut_quote(compiler)} fetch ${ut_quote(root)}/fetch > ${ut_quote(root)}/fetch.log 2>&1; echo $? > ${ut_quote(fetch_rc)}\n"
     c.eq_int(ut_sh(fetch_sh, fetch_rc), 0, "fetch accepts [test] and ignores it")
@@ -591,31 +593,31 @@ fn test_user_test(c: Checks) {
     shard_rc = "${root}/shard.rc"
     shard_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test --shard 1/2 > ${ut_quote(root)}/shard.log 2>&1; echo $? > ${ut_quote(shard_rc)}\n"
     c.eq_int(ut_sh(shard_sh, shard_rc), 1, "--shard with an exclusive file is an error")
-    if shard_text = file_read("${root}/shard.log") {
+    if shard_text = fs.read("${root}/shard.log") {
       c.expect(ut_has(shard_text, "exclusive"), "shard error names exclusive")
     } else {
       c.expect(false, "shard error names exclusive")
     }
 
     both_body = "[package]\nname = \"both\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nentry = \"main.av\"\n"
-    _ = file_write("${root}/both.toml", both_body)
+    _ = fs.write("${root}/both.toml", both_body)
     mkdir_p("${root}/both")
-    _ = file_write("${root}/both/avant.toml", both_body)
+    _ = fs.write("${root}/both/avant.toml", both_body)
     both_rc = "${root}/both.rc"
     both_sh = "#!/bin/sh\ncd ${ut_quote(root)}/both && ${ut_quote(compiler)} test > ${ut_quote(root)}/both.log 2>&1; echo $? > ${ut_quote(both_rc)}\n"
     c.eq_int(ut_sh(both_sh, both_rc), 1, "dir and entry together are an error")
 
     clock = "${root}/clock"
     mkdir_p("${clock}/tests")
-    _ = file_write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
-    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish()\n}\n"
+    _ = fs.write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
+    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = process.env(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
     left = ut_fill(piece, clock)
     left = ut_fill_name(left, "left")
-    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish()\n}\n"
-    mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish()\n}\n"
-    _ = file_write("${clock}/tests/test_left.av", left)
-    _ = file_write("${clock}/tests/test_right.av", right_src)
-    _ = file_write("${clock}/tests/test_mid.av", mid_src)
+    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if fs.exists(other) {\n      dummy = fs.write(flag, \"met\")\n      return\n    }\n    dummy = process.run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = fs.write(path, \"\${now_ms()}\")\n}\nfn nap {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process.run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    _ = fs.write("${clock}/tests/test_left.av", left)
+    _ = fs.write("${clock}/tests/test_right.av", right_src)
+    _ = fs.write("${clock}/tests/test_mid.av", mid_src)
     clock_rc = "${root}/clock.rc"
     clock_sh = "#!/bin/sh\ncd ${ut_quote(clock)} && ${ut_quote(compiler)} test --jobs 2 > ${ut_quote(root)}/clock.log 2>&1; echo $? > ${ut_quote(clock_rc)}\n"
     c.eq_int(ut_sh(clock_sh, clock_rc), 0, "overlap fixture exits 0")
@@ -637,7 +639,7 @@ fn test_user_test(c: Checks) {
     // the intervals were compared, so under an outer AVANT_GC_STRESS the
     // stressed compiler's compile time decided the result and the check
     // was skipped there.
-    c.expect(file_exists("${clock}/left.met") && file_exists("${clock}/right.met"), "non-exclusive files overlap")
+    c.expect(fs.exists("${clock}/left.met") && fs.exists("${clock}/right.met"), "non-exclusive files overlap")
     c.expect(pas >= 0 && pae > pas && pbs >= 0 && pbe > pbs, "parallel intervals were recorded")
     c.expect(pas < pbe && pbs < pae, "parallel tests in one file overlap")
     c.expect(ms >= 0 && me > ms, "exclusive interval was recorded")
@@ -658,29 +660,29 @@ fn test_user_test(c: Checks) {
     // and the two ran at once.)
     one = "${root}/onecpu"
     mkdir_p("${one}/tests")
-    _ = file_write("${one}/avant.toml", "[package]\nname = \"onecpu\"\nversion = \"0.1.0\"\n")
-    pair = "import std.testing\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    listing = v == \"1\"\n  }\n  if !listing {\n    dummy = file_write(\"DIR/NAME.start\", \"1\")\n    args: Array(String) = []\n    args.push(\"0.05\")\n    i = 0\n    while i < 20 {\n      if file_exists(\"DIR/OTHER.start\") {\n        dummy2 = file_write(\"DIR/NAME.met\", \"met\")\n        i = 20\n      }\n      dummy3 = process_run(\"/bin/sleep\", args)\n      i = i + 1\n    }\n  }\n  t.finish()\n}\n"
-    _ = file_write("${one}/tests/test_a.av", ut_sub(ut_fill_name(ut_fill(pair, one), "a"), "OTHER", "b"))
-    _ = file_write("${one}/tests/test_b.av", ut_sub(ut_fill_name(ut_fill(pair, one), "b"), "OTHER", "a"))
+    _ = fs.write("${one}/avant.toml", "[package]\nname = \"onecpu\"\nversion = \"0.1.0\"\n")
+    pair = "import std.testing\nfn main: Int {\n  t = Test.new()\n  listing = false\n  if v = process.env(\"AVANT_TEST_LIST\") {\n    listing = v == \"1\"\n  }\n  if !listing {\n    dummy = fs.write(\"DIR/NAME.start\", \"1\")\n    args: Array(String) = []\n    args.push(\"0.05\")\n    i = 0\n    while i < 20 {\n      if fs.exists(\"DIR/OTHER.start\") {\n        dummy2 = fs.write(\"DIR/NAME.met\", \"met\")\n        i = 20\n      }\n      dummy3 = process.run(\"/bin/sleep\", args)\n      i = i + 1\n    }\n  }\n  t.finish()\n}\nimport std.fs\nimport std.process\n"
+    _ = fs.write("${one}/tests/test_a.av", ut_sub(ut_fill_name(ut_fill(pair, one), "a"), "OTHER", "b"))
+    _ = fs.write("${one}/tests/test_b.av", ut_sub(ut_fill_name(ut_fill(pair, one), "b"), "OTHER", "a"))
     one_rc = "${root}/onecpu.rc"
     one_sh = "#!/bin/sh\ncd ${ut_quote(one)} && /usr/bin/taskset -c 0 ${ut_quote(compiler)} test > ${ut_quote(root)}/onecpu.log 2>&1; echo $? > ${ut_quote(one_rc)}\n"
     c.eq_int(ut_sh(one_sh, one_rc), 0, "the pair under taskset -c 0 exits 0")
-    c.expect(file_exists("${one}/a.start") && file_exists("${one}/b.start"), "both files of the pair ran")
-    c.expect(!(file_exists("${one}/a.met") && file_exists("${one}/b.met")), "under taskset -c 0 the default --jobs is 1: the pair ran one after the other")
+    c.expect(fs.exists("${one}/a.start") && fs.exists("${one}/b.start"), "both files of the pair ran")
+    c.expect(!(fs.exists("${one}/a.met") && fs.exists("${one}/b.met")), "under taskset -c 0 the default --jobs is 1: the pair ran one after the other")
 
     // [test] first: with one job, the listed file compiles and runs
     // before the next file compiles (no phase barrier), so its ok line
     // comes before the broken file's FAIL line, though it sorts after it.
     order = "${root}/order"
     mkdir_p("${order}/tests")
-    _ = file_write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
-    _ = file_write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
-    _ = file_write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"z\")\n  t.finish()\n}\n")
+    _ = fs.write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
+    _ = fs.write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
+    _ = fs.write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"z\")\n  t.finish()\n}\n")
     order_rc = "${root}/order.rc"
     order_sh = "#!/bin/sh\ncd ${ut_quote(order)} && ${ut_quote(compiler)} test --jobs 1 > ${ut_quote(root)}/order.log 2>&1; echo $? > ${ut_quote(order_rc)}\n"
     c.eq_int(ut_sh(order_sh, order_rc), 1, "first fixture fails on its broken file")
     order_text = ""
-    if ot = file_read("${root}/order.log") {
+    if ot = fs.read("${root}/order.log") {
       order_text = ot
     }
     zi = ut_index(order_text, "ok tests/test_z.av")
@@ -689,13 +691,13 @@ fn test_user_test(c: Checks) {
 
     nofirst = "${root}/nofirst"
     mkdir_p("${nofirst}/tests")
-    _ = file_write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
-    _ = file_write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
+    _ = fs.write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
+    _ = fs.write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
     nf_rc = "${root}/nofirst.rc"
     nf_sh = "#!/bin/sh\ncd ${ut_quote(nofirst)} && ${ut_quote(compiler)} test > ${ut_quote(root)}/nofirst.log 2>&1; echo $? > ${ut_quote(nf_rc)}\n"
     c.eq_int(ut_sh(nf_sh, nf_rc), 1, "a first path that is not a test is an error")
     nf_text = ""
-    if nt = file_read("${root}/nofirst.log") {
+    if nt = fs.read("${root}/nofirst.log") {
       nf_text = nt
     }
     c.expect(ut_has(nf_text, "first path is not a selected test"), "first error names the path rule")
@@ -707,14 +709,14 @@ fn test_user_test(c: Checks) {
     // working standard output prints its lines and exits 0.
     full_dir = "${root}/devfull"
     mkdir_p(full_dir)
-    _ = file_write("${full_dir}/report.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"one\")\n  t.check(1 + 1 == 2, \"two\")\n  t.finish()\n}\n")
+    _ = fs.write("${full_dir}/report.av", "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"one\")\n  t.check(1 + 1 == 2, \"two\")\n  t.finish()\n}\n")
     fq = ut_quote(full_dir)
     full_rc = "${full_dir}/full.rc"
     full_sh = "#!/bin/sh\n${ut_quote(compiler)} compile ${fq}/report.av ${fq}/report --debug > ${fq}/compile.log 2>&1 || { echo 90 > ${fq}/full.rc; echo 90 > ${fq}/plain.rc; exit 0; }\n${fq}/report > /dev/full 2> ${fq}/full.err; echo $? > ${fq}/full.rc\n${fq}/report > ${fq}/plain.out 2> ${fq}/plain.err; echo $? > ${fq}/plain.rc\n"
     c.eq_int(ut_sh(full_sh, full_rc), 1, "report write: a test binary whose report goes to /dev/full exits 1")
-    c.eq_str(file_read("${full_dir}/full.err") ?? "", "avant runtime: cannot write to standard output: No space left on device\n", "report write: a test binary whose report goes to /dev/full names the stream and the reason")
-    c.eq_str(file_read("${full_dir}/plain.rc") ?? "", "0\n", "report write: the same test binary with a working standard output exits 0")
-    c.expect(ut_has(file_read("${full_dir}/plain.out") ?? "", "PASS two"), "report write: the same test binary with a working standard output prints its report")
+    c.eq_str(fs.read("${full_dir}/full.err") ?? "", "avant runtime: cannot write to standard output: No space left on device\n", "report write: a test binary whose report goes to /dev/full names the stream and the reason")
+    c.eq_str(fs.read("${full_dir}/plain.rc") ?? "", "0\n", "report write: the same test binary with a working standard output exits 0")
+    c.expect(ut_has(fs.read("${full_dir}/plain.out") ?? "", "PASS two"), "report write: the same test binary with a working standard output prints its report")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

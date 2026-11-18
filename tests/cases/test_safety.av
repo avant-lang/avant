@@ -1,18 +1,20 @@
 import harness
 import std.sync
+import std.fs
+import std.process
 
 fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
   rlog = "${scratch()}/safety-waveb-${stamp}-${tag}.rlog"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
-  c.expect(file_exists(bin), "${tag} bin exists")
+  c.expect(fs.exists(bin), "${tag} bin exists")
   rcode = run_av_bin(bin, rlog)
   c.expect(rcode != 0, "${tag} exits non-zero")
-  if err = file_read(rlog) {
+  if err = fs.read(rlog) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -25,11 +27,11 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code != 0, "${tag} is a compile error")
-  c.expect(!file_exists(bin), "${tag} writes no binary")
-  if err = file_read(clog) {
+  c.expect(!fs.exists(bin), "${tag} writes no binary")
+  if err = fs.read(clog) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -49,13 +51,13 @@ fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
     log = "${scratch()}/safety-pool-worker-${stamp}-${kind}.log"
     args: Array(String) = []
     args.push(kind)
-    status = process_run_out(bin, args, log) ?? -1
+    status = run_out(bin, args, log) ?? -1
     c.eq_int(status, 0, ".${kind} reached through a call from a pool worker: status 0")
     want = "before\n2\n"
     if kind == "join" {
       want = "before\n1\n"
     }
-    c.eq_str(file_read(log) ?? "", want, ".${kind} reached through a call from a pool worker: the value")
+    c.eq_str(fs.read(log) ?? "", want, ".${kind} reached through a call from a pool worker: the value")
   }
 }
 
@@ -79,10 +81,10 @@ fn frozen_cases(c: Checks, compiler: String, stamp: Int) {
     log = "${scratch()}/safety-frozen-${stamp}-${kind}.log"
     args: Array(String) = []
     args.push(kind)
-    status = process_run_out(bin, args, log) ?? -1
+    status = run_out(bin, args, log) ?? -1
     c.eq_int(status, 1, "frozen ${kind}: status 1")
     want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array"
-    c.expect((file_read(log) ?? "").contains(want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
+    c.expect((fs.read(log) ?? "").contains(want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
   }
 }
 
@@ -117,9 +119,9 @@ fn frozen_hash_cases(c: Checks, compiler: String, stamp: Int) {
     log = "${scratch()}/safety-frozen-hash-${stamp}-${kind}.log"
     args: Array(String) = []
     args.push(kind)
-    status = process_run_out(bin, args, log) ?? -1
+    status = run_out(bin, args, log) ?? -1
     c.eq_int(status, statuses[i], "frozen hash ${kind}: status")
-    c.expect((file_read(log) ?? "").contains(wants[i]), "frozen hash ${kind}: the output")
+    c.expect((fs.read(log) ?? "").contains(wants[i]), "frozen hash ${kind}: the output")
   }
 }
 
@@ -232,7 +234,7 @@ fn test_safety(c: Checks) {
     c.expect(false, "channel array")
   }
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     pool_worker_cases(c, compiler, stamp)
     frozen_cases(c, compiler, stamp)
@@ -289,11 +291,11 @@ fn test_safety(c: Checks) {
     bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
     bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
     bad_log = "${scratch()}/safety-waveb-${stamp}-unknown.log"
-    _ = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
+    _ = fs.write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
     code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
-    c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
-    if err = file_read(bad_log) {
+    c.expect(!fs.exists(bad_bin), "unknown-fn bin absent")
+    if err = fs.read(bad_log) {
       c.expect(err.contains("unknown function"), "unknown-fn diagnostic")
     } else {
       c.expect(false, "unknown-fn diagnostic")
@@ -303,7 +305,7 @@ fn test_safety(c: Checks) {
     c.expect(code_r != 0, "unknown-fn run exits non-zero")
 
     hi_src = "${scratch()}/safety-waveb-${stamp}-hi.av"
-    _ = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
+    _ = fs.write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
     dbg_bin = "${scratch()}/safety-waveb-${stamp}-hi-dbg.bin"
     dbg_log = "${scratch()}/safety-waveb-${stamp}-hi-dbg.log"
     dbg_flags: Array(String) = []
@@ -313,7 +315,7 @@ fn test_safety(c: Checks) {
     out_d = "${scratch()}/safety-waveb-${stamp}-hi-dbg.out"
     code_dr = run_av_bin(dbg_bin, out_d)
     c.expect(code_dr == 0, "--debug binary runs")
-    if text = file_read(out_d) {
+    if text = fs.read(out_d) {
       c.expect(text.contains("hi"), "--debug binary output")
     } else {
       c.expect(false, "--debug binary output")

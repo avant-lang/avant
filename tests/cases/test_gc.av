@@ -1,16 +1,18 @@
 import harness
+import std.fs
+import std.process
 
 fn test_gc(c: Checks) {
   c.suite("tests/cases/test_gc.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/gc-${stamp}-gc.av"
     dump = "${scratch()}/gc-${stamp}-gc.mir"
     body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
-    c.wrote(file_write(src, body), "write gc fixture")
+    c.wrote(fs.write(src, body), "write gc fixture")
     code = dump_av(compiler, src, dump)
     c.eq_int(code, 0, "dump gc fixture")
-    if ir = file_read(dump) {
+    if ir = fs.read(dump) {
       // The MIR (the old back end's IR until it retired).
       // An optional reference is one pointer, nil the null pointer: no
       // union layout, the field one traced word.
@@ -30,11 +32,11 @@ fn test_gc(c: Checks) {
     golden = "${avant_test_root()}/tests/goldens/examples/hello.mir"
     hello = "${avant_test_root()}/examples/hello.av"
     hello_dump = "${scratch()}/gc-${stamp}-hello-golden.mir"
-    if file_exists(golden) {
+    if fs.exists(golden) {
       gcode = dump_av(compiler, hello, hello_dump)
       c.eq_int(gcode, 0, "dump hello golden")
-      if got = file_read(hello_dump) {
-        if want = file_read(golden) {
+      if got = fs.read(hello_dump) {
+        if want = fs.read(golden) {
           c.eq_str(got, want, "hello dump matches golden")
         } else {
           c.expect(false, "read hello golden")

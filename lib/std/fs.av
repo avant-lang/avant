@@ -1,0 +1,165 @@
+// std.fs: files and directories.
+//
+// Every path is a String. A call that can fail returns its value or an
+// IoError (the prelude's error type, which read_line shares) naming the
+// operation, the path and the OS error: `fs.read(p)?` passes it up.
+// Writing replaces a file, appending adds to its end; `fs.open(p)`
+// gives a Reader that reads the file line by line without holding it
+// whole.
+
+lib fs_sys {
+  fun avant_sys_read(path: String): String?
+  fun avant_sys_write(path: String, body: String): Int
+  fun avant_sys_append(path: String, body: String): Int
+  fun avant_sys_list(path: String): Array(String)?
+  fun avant_sys_errno: Int
+  fun avant_sys_read_line(handle: Int): String?
+  fun avant_sys_open(path: String): Int
+  fun avant_sys_close(handle: Int)
+  fun avant_sys_is_dir(path: String): Int
+  fun avant_sys_make_dir(path: String): Int
+  fun avant_sys_delete(path: String): Int
+  fun avant_sys_rename(from: String, to: String): Int
+  fun avant_sys_size(path: String): Int
+  fun avant_sys_walk(path: String): Array(String)?
+  fun avant_sys_more_errno: Int
+}
+
+// The whole file.
+pub fn read(path: String): String | IoError {
+  if text = fs_sys.avant_sys_read(path) {
+    return text
+  }
+  IoError.new("read", path, fs_sys.avant_sys_errno())
+}
+
+// Creates or replaces the file; the bytes written.
+pub fn write(path: String, body: String): Int | IoError {
+  n = fs_sys.avant_sys_write(path, body)
+  if n < 0 {
+    return IoError.new("write", path, fs_sys.avant_sys_errno())
+  }
+  n
+}
+
+// Adds body to the end of the file, creating it when it is not there;
+// the bytes written.
+pub fn append(path: String, body: String): Int | IoError {
+  n = fs_sys.avant_sys_append(path, body)
+  if n < 0 {
+    return IoError.new("write", path, fs_sys.avant_sys_more_errno())
+  }
+  n
+}
+
+// A file read line by line. It closes itself at the end of the file or
+// on an error; close stops it early.
+pub class Reader {
+  pub path: String
+  handle: Int
+
+  fn initialize(path: String, handle: Int) {
+    self.path = path
+    self.handle = handle
+  }
+
+  // The next line without its newline (nor a \r before it); nil after
+  // the last one.
+  pub fn read_line: String | IoError | Nil {
+    if handle == 0 {
+      return nil
+    }
+    if line = fs_sys.avant_sys_read_line(handle) {
+      return line
+    }
+    e = fs_sys.avant_sys_more_errno()
+    close()
+    if e != 0 {
+      return IoError.new("read", path, e)
+    }
+    nil
+  }
+
+  pub fn close {
+    if handle != 0 {
+      fs_sys.avant_sys_close(handle)
+      self.handle = 0
+    }
+  }
+
+  // Runs body with this reader and closes the file after it, however far
+  // body read: a reader given to a lambda never keeps its descriptor.
+  pub fn scoped(body: fn(Reader)) {
+    body(self)
+    close()
+  }
+}
+
+// The file, to read line by line.
+pub fn open(path: String): Reader | IoError {
+  h = fs_sys.avant_sys_open(path)
+  if h == 0 {
+    return IoError.new("open", path, fs_sys.avant_sys_more_errno())
+  }
+  Reader.new(path, h)
+}
+
+// Whether a file or a directory is there.
+pub fn exists(path: String): Bool {
+  file_exists(path)
+}
+
+// Whether path names a directory.
+pub fn is_dir(path: String): Bool {
+  fs_sys.avant_sys_is_dir(path) == 1
+}
+
+// The size in bytes.
+pub fn size(path: String): Int | IoError {
+  n = fs_sys.avant_sys_size(path)
+  if n < 0 {
+    return IoError.new("stat", path, fs_sys.avant_sys_more_errno())
+  }
+  n
+}
+
+// Removes a file (not a directory): nothing on success, else what failed.
+pub fn delete(path: String): Void | IoError {
+  if fs_sys.avant_sys_delete(path) != 0 {
+    return IoError.new("delete", path, fs_sys.avant_sys_more_errno())
+  }
+}
+
+// Renames from to to, replacing a file at to: nothing on success, else
+// what failed.
+pub fn rename(from: String, to: String): Void | IoError {
+  if fs_sys.avant_sys_rename(from, to) != 0 {
+    return IoError.new("rename", from, fs_sys.avant_sys_more_errno())
+  }
+}
+
+// The names in the directory, sorted, without . and ..
+pub fn list(path: String): Array(String) | IoError {
+  if names = fs_sys.avant_sys_list(path) {
+    return names
+  }
+  IoError.new("list", path, fs_sys.avant_sys_errno())
+}
+
+// Every name below the directory, as a path relative to it: a directory
+// before what it holds, each directory's names sorted; links are not
+// followed.
+pub fn walk(path: String): Array(String) | IoError {
+  if names = fs_sys.avant_sys_walk(path) {
+    return names
+  }
+  IoError.new("list", path, fs_sys.avant_sys_more_errno())
+}
+
+// Makes the directory and its missing parents; one that exists is fine.
+// Nothing on success, else what failed.
+pub fn make_dir(path: String): Void | IoError {
+  if fs_sys.avant_sys_make_dir(path) != 0 {
+    return IoError.new("make", path, fs_sys.avant_sys_more_errno())
+  }
+}

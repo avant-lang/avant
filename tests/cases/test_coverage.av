@@ -1,19 +1,21 @@
 import harness
+import std.fs
+import std.process
 
 fn test_coverage(c: Checks) {
   c.suite("tests/cases/test_coverage.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/coverage-${stamp}-cov.av"
     bin = "${scratch()}/coverage-${stamp}-cov.bin"
     log = "${scratch()}/coverage-${stamp}-cov.log"
     dump_log = "${scratch()}/coverage-${stamp}-cov.mir"
     body = "fn covered(n: Int): Int {\n  r = 0\n  if n > 0 {\n    r = 1\n  } else {\n    r = 2\n  }\n  r\n}\nfn unused(n: Int): Int {\n  n + 1\n}\nfn main {\n  x = covered(1)\n}\n"
-    c.wrote(file_write(src, body), "write coverage fixture")
+    c.wrote(fs.write(src, body), "write coverage fixture")
 
     dump_code = dump_av_cov(compiler, src, dump_log)
     c.eq_int(dump_code, 0, "dump with AVANT_COVERAGE")
-    if ir = file_read(dump_log) {
+    if ir = fs.read(dump_log) {
       c.expect(ir.contains("avant_cov_hit"), "dump IR has avant_cov_hit")
       c.expect(ir.contains("avant_cov_init"), "dump IR has avant_cov_init")
     } else {
@@ -22,9 +24,9 @@ fn test_coverage(c: Checks) {
 
     code = compile_av_cov(compiler, src, bin, log)
     c.eq_int(code, 0, "compile with AVANT_COVERAGE")
-    c.expect(file_exists(bin), "coverage bin exists")
-    c.expect(file_exists("${bin}.covmap"), "slot map defaults beside the binary")
-    if ir_map = file_read(dump_log) {
+    c.expect(fs.exists(bin), "coverage bin exists")
+    c.expect(fs.exists("${bin}.covmap"), "slot map defaults beside the binary")
+    if ir_map = fs.read(dump_log) {
       c.expect(ir_map.contains("/coverage.map"), "dump keeps its slot map in the scratch directory")
     }
     // Into a missing directory: the slot map is written while the
@@ -41,10 +43,10 @@ fn test_coverage(c: Checks) {
       nd_args.push("compile")
       nd_args.push(src)
       nd_args.push("${nd}/a/b/cov.bin")
-      nd_code = process_run_out("/usr/bin/env", nd_args, "${nd}.log") ?? -1
+      nd_code = run_out("/usr/bin/env", nd_args, "${nd}.log") ?? -1
       c.eq_int(nd_code, 0, "${bk}: compile with AVANT_COVERAGE into a missing directory")
-      c.expect(file_exists("${nd}/a/b/cov.bin"), "${bk}: the binary is in the created directory")
-      if nm = file_read("${nd}/a/b/cov.bin.covmap") {
+      c.expect(fs.exists("${nd}/a/b/cov.bin"), "${bk}: the binary is in the created directory")
+      if nm = fs.read("${nd}/a/b/cov.bin.covmap") {
         c.expect(nm.contains("covered"), "${bk}: the slot map is written beside it")
       } else {
         c.expect(false, "${bk}: the slot map is written beside it")
@@ -57,9 +59,9 @@ fn test_coverage(c: Checks) {
       ex_args.push("compile")
       ex_args.push(src)
       ex_args.push("${nd}/x/cov.bin")
-      ex_code = process_run_out("/usr/bin/env", ex_args, "${nd}-explicit.log") ?? -1
+      ex_code = run_out("/usr/bin/env", ex_args, "${nd}-explicit.log") ?? -1
       c.eq_int(ex_code, 0, "${bk}: compile with AVANT_COVERAGE_MAP in a missing directory")
-      c.expect(file_exists("${nd}/m/n/explicit.map"), "${bk}: AVANT_COVERAGE_MAP is written in the created directory")
+      c.expect(fs.exists("${nd}/m/n/explicit.map"), "${bk}: AVANT_COVERAGE_MAP is written in the created directory")
       // The slot map cannot be written (its path is a directory,
       // which nobody can write as a file): the build fails and
       // says which file and why (the failure was dropped and a
@@ -73,10 +75,10 @@ fn test_coverage(c: Checks) {
       lm_args.push("compile")
       lm_args.push(src)
       lm_args.push("${nd}/lost/cov.bin")
-      lm_code = process_run_out("/usr/bin/env", lm_args, "${nd}-lost.log") ?? -1
+      lm_code = run_out("/usr/bin/env", lm_args, "${nd}-lost.log") ?? -1
       c.eq_int(lm_code, 1, "${bk}: a coverage build whose slot map cannot be written fails")
-      c.expect(!file_exists("${nd}/lost/cov.bin"), "${bk}: and builds no binary")
-      c.eq_str(file_read("${nd}-lost.log") ?? "", "error: the coverage map was not written: cannot write ${nd}/isdir: Is a directory\n", "${bk}: and names the file and the reason")
+      c.expect(!fs.exists("${nd}/lost/cov.bin"), "${bk}: and builds no binary")
+      c.eq_str(fs.read("${nd}-lost.log") ?? "", "error: the coverage map was not written: cannot write ${nd}/isdir: Is a directory\n", "${bk}: and names the file and the reason")
     }
     chmod_x(bin)
     // The fixture writes its own lcov. The compiler's report is a different file.
@@ -86,9 +88,9 @@ fn test_coverage(c: Checks) {
     cov_run.push("AVANT_COVERAGE_LCOV=${fix_lcov}")
     cov_run.push("AVANT_COVERAGE_REPORT=1")
     cov_run.push(bin)
-    run_code = process_run_out("/usr/bin/env", cov_run, log) ?? -1
+    run_code = run_out("/usr/bin/env", cov_run, log) ?? -1
     c.eq_int(run_code, 0, "run coverage fixture")
-    if out = file_read(log) {
+    if out = fs.read(log) {
       c.expect(out.contains("% Stmts"), "coverage has % Stmts")
       c.expect(out.contains("% Branch"), "coverage has % Branch")
       c.expect(out.contains("% Funcs"), "coverage has % Funcs")
@@ -98,7 +100,7 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "coverage table")
     }
-    if lcov = file_read(fix_lcov) {
+    if lcov = fs.read(fix_lcov) {
       c.expect(lcov.contains("TN:"), "lcov has TN:")
       c.expect(lcov.contains("SF:"), "lcov has SF:")
       c.expect(lcov.contains("DA:"), "lcov has DA:")
@@ -114,7 +116,7 @@ fn test_coverage(c: Checks) {
     rel_dir = "covrel-coverage-${stamp}"
     rel_src = "${rel_dir}/sample.av"
     mkdir_p("${rel_cwd}/${rel_dir}")
-    c.wrote(file_write("${rel_cwd}/${rel_src}", body), "write relative coverage fixture")
+    c.wrote(fs.write("${rel_cwd}/${rel_src}", body), "write relative coverage fixture")
     rel_bin = "${scratch()}/coverage-${stamp}-covrel.bin"
     rel_log = "${scratch()}/coverage-${stamp}-covrel.log"
     rel_args: Array(String) = []
@@ -125,7 +127,7 @@ fn test_coverage(c: Checks) {
     rel_args.push("compile")
     rel_args.push(rel_src)
     rel_args.push(rel_bin)
-    rel_code = process_run_out("/usr/bin/env", rel_args, rel_log) ?? -1
+    rel_code = run_out("/usr/bin/env", rel_args, rel_log) ?? -1
     c.eq_int(rel_code, 0, "compile relative coverage fixture")
     chmod_x(rel_bin)
     rel_lcov_path = "${scratch()}/coverage-${stamp}-rel.lcov"
@@ -133,9 +135,9 @@ fn test_coverage(c: Checks) {
     rel_run.push("AVANT_COVERAGE_LCOV=${rel_lcov_path}")
     rel_run.push("AVANT_COVERAGE_REPORT=0")
     rel_run.push(rel_bin)
-    rel_run_code = process_run_out("/usr/bin/env", rel_run, rel_log) ?? -1
+    rel_run_code = run_out("/usr/bin/env", rel_run, rel_log) ?? -1
     c.eq_int(rel_run_code, 0, "run relative coverage fixture")
-    if rel_out = file_read(rel_log) {
+    if rel_out = fs.read(rel_log) {
       if rel_out.contains("% Stmts") {
         c.expect(false, "REPORT=0 hides the table")
       } else {
@@ -144,7 +146,7 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "REPORT=0 log")
     }
-    if rel_lcov = file_read(rel_lcov_path) {
+    if rel_lcov = fs.read(rel_lcov_path) {
       c.expect(rel_lcov.contains("SF:${rel_src}\n"), "relative SF keeps the directory")
     } else {
       c.expect(false, "relative lcov")
@@ -154,7 +156,7 @@ fn test_coverage(c: Checks) {
     mkdir_p(jdir)
     jcase = "${jdir}/test_ok.av"
     jbody = "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"ok\")\n  t.finish()\n}\n"
-    c.wrote(file_write(jcase, jbody), "write junit mini case")
+    c.wrote(fs.write(jcase, jbody), "write junit mini case")
     junit = "${scratch()}/coverage-${stamp}-junit.xml"
     jlog = "${scratch()}/coverage-${stamp}-junit.log"
     env_args: Array(String) = []
@@ -166,9 +168,9 @@ fn test_coverage(c: Checks) {
     env_args.push("--junit")
     env_args.push(junit)
     env_args.push(jdir)
-    jcode = process_run_out("/usr/bin/env", env_args, jlog) ?? -1
+    jcode = run_out("/usr/bin/env", env_args, jlog) ?? -1
     c.eq_int(jcode, 0, "mini suite for junit")
-    if jout = file_read(jlog) {
+    if jout = fs.read(jlog) {
       c.expect(jout.contains("PASS ok"), "mini suite prints PASS")
       // The runner names a file relative to its working directory when the
       // file is inside it (TMPDIR inside the checkout).
@@ -181,7 +183,7 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "mini suite log")
     }
-    if xml = file_read(junit) {
+    if xml = fs.read(junit) {
       c.expect(xml.contains("<testsuites"), "junit has testsuites")
       c.expect(xml.contains("<testcase"), "junit has testcase")
       c.expect(xml.contains("name=\"ok\""), "junit names the check")
@@ -192,16 +194,16 @@ fn test_coverage(c: Checks) {
 
     abs_compiler = compiler_abs("coverage", compiler)
     flag_src = "${scratch()}/coverage-${stamp}-flag.av"
-    c.wrote(file_write(flag_src, "fn main {\n  puts(1)\n}\n"), "write flag fixture")
+    c.wrote(fs.write(flag_src, "fn main {\n  puts(1)\n}\n"), "write flag fixture")
     flag_log = "${scratch()}/coverage-${stamp}-flag.log"
     flag_args: Array(String) = []
     flag_args.push("compile")
     flag_args.push(flag_src)
     flag_args.push("${scratch()}/coverage-${stamp}-flag.bin")
     flag_args.push("--coverage")
-    flag_code = process_run_out(abs_compiler, flag_args, flag_log) ?? -1
+    flag_code = run_out(abs_compiler, flag_args, flag_log) ?? -1
     c.expect(flag_code != 0, "compile rejects --coverage")
-    if flag_txt = file_read(flag_log) {
+    if flag_txt = fs.read(flag_log) {
       c.expect(flag_txt.contains("unknown"), "compile names the unknown flag")
     } else {
       c.expect(false, "compile flag log")
@@ -211,14 +213,14 @@ fn test_coverage(c: Checks) {
     dump_flag_args.push(flag_src)
     dump_flag_args.push("--coverage")
     dump_flag_log = "${scratch()}/coverage-${stamp}-dump-flag.log"
-    dump_flag_code = process_run_out(abs_compiler, dump_flag_args, dump_flag_log) ?? -1
+    dump_flag_code = run_out(abs_compiler, dump_flag_args, dump_flag_log) ?? -1
     c.expect(dump_flag_code != 0, "dump rejects --coverage")
 
     repo = compiler_abs("covrepo", ".")
     miss_root = "${scratch()}/coverage-${stamp}-noroot"
     mkdir_p(miss_root)
     miss_src = "${scratch()}/coverage-${stamp}-stdimp.av"
-    c.wrote(file_write(miss_src, "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"x\")\n  t.finish()\n}\n"), "write std import")
+    c.wrote(fs.write(miss_src, "import std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(true, \"x\")\n  t.finish()\n}\n"), "write std import")
     miss_log = "${scratch()}/coverage-${stamp}-stdmiss.log"
     miss_env: Array(String) = []
     miss_env.push("AVANT_ROOT=${miss_root}")
@@ -227,9 +229,9 @@ fn test_coverage(c: Checks) {
     miss_env.push(miss_src)
     miss_env.push("${scratch()}/coverage-${stamp}-stdmiss.bin")
     miss_env.push("--debug")
-    miss_code = process_run_out("/usr/bin/env", miss_env, miss_log) ?? -1
+    miss_code = run_out("/usr/bin/env", miss_env, miss_log) ?? -1
     c.expect(miss_code != 0, "AVANT_ROOT without lib/std fails")
-    if miss_txt = file_read(miss_log) {
+    if miss_txt = fs.read(miss_log) {
       c.expect(miss_txt.contains("cannot find std.testing"), "missing std names the module")
     } else {
       c.expect(false, "missing std log")
@@ -240,13 +242,13 @@ fn test_coverage(c: Checks) {
     walk_sh = "${scratch()}/coverage-${stamp}-stdwalk.sh"
     walk_body = "#!/bin/sh\ncd /tmp\nunset AVANT_ROOT\n"
     walk_body = "${walk_body}${abs_compiler} compile ${miss_src} ${scratch()}/coverage-${stamp}-stdwalk.bin --debug > ${walk_log} 2>&1\necho $? > ${walk_rc}\n"
-    c.wrote(file_write(walk_sh, walk_body), "write std walk script")
+    c.wrote(fs.write(walk_sh, walk_body), "write std walk script")
     chmod_x(walk_sh)
     walk_run: Array(String) = []
     walk_run.push(walk_sh)
-    _ = process_run("/bin/sh", walk_run)
+    _ = process.run("/bin/sh", walk_run)
     walk_code = 1
-    if walk_text = file_read(walk_rc) {
+    if walk_text = fs.read(walk_rc) {
       walk_code = 0
       wt = walk_text.strip()
       for wc in wt.bytes {
@@ -262,23 +264,23 @@ fn test_coverage(c: Checks) {
     proj = "${scratch()}/coverage-${stamp}-proj"
     mkdir_p("${proj}/src")
     mkdir_p("${proj}/tests")
-    c.wrote(file_write("${proj}/avant.toml", "[package]\nname = \"covproj\"\nversion = \"0.0.1\"\n\n[coverage]\ninclude = [\"src\"]\nexclude = [\"tests\"]\n"), "write coverage manifest")
-    c.wrote(file_write("${proj}/src/greet.av", "pub fn greet: Int {\n  1\n}\npub fn other: Int {\n  2\n}\n"), "write greet")
-    c.wrote(file_write("${proj}/src/unused.av", "// not loaded\nfn unused: Int {\n  3\n}\n"), "write unused")
-    c.wrote(file_write("${proj}/tests/test_a.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(greet() == 1, \"greet\")\n  t.finish()\n}\n"), "write test_a")
-    c.wrote(file_write("${proj}/tests/test_b.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(other() == 2, \"other\")\n  t.finish()\n}\n"), "write test_b")
+    c.wrote(fs.write("${proj}/avant.toml", "[package]\nname = \"covproj\"\nversion = \"0.0.1\"\n\n[coverage]\ninclude = [\"src\"]\nexclude = [\"tests\"]\n"), "write coverage manifest")
+    c.wrote(fs.write("${proj}/src/greet.av", "pub fn greet: Int {\n  1\n}\npub fn other: Int {\n  2\n}\n"), "write greet")
+    c.wrote(fs.write("${proj}/src/unused.av", "// not loaded\nfn unused: Int {\n  3\n}\n"), "write unused")
+    c.wrote(fs.write("${proj}/tests/test_a.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(greet() == 1, \"greet\")\n  t.finish()\n}\n"), "write test_a")
+    c.wrote(fs.write("${proj}/tests/test_b.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new()\n  t.check(other() == 2, \"other\")\n  t.finish()\n}\n"), "write test_b")
     proj_log = "${scratch()}/coverage-${stamp}-proj.log"
     proj_rc = "${scratch()}/coverage-${stamp}-proj.rc"
     proj_sh = "${scratch()}/coverage-${stamp}-proj.sh"
     proj_body = "#!/bin/sh\ncd ${proj}\nexport AVANT_ROOT='${repo}'\n"
     proj_body = "${proj_body}${abs_compiler} test --coverage --jobs 2 > ${proj_log} 2>&1\necho $? > ${proj_rc}\n"
-    c.wrote(file_write(proj_sh, proj_body), "write coverage project script")
+    c.wrote(fs.write(proj_sh, proj_body), "write coverage project script")
     chmod_x(proj_sh)
     proj_run: Array(String) = []
     proj_run.push(proj_sh)
-    _ = process_run("/bin/sh", proj_run)
+    _ = process.run("/bin/sh", proj_run)
     proj_code = 1
-    if proj_text = file_read(proj_rc) {
+    if proj_text = fs.read(proj_rc) {
       proj_code = 0
       pt = proj_text.strip()
       for pc in pt.bytes {
@@ -290,7 +292,7 @@ fn test_coverage(c: Checks) {
       }
     }
     c.eq_int(proj_code, 0, "avant test --coverage")
-    if proj_out = file_read(proj_log) {
+    if proj_out = fs.read(proj_log) {
       c.expect(proj_out.contains("0 failed, 2 passed"), "coverage run passes")
       c.expect(proj_out.contains("% Stmts"), "coverage table has % Stmts")
       c.expect(proj_out.contains("All files"), "coverage table has All files")
@@ -299,8 +301,8 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "coverage project log")
     }
-    c.expect(!file_exists("${proj}/lcov.info"), "no lcov.info beside the manifest")
-    if proj_lcov = file_read("${proj}/coverage/lcov.info") {
+    c.expect(!fs.exists("${proj}/lcov.info"), "no lcov.info beside the manifest")
+    if proj_lcov = fs.read("${proj}/coverage/lcov.info") {
       c.expect(proj_lcov.contains("SF:src/greet.av\n"), "lcov has greet")
       c.expect(proj_lcov.contains("SF:src/unused.av\n"), "lcov has unused")
       c.expect(proj_lcov.contains("DA:"), "lcov has line records")

@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn test_compiler(c: Checks) {
   c.suite("tests/cases/test_compiler.av")
@@ -6,77 +8,77 @@ fn test_compiler(c: Checks) {
   echo_out = "${scratch()}/compiler-${stamp}-echo.txt"
   echo_args: Array(String) = []
   echo_args.push("ok")
-  echo_code = process_run_out("/bin/echo", echo_args, echo_out) ?? -1
-  c.eq_int(echo_code, 0, "process_run_out echo")
-  if echoed = file_read(echo_out) {
-    c.eq_str(echoed, "ok\n", "process_run_out capture")
+  echo_code = run_out("/bin/echo", echo_args, echo_out) ?? -1
+  c.eq_int(echo_code, 0, "run_out echo")
+  if echoed = fs.read(echo_out) {
+    c.eq_str(echoed, "ok\n", "run_out capture")
   } else {
-    c.expect(false, "process_run_out capture")
+    c.expect(false, "run_out capture")
   }
 
   // file_read reads to end of file whatever size the file reports: /proc
   // reports 0, and some kernels' sysfs reports 4096 (the runner's
   // processor count reads /sys/devices/system/cpu/online).
   proc_text = ""
-  if pt = file_read("/proc/self/status") {
+  if pt = fs.read("/proc/self/status") {
     proc_text = pt
   }
-  c.expect(proc_text.contains("Name:"), "file_read reads a /proc file that reports size 0")
+  c.expect(proc_text.contains("Name:"), "fs.read reads a /proc file that reports size 0")
   online = ""
-  if ot = file_read("/sys/devices/system/cpu/online") {
+  if ot = fs.read("/sys/devices/system/cpu/online") {
     online = ot.strip()
   }
-  c.expect(online.size > 0, "file_read reads the sysfs processor list")
+  c.expect(online.size > 0, "fs.read reads the sysfs processor list")
 
   // The file helpers that replaced /bin/mkdir, chmod, rm, and sh -c pwd
   // (in the runtime: no tool is started).
-  fs = scratch_dir()
-  mkdir_p("${fs}/a/b/c")
-  c.expect(file_exists("${fs}/a/b/c"), "mkdir_p makes nested directories")
-  script = "${fs}/a/run.sh"
-  _ = file_write(script, "#!/bin/sh\nexit 3\n")
+  sd = scratch_dir()
+  mkdir_p("${sd}/a/b/c")
+  c.expect(fs.exists("${sd}/a/b/c"), "mkdir_p makes nested directories")
+  script = "${sd}/a/run.sh"
+  _ = fs.write(script, "#!/bin/sh\nexit 3\n")
   chmod_x(script)
-  c.eq_int((process_run(script, empty_strs()) ?? -1), 3, "chmod_x makes a file executable")
+  c.eq_int((process.run(script, empty_strs()) ?? -1), 3, "chmod_x makes a file executable")
   rm_f(script)
   rm_f(script)
-  c.expect(!file_exists(script), "rm_f removes a file and ignores a missing one")
-  keep = "${fs}/keep.txt"
-  _ = file_write(keep, "kept")
+  c.expect(!fs.exists(script), "rm_f removes a file and ignores a missing one")
+  keep = "${sd}/keep.txt"
+  _ = fs.write(keep, "kept")
   ln_args: Array(String) = []
   ln_args.push("-s")
   ln_args.push(keep)
-  ln_args.push("${fs}/a/b/link")
-  _ = process_run("/bin/ln", ln_args)
-  rm_rf("${fs}/a")
-  c.expect(!file_exists("${fs}/a"), "rm_rf removes a tree")
-  c.expect(file_exists(keep), "rm_rf does not follow a symbolic link")
-  pwd_out = "${fs}/pwd.txt"
+  ln_args.push("${sd}/a/b/link")
+  _ = process.run("/bin/ln", ln_args)
+  rm_rf("${sd}/a")
+  c.expect(!fs.exists("${sd}/a"), "rm_rf removes a tree")
+  c.expect(fs.exists(keep), "rm_rf does not follow a symbolic link")
+  pwd_out = "${sd}/pwd.txt"
   pwd_args: Array(String) = []
   pwd_args.push("-P")
-  _ = process_run_out("/bin/pwd", pwd_args, pwd_out)
+  _ = run_out("/bin/pwd", pwd_args, pwd_out)
   pwd_text = ""
-  if pt = file_read(pwd_out) {
+  if pt = fs.read(pwd_out) {
     pwd_text = pt.strip()
   }
   c.eq_str(cwd_here(), pwd_text, "cwd_here is the physical working directory")
 
-  if compiler = env_get("AVANT_COMPILER") {
-    c.expect(file_exists(compiler), "AVANT_COMPILER exists")
+  if compiler = process.env("AVANT_COMPILER") {
+    c.expect(fs.exists(compiler), "AVANT_COMPILER exists")
 
     hello_src = "${scratch()}/compiler-${stamp}-hello.av"
     hello_bin = "${scratch()}/compiler-${stamp}-hello.bin"
     hello_out = "${scratch()}/compiler-${stamp}-hello.txt"
     hello_log = "${scratch()}/compiler-${stamp}-hello.log"
     hello_dump = "${scratch()}/compiler-${stamp}-hello.mir"
-    hello_body = "fn main {\n  w = file_write(\"${hello_out}\", \"Hello Avant\")\n}\n"
-    c.wrote(file_write(hello_src, hello_body), "write hello fixture")
+    hello_body = "fn main {\n  w = fs.write(\"${hello_out}\", \"Hello Avant\")\n}\nimport std.fs\n"
+    c.wrote(fs.write(hello_src, hello_body), "write hello fixture")
     hello_code = compile_av(compiler, hello_src, hello_bin, hello_log)
     c.eq_int(hello_code, 0, "compile hello fixture")
-    c.expect(file_exists(hello_bin), "hello bin exists")
+    c.expect(fs.exists(hello_bin), "hello bin exists")
     chmod_x(hello_bin)
     run_code = run_av_bin(hello_bin, hello_log)
     c.eq_int(run_code, 0, "run hello fixture")
-    if got = file_read(hello_out) {
+    if got = fs.read(hello_out) {
       c.eq_str(got, "Hello Avant", "hello fixture wrote")
     } else {
       c.expect(false, "hello fixture wrote")
@@ -84,7 +86,7 @@ fn test_compiler(c: Checks) {
 
     dump_code = dump_av(compiler, hello_src, hello_dump)
     c.eq_int(dump_code, 0, "dump hello fixture")
-    if ir = file_read(hello_dump) {
+    if ir = fs.read(hello_dump) {
       c.expect(ir.contains("\nfn main("), "dump has fn main")
       c.expect(ir.contains(" = \"Hello Avant\"\n"), "dump has string")
     } else {
@@ -95,15 +97,15 @@ fn test_compiler(c: Checks) {
     fact_bin = "${scratch()}/compiler-${stamp}-fact.bin"
     fact_out = "${scratch()}/compiler-${stamp}-fact.txt"
     fact_log = "${scratch()}/compiler-${stamp}-fact.log"
-    fact_body = "fn fact(n: Int): Int {\n  if n <= 1 { return 1 }\n  n * fact(n - 1)\n}\nfn main {\n  n = fact(5)\n  b = buf_new()\n  b.push_fmt_i(n)\n  w = file_write(\"${fact_out}\", b.to_s())\n}\n"
-    c.wrote(file_write(fact_src, fact_body), "write fact fixture")
+    fact_body = "fn fact(n: Int): Int {\n  if n <= 1 { return 1 }\n  n * fact(n - 1)\n}\nfn main {\n  n = fact(5)\n  b = buf_new()\n  b.push_fmt_i(n)\n  w = fs.write(\"${fact_out}\", b.to_s())\n}\nimport std.fs\n"
+    c.wrote(fs.write(fact_src, fact_body), "write fact fixture")
     fact_code = compile_av(compiler, fact_src, fact_bin, fact_log)
     c.eq_int(fact_code, 0, "compile fact fixture")
-    c.expect(file_exists(fact_bin), "fact bin exists")
+    c.expect(fs.exists(fact_bin), "fact bin exists")
     chmod_x(fact_bin)
     fact_run = run_av_bin(fact_bin, fact_log)
     c.eq_int(fact_run, 0, "run fact fixture")
-    if n = file_read(fact_out) {
+    if n = fs.read(fact_out) {
       c.eq_str(n, "120", "fact(5)")
     } else {
       c.expect(false, "fact(5)")
@@ -112,11 +114,11 @@ fn test_compiler(c: Checks) {
     bad_src = "${scratch()}/compiler-${stamp}-bad.av"
     bad_bin = "${scratch()}/compiler-${stamp}-bad.bin"
     bad_log = "${scratch()}/compiler-${stamp}-bad.log"
-    c.wrote(file_write(bad_src, "fn main {\n  puts(x)\n}\n"), "write bad fixture")
+    c.wrote(fs.write(bad_src, "fn main {\n  puts(x)\n}\n"), "write bad fixture")
     bad_code = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(bad_code != 0, "compile bad exits non-zero")
-    c.expect(!file_exists(bad_bin), "bad bin absent")
-    if err = file_read(bad_log) {
+    c.expect(!fs.exists(bad_bin), "bad bin absent")
+    if err = fs.read(bad_log) {
       c.expect(err.contains("unknown name"), "checker unknown name")
     } else {
       c.expect(false, "checker unknown name")

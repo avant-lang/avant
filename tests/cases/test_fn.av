@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn inc(n: Int): Int {
   n + 1
@@ -181,9 +183,9 @@ fn test_fn(c: Checks) {
   c.eq_int((box.f)(), 0, "fn field default")
   box.f = () { 9 }
   c.eq_int((box.f)(), 9, "fn field")
-  fs: Array(fn(): Int) = []
-  fs.push(() { 8 })
-  c.eq_int((fs[0])(), 8, "fn array element")
+  fns: Array(fn(): Int) = []
+  fns.push(() { 8 })
+  c.eq_int((fns[0])(), 8, "fn array element")
   msg = "ke" + "pt"
   read: fn(): String = () { msg }
   c.eq_str(read(), "kept", "capture string")
@@ -352,7 +354,7 @@ fn test_fn(c: Checks) {
   }
   c.eq_int(nil_f(4), 4, "nilable lambda")
   c.eq_int(nil_f(nil), 0, "nilable lambda nil")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/fn-${stamp}.av"
     bin = "${scratch()}/fn-${stamp}"
@@ -360,18 +362,18 @@ fn test_fn(c: Checks) {
     rlog = "${scratch()}/fn-${stamp}-run.log"
     slog = "${scratch()}/fn-${stamp}-stats.log"
     body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String = { || \"\" }\n  g: fn(Int): Int = ident\n  fn initialize {\n  }\n}\nstruct Inner {\n  f: fn(): String\n}\nclass Nest {\n  inner: Inner = Inner { f: { || \"\" } }\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  nest = Nest.new()\n  nest.inner = Inner { f: { || s } }\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n  puts((nest.inner.f)())\n}\n"
-    c.wrote(file_write(src, body), "write nursery fn")
+    c.wrote(fs.write(src, body), "write nursery fn")
     cc = compile_av(compiler, src, bin, clog)
     c.eq_int(cc, 0, "compile nursery fn")
-    if file_exists(bin) {
+    if fs.exists(bin) {
       chmod_x(bin)
       cap: Array(String) = []
       cap.push("AVANT_NURSERY=1")
       cap.push("AVANT_HEAP_MAX_MB=3")
       cap.push(bin)
-      rcode = process_run_out("/usr/bin/env", cap, rlog) ?? -1
+      rcode = run_out("/usr/bin/env", cap, rlog) ?? -1
       c.eq_int(rcode, 0, "fn survives nursery")
-      if out = file_read(rlog) {
+      if out = fs.read(rlog) {
         c.eq_str(out, "kept\nkept\n42\nkept\n", "fn values after collection")
       } else {
         c.expect(false, "read nursery fn stdout")
@@ -382,9 +384,9 @@ fn test_fn(c: Checks) {
       st.push("AVANT_HEAP_MAX_MB=3")
       st.push("AVANT_GC_STATS=1")
       st.push(bin)
-      scode = process_run_out("/usr/bin/env", st, slog) ?? -1
+      scode = run_out("/usr/bin/env", st, slog) ?? -1
       c.eq_int(scode, 0, "fn nursery stats run")
-      if stats = file_read(slog) {
+      if stats = fs.read(slog) {
         c.expect(stats.contains("young="), "gc stats printed")
         c.expect(!stats.contains("young=0 full"), "copying nursery ran")
         c.expect(stats.contains("kept"), "string intact in stats run")
@@ -393,17 +395,17 @@ fn test_fn(c: Checks) {
       }
     } else {
       c.expect(false, "nursery fn binary")
-      if err = file_read(clog) {
+      if err = fs.read(clog) {
         c.expect(false, err)
       }
     }
     each_src = "${scratch()}/fn-${stamp}-each.av"
     each_log = "${scratch()}/fn-${stamp}-each.log"
     each_body = "fn main {\n  xs = [1, 2, 3]\n  sum = 0\n  xs.each { |i| sum = sum + i }\n  puts(sum)\n}\n"
-    _ = file_write(each_src, each_body)
+    _ = fs.write(each_src, each_body)
     d1 = dump_av(compiler, each_src, each_log)
     c.eq_int(d1, 0, "dump each")
-    if each_ir = file_read(each_log) {
+    if each_ir = fs.read(each_log) {
       c.expect(!each_ir.contains("#lam"), "each does not allocate a lambda")
     } else {
       c.expect(false, "read each dump")
@@ -411,10 +413,10 @@ fn test_fn(c: Checks) {
     lam_src = "${scratch()}/fn-${stamp}-lam.av"
     lam_log = "${scratch()}/fn-${stamp}-lam.log"
     lam_body = "fn main {\n  n = 1\n  f: fn(): Int = { || n }\n  puts(f())\n}\n"
-    _ = file_write(lam_src, lam_body)
+    _ = fs.write(lam_src, lam_body)
     d2 = dump_av(compiler, lam_src, lam_log)
     c.eq_int(d2, 0, "dump closure")
-    if lam_ir = file_read(lam_log) {
+    if lam_ir = fs.read(lam_log) {
       c.expect(lam_ir.contains("#lam1("), "closure has a thunk")
       c.expect(lam_ir.contains("= call indirect "), "closure calls indirectly")
     } else {

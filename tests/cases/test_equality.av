@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Equality and printing, the derived clone, entry points that fail, type names. Each program is
 // compiled in parallel; a refused one must leave no binary, say the
@@ -141,7 +143,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/eq-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/eq-${f.tag}.bin", "${dir}/eq-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -163,7 +165,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/eq-${f3.tag}.run.err"), f3.err, "${f3.tag}: stderr")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/eq-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/eq-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("eq-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -174,14 +176,14 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 // through the runtime; a derived == written once.
 fn check_ll(c: Checks, compiler: String, dir: String) {
   plain = "${dir}/eq-ll-plain.av"
-  _ = file_write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
+  _ = fs.write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
   c.eq_int(emit_ll(compiler, plain, "${dir}/eq-ll-plain.ll", "${dir}/eq-ll-plain.log"), 0, "ll-plain: emits")
   ll = log_text("${dir}/eq-ll-plain.ll")
   c.expect(!ll.contains("__avant_eq"), "ll-plain: no written ==")
   c.expect(ll.contains("@avant_puts_i64("), "ll-plain: an integer's puts is the runtime's")
   c.expect(!ll.contains("@printf("), "ll-plain: no printf")
   twice = "${dir}/eq-ll-twice.av"
-  _ = file_write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
+  _ = fs.write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
   c.eq_int(emit_ll(compiler, twice, "${dir}/eq-ll-twice.ll", "${dir}/eq-ll-twice.log"), 0, "ll-twice: emits")
   ll2 = log_text("${dir}/eq-ll-twice.ll")
   defs = 0
@@ -192,7 +194,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   }
   c.eq_int(defs, 1, "ll-twice: one derived == for P")
   scal = "${dir}/eq-ll-search.av"
-  _ = file_write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.has(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
+  _ = fs.write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.has(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, scal, "${dir}/eq-ll-search.ll", "${dir}/eq-ll-search.log"), 0, "ll-search: emits")
   ll3 = log_text("${dir}/eq-ll-search.ll")
   c.expect(ll3.contains("@avant_array_contains_i64(") && ll3.contains("@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
@@ -202,7 +204,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // numbers copied by the runtime's buffer copy, with no loop written.
   c.expect(!ll.contains("clone"), "ll-plain: no clone written")
   cl = "${dir}/eq-ll-clone.av"
-  _ = file_write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
+  _ = fs.write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
   c.eq_int(emit_ll(compiler, cl, "${dir}/eq-ll-clone.ll", "${dir}/eq-ll-clone.log"), 0, "ll-clone: emits")
   ll4 = log_text("${dir}/eq-ll-clone.ll")
   cdefs = 0
@@ -217,7 +219,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_equality.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_ll(c, compiler, scratch_dir())
   } else {

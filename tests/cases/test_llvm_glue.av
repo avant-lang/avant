@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The compiler's in-process LLVM (runtime/avant_llvm.c,
 // compiler/llvm/glue.av) through the internal hook
@@ -76,7 +78,7 @@ fn mode_tag(mode: String): String {
 }
 
 fn log_text(path: String): String {
-  if t = file_read(path) {
+  if t = fs.read(path) {
     return t
   }
   "(no log)"
@@ -138,12 +140,12 @@ fn test_bad_module(c: Checks, compiler: String, root: String, dir: String, name:
   e = log_text(err)
   c.expect(e.contains("LLVM ${status} failed for ${ll}"), "${name}.ll: stderr names the ${status} failure")
   c.expect(e.contains(detail), "${name}.ll: stderr carries LLVM's message")
-  c.expect(!file_exists(obj), "${name}.ll: no object written")
+  c.expect(!fs.exists(obj), "${name}.ll: no object written")
 }
 
 fn test_llvm_glue(c: Checks) {
   c.suite("tests/cases/test_llvm_glue.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     dir = scratch_dir()
     test_hello_modes(c, compiler, root, dir)

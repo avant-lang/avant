@@ -1025,3 +1025,60 @@ pub fn (checker_self: Checker) qualify_last_name(expr: Expr) {
     root.ident = full
   }
 }
+
+// The std.fs or std.process spelling of a function that left the
+// prelude, "" for any other name.
+pub fn moved_io_name(name: String): String {
+  olds = ["file_read", "file_write", "dir_list", "file_exists", "dir_exists", "dir_walk", "process_run", "argv", "env_get"]
+  news = ["fs.read(path)", "fs.write(path, body)", "fs.list(path)", "fs.exists(path)", "fs.is_dir(path)", "fs.walk(path)", "process.run(program, args)", "process.args()", "process.env(name)"]
+  for i in 0..olds.size {
+    if olds[i] == name {
+      return news[i]
+    }
+  }
+  ""
+}
+
+// Whether the current module may still call the prelude's old file and
+// process names: the compiler's own sources (built by the seed, which
+// has no std.fs) and the two modules that wrap them.
+pub fn (checker_self: Checker) moved_io_allowed: Bool {
+  m = checker_self.current_module
+  if m == "std.fs" || m == "std.process" || m == "prelude" {
+    return true
+  }
+  for info in checker_self.program.mods {
+    if info.name == m {
+      p = info.path
+      return str_starts(p, "compiler/") || str_has_part(p, "/compiler/")
+    }
+  }
+  false
+}
+
+fn str_has_part(hay: String, part: String): Bool {
+  n = part.size
+  i = 0
+  while i + n <= hay.size {
+    if str_slice(hay, i, i + n) == part {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+// A call of a function that left the prelude, outside the modules that
+// may still name it: refused with the new spelling; true when refused.
+pub fn (checker_self: Checker) refuse_moved_io(expr: Expr): Bool {
+  spelled = moved_io_name(expr.callee)
+  if spelled.size == 0 || checker_self.moved_io_allowed() {
+    return false
+  }
+  mod = "std.fs"
+  if str_starts(spelled, "process.") {
+    mod = "std.process"
+  }
+  checker_self.fail(expr.loc, "${expr.callee} is now ${spelled}: import ${mod}")
+  true
+}

@@ -1,5 +1,7 @@
 import harness
 import std.sync
+import std.fs
+import std.process
 
 struct Pair {
   a: Int
@@ -163,7 +165,7 @@ fn test_tasks(c: Checks) {
   after = shared.with (x) { x }
   c.eq_int(after, 11, "mutex after spawn")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     task_trap_cases(c, compiler, now_ms())
     lib_trap_cases(c, compiler, now_ms())
     task_exit_cases(c, compiler, now_ms())
@@ -202,9 +204,9 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("${bin} ${kind} 2> ${elog}")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     c.eq_int(status, statuses[i], "mutex recover ${kind}: status ${statuses[i]}")
     c.expect(out.contains(wants[i]), "mutex recover ${kind}: stdout has ${wants[i]}")
     c.expect(err.contains(wants_err[i]), "mutex recover ${kind}: stderr has ${wants_err[i]}")
@@ -243,8 +245,8 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
       args: Array(String) = []
       args.push("-c")
       args.push("timeout -k 5 20 ${bin} --avant-threads=16 ${kind} 2> ${log}.err")
-      status = process_run_out("/bin/sh", args, log) ?? -1
-      out = file_read(log) ?? ""
+      status = run_out("/bin/sh", args, log) ?? -1
+      out = fs.read(log) ?? ""
       if status == 124 || status == 137 {
         hung = true
         c.expect(false, "task exit ${kind}: the run ended within its 20 s bound (status ${status}); the cases stop here")
@@ -275,9 +277,9 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("${bin} ${kind} 2> ${elog}")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     c.eq_int(status, statuses[i], "lib trap ${kind}: status")
     if statuses[i] == 0 {
       c.eq_str(out, "before\ntrapped: ${texts[i]}\nafter\n", "lib trap ${kind}: the task alone ends")
@@ -347,9 +349,9 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       args.push("${bin} ${kind} 2> ${elog}")
     }
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     if kind == "heap" {
       // The collector's own stop (an abort), not a trap.
       c.expect(status != 0, "task trap heap: the program ends")
@@ -378,8 +380,8 @@ fn task_flood_cases(c: Checks, bin: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("timeout -k 5 60 ${bin} flood")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
     c.eq_int(status, 0, "task flood ${round}: status 0")
     broken = ""
     for line in out.split("\n") {

@@ -25,6 +25,9 @@
 // the site of the safe twin when the twin differs by its site rather
 // than by its text.
 
+import std.fs
+import std.process
+
 lib probe_rt {
   fun avant_tmp_dir: String
 }
@@ -60,7 +63,7 @@ fn rule(name: String, kind: String, ty: String, site: String, safe_site: String,
 // that can fail (the README's parse_age), and opaque values for the
 // wrappers' conditions.
 fn prelude_decls: String {
-  "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn probe_cond: Bool {\n  argv().size > 0\n}\n\nfn probe_k: Int {\n  argv().size\n}\n\nfn probe_maybe: Int? {\n  if argv().size > 0 {\n    return 1\n  }\n  nil\n}\n"
+  "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn probe_cond: Bool {\n  process.args().size > 0\n}\n\nfn probe_k: Int {\n  process.args().size\n}\n\nfn probe_maybe: Int? {\n  if process.args().size > 0 {\n    return 1\n  }\n  nil\n}\n"
 }
 
 // The rules the README states that one program pair
@@ -427,9 +430,11 @@ fn program(r: PRule, w: String, safe: Bool): String {
     while filled[nl] != 10 {
       nl += 1
     }
-    return "${str_slice(filled, 0, nl + 1)}\n${decls}\n${str_slice(filled, nl + 1, filled.size)}"
+    return "${str_slice(filled, 0, nl + 1)}\n${decls}\n${str_slice(filled, nl + 1, filled.size)}\nimport std.process\n"
   }
-  "${decls}\n${filled}"
+  // The opaque values read process.args(): its import goes last, so no
+  // line moves.
+  "${decls}\n${filled}\nimport std.process\n"
 }
 
 // The index of needle in hay at or after from, or -1; no allocation per
@@ -476,8 +481,8 @@ fn dump_part(compiler: String, dir: String, total: Int, parts: Int, part: Int): 
     if n % parts == part {
       src = "${dir}/p${n}.av"
       log = "${dir}/p${n}.log"
-      code = process_run_out(compiler, ["dump", src], log) ?? -1
-      _ = file_write("${dir}/p${n}.code", "${code}")
+      code = run_out(compiler, ["dump", src], log) ?? -1
+      _ = fs.write("${dir}/p${n}.code", "${code}")
       done += 1
     }
   }
@@ -485,19 +490,19 @@ fn dump_part(compiler: String, dir: String, total: Int, parts: Int, part: Int): 
 }
 
 fn main: Int {
-  compiler = env_get("AVANT_COMPILER") ?? ""
+  compiler = process.env("AVANT_COMPILER") ?? ""
   if compiler.size == 0 {
     puts("tests/probe_matrix.av: AVANT_COMPILER is not set")
     return 1
   }
-  root = env_get("AVANT_ROOT") ?? "."
+  root = process.env("AVANT_ROOT") ?? "."
   out_path = "${root}/tests/probe/matrix.txt"
-  av = argv()
+  av = process.args()
   if av.size > 1 {
     out_path = av[1]
   }
   dir = probe_rt.avant_tmp_dir()
-  _ = file_write("${dir}/probe_mod.av", probe_mod_src())
+  _ = fs.write("${dir}/probe_mod.av", probe_mod_src())
   // Every program first, with what its row prints.
   names: Array(String) = []
   needles: Array(String) = []
@@ -516,7 +521,7 @@ fn main: Int {
           variant = "safe"
         }
         n += 1
-        _ = file_write("${dir}/p${n}.av", program(r, w, safe))
+        _ = fs.write("${dir}/p${n}.av", program(r, w, safe))
         names.push("${r.name} ${w} ${variant}")
         needles.push(r.needle)
         safes.push(safe)
@@ -544,8 +549,8 @@ fn main: Int {
   for i in 0..total {
     m = i + 1
     log = "${dir}/p${m}.log"
-    code = file_read("${dir}/p${m}.code") ?? "-1"
-    text = file_read(log) ?? ""
+    code = fs.read("${dir}/p${m}.code") ?? "-1"
+    text = fs.read(log) ?? ""
     err = first_error(text)
     safe = safes[i]
     verdict = "accepted"
@@ -565,12 +570,23 @@ fn main: Int {
     }
     table.push_str("${names[i]} ${verdict} ${cls} | ${err}\n")
     if code == "0" {
-      _ = file_write(log, "")
+      _ = fs.write(log, "")
     }
   }
-  if r = file_write(out_path, table.to_s()) {
+  if r = fs.write(out_path, table.to_s()) {
     return 0
   }
   puts("tests/probe_matrix.av: cannot write ${out_path}")
   1
+}
+
+// Runs the program with its stdout and stderr both written to the file
+// out, in the order it wrote them (through sh's redirection, which is
+// what the file then holds): the exit status, or the failure to start sh.
+fn run_out(program: String, args: Array(String), out: String): Int | ProcessError {
+  sh_args = ["-c", "out=$1; shift; exec \"$@\" > \"$out\" 2>&1", "sh", out, program]
+  for a in args {
+    sh_args.push(a)
+  }
+  process.run("/bin/sh", sh_args)
 }

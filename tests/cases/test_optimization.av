@@ -1,17 +1,19 @@
 import harness
+import std.fs
+import std.process
 
 fn expect_trap_opt(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/optimization-wavek-${stamp}-${tag}.av"
   bin = "${scratch()}/optimization-wavek-${stamp}-${tag}.bin"
   clog = "${scratch()}/optimization-wavek-${stamp}-${tag}.clog"
   rlog = "${scratch()}/optimization-wavek-${stamp}-${tag}.rlog"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
-  c.expect(file_exists(bin), "${tag} bin exists")
+  c.expect(fs.exists(bin), "${tag} bin exists")
   rcode = run_av_bin(bin, rlog)
   c.expect(rcode != 0, "${tag} exits non-zero")
-  if err = file_read(rlog) {
+  if err = fs.read(rlog) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -321,7 +323,7 @@ fn test_optimization(c: Checks) {
   }
   c.eq_int(decl_hits, 2, "call-sized decline string loop computes")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
 
     expect_trap_opt(c, compiler, stamp, "overflow-add-unbounded", "fn main {\n  x: Int32 = 2147483647\n  y: Int32 = 1\n  puts(x + y)\n}\n", "integer overflow")

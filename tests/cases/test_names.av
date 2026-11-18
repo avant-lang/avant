@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The messages for names, calls and ambiguity. A type
 // without the type-level function a call names, a type two
@@ -222,7 +224,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
       }
       src = "${d}/main.av"
     }
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/nm-${f.tag}.bin", "${dir}/nm-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -248,7 +250,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
     if f2.mods.size > 0 {
       file = "main.av"
     }
-    c.expect(jobs[i].code != 0 && !file_exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(jobs[i].code != 0 && !fs.exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
     c.expect(log.contains(f2.want), "${f2.tag}: says ${f2.want}")
     c.expect(log.contains("${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
     if f2.single {
@@ -340,7 +342,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
     }
     body.push_str("}\n")
     f = "${dir}/nm-builtin-${prog}.av"
-    _ = file_write(f, body.to_s())
+    _ = fs.write(f, body.to_s())
     jobs.push(compile_job("", compiler, f, "${dir}/nm-builtin-${prog}.bin", "${dir}/nm-builtin-${prog}.log"))
     tags.push("${prog}")
     joined = buf_new()
@@ -364,7 +366,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_names.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_builtin_names(c, compiler, scratch_dir())
   } else {

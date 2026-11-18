@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The metamorphic probe matrix: the compiler
 // under test runs tests/probe_matrix.av, which checks every rule's unsafe
@@ -34,17 +36,17 @@ fn row_key(row: String): String {
 
 fn test_probe_matrix(c: Checks) {
   c.suite("tests/cases/test_probe_matrix.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     got_path = "${scratch()}/matrix.txt"
     log = "${scratch()}/probe_matrix.log"
-    code = process_run_out(compiler, ["run", "${root}/tests/probe_matrix.av", "--", got_path], log) ?? -1
+    code = run_out(compiler, ["run", "${root}/tests/probe_matrix.av", "--", got_path], log) ?? -1
     if code != 0 {
-      c.eq_str(file_read(log) ?? "(no log)", "", "tests/probe_matrix.av runs (its log)")
+      c.eq_str(fs.read(log) ?? "(no log)", "", "tests/probe_matrix.av runs (its log)")
     }
     c.eq_int(code, 0, "tests/probe_matrix.av runs")
-    want = rows_of(file_read("${root}/tests/probe/matrix.txt") ?? "")
-    got = rows_of(file_read(got_path) ?? "")
+    want = rows_of(fs.read("${root}/tests/probe/matrix.txt") ?? "")
+    got = rows_of(fs.read(got_path) ?? "")
     c.eq_int(got.size, want.size, "the matrix has as many rows as tests/probe/matrix.txt")
     for i in 0..want.size {
       g = "(missing)"

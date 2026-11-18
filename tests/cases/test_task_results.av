@@ -1,5 +1,7 @@
 import harness
 import std.sync
+import std.fs
+import std.process
 
 // A task's value of any type, `?` in a spawn block, structured
 // completion (a task's join waits for every task it spawned), joins and
@@ -217,9 +219,9 @@ fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("timeout -k 5 60 ${bin} --avant-threads=${n} 2> ${log}.err")
-    status = process_run_out("/bin/sh", args, log) ?? -1
+    status = run_out("/bin/sh", args, log) ?? -1
     c.eq_int(status, 0, "nested joins with ${n} pool threads: status")
-    c.eq_str(file_read(log) ?? "", "17711\n55\n111\n", "nested joins with ${n} pool threads: output")
+    c.eq_str(fs.read(log) ?? "", "17711\n55\n111\n", "nested joins with ${n} pool threads: output")
   }
 
   pbin = "${scratch()}/task-results-ptraps-${stamp}.bin"
@@ -235,9 +237,9 @@ fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       args.push("timeout -k 5 60 ${pbin} 2> ${elog}")
     }
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     if kind == "main" {
       c.eq_int(status, 1, ".parallel traps on the main thread: status 1")
       c.eq_str(out, "", ".parallel traps on the main thread: nothing after it")
@@ -257,7 +259,7 @@ fn test_task_results(c: Checks) {
   value_cases(c)
   try_cases(c)
   structured_cases(c)
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     fixture_cases(c, compiler, now_ms())
   }
 }

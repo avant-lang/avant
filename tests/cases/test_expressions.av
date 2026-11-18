@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Expressions: how tightly the operators bind (the bitwise operators
 // above the comparisons); the type an expression of literals takes from
@@ -80,7 +82,7 @@ fn bool_cases: Array(ECase) {
 // `b.to_i` is the Bool zero-extended: no branch in the function.
 fn check_bool_ll(c: Checks, compiler: String, dir: String) {
   src = "${dir}/ex-bool-ll.av"
-  _ = file_write(src, "fn count(a: Bool): Int {\n  a.to_i()\n}\nfn main {\n  puts(count(argv().size > 0))\n}\n")
+  _ = fs.write(src, "fn count(a: Bool): Int {\n  a.to_i()\n}\nfn main {\n  puts(count(process.args().size > 0))\n}\nimport std.process\n")
   c.eq_int(emit_ll(compiler, src, "${dir}/ex-bool-ll.ll", "${dir}/ex-bool-ll.log"), 0, "bool ll: emits")
   ll = log_text("${dir}/ex-bool-ll.ll")
   body = ""
@@ -115,12 +117,12 @@ fn effect_cases: Array(ECase) {
   xs.push(refused("effect-middle", "fn main {\n  x = 1\n  x + 1\n  puts(x)\n}\n", "this line computes a value and drops it", "3:3"))
   xs.push(refused("effect-name", "fn main {\n  x = 1\n  puts(x)\n  x\n  puts(2)\n}\n", "this line computes a value and drops it", "4:3"))
   xs.push(refused("effect-main-tail", "fn main {\n  x = 1\n  puts(x)\n  x\n}\n", "this line computes an Int and drops it: main has no result type; to return it, declare fn main: Int", "4:3"))
-  xs.push(refused("effect-main-bool", "fn main {\n  x = argv().size\n  x > 0\n}\n", "this line computes a value and drops it; use it, or remove the line", "3:3"))
+  xs.push(refused("effect-main-bool", "fn main {\n  x = process.args().size\n  x > 0\n}\nimport std.process\n", "this line computes a value and drops it; use it, or remove the line", "3:3"))
   xs.push(refused("effect-literal", "fn main {\n  \"done\"\n  puts(1)\n}\n", "this line computes a value and drops it", "2:3"))
   xs.push(refused("effect-tail", "fn two {\n  2\n}\nfn main {\n  two()\n}\n", "this line computes an Int and drops it: two has no result type; to return it, declare fn two: Int", "2:3"))
   xs.push(refused("effect-method-tail", "class C {\n  pub n: Int = 1\n  fn get {\n    n * 2\n  }\n}\nfn main {\n  C.new().get()\n}\n", "this line computes an Int and drops it: get has no result type; to return it, declare fn get: Int", "4:5"))
   xs.push(refused("effect-field", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  p.x\n  puts(p.x)\n}\n", "this line computes a value and drops it", "6:3"))
-  xs.push(refused("effect-branch", "fn main {\n  x = argv().size\n  if x > 0 {\n    x == 1\n  }\n}\n", "this line computes a value and drops it", "4:5"))
+  xs.push(refused("effect-branch", "fn main {\n  x = process.args().size\n  if x > 0 {\n    x == 1\n  }\n}\nimport std.process\n", "this line computes a value and drops it", "4:5"))
   xs.push(refused("effect-fn-name", "fn cleanup {\n  puts(1)\n}\nfn main {\n  cleanup\n}\n", "cleanup alone is the function as a value; to call it, write cleanup()", "5:3"))
   xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = { |n| n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
   xs.push(refused("effect-bind-void", "fn two {\n  puts(2)\n}\nfn main {\n  x = two()\n  puts(x)\n}\n", "cannot bind a Void value: two has no result type", "5:5"))
@@ -157,7 +159,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/ex-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/ex-${f.tag}.bin", "${dir}/ex-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -178,7 +180,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
       c.eq_str(log_text("${dir}/ex-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ex-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/ex-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("ex-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -187,7 +189,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_expressions.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     dir = scratch_dir()
     all: Array(ECase) = []
     for x in precedence_cases() {

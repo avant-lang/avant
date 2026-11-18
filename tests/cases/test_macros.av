@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 quote {
   fn doubled(n: Int): Int {
@@ -34,7 +36,7 @@ fn test_macros(c: Checks) {
   b = Box { n: 3 }
   c.eq_int(b.doubled(), 6, "quoted method")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     dir = "${scratch()}/macros-${stamp}"
     mkdir_p(dir)
@@ -45,10 +47,10 @@ fn test_macros(c: Checks) {
     fields_out = "${dir}/fields.out"
     fields_code = compile_av(compiler, "${dir}/fields.av", fields_bin, fields_log)
     c.eq_int(fields_code, 0, "field walk compile")
-    c.expect(file_exists(fields_bin), "field walk bin")
+    c.expect(fs.exists(fields_bin), "field walk bin")
     chmod_x(fields_bin)
     run_av_bin(fields_bin, fields_out)
-    if got = file_read(fields_out) {
+    if got = fs.read(fields_out) {
       c.eq_str(got, "3\n4\n", "field walk accessors")
     } else {
       c.expect(false, "field walk accessors")
@@ -59,8 +61,8 @@ fn test_macros(c: Checks) {
     splice_log = "${dir}/splice.log"
     splice_code = compile_av(compiler, "${dir}/splice_out.av", splice_bin, splice_log)
     c.expect(splice_code != 0, "splice outside quote exits non-zero")
-    c.expect(!file_exists(splice_bin), "splice outside quote bin absent")
-    if err = file_read(splice_log) {
+    c.expect(!fs.exists(splice_bin), "splice outside quote bin absent")
+    if err = fs.read(splice_log) {
       c.expect(err.contains("splice #() only belongs in quote"), "splice outside quote")
     } else {
       c.expect(false, "splice outside quote")
@@ -71,8 +73,8 @@ fn test_macros(c: Checks) {
     bad_log = "${dir}/bad.log"
     bad_code = compile_av(compiler, "${dir}/bad_comptime.av", bad_bin, bad_log)
     c.expect(bad_code != 0, "bad comptime exits non-zero")
-    c.expect(!file_exists(bad_bin), "bad comptime bin absent")
-    if err = file_read(bad_log) {
+    c.expect(!fs.exists(bad_bin), "bad comptime bin absent")
+    if err = fs.read(bad_log) {
       c.expect(err.contains("a comptime block is a field walk: comptime { for f in Type.fields { quote { ... } } }"), "comptime field walk")
     } else {
       c.expect(false, "comptime field walk")
@@ -83,8 +85,8 @@ fn test_macros(c: Checks) {
     nest_log = "${dir}/nest.log"
     nest_code = compile_av(compiler, "${dir}/nested.av", nest_bin, nest_log)
     c.expect(nest_code != 0, "nested quote exits non-zero")
-    c.expect(!file_exists(nest_bin), "nested quote bin absent")
-    if err = file_read(nest_log) {
+    c.expect(!fs.exists(nest_bin), "nested quote bin absent")
+    if err = fs.read(nest_log) {
       c.expect(err.contains("quote cannot nest"), "nested quote")
     } else {
       c.expect(false, "nested quote")

@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Honest defaults for processes, files, the exit status,
 // the C boundary, traps and library errors.
@@ -58,28 +60,27 @@ fn trapped(tag: String, src: String, out: String, needle: String): SCase {
 
 fn io_cases: Array(SCase) {
   xs: Array(SCase) = []
-  xs.push(accepted("io-read", "fn main {\n  if t = file_read(\"no-such-file.txt\") {\n    puts(t)\n  } else {\n    puts(\"absent\")\n  }\n  puts(file_read(\"/\") ?? \"a directory\")\n  _ = file_write(\"io-read.txt\", \"abc\")\n  puts(file_read(\"io-read.txt\") ?? \"?\")\n}\n", "absent\na directory\nabc\n"))
-  xs.push(accepted("io-write", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  r = file_write(\"no/such/dir/x.txt\", \"hi\")\n  switch r {\n    case e: IoError {\n      puts(\"\${e.op} \${e.path} \${e.errno}\")\n      puts(\"\${e}\")\n    }\n    case Int { }\n  }\n  puts(file_write(\"io-write.txt\", \"hello\") ?? -1)\n  puts(file_write(\"io-write.txt\", \"\") ?? -1)\n  puts((file_read(\"io-write.txt\") ?? \"?\").size)\n  switch file_write(\"/\", \"x\") {\n    case e2: IoError {\n      puts(\"\${e2}\")\n    }\n    case Int { }\n  }\n}\n", "write no/such/dir/x.txt 2\ncannot write no/such/dir/x.txt: No such file or directory\n5\n0\n0\ncannot write /: Is a directory\n"))
-  xs.push(accepted("io-propagate", "fn copy(from: String, to: String): Int | IoError {\n  text = file_read(from)?\n  file_write(to, text)?\n}\n\nfn main {\n  _ = file_write(\"io-prop.txt\", \"four\")\n  puts(copy(\"io-prop.txt\", \"io-prop2.txt\") ?? -1)\n  puts(copy(\"io-prop-missing.txt\", \"io-prop3.txt\") ?? -1)\n  puts(file_exists(\"io-prop3.txt\"))\n}\n", "4\n-1\nfalse\n"))
-  xs.push(accepted("io-list", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  switch dir_list(\"no-such-dir\") {\n    case e: IoError {\n      puts(\"\${e.op}: \${e}\")\n    }\n    case Array(String) { }\n  }\n  _ = file_write(\"io-list-file\", \"x\")\n  switch dir_list(\"io-list-file\") {\n    case e2: IoError {\n      puts(\"\${e2}\")\n    }\n    case Array(String) { }\n  }\n  args = [\"-p\", \"io-list-dir\"]\n  _ = process_run(\"mkdir\", args)\n  _ = file_write(\"io-list-dir/b\", \"\")\n  _ = file_write(\"io-list-dir/a\", \"\")\n  _ = file_write(\"io-list-dir/.c\", \"\")\n  if names = dir_list(\"io-list-dir\") {\n    puts(names.size)\n    for n in names {\n      puts(n)\n    }\n  }\n}\n", "list: cannot list no-such-dir: No such file or directory\ncannot list io-list-file: Not a directory\n3\n.c\na\nb\n"))
-  xs.push(accepted("proc-run", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  none: Array(String) = []\n  show_run(process_run(\"/no/such/binary\", none))\n  show_run(process_run(\"no-such-program-w4b2\", [\"a\"]))\n  show_run(process_run(\"sh\", [\"-c\", \"exit 127\"]))\n  show_run(process_run(\"/bin/sh\", [\"-c\", \"kill -9 $$\"]))\n  show_run(process_run(\"/bin/sh\", [\"-c\", \"exit 137\"]))\n  show_run(process_run(\"true\", none))\n  show_run(process_run(\"false\", none))\n  _ = file_write(\"proc-run-data\", \"x\")\n  show_run(process_run(\"./proc-run-data\", none))\n}\n", "errno 2 signal 0 output []: cannot run /no/such/binary: No such file or directory\nerrno 2 signal 0 output []: cannot run no-such-program-w4b2: No such file or directory\nexit 127\nerrno 0 signal 9 output []: /bin/sh killed by signal 9 (Killed)\nexit 137\nexit 0\nexit 1\nerrno 13 signal 0 output []: cannot run ./proc-run-data: Permission denied\n"))
-  xs.push(accepted("proc-run-out", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  show_run(process_run_out(\"echo\", [\"out\", \"put\"], \"proc-out.txt\"))\n  puts(file_read(\"proc-out.txt\") ?? \"?\")\n  show_run(process_run_out(\"sh\", [\"-c\", \"echo err >&2; exit 3\"], \"proc-err.txt\"))\n  puts(file_read(\"proc-err.txt\") ?? \"?\")\n  show_run(process_run_out(\"true\", [\"x\"], \"no/such/dir/out.txt\"))\n}\n", "exit 0\nout put\n\nexit 3\nerr\n\nerrno 2 signal 0 output [no/such/dir/out.txt]: cannot run true: cannot open no/such/dir/out.txt: No such file or directory\n"))
-  xs.push(accepted("proc-try", "fn build(n: Int): Int | ProcessError {\n  code = process_run(\"sh\", [\"-c\", \"exit \${n}\"])?\n  code * 10\n}\n\nfn main {\n  puts(build(4) ?? -1)\n  puts(process_run(\"no-such-program-w4b2\", [\"x\"]) ?? -1)\n}\n", "40\n-1\n"))
-  xs.push(refused("io-dropped", "fn main {\n  file_write(\"x.txt\", \"y\")\n}\n", "this statement drops a value that can be an error (Int | IoError)"))
-  xs.push(refused("proc-dropped", "fn main {\n  process_run(\"true\", [\"x\"])\n}\n", "this statement drops a value that can be an error (Int | ProcessError)"))
-  xs.push(refused("io-as-int", "fn main {\n  n: Int = file_write(\"x.txt\", \"y\")\n  puts(n)\n}\n", "Int | IoError"))
-  xs.push(refused("list-as-array", "fn main {\n  for n in dir_list(\".\") {\n    puts(n)\n  }\n}\n", "Array(String) | IoError"))
+  xs.push(accepted("io-read", "fn main {\n  if t = fs.read(\"no-such-file.txt\") {\n    puts(t)\n  } else {\n    puts(\"absent\")\n  }\n  puts(fs.read(\"/\") ?? \"a directory\")\n  _ = fs.write(\"io-read.txt\", \"abc\")\n  puts(fs.read(\"io-read.txt\") ?? \"?\")\n}\nimport std.fs\n", "absent\na directory\nabc\n"))
+  xs.push(accepted("io-write", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  r = fs.write(\"no/such/dir/x.txt\", \"hi\")\n  switch r {\n    case e: IoError {\n      puts(\"\${e.op} \${e.path} \${e.errno}\")\n      puts(\"\${e}\")\n    }\n    case Int { }\n  }\n  puts(fs.write(\"io-write.txt\", \"hello\") ?? -1)\n  puts(fs.write(\"io-write.txt\", \"\") ?? -1)\n  puts((fs.read(\"io-write.txt\") ?? \"?\").size)\n  switch fs.write(\"/\", \"x\") {\n    case e2: IoError {\n      puts(\"\${e2}\")\n    }\n    case Int { }\n  }\n}\nimport std.fs\n", "write no/such/dir/x.txt 2\ncannot write no/such/dir/x.txt: No such file or directory\n5\n0\n0\ncannot write /: Is a directory\n"))
+  xs.push(accepted("io-propagate", "fn copy(from: String, to: String): Int | IoError {\n  text = fs.read(from)?\n  fs.write(to, text)?\n}\n\nfn main {\n  _ = fs.write(\"io-prop.txt\", \"four\")\n  puts(copy(\"io-prop.txt\", \"io-prop2.txt\") ?? -1)\n  puts(copy(\"io-prop-missing.txt\", \"io-prop3.txt\") ?? -1)\n  puts(fs.exists(\"io-prop3.txt\"))\n}\nimport std.fs\n", "4\n-1\nfalse\n"))
+  xs.push(accepted("io-list", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  switch fs.list(\"no-such-dir\") {\n    case e: IoError {\n      puts(\"\${e.op}: \${e}\")\n    }\n    case Array(String) { }\n  }\n  _ = fs.write(\"io-list-file\", \"x\")\n  switch fs.list(\"io-list-file\") {\n    case e2: IoError {\n      puts(\"\${e2}\")\n    }\n    case Array(String) { }\n  }\n  args = [\"-p\", \"io-list-dir\"]\n  _ = process.run(\"mkdir\", args)\n  _ = fs.write(\"io-list-dir/b\", \"\")\n  _ = fs.write(\"io-list-dir/a\", \"\")\n  _ = fs.write(\"io-list-dir/.c\", \"\")\n  if names = fs.list(\"io-list-dir\") {\n    puts(names.size)\n    for n in names {\n      puts(n)\n    }\n  }\n}\nimport std.fs\nimport std.process\n", "list: cannot list no-such-dir: No such file or directory\ncannot list io-list-file: Not a directory\n3\n.c\na\nb\n"))
+  xs.push(accepted("proc-run", "fn show_run(r: Int | ProcessError) {\n  switch r {\n    case n: Int { puts(\"exit \${n}\") }\n    case e: ProcessError { puts(\"errno \${e.errno} signal \${e.signal} output [\${e.output}]: \${e}\") }\n  }\n}\n\nfn main {\n  none: Array(String) = []\n  show_run(process.run(\"/no/such/binary\", none))\n  show_run(process.run(\"no-such-program-w4b2\", [\"a\"]))\n  show_run(process.run(\"sh\", [\"-c\", \"exit 127\"]))\n  show_run(process.run(\"/bin/sh\", [\"-c\", \"kill -9 $$\"]))\n  show_run(process.run(\"/bin/sh\", [\"-c\", \"exit 137\"]))\n  show_run(process.run(\"true\", none))\n  show_run(process.run(\"false\", none))\n  _ = fs.write(\"proc-run-data\", \"x\")\n  show_run(process.run(\"./proc-run-data\", none))\n}\nimport std.fs\nimport std.process\n", "errno 2 signal 0 output []: cannot run /no/such/binary: No such file or directory\nerrno 2 signal 0 output []: cannot run no-such-program-w4b2: No such file or directory\nexit 127\nerrno 0 signal 9 output []: /bin/sh killed by signal 9 (Killed)\nexit 137\nexit 0\nexit 1\nerrno 13 signal 0 output []: cannot run ./proc-run-data: Permission denied\n"))
+  xs.push(accepted("proc-try", "fn build(n: Int): Int | ProcessError {\n  code = process.run(\"sh\", [\"-c\", \"exit \${n}\"])?\n  code * 10\n}\n\nfn main {\n  puts(build(4) ?? -1)\n  puts(process.run(\"no-such-program-w4b2\", [\"x\"]) ?? -1)\n}\nimport std.process\n", "40\n-1\n"))
+  xs.push(refused("io-dropped", "fn main {\n  fs.write(\"x.txt\", \"y\")\n}\nimport std.fs\n", "this statement drops a value that can be an error (Int | IoError)"))
+  xs.push(refused("proc-dropped", "fn main {\n  process.run(\"true\", [\"x\"])\n}\nimport std.process\n", "this statement drops a value that can be an error (Int | ProcessError)"))
+  xs.push(refused("io-as-int", "fn main {\n  n: Int = fs.write(\"x.txt\", \"y\")\n  puts(n)\n}\nimport std.fs\n", "Int | IoError"))
+  xs.push(refused("list-as-array", "fn main {\n  for n in fs.list(\".\") {\n    puts(n)\n  }\n}\nimport std.fs\n", "Array(String) | IoError"))
   xs
 }
 
 fn exit_cases: Array(SCase) {
   xs: Array(SCase) = []
   xs.push(exited("exit-255", "fn main: Int {\n  puts(\"x\")\n  255\n}\n", "x\n", 255, ""))
-  xs.push(exited("exit-3-return", "fn main: Int {\n  n = argv().size\n  if n > 0 {\n    return 3\n  }\n  0\n}\n", "", 3, ""))
+  xs.push(exited("exit-3-return", "fn main: Int {\n  n = process.args().size\n  if n > 0 {\n    return 3\n  }\n  0\n}\nimport std.process\n", "", 3, ""))
   xs.push(trapped("exit-256", "fn main: Int {\n  puts(\"before\")\n  256\n}\n", "before\n", "avant runtime: exit status 256 out of range (0..255)"))
-  xs.push(trapped("exit-neg", "fn main: Int {\n  n = argv().size\n  if n > 0 {\n    return -1\n  }\n  0\n}\n", "", "avant runtime: exit status -1 out of range (0..255)"))
-  xs.push(trapped("exit-if-tail", "fn main: Int {\n  n = argv().size\n  if n > 100 {\n    0\n  } else {\n    1000 + n\n  }\n}\n", "", "avant runtime: exit status 1001 out of range (0..255)"))
-  xs.push(trapped("exit-switch-tail", "fn main: Int {\n  n = argv().size\n  switch n {\n    case 1 {\n      512\n    }\n    else {\n      0\n    }\n  }\n}\n", "", "avant runtime: exit status 512 out of range (0..255)"))
+  xs.push(trapped("exit-neg", "fn main: Int {\n  n = process.args().size\n  if n > 0 {\n    return -1\n  }\n  0\n}\nimport std.process\n", "", "avant runtime: exit status -1 out of range (0..255)"))
+  xs.push(trapped("exit-if-tail", "fn main: Int {\n  n = process.args().size\n  if n > 100 {\n    0\n  } else {\n    1000 + n\n  }\n}\nimport std.process\n", "", "avant runtime: exit status 1001 out of range (0..255)"))
+  xs.push(trapped("exit-switch-tail", "fn main: Int {\n  n = process.args().size\n  switch n {\n    case 1 {\n      512\n    }\n    else {\n      0\n    }\n  }\n}\nimport std.process\n", "", "avant runtime: exit status 512 out of range (0..255)"))
   xs.push(trapped("exit-run", "fn run: Int {\n  puts(\"run\")\n  300\n}\n", "run\n", "avant runtime: exit status 300 out of range (0..255)"))
   xs.push(exited("exit-run-ok", "fn run: Int {\n  7\n}\n", "", 7, ""))
   xs
@@ -95,25 +96,25 @@ fn cnull_cases: Array(SCase) {
 
 fn trap_cases: Array(SCase) {
   xs: Array(SCase) = []
-  xs.push(trapped("trap-index", "fn main {\n  puts(\"a\")\n  xs = [1]\n  i = argv().size + 4\n  puts(xs[i])\n}\n", "a\n", "avant runtime: index 5 out of bounds (size 1) in main (sys-trap-index.av:1:1)"))
-  xs.push(trapped("trap-str-index", "fn main {\n  s = \"ab\"\n  i = argv().size + 6\n  puts(s[i])\n}\n", "", "avant runtime: index 7 out of bounds (size 2) in main (sys-trap-str-index.av:1:1)"))
-  xs.push(trapped("trap-add", "fn main {\n  a = 9223372036854775807\n  b = argv().size\n  puts(a + b)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-add.av:1:1)"))
-  xs.push(trapped("trap-sub", "fn main {\n  a = -9223372036854775807\n  b = argv().size + 1\n  puts(a - b)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-sub.av:1:1)"))
-  xs.push(trapped("trap-mul64", "fn main {\n  a: Int = 9223372036854775807\n  b = argv().size.to_i() + 1\n  puts(a * b)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-mul64.av:1:1)"))
-  xs.push(trapped("trap-u64-sub", "fn main {\n  a: UInt64 = 0u64\n  b = argv().size.to_u64() + 1u64\n  puts(a - b)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-u64-sub.av:1:1)"))
-  xs.push(trapped("trap-neg", "fn main {\n  a = -9223372036854775807 - argv().size\n  puts(-a)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-neg.av:1:1)"))
-  xs.push(trapped("trap-div0", "fn main {\n  a = 7\n  b = argv().size - 1\n  puts(a / b)\n}\n", "", "avant runtime: division by zero in main (sys-trap-div0.av:1:1)"))
-  xs.push(trapped("trap-rem0", "fn main {\n  a = 7\n  b = argv().size - 1\n  puts(a % b)\n}\n", "", "avant runtime: division by zero in main (sys-trap-rem0.av:1:1)"))
-  xs.push(trapped("trap-div-min", "fn main {\n  a = -9223372036854775807 - argv().size\n  b = 0 - argv().size\n  puts(a / b)\n}\n", "", "avant runtime: integer overflow in main (sys-trap-div-min.av:1:1)"))
+  xs.push(trapped("trap-index", "fn main {\n  puts(\"a\")\n  xs = [1]\n  i = process.args().size + 4\n  puts(xs[i])\n}\nimport std.process\n", "a\n", "avant runtime: index 5 out of bounds (size 1) in main (sys-trap-index.av:1:1)"))
+  xs.push(trapped("trap-str-index", "fn main {\n  s = \"ab\"\n  i = process.args().size + 6\n  puts(s[i])\n}\nimport std.process\n", "", "avant runtime: index 7 out of bounds (size 2) in main (sys-trap-str-index.av:1:1)"))
+  xs.push(trapped("trap-add", "fn main {\n  a = 9223372036854775807\n  b = process.args().size\n  puts(a + b)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-add.av:1:1)"))
+  xs.push(trapped("trap-sub", "fn main {\n  a = -9223372036854775807\n  b = process.args().size + 1\n  puts(a - b)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-sub.av:1:1)"))
+  xs.push(trapped("trap-mul64", "fn main {\n  a: Int = 9223372036854775807\n  b = process.args().size.to_i() + 1\n  puts(a * b)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-mul64.av:1:1)"))
+  xs.push(trapped("trap-u64-sub", "fn main {\n  a: UInt64 = 0u64\n  b = process.args().size.to_u64() + 1u64\n  puts(a - b)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-u64-sub.av:1:1)"))
+  xs.push(trapped("trap-neg", "fn main {\n  a = -9223372036854775807 - process.args().size\n  puts(-a)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-neg.av:1:1)"))
+  xs.push(trapped("trap-div0", "fn main {\n  a = 7\n  b = process.args().size - 1\n  puts(a / b)\n}\nimport std.process\n", "", "avant runtime: division by zero in main (sys-trap-div0.av:1:1)"))
+  xs.push(trapped("trap-rem0", "fn main {\n  a = 7\n  b = process.args().size - 1\n  puts(a % b)\n}\nimport std.process\n", "", "avant runtime: division by zero in main (sys-trap-rem0.av:1:1)"))
+  xs.push(trapped("trap-div-min", "fn main {\n  a = -9223372036854775807 - process.args().size\n  b = 0 - process.args().size\n  puts(a / b)\n}\nimport std.process\n", "", "avant runtime: integer overflow in main (sys-trap-div-min.av:1:1)"))
   xs.push(trapped("trap-pop", "fn main {\n  xs: Array(Int) = []\n  puts(\"p\")\n  puts(xs.pop().expect(\"xs has an element\"))\n}\n", "p\n", "avant runtime: xs has an element at sys-trap-pop.av:4:16"))
-  xs.push(trapped("trap-convert", "fn main {\n  big = 5000000000 + argv().size\n  puts(big.to_i32())\n}\n", "", "avant runtime: to_i32 of Int 5000000001 out of range for Int32 at sys-trap-convert.av:3:11"))
-  xs.push(trapped("trap-byte", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  b[0] = 299 + argv().size\n}\n", "", "avant runtime: byte 300 out of range (0..255) at sys-trap-byte.av:4:8"))
-  xs.push(trapped("trap-shift", "fn main {\n  n = 63 + argv().size\n  puts(1 << n)\n}\n", "", "avant runtime: shift amount 64 out of range for Int (0..63) at sys-trap-shift.av:3:10"))
-  xs.push(trapped("trap-f2i", "fn main {\n  x = 1e300 * argv().size.to_f()\n  puts(x.to_i())\n}\n", "", "avant runtime: to_i of Float64 1e300 out of range for Int at sys-trap-f2i.av:3:9"))
-  xs.push(trapped("trap-array-new", "fn main {\n  n = -4 - argv().size\n  xs = Array(Int).new(n)\n  puts(xs.size)\n}\n", "", "avant runtime: Array size -5 is negative at sys-trap-array-new.av:3:8"))
-  xs.push(trapped("trap-in-method", "class Heap {\n  xs: Array(Int) = []\n\n  fn at(i: Int): Int {\n    xs[i] + 1\n  }\n}\n\nfn twice(n: Int): Int {\n  n * 2\n}\n\nfn main {\n  h = Heap.new()\n  h.xs.push(1)\n  puts(twice(h.at(0)))\n  puts(twice(4611686018427387904 + argv().size))\n}\n", "4\n", "avant runtime: integer overflow in twice (sys-trap-in-method.av:9:1)"))
-  xs.push(trapped("trap-in-method2", "class Heap {\n  xs: Array(Int) = []\n\n  fn at(i: Int): Int {\n    xs[i] + 1\n  }\n}\n\nfn main {\n  h = Heap.new()\n  puts(h.at(argv().size + 1))\n}\n", "", "avant runtime: index 2 out of bounds (size 0) in Heap.at (sys-trap-in-method2.av:4:3)"))
-  xs.push(accepted("trap-order", "fn main {\n  args = argv()\n  if args.size > 1 {\n    puts(\"first\")\n    puts(\"second\")\n    xs = [1]\n    puts(xs[args.size + 3])\n  }\n  _ = process_run_out(args[0], [\"child\"], \"trap-order.txt\")\n  puts(file_read(\"trap-order.txt\") ?? \"?\")\n}\n", "first\nsecond\navant runtime: index 5 out of bounds (size 1) in main (sys-trap-order.av:1:1)\n\n"))
+  xs.push(trapped("trap-convert", "fn main {\n  big = 5000000000 + process.args().size\n  puts(big.to_i32())\n}\nimport std.process\n", "", "avant runtime: to_i32 of Int 5000000001 out of range for Int32 at sys-trap-convert.av:3:11"))
+  xs.push(trapped("trap-byte", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  b[0] = 299 + process.args().size\n}\nimport std.process\n", "", "avant runtime: byte 300 out of range (0..255) at sys-trap-byte.av:4:8"))
+  xs.push(trapped("trap-shift", "fn main {\n  n = 63 + process.args().size\n  puts(1 << n)\n}\nimport std.process\n", "", "avant runtime: shift amount 64 out of range for Int (0..63) at sys-trap-shift.av:3:10"))
+  xs.push(trapped("trap-f2i", "fn main {\n  x = 1e300 * process.args().size.to_f()\n  puts(x.to_i())\n}\nimport std.process\n", "", "avant runtime: to_i of Float64 1e300 out of range for Int at sys-trap-f2i.av:3:9"))
+  xs.push(trapped("trap-array-new", "fn main {\n  n = -4 - process.args().size\n  xs = Array(Int).new(n)\n  puts(xs.size)\n}\nimport std.process\n", "", "avant runtime: Array size -5 is negative at sys-trap-array-new.av:3:8"))
+  xs.push(trapped("trap-in-method", "class Heap {\n  xs: Array(Int) = []\n\n  fn at(i: Int): Int {\n    xs[i] + 1\n  }\n}\n\nfn twice(n: Int): Int {\n  n * 2\n}\n\nfn main {\n  h = Heap.new()\n  h.xs.push(1)\n  puts(twice(h.at(0)))\n  puts(twice(4611686018427387904 + process.args().size))\n}\nimport std.process\n", "4\n", "avant runtime: integer overflow in twice (sys-trap-in-method.av:9:1)"))
+  xs.push(trapped("trap-in-method2", "class Heap {\n  xs: Array(Int) = []\n\n  fn at(i: Int): Int {\n    xs[i] + 1\n  }\n}\n\nfn main {\n  h = Heap.new()\n  puts(h.at(process.args().size + 1))\n}\nimport std.process\n", "", "avant runtime: index 2 out of bounds (size 0) in Heap.at (sys-trap-in-method2.av:4:3)"))
+  xs.push(accepted("trap-order", "fn main {\n  args = process.args()\n  if args.size > 1 {\n    puts(\"first\")\n    puts(\"second\")\n    xs = [1]\n    puts(xs[args.size + 3])\n  }\n  _ = process.run(\"sh\", [\"-c\", \"\${args[0]} child > trap-order.txt 2>&1\"])\n  puts(fs.read(\"trap-order.txt\") ?? \"?\")\n}\nimport std.fs\nimport std.process\n", "first\nsecond\navant runtime: index 5 out of bounds (size 1) in main (sys-trap-order.av:1:1)\n\n"))
   xs
 }
 
@@ -124,10 +125,10 @@ fn panic_cases: Array(SCase) {
   xs: Array(SCase) = []
   xs.push(trapped("panic-plain", "fn main {\n  puts(\"before\")\n  panic(\"the table is empty\")\n}\n", "before\n", "avant runtime: the table is empty at sys-panic-plain.av:3:3"))
   xs.push(trapped("panic-coalesce", "fn main {\n  s = \"4x\"\n  n = s.to_i() ?? panic(\"not a number: \${s}\")\n  puts(n)\n}\n", "", "avant runtime: not a number: 4x at sys-panic-coalesce.av:3:19"))
-  xs.push(accepted("panic-coalesce-ok", "fn main {\n  n = \"42\".to_i() ?? panic(\"not a number\")\n  puts(n + 1)\n  xs = [1.5, 2.5]\n  puts(xs.get(1) ?? panic(\"no second\"))\n  n = argv().size\n  v = if n > 0 { n * 2 } else { panic(\"no program name\") }\n  puts(v)\n}\n", "43\n2.5\n2\n"))
+  xs.push(accepted("panic-coalesce-ok", "fn main {\n  n = \"42\".to_i() ?? panic(\"not a number\")\n  puts(n + 1)\n  xs = [1.5, 2.5]\n  puts(xs.get(1) ?? panic(\"no second\"))\n  n = process.args().size\n  v = if n > 0 { n * 2 } else { panic(\"no program name\") }\n  puts(v)\n}\nimport std.process\n", "43\n2.5\n2\n"))
   xs.push(trapped("panic-guard", "class Bad: Error {\n  message: String = \"no such key\"\n}\n\nfn find(k: Int): Int | Bad {\n  if k > 2 {\n    return Bad.new()\n  }\n  k * 10\n}\n\nfn main {\n  for k in 1..5 {\n    v = find(k) else e {\n      panic(\"key \${k}: \${e}\")\n    }\n    puts(v)\n  }\n}\n", "10\n20\n", "avant runtime: key 3: no such key at sys-panic-guard.av:15:7"))
-  xs.push(trapped("panic-tail", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  }\n  panic(\"pick needs a positive number, got \${n}\")\n}\n\nfn kind(n: Int): String {\n  switch n {\n    case 1 { \"one\" }\n    case 2 { \"two\" }\n    else { panic(\"no kind for \${n}\") }\n  }\n}\n\nfn main {\n  puts(pick(3))\n  puts(kind(2))\n  puts(pick(1 - argv().size))\n}\n", "3\ntwo\n", "avant runtime: pick needs a positive number, got 0 at sys-panic-tail.av:5:3"))
-  xs.push(accepted("panic-task", "fn main {\n  n = argv().size\n  h = spawn {\n    if n > 0 {\n      panic(\"the task gave up\")\n    }\n    n\n  }\n  v = h.join() else e {\n    puts(\"joined: \${e.what}\")\n    return\n  }\n  puts(v)\n}\n", "joined: the task gave up\n"))
+  xs.push(trapped("panic-tail", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  }\n  panic(\"pick needs a positive number, got \${n}\")\n}\n\nfn kind(n: Int): String {\n  switch n {\n    case 1 { \"one\" }\n    case 2 { \"two\" }\n    else { panic(\"no kind for \${n}\") }\n  }\n}\n\nfn main {\n  puts(pick(3))\n  puts(kind(2))\n  puts(pick(1 - process.args().size))\n}\nimport std.process\n", "3\ntwo\n", "avant runtime: pick needs a positive number, got 0 at sys-panic-tail.av:5:3"))
+  xs.push(accepted("panic-task", "fn main {\n  n = process.args().size\n  h = spawn {\n    if n > 0 {\n      panic(\"the task gave up\")\n    }\n    n\n  }\n  v = h.join() else e {\n    puts(\"joined: \${e.what}\")\n    return\n  }\n  puts(v)\n}\nimport std.process\n", "joined: the task gave up\n"))
   xs.push(exited("exit-coalesce", "fn main {\n  puts(\"start\")\n  n = \"seven\".to_i() ?? exit(4)\n  puts(n)\n}\n", "start\n", 4, ""))
   xs.push(refused("panic-not-string", "fn main {\n  panic(3)\n}\n", "expected String"))
   xs.push(refused("panic-no-message", "fn main {\n  panic()\n}\n", "panic takes one String, the message"))
@@ -164,7 +165,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/sys-${f.tag}.av"
-    c.wrote(file_write(src, f.src), "${f.tag}: write")
+    c.wrote(fs.write(src, f.src), "${f.tag}: write")
     jobs.push(compile_job("", compiler, src, "${dir}/sys-${f.tag}.bin", "${dir}/sys-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -194,7 +195,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
       }
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/sys-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/sys-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
     }
   }
@@ -202,7 +203,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_system.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     all: Array(SCase) = []
     for f_io in io_cases() {
       all.push(f_io)

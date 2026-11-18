@@ -1,6 +1,8 @@
 import harness
 import std.sync
 import std.http
+import std.fs
+import std.process
 
 // Safety behaviours of std.http's server, each a defect
 // that had no test: a client that closes with pipelined
@@ -49,7 +51,7 @@ fn set_env(name: String, value: String) {
 
 // This process's peak resident memory in kB (VmHWM), 0 when unreadable.
 fn peak_rss_kb: Int {
-  if text = file_read("/proc/self/status") {
+  if text = fs.read("/proc/self/status") {
     i = 0
     while i < count_lines(text) {
       line = nth_line(text, i)
@@ -77,8 +79,8 @@ fn raw_client(port: Int, root: String, stamp: Int, mode: String, arg: String): S
   if arg.size > 0 {
     args.push(arg)
   }
-  _ = process_run_out("/usr/bin/python3", args, log)
-  if text = file_read(log) {
+  _ = run_out("/usr/bin/python3", args, log)
+  if text = fs.read(log) {
     return nth_line(text, 0)
   }
   ""
@@ -352,7 +354,7 @@ fn ws_route_cases(c: Checks) {
 // prints its line and fails its request (answered 500), and the server
 // goes on to its stop.
 fn route_serving_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/http-route-serving-${stamp}.bin"
     clog = "${scratch()}/http-route-serving-${stamp}.clog"
@@ -364,8 +366,8 @@ fn route_serving_cases(c: Checks, root: String) {
       log = "${scratch()}/http-route-serving-${stamp}-${kinds[i]}.log"
       args: Array(String) = []
       args.push(kinds[i])
-      status = process_run_out(bin, args, log) ?? -1
-      text = file_read(log) ?? ""
+      status = run_out(bin, args, log) ?? -1
+      text = fs.read(log) ?? ""
       c.eq_int(status, 0, "Server.${kinds[i]} while serving: the server goes on, status 0")
       c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\nanswered 500\n", "Server.${kinds[i]} while serving: the trap's line, the request answered 500")
     }
@@ -384,8 +386,8 @@ fn route_serving_cases(c: Checks, root: String) {
       log = "${scratch()}/http-route-serving-${stamp}-${limits[i]}.log"
       args: Array(String) = []
       args.push(limits[i])
-      status = process_run_out(bin, args, log) ?? -1
-      text = file_read(log) ?? ""
+      status = run_out(bin, args, log) ?? -1
+      text = fs.read(log) ?? ""
       want_status = 1
       if i < 2 {
         want_status = 0
@@ -408,7 +410,7 @@ fn route_serving_cases(c: Checks, root: String) {
 // case (a tab, a quote and bytes over 127 in the value, the token's
 // punctuation in the name) is answered with the header as given.
 fn header_split_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/http-header-split-${stamp}.bin"
     clog = "${scratch()}/http-header-split-${stamp}.clog"
@@ -448,7 +450,7 @@ fn header_split_cases(c: Checks, root: String) {
         args: Array(String) = []
         args.push(kind)
         args.push(port_file)
-        process_run_out(bin, args, log) ?? -1
+        run_out(bin, args, log) ?? -1
       }
       wlog = "${scratch()}/http-header-split-${stamp}-${kind}.wire"
       pargs: Array(String) = []
@@ -456,10 +458,10 @@ fn header_split_cases(c: Checks, root: String) {
       pargs.push("0")
       pargs.push("header_split")
       pargs.push(port_file)
-      _ = process_run_out("/usr/bin/python3", pargs, wlog)
-      wire = nth_line(file_read(wlog) ?? "", 0)
+      _ = run_out("/usr/bin/python3", pargs, wlog)
+      wire = nth_line(fs.read(wlog) ?? "", 0)
       status = server.join() ?? -1
-      text = file_read(log) ?? ""
+      text = fs.read(log) ?? ""
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) 200 Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
@@ -488,7 +490,7 @@ fn header_split_cases(c: Checks, root: String) {
 // literal outside std.http does not compile, and neither does reading
 // the field; a response built by Response.text and `header` does.
 fn response_literal_cases(c: Checks) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     srcs = [
       "import std.http\n\nfn main {\n  r = Response { status: 200, hs: Response.text(\"x\").headers(), ctype: \"\", head: \"X: 1\\r\\n\\r\\nforged\", body: \"x\".bytes }\n  puts(r.status)\n}\n",
@@ -498,12 +500,12 @@ fn response_literal_cases(c: Checks) {
     names = ["literal", "read", "built"]
     for i in 0..srcs.size {
       src = "${scratch()}/http-response-${stamp}-${names[i]}.av"
-      if wrote = file_write(src, srcs[i]) {
+      if wrote = fs.write(src, srcs[i]) {
       }
       bin = "${scratch()}/http-response-${stamp}-${names[i]}.bin"
       clog = "${scratch()}/http-response-${stamp}-${names[i]}.clog"
       code = compile_av(compiler, src, bin, clog)
-      text = file_read(clog) ?? ""
+      text = fs.read(clog) ?? ""
       if names[i] == "built" {
         c.eq_int(code, 0, "a response built by Response.text and header compiles")
       } else {
@@ -521,7 +523,7 @@ fn response_literal_cases(c: Checks) {
 fn wait_port(path: String): Int {
   tries = 0
   while tries < 500 {
-    if text = file_read(path) {
+    if text = fs.read(path) {
       if text.size > 1 && text[text.size - 1] == 10 {
         return str_slice(text, 0, text.size - 1).to_i() ?? 0
       }
@@ -553,7 +555,7 @@ fn client_framing_cases(c: Checks, root: String) {
     args.push("${root}/tests/fixtures/http/keep_server.py")
     args.push(port_file)
     args.push("30")
-    process_run_out("/usr/bin/python3", args, log) ?? -1
+    run_out("/usr/bin/python3", args, log) ?? -1
   }
   port = wait_port(port_file)
   c.expect(port > 0, "the keep-open server is listening")
@@ -611,7 +613,7 @@ fn client_request_cases(c: Checks, root: String) {
     args.push("${root}/tests/fixtures/http/keep_server.py")
     args.push(port_file)
     args.push("0")
-    process_run_out("/usr/bin/python3", args, log) ?? -1
+    run_out("/usr/bin/python3", args, log) ?? -1
   }
   port = wait_port(port_file)
   c.expect(port > 0, "the echo server is listening")
@@ -704,7 +706,7 @@ fn client_request_cases(c: Checks, root: String) {
     args.push("${root}/tests/fixtures/http/keep_server.py")
     args.push(other_file)
     args.push("0")
-    process_run_out("/usr/bin/python3", args, other_log) ?? -1
+    run_out("/usr/bin/python3", args, other_log) ?? -1
   }
   other_port = wait_port(other_file)
   c.eq_str(outcome(Http.request("GET", "${base}/to?http://127.0.0.1:${other_port}/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: 127.0.0.1:${other_port}|X-Keep: 1|Content-Length: 0|Connection: close", "a redirect to another port is another authority")
@@ -730,7 +732,7 @@ fn client_response_round(c: Checks, root: String, what: String, paths: Array(Str
     args.push("${root}/tests/fixtures/http/keep_server.py")
     args.push(port_file)
     args.push("0")
-    process_run_out("/usr/bin/python3", args, log) ?? -1
+    run_out("/usr/bin/python3", args, log) ?? -1
   }
   port = wait_port(port_file)
   c.expect(port > 0, "the answering server is listening (${what})")
@@ -923,7 +925,7 @@ fn ws_target_round(root: String, n: Int, out: Channel(String)) {
     args: Array(String) = []
     args.push("${root}/tests/fixtures/http/ws_target_server.py")
     args.push(port_file)
-    process_run_out("/usr/bin/python3", args, log) ?? -1
+    run_out("/usr/bin/python3", args, log) ?? -1
   }
   port = wait_port(port_file)
   r = Ws.connect("ws://127.0.0.1:${port}/${repeat_byte(97, n)}", 5000)
@@ -994,7 +996,7 @@ fn ws_handshake_cases(c: Checks, root: String) {
 // LD_PRELOAD shim tests/fixtures/http/malloc_fail.c, which fails the
 // fixture's large mallocs while its handler sends.
 fn ws_cut_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/ws-cut-${stamp}.bin"
     so = "${scratch()}/malloc-fail-${stamp}.so"
@@ -1007,7 +1009,7 @@ fn ws_cut_cases(c: Checks, root: String) {
     cargs.push("-o")
     cargs.push(so)
     cargs.push("${root}/tests/fixtures/http/malloc_fail.c")
-    c.eq_int(process_run_out("/usr/bin/env", cargs, "${scratch()}/malloc-fail-${stamp}.cclog") ?? -1, 0, "the malloc-fail shim builds")
+    c.eq_int(run_out("/usr/bin/env", cargs, "${scratch()}/malloc-fail-${stamp}.cclog") ?? -1, 0, "the malloc-fail shim builds")
     port_file = "${scratch()}/ws-cut-${stamp}.port"
     log = "${scratch()}/ws-cut-${stamp}.log"
     server = spawn {
@@ -1015,7 +1017,7 @@ fn ws_cut_cases(c: Checks, root: String) {
       args.push("LD_PRELOAD=${so}")
       args.push(bin)
       args.push(port_file)
-      process_run_out("/usr/bin/env", args, log) ?? -1
+      run_out("/usr/bin/env", args, log) ?? -1
     }
     wlog = "${scratch()}/ws-cut-${stamp}.wire"
     pargs: Array(String) = []
@@ -1023,8 +1025,8 @@ fn ws_cut_cases(c: Checks, root: String) {
     pargs.push("0")
     pargs.push("ws_cut")
     pargs.push(port_file)
-    _ = process_run_out("/usr/bin/python3", pargs, wlog)
-    wire = nth_line(file_read(wlog) ?? "", 0)
+    _ = run_out("/usr/bin/python3", pargs, wlog)
+    wire = nth_line(fs.read(wlog) ?? "", 0)
     port = wait_port(port_file)
     stop(port)
     c.eq_int(server.join() ?? -1, 0, "the cut-frame server ends, status 0")
@@ -1040,7 +1042,7 @@ fn ws_cut_cases(c: Checks, root: String) {
 // shortage lasted. The socket is polled again at the loop's next sweep;
 // once descriptors are free the waiting connection is answered.
 fn emfile_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/emfile-${stamp}.bin"
     code = compile_av(compiler, "${root}/tests/fixtures/http/emfile.av", bin, "${scratch()}/emfile-${stamp}.clog")
@@ -1050,7 +1052,7 @@ fn emfile_cases(c: Checks, root: String) {
     server = spawn {
       args: Array(String) = []
       args.push(port_file)
-      process_run_out(bin, args, log) ?? -1
+      run_out(bin, args, log) ?? -1
     }
     wlog = "${scratch()}/emfile-${stamp}.wire"
     pargs: Array(String) = []
@@ -1058,10 +1060,10 @@ fn emfile_cases(c: Checks, root: String) {
     pargs.push("0")
     pargs.push("emfile")
     pargs.push(port_file)
-    _ = process_run_out("/usr/bin/python3", pargs, wlog)
-    c.eq_str(nth_line(file_read(wlog) ?? "", 0), "emfile=answered", "a connection that waited while descriptors ran out is answered")
+    _ = run_out("/usr/bin/python3", pargs, wlog)
+    c.eq_str(nth_line(fs.read(wlog) ?? "", 0), "emfile=answered", "a connection that waited while descriptors ran out is answered")
     c.eq_int(server.join() ?? -1, 0, "the EMFILE server ends, status 0")
-    c.eq_str(file_read(log) ?? "", "cpu while accept failed: under 300 ms\n", "a failing accept does not spin the loop")
+    c.eq_str(fs.read(log) ?? "", "cpu while accept failed: under 300 ms\n", "a failing accept does not spin the loop")
   } else {
     c.expect(false, "AVANT_COMPILER is set for the EMFILE test")
   }
@@ -1122,7 +1124,7 @@ fn ws_live_cases(c: Checks, root: String) {
 }
 
 fn ws_deadline_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/ws-deadlines-${stamp}.bin"
     so = "${scratch()}/clock-step-${stamp}.so"
@@ -1137,14 +1139,14 @@ fn ws_deadline_cases(c: Checks, root: String) {
     cargs.push(so)
     cargs.push("${root}/tests/fixtures/http/clock_step.c")
     cargs.push("-ldl")
-    c.eq_int(process_run_out("/usr/bin/env", cargs, "${scratch()}/clock-step-${stamp}.cclog") ?? -1, 0, "the clock-step shim builds")
+    c.eq_int(run_out("/usr/bin/env", cargs, "${scratch()}/clock-step-${stamp}.cclog") ?? -1, 0, "the clock-step shim builds")
     args: Array(String) = []
     args.push("LD_PRELOAD=${so}")
     args.push(bin)
     log = "${scratch()}/ws-deadlines-${stamp}.log"
-    status = process_run_out("/usr/bin/env", args, log) ?? -1
+    status = run_out("/usr/bin/env", args, log) ?? -1
     c.eq_int(status, 0, "the WebSocket deadline fixture under a wall clock an hour back: status 0")
-    c.eq_str(file_read(log) ?? "", "connect: in time\nrecv: in time\n", "Ws.connect's and recv's deadlines under a wall clock an hour back")
+    c.eq_str(fs.read(log) ?? "", "connect: in time\nrecv: in time\n", "Ws.connect's and recv's deadlines under a wall clock an hour back")
   } else {
     c.expect(false, "AVANT_COMPILER is set for the WebSocket deadline test")
   }
@@ -1216,7 +1218,7 @@ fn deadline_cases(c: Checks, root: String) {
 // is printed when it happens, in order. A trap inside a C callback the
 // handler made still ends the program, its request unanswered.
 fn handler_trap_cases(c: Checks, root: String) {
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     bin = "${scratch()}/http-handler-trap-${stamp}.bin"
     clog = "${scratch()}/http-handler-trap-${stamp}.clog"
@@ -1229,7 +1231,7 @@ fn handler_trap_cases(c: Checks, root: String) {
       server = spawn {
         args: Array(String) = []
         args.push(port_file)
-        process_run_out(bin, args, log) ?? -1
+        run_out(bin, args, log) ?? -1
       }
       wlog = "${scratch()}/http-handler-trap-${stamp}-${mode}.wire"
       pargs: Array(String) = []
@@ -1237,10 +1239,10 @@ fn handler_trap_cases(c: Checks, root: String) {
       pargs.push("0")
       pargs.push(mode)
       pargs.push(port_file)
-      _ = process_run_out("/usr/bin/python3", pargs, wlog)
-      wire = nth_line(file_read(wlog) ?? "", 0)
+      _ = run_out("/usr/bin/python3", pargs, wlog)
+      wire = nth_line(fs.read(wlog) ?? "", 0)
       status = server.join() ?? -1
-      text = file_read(log) ?? ""
+      text = fs.read(log) ?? ""
       if mode == "handler_trap" {
         c.eq_int(status, 0, "a handler's trap: the server goes on to its stop, status 0")
         c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,grow-hash:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
@@ -1372,7 +1374,7 @@ fn limit_cases(c: Checks, root: String) {
   } else {
     c.expect(false, "listen for the shutdown deadline test")
   }
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     bin = "${scratch()}/http-ceiling-${stamp}.bin"
     clog = "${scratch()}/http-ceiling-${stamp}.clog"
     code = compile_av(compiler, "${root}/tests/fixtures/http/handler_trap.av", bin, clog)
@@ -1385,7 +1387,7 @@ fn limit_cases(c: Checks, root: String) {
       args.push(bin)
       args.push(port_file)
       args.push("ceiling")
-      process_run_out("/usr/bin/timeout", args, log) ?? -1
+      run_out("/usr/bin/timeout", args, log) ?? -1
     }
     wlog = "${scratch()}/http-ceiling-${stamp}.wire"
     pargs: Array(String) = []
@@ -1393,8 +1395,8 @@ fn limit_cases(c: Checks, root: String) {
     pargs.push("0")
     pargs.push("ceiling")
     pargs.push(port_file)
-    _ = process_run_out("/usr/bin/python3", pargs, wlog)
-    c.eq_str(nth_line(file_read(wlog) ?? "", 0), "ceiling=503 closed", "past the memory ceiling a request is answered 503")
+    _ = run_out("/usr/bin/python3", pargs, wlog)
+    c.eq_str(nth_line(fs.read(wlog) ?? "", 0), "ceiling=503 closed", "past the memory ceiling a request is answered 503")
     c.eq_int(ceiling_server.join() ?? -1, 124, "the memory-ceiling server ends by its timeout")
   } else {
     c.expect(false, "AVANT_COMPILER is set for the memory-ceiling test")

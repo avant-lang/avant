@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The LLVM emitter (compiler/llvm/emit*.av) and the driver
 // (compiler/llvm/driver.av) through the internal hook
@@ -25,7 +27,7 @@ fn mode_tag(mode: String): String {
 }
 
 fn log_text(path: String): String {
-  if t = file_read(path) {
+  if t = fs.read(path) {
     return t
   }
   "(no log)"
@@ -165,12 +167,12 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   cf: Array(String) = []
   cf.push("--call-forms")
   builds.push(build_job(compiler, "example", "${dir}/ex-calls", "--debug", cf, "${dir}/ex-calls.build.log"))
-  fs = finals()
+  fins = finals()
   i = 0
-  while i < fs.size {
-    ex = emit_ll("${dir}/${fs[i]}.ll")
+  while i < fins.size {
+    ex = emit_ll("${dir}/${fins[i]}.ll")
     ex.push("--object")
-    builds.push(build_job(compiler, fs[i], "${dir}/${fs[i]}.o", "--debug", ex, "${dir}/${fs[i]}.build.log"))
+    builds.push(build_job(compiler, fins[i], "${dir}/${fins[i]}.o", "--debug", ex, "${dir}/${fins[i]}.build.log"))
     i += 1
   }
   builds.push(build_job(compiler, "example_no_barrier", "${dir}/nb", "--debug", emit_ll("${dir}/nb.ll"), "${dir}/nb.build.log"))
@@ -185,7 +187,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
 
   // (a) the .ll: the fixture, and the same text in every mode.
   want = "(no fixture)"
-  if t = file_read("${root}/tests/fixtures/mir/example.ll") {
+  if t = fs.read("${root}/tests/fixtures/mir/example.ll") {
     want = t
   }
   got = log_text("${dir}/ex-debug.ll")
@@ -195,9 +197,9 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
 
   // (d) the selftest's final-stage modules: verified and compiled.
   i = 0
-  while i < fs.size {
-    c.expect(file_exists("${dir}/${fs[i]}.o"), "${fs[i]}: an object")
-    c.expect(log_text("${dir}/${fs[i]}.ll").contains("define internal void @\"av.t/churn\"()"), "${fs[i]}: its .ll defines the module's functions")
+  while i < fins.size {
+    c.expect(fs.exists("${dir}/${fins[i]}.o"), "${fins[i]}: an object")
+    c.expect(log_text("${dir}/${fins[i]}.ll").contains("define internal void @\"av.t/churn\"()"), "${fins[i]}: its .ll defines the module's functions")
     i += 1
   }
 
@@ -207,8 +209,8 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   e = log_text(nb.log)
   c.expect(e.contains("error[V13]: av.main/tag: bb1[1]: reference store through (*_2).0 without its barrier"), "example_no_barrier: the V13 diagnostic")
   c.expect(e.contains("--> ex.av:12:5"), "example_no_barrier: at the MIR's source location")
-  c.expect(!file_exists("${dir}/nb.ll"), "example_no_barrier: no .ll written")
-  c.expect(!file_exists("${dir}/nb"), "example_no_barrier: no program linked")
+  c.expect(!fs.exists("${dir}/nb.ll"), "example_no_barrier: no .ll written")
+  c.expect(!fs.exists("${dir}/nb"), "example_no_barrier: no program linked")
 
   // The second wave: every run at once.
   gcv = "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1"
@@ -278,7 +280,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_mir_emit.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_mir_emit(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

@@ -1,5 +1,7 @@
 import std.http
 import std.sync
+import std.fs
+import std.process
 
 // accept failing for want of descriptors (EMFILE): run by
 // tests/cases/test_std_http_safety.av with raw_client.py mode emfile.
@@ -24,7 +26,7 @@ fn sleep_ms(ms: Int) {
 }
 
 fn main: Int {
-  a = argv()
+  a = process.args()
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.memory_ceiling(0)
     server.get("/ping", (req) {
@@ -35,7 +37,7 @@ fn main: Int {
       Response.text("bye")
     })
     if a.size > 1 {
-      if wrote = file_write(a[1], "${server.port()}\n") {
+      if wrote = fs.write(a[1], "${server.port()}\n") {
       }
       fds: Array(Int) = []
       zero: Int32 = 0

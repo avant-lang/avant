@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Spawn, JoinHandle, the task pool, channels, `.parallel`,
 // `Mutex.with`, and coverage on the new back end
@@ -123,7 +125,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     j = jobs[base + i]
     c.eq_int(j.code, 0, "${gn[i]}: dump under llvm exits 0")
     want = "(no golden)"
-    if t = file_read("${root}/tests/goldens/threads/${gn[i]}.mir") {
+    if t = fs.read("${root}/tests/goldens/threads/${gn[i]}.mir") {
       want = t
     }
     c.eq_str(lib_relative(log_text(j.log), compiler), want, "tests/fixtures/threads/${gn[i]}.av: the MIR dump is tests/goldens/threads/${gn[i]}.mir")
@@ -134,11 +136,11 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(jobs[base + 1].code, 0, "threads/spawn.av: __emit-ll exits 0")
   c.eq_int(jobs[base + 2].code, 0, "heap/loops.av: __emit-ll exits 0")
   vol_shared = "(no .ll)"
-  if t = file_read("${dir}/vol0.ll") {
+  if t = fs.read("${dir}/vol0.ll") {
     vol_shared = without_frame_links(t)
   }
   vol_single = "(no .ll) volatile"
-  if t = file_read("${dir}/vol1.ll") {
+  if t = fs.read("${dir}/vol1.ll") {
     vol_single = without_frame_links(t)
   }
   c.expect(!vol_shared.contains("load volatile ptr") && !vol_shared.contains("store volatile") && vol_shared.contains("load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
@@ -228,7 +230,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
 // file records, an absolute path that differs between
 // checkouts; the goldens name them lib/... .
 fn lib_relative(text: String, compiler: String): String {
-  if t = file_read("${compiler}.versions.txt") {
+  if t = fs.read("${compiler}.versions.txt") {
     for line in t.split("\n") {
       if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
         return text.replace("${str_slice(line, 5, line.size)}/", "lib/")
@@ -240,7 +242,7 @@ fn lib_relative(text: String, compiler: String): String {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_threads_llvm.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_threads_llvm(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

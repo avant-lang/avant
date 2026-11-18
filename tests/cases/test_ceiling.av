@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The runtime's size ceiling (runtime/avant_rt.h,
 // AVANT_SIZE_MAX): a Buf, Array, Hash or String whose size would
@@ -11,9 +13,9 @@ import harness
 fn expect_ceiling(c: Checks, bin: String, stamp: Int, mode: String, needle: String) {
   log = "${scratch()}/ceiling-${stamp}-${mode}.log"
   args = [mode]
-  code = process_run_out(bin, args, log) ?? -1
+  code = run_out(bin, args, log) ?? -1
   c.eq_int(code, 1, "${mode}: exits 1")
-  if out = file_read(log) {
+  if out = fs.read(log) {
     c.expect(out.contains(needle), "${mode}: ${needle}")
     c.expect(!out.contains("no trap"), "${mode}: traps before returning")
   } else {
@@ -23,7 +25,7 @@ fn expect_ceiling(c: Checks, bin: String, stamp: Int, mode: String, needle: Stri
 
 fn test_ceiling(c: Checks) {
   c.suite("tests/cases/test_ceiling.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
     src = "${root}/tests/fixtures/ffi/ceiling.av"
@@ -33,7 +35,7 @@ fn test_ceiling(c: Checks) {
     flags.push("--cc")
     flags.push("${root}/tests/fixtures/ffi/ceiling.c")
     c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "compile the ceiling probes")
-    if file_exists(bin) {
+    if fs.exists(bin) {
       chmod_x(bin)
       expect_ceiling(c, bin, stamp, "1", "avant runtime: Buf would exceed 2147483647 bytes")
       expect_ceiling(c, bin, stamp, "2", "avant runtime: Buf would exceed 2147483647 bytes")
@@ -45,9 +47,9 @@ fn test_ceiling(c: Checks) {
       path = "${scratch()}/ceiling-${stamp}-sparse"
       rlog = "${scratch()}/ceiling-${stamp}-read.log"
       rargs = ["read", path]
-      rcode = process_run_out(bin, rargs, rlog) ?? -1
+      rcode = run_out(bin, rargs, rlog) ?? -1
       c.eq_int(rcode, 0, "read: a file past the ceiling is an error value")
-      if out = file_read(rlog) {
+      if out = fs.read(rlog) {
         c.eq_str(out, "errno 27: cannot read ${path}: File too large\n", "read: EFBIG")
       } else {
         c.expect(false, "read: read the log")

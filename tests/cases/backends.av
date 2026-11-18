@@ -1,4 +1,5 @@
 import harness
+import std.fs
 
 // Helpers shared by the suite tests of the back end's subsets
 // (test_scalars.av, test_strings.av, ...; until the old back end retired
@@ -8,7 +9,7 @@ import harness
 // own files, waves of at most 24 jobs, and the run goldens.
 
 pub fn log_text(path: String): String {
-  if t = file_read(path) {
+  if t = fs.read(path) {
     return t
   }
   "(no log)"
@@ -127,7 +128,7 @@ pub fn golden_key(rel: String): String {
 }
 
 pub fn golden_out(root: String, rel: String): String {
-  if t = file_read("${root}/tests/goldens/runs/${golden_key(rel)}.out") {
+  if t = fs.read("${root}/tests/goldens/runs/${golden_key(rel)}.out") {
     return t
   }
   "(no golden for ${rel})"
@@ -185,8 +186,8 @@ fn is_version(s: String): Bool {
 // The golden stderr: KEY.err, absent when it is empty.
 pub fn golden_err(root: String, rel: String): String {
   path = "${root}/tests/goldens/runs/${golden_key(rel)}.err"
-  if file_exists(path) {
-    if t = file_read(path) {
+  if fs.exists(path) {
+    if t = fs.read(path) {
       return t
     }
   }
@@ -196,7 +197,7 @@ pub fn golden_err(root: String, rel: String): String {
 // The golden exit status (status.txt: `PATH STATUS` lines), -1 when the
 // program has none.
 pub fn golden_status(root: String, rel: String): Int {
-  if t = file_read("${root}/tests/goldens/runs/status.txt") {
+  if t = fs.read("${root}/tests/goldens/runs/status.txt") {
     lines = t.split("\n")
     i = 0
     while i < lines.size {

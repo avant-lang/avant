@@ -1,7 +1,10 @@
-// The prelude module's source: the file, input and process functions
-// (prelude_names), written in Avant. Each returns its result or an Error
-// value that says what failed: IoError for files, directories and
-// standard input, ProcessError for programs.
+// The prelude module's source: standard input (read_line) and the error
+// types IoError and ProcessError, which read_line, std.fs and
+// std.process give, written in Avant. The file and process functions
+// beside them (file_read, file_write, dir_list, process_run, dir_exists,
+// dir_walk) are std.fs's and std.process's under their old names, kept
+// only for the compiler's own sources, which the seed builds: the checker
+// refuses them anywhere else, naming the new spelling (moved_io_name).
 // The loader adds this module, named `prelude`, to a program whose source
 // names one of the functions (prelude_wanted); every module of the
 // program then sees its pub names, the two error types included. The runtime entries are
@@ -13,7 +16,17 @@ import token
 // The names that bring the module in: its functions. A program that
 // calls none of them may declare its own IoError or ProcessError.
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output", "process_output_into"]
+  ["file_read", "file_write", "dir_list", "process_run", "read_line", "dir_exists", "dir_walk"]
+}
+
+// The old functions of prelude_old_source: a program gets them only when
+// it names one.
+pub fn prelude_old_names: Array(String) {
+  ["file_read", "file_write", "dir_list", "process_run"]
+}
+
+pub fn prelude_old_wanted(tokens: Array(Token)): Bool {
+  names_wanted(tokens, prelude_old_names())
 }
 
 // The functions of the module's second part (prelude_more_source), which
@@ -21,7 +34,7 @@ pub fn prelude_names: Array(String) {
 // only the first part's functions compiles exactly the code it did
 // before the second part existed.
 pub fn prelude_more_names: Array(String) {
-  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output", "process_output_into"]
+  ["read_line", "dir_exists", "dir_walk"]
 }
 
 // Whether a module's tokens name one of the prelude module's names.
@@ -55,19 +68,13 @@ pub fn prelude_source: String {
   b = buf_new()
   lines = [
     "lib avant_sys {",
-    "  fun avant_sys_read(path: String): String?",
-    "  fun avant_sys_write(path: String, body: String): Int",
-    "  fun avant_sys_list(path: String): Array(String)?",
-    "  fun avant_sys_run(path: String, args: Array(String), out: String): Int",
-    "  fun avant_sys_errno: Int",
-    "  fun avant_sys_stage: Int",
-    "  fun avant_sys_signal: Int",
     "  fun avant_sys_strerror(code: Int): String",
     "  fun avant_sys_strsignal(sig: Int): String",
     "}",
     "",
     "// A file or directory operation that failed: op is \"read\", \"write\",",
-    "// \"list\", \"open\", \"stat\", \"delete\" or \"make\", errno the OS error number.",
+    "// \"list\", \"open\", \"stat\", \"delete\", \"rename\" or \"make\", errno the OS",
+    "// error number.",
     "pub class IoError: Error {",
     "  pub op: String",
     "  pub path: String",
@@ -108,53 +115,72 @@ pub fn prelude_source: String {
     "    }",
     "    \"cannot run \${path}: \${avant_sys.avant_sys_strerror(errno)}\"",
     "  }",
+    "}"
+  ]
+  for line in lines {
+    b.push_str(line)
+    b.push_str("\n")
+  }
+  b.to_s()
+}
+
+// The old file and process functions, which only the compiler's own
+// sources still call (the seed that builds them has no std.fs): a part
+// of its own, so a program that imports std.fs or std.process carries
+// none of them.
+pub fn prelude_old_source: String {
+  b = buf_new()
+  lines = [
+    "lib avant_sys_old {",
+    "  fun avant_sys_read(path: String): String?",
+    "  fun avant_sys_write(path: String, body: String): Int",
+    "  fun avant_sys_list(path: String): Array(String)?",
+    "  fun avant_sys_run(path: String, args: Array(String), out: String): Int",
+    "  fun avant_sys_errno: Int",
+    "  fun avant_sys_stage: Int",
+    "  fun avant_sys_signal: Int",
     "}",
     "",
     "// The whole file.",
     "pub fn file_read(path: String): String | IoError {",
-    "  if text = avant_sys.avant_sys_read(path) {",
+    "  if text = avant_sys_old.avant_sys_read(path) {",
     "    return text",
     "  }",
-    "  IoError.new(\"read\", path, avant_sys.avant_sys_errno())",
+    "  IoError.new(\"read\", path, avant_sys_old.avant_sys_errno())",
     "}",
     "",
     "// Creates or replaces the file; the bytes written.",
     "pub fn file_write(path: String, body: String): Int | IoError {",
-    "  n = avant_sys.avant_sys_write(path, body)",
+    "  n = avant_sys_old.avant_sys_write(path, body)",
     "  if n < 0 {",
-    "    return IoError.new(\"write\", path, avant_sys.avant_sys_errno())",
+    "    return IoError.new(\"write\", path, avant_sys_old.avant_sys_errno())",
     "  }",
     "  n",
     "}",
     "",
     "// The names in the directory, sorted, without . and ..",
     "pub fn dir_list(path: String): Array(String) | IoError {",
-    "  if names = avant_sys.avant_sys_list(path) {",
+    "  if names = avant_sys_old.avant_sys_list(path) {",
     "    return names",
     "  }",
-    "  IoError.new(\"list\", path, avant_sys.avant_sys_errno())",
+    "  IoError.new(\"list\", path, avant_sys_old.avant_sys_errno())",
     "}",
     "",
     "// Runs the program (a name without / is looked up on PATH) and waits;",
     "// the exit status of a process that exited.",
     "pub fn process_run(path: String, args: Array(String)): Int | ProcessError {",
-    "  process_result(path, avant_sys.avant_sys_run(path, args, \"\"), \"\")",
-    "}",
-    "",
-    "// process_run with stdout and stderr written to the file out.",
-    "pub fn process_run_out(path: String, args: Array(String), out: String): Int | ProcessError {",
-    "  process_result(path, avant_sys.avant_sys_run(path, args, out), out)",
+    "  process_result(path, avant_sys_old.avant_sys_run(path, args, \"\"), \"\")",
     "}",
     "",
     "fn process_result(path: String, st: Int, out: String): Int | ProcessError {",
     "  if st == -2 {",
-    "    return ProcessError.new(path, 0, avant_sys.avant_sys_signal(), \"\")",
+    "    return ProcessError.new(path, 0, avant_sys_old.avant_sys_signal(), \"\")",
     "  }",
     "  if st < 0 {",
-    "    if avant_sys.avant_sys_stage() == 1 {",
-    "      return ProcessError.new(path, avant_sys.avant_sys_errno(), 0, out)",
+    "    if avant_sys_old.avant_sys_stage() == 1 {",
+    "      return ProcessError.new(path, avant_sys_old.avant_sys_errno(), 0, out)",
     "    }",
-    "    return ProcessError.new(path, avant_sys.avant_sys_errno(), 0, \"\")",
+    "    return ProcessError.new(path, avant_sys_old.avant_sys_errno(), 0, \"\")",
     "  }",
     "  st",
     "}"
@@ -166,26 +192,17 @@ pub fn prelude_source: String {
   b.to_s()
 }
 
-// The module's second part: standard input and files read line by
-// line, the file system's basics and a child process's output, after
+// The module's second part: standard input read line by line, and the
+// two directory functions the compiler's own sources still call, after
 // the first part (its error types and process_result).
 pub fn prelude_more_source: String {
   b = buf_new()
   lines = [
     "lib avant_sys_more {",
     "  fun avant_sys_read_line(handle: Int): String?",
-    "  fun avant_sys_open(path: String): Int",
-    "  fun avant_sys_close(handle: Int)",
     "  fun avant_sys_is_dir(path: String): Int",
-    "  fun avant_sys_make_dir(path: String): Int",
-    "  fun avant_sys_delete(path: String): Int",
-    "  fun avant_sys_size(path: String): Int",
     "  fun avant_sys_walk(path: String): Array(String)?",
-    "  fun avant_sys_capture(path: String, args: Array(String), input: String): Int",
-    "  fun avant_sys_captured(which: Int): String",
-    "  fun avant_sys_captured_into(which: Int, dst: Buf): Int",
     "  fun avant_sys_more_errno: Int",
-    "  fun avant_sys_more_signal: Int",
     "}",
     "",
     "// One line of standard input without its newline; nil at the end of",
@@ -201,85 +218,9 @@ pub fn prelude_more_source: String {
     "  nil",
     "}",
     "",
-    "// A file read line by line. It closes itself at the end of the file or",
-    "// on an error; close stops it early.",
-    "pub class FileReader {",
-    "  pub path: String",
-    "  handle: Int",
-    "",
-    "  fn initialize(path: String, handle: Int) {",
-    "    self.path = path",
-    "    self.handle = handle",
-    "  }",
-    "",
-    "  // The next line without its newline; nil after the last one.",
-    "  pub fn read_line: String | IoError | Nil {",
-    "    if handle == 0 {",
-    "      return nil",
-    "    }",
-    "    if line = avant_sys_more.avant_sys_read_line(handle) {",
-    "      return line",
-    "    }",
-    "    e = avant_sys_more.avant_sys_more_errno()",
-    "    close()",
-    "    if e != 0 {",
-    "      return IoError.new(\"read\", path, e)",
-    "    }",
-    "    nil",
-    "  }",
-    "",
-    "  pub fn close {",
-    "    if handle != 0 {",
-    "      avant_sys_more.avant_sys_close(handle)",
-    "      self.handle = 0",
-    "    }",
-    "  }",
-    "",
-    "  // Runs body with this reader and closes the file after it, however",
-    "  // far body read: a reader given to a block never keeps its",
-    "  // descriptor.",
-    "  pub fn scoped(body: fn(FileReader)) {",
-    "    body(self)",
-    "    close()",
-    "  }",
-    "}",
-    "",
-    "// The file, to read line by line.",
-    "pub fn file_open(path: String): FileReader | IoError {",
-    "  h = avant_sys_more.avant_sys_open(path)",
-    "  if h == 0 {",
-    "    return IoError.new(\"open\", path, avant_sys_more.avant_sys_more_errno())",
-    "  }",
-    "  FileReader.new(path, h)",
-    "}",
-    "",
     "// Whether path names a directory.",
     "pub fn dir_exists(path: String): Bool {",
     "  avant_sys_more.avant_sys_is_dir(path) == 1",
-    "}",
-    "",
-    "// Makes the directory and its missing parents; one that exists is fine.",
-    "// Nothing on success, else what failed.",
-    "pub fn dir_make(path: String): Void | IoError {",
-    "  if avant_sys_more.avant_sys_make_dir(path) != 0 {",
-    "    return IoError.new(\"make\", path, avant_sys_more.avant_sys_more_errno())",
-    "  }",
-    "}",
-    "",
-    "// Removes a file (not a directory): nothing on success, else what failed.",
-    "pub fn file_delete(path: String): Void | IoError {",
-    "  if avant_sys_more.avant_sys_delete(path) != 0 {",
-    "    return IoError.new(\"delete\", path, avant_sys_more.avant_sys_more_errno())",
-    "  }",
-    "}",
-    "",
-    "// The size in bytes.",
-    "pub fn file_size(path: String): Int | IoError {",
-    "  n = avant_sys_more.avant_sys_size(path)",
-    "  if n < 0 {",
-    "    return IoError.new(\"stat\", path, avant_sys_more.avant_sys_more_errno())",
-    "  }",
-    "  n",
     "}",
     "",
     "// Every name below the directory, as a path relative to it: a directory",
@@ -290,57 +231,6 @@ pub fn prelude_more_source: String {
     "    return names",
     "  }",
     "  IoError.new(\"list\", path, avant_sys_more.avant_sys_more_errno())",
-    "}",
-    "",
-    "// What a finished program gave: its exit status and what it wrote.",
-    "pub class ProcessOutput {",
-    "  pub status: Int",
-    "  pub stdout: String",
-    "  pub stderr: String",
-    "",
-    "  fn initialize(status: Int, stdout: String, stderr: String) {",
-    "    self.status = status",
-    "    self.stdout = stdout",
-    "    self.stderr = stderr",
-    "  }",
-    "}",
-    "",
-    "// Runs the program as process_run does, with input on its stdin, and",
-    "// captures its stdout and stderr.",
-    "pub fn process_output(path: String, args: Array(String), input: String = \"\"): ProcessOutput | ProcessError {",
-    "  st = avant_sys_more.avant_sys_capture(path, args, input)",
-    "  if st < 0 {",
-    "    return process_failure(path, st)",
-    "  }",
-    "  ProcessOutput.new(st, avant_sys_more.avant_sys_captured(1), avant_sys_more.avant_sys_captured(2))",
-    "}",
-    "",
-    "// process_output into the caller's buffers: the child's stdout is",
-    "// appended to out and its stderr to err, and the exit status is the",
-    "// value, so a loop that runs many programs reuses two Bufs.",
-    "pub fn process_output_into(path: String, args: Array(String), out: Buf, err: Buf, input: String = \"\"): Int | ProcessError {",
-    "  st = avant_sys_more.avant_sys_capture(path, args, input)",
-    "  if st < 0 {",
-    "    return process_failure(path, st)",
-    "  }",
-    "  e1 = avant_sys_more.avant_sys_captured_into(1, out)",
-    "  e2 = avant_sys_more.avant_sys_captured_into(2, err)",
-    "  if e1 != 0 {",
-    "    return ProcessError.new(path, e1, 0, \"\")",
-    "  }",
-    "  if e2 != 0 {",
-    "    return ProcessError.new(path, e2, 0, \"\")",
-    "  }",
-    "  st",
-    "}",
-    "",
-    "// Why a captured run failed: a signal, or a start (or an output too",
-    "// large to hold) that failed.",
-    "fn process_failure(path: String, st: Int): ProcessError {",
-    "  if st == -2 {",
-    "    return ProcessError.new(path, 0, avant_sys_more.avant_sys_more_signal(), \"\")",
-    "  }",
-    "  ProcessError.new(path, avant_sys_more.avant_sys_more_errno(), 0, \"\")",
     "}"
   ]
   for line in lines {

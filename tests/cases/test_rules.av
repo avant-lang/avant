@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The compiler's safety rules of this wave. Each program
 // is compiled in parallel; a refused one must leave no binary, say the
@@ -119,8 +121,8 @@ fn guard_cases: Array(RCase) {
   xs.push(refused("with-return-guarded", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nfn grab(m: Mutex(Box)): Box {\n  m.with { |b|\n    return b\n  }\n  Box.new()\n}\n\nfn main {\n  puts(grab(Mutex(Box).new(Box.new())).n)\n}\n", "Mutex.with: the returned value is the guarded value or a reference reached from it (Box)", "9:12"))
   xs.push(refused("with-no-value", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  v = m.with { |n| n += 1 }\n  puts(v)\n}\n", "cannot bind a Void value", "9:5"))
   xs.push(accepted("with-ways-out", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nfn first_big(m: Mutex(Array(Int)), k: Int): Int {\n  m.with { |xs|\n    for x in xs {\n      if x > k {\n        return x\n      }\n    }\n  }\n  -1\n}\n\nfn half(n: Int): Int? {\n  if n % 2 == 1 {\n    return nil\n  }\n  n / 2\n}\n\nfn halves(m: Mutex(Int), xs: Array(Int)): Int? {\n  for x in xs {\n    m.with { |total|\n      h = half(x)?\n      total += h\n    }\n  }\n  m.with { |total| total }\n}\n\nfn main {\n  start: Array(Int) = [3, 9, 27]\n  m = Mutex(Array(Int)).new(start)\n  puts(first_big(m, 5))\n  puts(first_big(m, 50))\n  t = Mutex(Int).new(0)\n  puts(halves(t, [2, 4, 6]) ?? -1)\n  puts(halves(t, [8, 3, 10]) ?? -1)\n  puts(t.with { |total| total })\n  n = 0\n  for i in 0..10 {\n    t.with { |total|\n      if i % 2 == 0 {\n        continue\n      }\n      if i > 6 {\n        break\n      }\n      total += 1\n      n += 1\n    }\n  }\n  puts(n)\n  puts(t.with { |total| total })\n}\n", "9\n-1\n6\n-1\n10\n3\n13\n"))
-  xs.push(refused("spawn-return-value", "fn main {\n  h = spawn {\n    if argv().size > 5 {\n      return 3\n    }\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "return inside a spawn block: a spawn block cannot return; its value is its last expression\n", "4:7"))
-  xs.push(refused("spawn-return-bare", "fn main {\n  h = spawn {\n    if argv().size < 5 {\n      return\n    }\n    7\n  }\n  puts(h.join() ?? -1)\n}\n", "return inside a spawn block: a spawn block cannot return", "4:7"))
+  xs.push(refused("spawn-return-value", "fn main {\n  h = spawn {\n    if process.args().size > 5 {\n      return 3\n    }\n    1\n  }\n  puts(h.join() ?? -1)\n}\nimport std.process\n", "return inside a spawn block: a spawn block cannot return; its value is its last expression\n", "4:7"))
+  xs.push(refused("spawn-return-bare", "fn main {\n  h = spawn {\n    if process.args().size < 5 {\n      return\n    }\n    7\n  }\n  puts(h.join() ?? -1)\n}\nimport std.process\n", "return inside a spawn block: a spawn block cannot return", "4:7"))
   xs.push(refused("parallel-return", "fn main {\n  r = [1, 2].parallel { |x|\n    if x > 5 {\n      return 0\n    }\n    x\n  }\n  puts(r[1])\n}\n", "return inside a parallel block: a parallel block cannot return; its value is its last expression\n", "4:7"))
   xs.push(refused("sync-gate-internal", "import std.sync\n\nfn main {\n  g = avant_gate_new()\n  puts(g)\n}\n", "avant_gate_new is internal to the standard library: use Channel(T) and Mutex(T) from std.sync (import std.sync)", "4:7"))
   xs
@@ -152,11 +154,11 @@ fn consume_cases: Array(RCase) {
   // The rule follows the source's order, not its paths: these four
   // programs are safe and refused, each fixed by one line (README,
   // "Mutex(T).new(v) consumes v"); no program outside the tests hits them.
-  xs.push(refused("consume-other-branch", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  if argv().size > 5 {\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n  } else {\n    b.n += 1\n  }\n}\n", "b was consumed by Mutex(Box).new at 15:19", "18:5"))
+  xs.push(refused("consume-other-branch", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  if process.args().size > 5 {\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n  } else {\n    b.n += 1\n  }\n}\nimport std.process\n", "b was consumed by Mutex(Box).new at 15:19", "18:5"))
   xs.push(refused("consume-dead-alias", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  inner = b.inner\n  inner.n += 1\n  m = Mutex(Box).new(b)\n  puts(m.with { |x| x.n + x.inner.n })\n}\n", "Mutex(Box).new consumes b (at 16:17), so before it the value stored into inner is b or a reference reached from it (Inner)", "14:12"))
-  xs.push(refused("consume-after-return", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  if argv().size > 5 {\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n    return\n  }\n  b.n += 1\n  puts(b.n)\n}\n", "b was consumed by Mutex(Box).new at 15:19", "19:3"))
+  xs.push(refused("consume-after-return", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  if process.args().size > 5 {\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n    return\n  }\n  b.n += 1\n  puts(b.n)\n}\nimport std.process\n", "b was consumed by Mutex(Box).new at 15:19", "19:3"))
   xs.push(refused("consume-in-with", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  b = Box.new()\n  outer = Mutex(Int).new(0)\n  outer.with { |k|\n    m = Mutex(Box).new(b)\n    k += m.with { |x| x.n }\n  }\n}\n", "Mutex(Box).new consumes b inside a loop or a block that b was declared outside of", "16:24"))
-  xs.push(accepted("consume-order-fixes", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  if argv().size > 5 {\n    b = Box.new()\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n    return\n  }\n  c = Box.new()\n  c.inner.n += 1\n  mc = Mutex(Box).new(c)\n  puts(mc.with { |x| x.inner.n })\n  outer = Mutex(Int).new(0)\n  outer.with { |k|\n    d = Box.new()\n    d.n = 2\n    m = Mutex(Box).new(d)\n    k += m.with { |x| x.n }\n  }\n  puts(outer.with { |k| k })\n}\n", "1\n2\n"))
+  xs.push(accepted("consume-order-fixes", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n}\n\nfn main {\n  if process.args().size > 5 {\n    b = Box.new()\n    m = Mutex(Box).new(b)\n    puts(m.with { |x| x.n })\n    return\n  }\n  c = Box.new()\n  c.inner.n += 1\n  mc = Mutex(Box).new(c)\n  puts(mc.with { |x| x.inner.n })\n  outer = Mutex(Int).new(0)\n  outer.with { |k|\n    d = Box.new()\n    d.n = 2\n    m = Mutex(Box).new(d)\n    k += m.with { |x| x.n }\n  }\n  puts(outer.with { |k| k })\n}\nimport std.process\n", "1\n2\n"))
   xs.push(accepted("consume-neighbours", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new()\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new()\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new()\n  b.n = 5\n  b.items.push(Inner.new())\n  b.inner.n = 2\n  for it in b.items {\n    it.n += 1\n  }\n  if nx = b.next {\n    nx.n = 1\n  }\n  m = Mutex(Box).new(b)\n  plain = 3\n  mi = Mutex(Int).new(plain)\n  puts(plain)\n  xs: Array(Int) = []\n  ma = Mutex(Array(Int)).new(xs)\n  puts(m.with { |x| x.n + x.items.size + x.inner.n })\n  puts(mi.with { |x| x })\n  h = Holder.new()\n  mh = Mutex(Box).new(Box.new())\n\n}\n", "3\n8\n3\n"))
   xs
 }
@@ -254,7 +256,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/rules-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/rules-${f.tag}.bin", "${dir}/rules-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -275,7 +277,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/rules-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/rules-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/rules-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("rules-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -284,7 +286,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_rules.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     all = mutex_cases()
     for g in guard_cases() {
       all.push(g)

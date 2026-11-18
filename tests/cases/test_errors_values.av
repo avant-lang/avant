@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Errors and values. Each program is compiled in parallel;
 // a refused one must leave no binary and say the expected words, an
@@ -161,7 +163,7 @@ fn void_result_cases: Array(FCase) {
 
 fn write_sources(dir: String, src: String, text: String) {
   parts = text.split("//== ")
-  _ = file_write(src, parts[0])
+  _ = fs.write(src, parts[0])
   for i in 1..parts.size {
     lines = parts[i].split("\n")
     body = ""
@@ -171,7 +173,7 @@ fn write_sources(dir: String, src: String, text: String) {
         body = body + "\n"
       }
     }
-    _ = file_write("${dir}/${lines[0]}", body)
+    _ = fs.write("${dir}/${lines[0]}", body)
   }
 }
 
@@ -215,7 +217,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
       c.eq_str(log_text("${dir}/errv-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/errv-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/errv-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
     }
   }
@@ -223,7 +225,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_errors_values.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     all = marker_cases()
     for f_cause_cases in cause_cases() {
       all.push(f_cause_cases)

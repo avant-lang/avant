@@ -1,13 +1,15 @@
 import harness
+import std.fs
+import std.process
 
 fn sugar_expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/sugar-wavef-${stamp}-${tag}.av"
   bin = "${scratch()}/sugar-wavef-${stamp}-${tag}.bin"
   log = "${scratch()}/sugar-wavef-${stamp}-${tag}.log"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  if err = file_read(log) {
+  if err = fs.read(log) {
     c.expect(err.contains(needle), "${tag} reports ${needle}")
   } else {
     c.expect(false, "${tag} log readable")
@@ -186,7 +188,7 @@ fn test_sugar(c: Checks) {
     c.expect(true, "?? nil stays nil")
   }
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     sugar_expect_err(c, compiler, stamp, "raw-newline", "fn main {\n  a = r\"one\ntwo\"\n}\n", "unterminated string")
     sugar_expect_err(c, compiler, stamp, "backtick", "fn main {\n  a = `hi`\n}\n", "unexpected character")

@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Reading a failure where it is handled. The else
 // guard of an assignment (`n = f() else e { ...; leave }`) and the
@@ -94,7 +96,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/eg-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/eg-${f.tag}.bin", "${dir}/eg-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -115,7 +117,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/eg-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/eg-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/eg-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("eg-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -124,7 +126,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_else_guard.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

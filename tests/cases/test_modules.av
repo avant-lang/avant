@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // A module program that compiles and prints want.
 fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String, tag: String) {
@@ -9,7 +11,7 @@ fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String
   c.eq_int(code, 0, "${tag} compiles")
   chmod_x(bin)
   run_av_bin(bin, out)
-  if got = file_read(out) {
+  if got = fs.read(out) {
     c.eq_str(got, want, tag)
   } else {
     c.expect(false, tag)
@@ -22,8 +24,8 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
   log = "${dir}/${name}.log"
   code = compile_av(compiler, "${dir}/${name}.av", bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  c.expect(!file_exists(bin), "${tag} bin absent")
-  if err = file_read(log) {
+  c.expect(!fs.exists(bin), "${tag} bin absent")
+  if err = fs.read(log) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -65,14 +67,14 @@ fn fake_fetched(dir: String, project: String, name: String) {
   sha = "58a9ab1a2db9803a031edf34adb9e16c74f9d126"
   git = "https://example.invalid/${name}.git"
   mkdir_p("${dir}/deps/${name}/.git")
-  _ = file_write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
-  _ = file_write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
-  _ = file_write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
+  _ = fs.write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
+  _ = fs.write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
+  _ = fs.write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
 }
 
 fn test_modules(c: Checks) {
   c.suite("tests/cases/test_modules.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     dir = "${scratch()}/modules-${stamp}"
     mkdir_p(dir)
@@ -84,11 +86,11 @@ fn test_modules(c: Checks) {
     out = "${dir}/ok.out"
     code = compile_av(compiler, "${dir}/main.av", bin, log)
     c.eq_int(code, 0, "import pub names")
-    c.expect(file_exists(bin), "import pub names bin")
+    c.expect(fs.exists(bin), "import pub names bin")
     chmod_x(bin)
     run_code = run_av_bin(bin, out)
     c.eq_int(run_code, 0, "import pub names run")
-    if got = file_read(out) {
+    if got = fs.read(out) {
       c.eq_str(got, "0\n", "imported origin")
     } else {
       c.expect(false, "imported origin")
@@ -100,8 +102,8 @@ fn test_modules(c: Checks) {
     hide_log = "${dir}/hide.log"
     hide_code = compile_av(compiler, "${dir}/hide.av", hide_bin, hide_log)
     c.expect(hide_code != 0, "private helper exits non-zero")
-    c.expect(!file_exists(hide_bin), "private helper bin absent")
-    if err = file_read(hide_log) {
+    c.expect(!fs.exists(hide_bin), "private helper bin absent")
+    if err = fs.read(hide_log) {
       c.expect(err.contains("unknown function hidden"), "private helper hidden")
     } else {
       c.expect(false, "private helper hidden")
@@ -114,8 +116,8 @@ fn test_modules(c: Checks) {
     cycle_log = "${dir}/cycle.log"
     cycle_code = compile_av(compiler, "${dir}/cycle.av", cycle_bin, cycle_log)
     c.expect(cycle_code != 0, "cycle exits non-zero")
-    c.expect(!file_exists(cycle_bin), "cycle bin absent")
-    if err = file_read(cycle_log) {
+    c.expect(!fs.exists(cycle_bin), "cycle bin absent")
+    if err = fs.read(cycle_log) {
       c.expect(err.contains("import cycle"), "import cycle")
     } else {
       c.expect(false, "import cycle")
@@ -131,7 +133,7 @@ fn test_modules(c: Checks) {
     c.eq_int(clash_code, 0, "two Box types compile")
     chmod_x(clash_bin)
     run_av_bin(clash_bin, clash_out)
-    if got = file_read(clash_out) {
+    if got = fs.read(clash_out) {
       c.eq_str(got, "1\n", "two Box types unused")
     } else {
       c.expect(false, "two Box types unused")
@@ -141,8 +143,8 @@ fn test_modules(c: Checks) {
     bare_log = "${dir}/bare.log"
     bare_code = compile_av(compiler, "${dir}/bare.av", bare_bin, bare_log)
     c.expect(bare_code != 0, "bare Box exits non-zero")
-    c.expect(!file_exists(bare_bin), "bare Box bin absent")
-    if err = file_read(bare_log) {
+    c.expect(!fs.exists(bare_bin), "bare Box bin absent")
+    if err = fs.read(bare_log) {
       c.expect(err.contains("Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
     } else {
       c.expect(false, "bare Box ambiguous")
@@ -155,7 +157,7 @@ fn test_modules(c: Checks) {
     c.eq_int(qb_code, 0, "qualified Box types")
     chmod_x(qb_bin)
     run_av_bin(qb_bin, qb_out)
-    if got = file_read(qb_out) {
+    if got = fs.read(qb_out) {
       c.eq_str(got, "1\n12\n", "qualified Box draw")
     } else {
       c.expect(false, "qualified Box draw")
@@ -171,7 +173,7 @@ fn test_modules(c: Checks) {
     c.eq_int(over_code, 0, "pub overloads")
     chmod_x(over_bin)
     run_av_bin(over_bin, over_out)
-    if got = file_read(over_out) {
+    if got = fs.read(over_out) {
       c.eq_str(got, "7\n2\n", "merged pub overloads")
     } else {
       c.expect(false, "merged pub overloads")
@@ -187,7 +189,7 @@ fn test_modules(c: Checks) {
     c.eq_int(qual_code, 0, "qualify clash")
     chmod_x(qual_bin)
     run_av_bin(qual_bin, qual_out)
-    if got = file_read(qual_out) {
+    if got = fs.read(qual_out) {
       c.eq_str(got, "1\n2\n", "qualified clash")
     } else {
       c.expect(false, "qualified clash")
@@ -203,7 +205,7 @@ fn test_modules(c: Checks) {
     c.eq_int(apply_code, 0, "external method")
     chmod_x(apply_bin)
     run_av_bin(apply_bin, apply_out)
-    if got = file_read(apply_out) {
+    if got = fs.read(apply_out) {
       c.eq_str(got, "2\n6\n", "doubled")
     } else {
       c.expect(false, "doubled")
@@ -212,10 +214,10 @@ fn test_modules(c: Checks) {
     proj = "${dir}/proj"
     mkdir_p("${proj}/tests/math")
     mkdir_p("${proj}/http")
-    _ = file_write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${proj}/vec.av", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
-    _ = file_write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
-    _ = file_write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new()\n  puts(v.x)\n  puts(s.port())\n}\n")
+    _ = fs.write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${proj}/vec.av", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
+    _ = fs.write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
+    _ = fs.write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new()\n  puts(v.x)\n  puts(s.port())\n}\n")
     nest_bin = "${dir}/nest.bin"
     nest_log = "${dir}/nest.log"
     nest_out = "${dir}/nest.out"
@@ -223,7 +225,7 @@ fn test_modules(c: Checks) {
     c.eq_int(nest_code, 0, "nested import from tests/")
     chmod_x(nest_bin)
     run_av_bin(nest_bin, nest_out)
-    if got = file_read(nest_out) {
+    if got = fs.read(nest_out) {
       c.eq_str(got, "1\n80\n", "unqualified nested names")
     } else {
       c.expect(false, "unqualified nested names")
@@ -232,9 +234,9 @@ fn test_modules(c: Checks) {
     dep_app = "${dir}/depapp"
     mkdir_p("${dep_app}/deps/greeter/http")
     fake_fetched(dep_app, "depapp", "greeter")
-    _ = file_write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
-    _ = file_write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
+    _ = fs.write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
+    _ = fs.write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
     dep_bin = "${dir}/dep.bin"
     dep_log = "${dir}/dep.log"
     dep_out = "${dir}/dep.out"
@@ -242,7 +244,7 @@ fn test_modules(c: Checks) {
     c.eq_int(dep_code, 0, "dep nested import")
     chmod_x(dep_bin)
     run_av_bin(dep_bin, dep_out)
-    if got = file_read(dep_out) {
+    if got = fs.read(dep_out) {
       c.eq_str(got, "7\n", "dep nested listen")
     } else {
       c.expect(false, "dep nested listen")
@@ -250,16 +252,16 @@ fn test_modules(c: Checks) {
 
     sh = "${dir}/shadow"
     mkdir_p("${sh}/nest")
-    _ = file_write("${sh}/avant.toml", "[package]\nname = \"shadow\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${sh}/vec.av", "pub fn from_root: Int { 1 }\n")
-    _ = file_write("${sh}/nest/vec.av", "pub fn from_nest: Int { 2 }\n")
-    _ = file_write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
+    _ = fs.write("${sh}/avant.toml", "[package]\nname = \"shadow\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${sh}/vec.av", "pub fn from_root: Int { 1 }\n")
+    _ = fs.write("${sh}/nest/vec.av", "pub fn from_nest: Int { 2 }\n")
+    _ = fs.write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
     sh_bin = "${dir}/shadow.bin"
     sh_log = "${dir}/shadow.log"
     sh_code = compile_av(compiler, "${sh}/nest/main.av", sh_bin, sh_log)
     c.expect(sh_code != 0, "shadow exits non-zero")
-    c.expect(!file_exists(sh_bin), "shadow bin absent")
-    if err = file_read(sh_log) {
+    c.expect(!fs.exists(sh_bin), "shadow bin absent")
+    if err = fs.read(sh_log) {
       c.expect(err.contains("import vec is ambiguous"), "shadow names both")
       c.expect(err.contains("nest/vec.av"), "shadow beside path")
       c.expect(err.contains("/vec.av"), "shadow manifest path")
@@ -269,16 +271,16 @@ fn test_modules(c: Checks) {
 
     cyc = "${dir}/cyc"
     mkdir_p("${cyc}/sub")
-    _ = file_write("${cyc}/avant.toml", "[package]\nname = \"cyc\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${cyc}/a.av", "import sub.b\npub fn from_a: Int { 1 }\n")
-    _ = file_write("${cyc}/sub/b.av", "import a\npub fn from_b: Int { from_a() }\n")
-    _ = file_write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
+    _ = fs.write("${cyc}/avant.toml", "[package]\nname = \"cyc\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${cyc}/a.av", "import sub.b\npub fn from_a: Int { 1 }\n")
+    _ = fs.write("${cyc}/sub/b.av", "import a\npub fn from_b: Int { from_a() }\n")
+    _ = fs.write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
     cyc_bin = "${dir}/cyc.bin"
     cyc_log = "${dir}/cyc.log"
     cyc_code = compile_av(compiler, "${cyc}/main.av", cyc_bin, cyc_log)
     c.expect(cyc_code != 0, "cross-dir cycle exits non-zero")
-    c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
-    if err = file_read(cyc_log) {
+    c.expect(!fs.exists(cyc_bin), "cross-dir cycle bin absent")
+    if err = fs.read(cyc_log) {
       c.expect(err.contains("import cycle"), "cross-dir cycle")
     } else {
       c.expect(false, "cross-dir cycle")
@@ -286,16 +288,16 @@ fn test_modules(c: Checks) {
 
     tw = "${dir}/twice"
     mkdir_p("${tw}/http")
-    _ = file_write("${tw}/avant.toml", "[package]\nname = \"twice\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${tw}/http/server.av", "pub fn listen: Int { 1 }\n")
-    _ = file_write("${tw}/http/client.av", "import server\nimport http.server\npub fn go: Int { listen() }\n")
-    _ = file_write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${tw}/avant.toml", "[package]\nname = \"twice\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${tw}/http/server.av", "pub fn listen: Int { 1 }\n")
+    _ = fs.write("${tw}/http/client.av", "import server\nimport http.server\npub fn go: Int { listen() }\n")
+    _ = fs.write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
     tw_bin = "${dir}/twice.bin"
     tw_log = "${dir}/twice.log"
     tw_code = compile_av(compiler, "${tw}/main.av", tw_bin, tw_log)
     c.expect(tw_code != 0, "two spellings exits non-zero")
-    c.expect(!file_exists(tw_bin), "two spellings bin absent")
-    if err = file_read(tw_log) {
+    c.expect(!fs.exists(tw_bin), "two spellings bin absent")
+    if err = fs.read(tw_log) {
       c.expect(err.contains("open the same file"), "two spellings")
     } else {
       c.expect(false, "two spellings")
@@ -304,11 +306,11 @@ fn test_modules(c: Checks) {
     rootp = "${dir}/rootprobe"
     mkdir_p("${rootp}/compiler/checker")
     mkdir_p("${rootp}/compiler/codegen")
-    _ = file_write("${rootp}/avant.toml", "[package]\nname = \"rootprobe\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${rootp}/compiler/loader.av", "pub fn answer: Int { 4 }\n")
-    _ = file_write("${rootp}/compiler/codegen/calls.av", "pub fn ring: Int { 3 }\n")
-    _ = file_write("${rootp}/compiler/checker/use.av", "import codegen.calls\nimport loader\npub fn go: Int { ring() + answer() }\n")
-    _ = file_write("${rootp}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${rootp}/avant.toml", "[package]\nname = \"rootprobe\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${rootp}/compiler/loader.av", "pub fn answer: Int { 4 }\n")
+    _ = fs.write("${rootp}/compiler/codegen/calls.av", "pub fn ring: Int { 3 }\n")
+    _ = fs.write("${rootp}/compiler/checker/use.av", "import codegen.calls\nimport loader\npub fn go: Int { ring() + answer() }\n")
+    _ = fs.write("${rootp}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
     rp_bin = "${dir}/rootprobe.bin"
     rp_log = "${dir}/rootprobe.log"
     rp_out = "${dir}/rootprobe.out"
@@ -316,7 +318,7 @@ fn test_modules(c: Checks) {
     c.eq_int(rp_code, 0, "compilation root probe")
     chmod_x(rp_bin)
     run_av_bin(rp_bin, rp_out)
-    if got = file_read(rp_out) {
+    if got = fs.read(rp_out) {
       c.eq_str(got, "7\n", "nested import under compiled file")
     } else {
       c.expect(false, "nested import under compiled file")
@@ -324,17 +326,17 @@ fn test_modules(c: Checks) {
 
     both = "${dir}/bothroot"
     mkdir_p("${both}/src/nest")
-    _ = file_write("${both}/avant.toml", "[package]\nname = \"bothroot\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${both}/vec.av", "pub fn from_manifest: Int { 1 }\n")
-    _ = file_write("${both}/src/vec.av", "pub fn from_root: Int { 2 }\n")
-    _ = file_write("${both}/src/nest/use.av", "import vec\npub fn go: Int { 1 }\n")
-    _ = file_write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${both}/avant.toml", "[package]\nname = \"bothroot\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${both}/vec.av", "pub fn from_manifest: Int { 1 }\n")
+    _ = fs.write("${both}/src/vec.av", "pub fn from_root: Int { 2 }\n")
+    _ = fs.write("${both}/src/nest/use.av", "import vec\npub fn go: Int { 1 }\n")
+    _ = fs.write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
     both_bin = "${dir}/bothroot.bin"
     both_log = "${dir}/bothroot.log"
     both_code = compile_av(compiler, "${both}/src/main.av", both_bin, both_log)
     c.expect(both_code != 0, "root and manifest exits non-zero")
-    c.expect(!file_exists(both_bin), "root and manifest bin absent")
-    if err = file_read(both_log) {
+    c.expect(!fs.exists(both_bin), "root and manifest bin absent")
+    if err = fs.read(both_log) {
       c.expect(err.contains("import vec is ambiguous"), "root and manifest")
       c.expect(err.contains("src/vec.av"), "root path")
       c.expect(err.contains("bothroot/vec.av"), "manifest path")
@@ -344,16 +346,16 @@ fn test_modules(c: Checks) {
 
     spell = "${dir}/spell"
     mkdir_p("${spell}/compiler/checker")
-    _ = file_write("${spell}/avant.toml", "[package]\nname = \"spell\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${spell}/compiler/checker/facts.av", "pub fn n: Int { 1 }\n")
-    _ = file_write("${spell}/compiler/checker/use.av", "import facts\nimport checker.facts\npub fn go: Int { n() }\n")
-    _ = file_write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${spell}/avant.toml", "[package]\nname = \"spell\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${spell}/compiler/checker/facts.av", "pub fn n: Int { 1 }\n")
+    _ = fs.write("${spell}/compiler/checker/use.av", "import facts\nimport checker.facts\npub fn go: Int { n() }\n")
+    _ = fs.write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
     spell_bin = "${dir}/spell.bin"
     spell_log = "${dir}/spell.log"
     spell_code = compile_av(compiler, "${spell}/compiler/main.av", spell_bin, spell_log)
     c.expect(spell_code != 0, "root two spellings exits non-zero")
-    c.expect(!file_exists(spell_bin), "root two spellings bin absent")
-    if err = file_read(spell_log) {
+    c.expect(!fs.exists(spell_bin), "root two spellings bin absent")
+    if err = fs.read(spell_log) {
       c.expect(err.contains("open the same file"), "root two spellings")
     } else {
       c.expect(false, "root two spellings")
@@ -362,16 +364,16 @@ fn test_modules(c: Checks) {
     seal = "${dir}/seal"
     mkdir_p("${seal}/deps/lib")
     fake_fetched(seal, "seal", "lib")
-    _ = file_write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
-    _ = file_write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
-    _ = file_write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
+    _ = fs.write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
+    _ = fs.write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
     seal_bin = "${dir}/seal.bin"
     seal_log = "${dir}/seal.log"
     seal_code = compile_av(compiler, "${seal}/main.av", seal_bin, seal_log)
     c.expect(seal_code != 0, "dep does not see consumer exits non-zero")
-    c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
-    if err = file_read(seal_log) {
+    c.expect(!fs.exists(seal_bin), "dep does not see consumer bin absent")
+    if err = fs.read(seal_log) {
       c.expect(err.contains("cannot find hidden.av"), "dep does not see consumer")
     } else {
       c.expect(false, "dep does not see consumer")
@@ -379,31 +381,31 @@ fn test_modules(c: Checks) {
 
     kw = "${dir}/kw"
     mkdir_p("${kw}/pkg")
-    _ = file_write("${kw}/pkg/spawn.av", "pub struct Node {\n  pub n: Int\n}\npub fn from_spawn: Int { 3 }\n")
-    _ = file_write("${kw}/other.av", "pub struct Node {\n  pub n: Int\n}\n")
-    _ = file_write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
+    _ = fs.write("${kw}/pkg/spawn.av", "pub struct Node {\n  pub n: Int\n}\npub fn from_spawn: Int { 3 }\n")
+    _ = fs.write("${kw}/other.av", "pub struct Node {\n  pub n: Int\n}\n")
+    _ = fs.write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
     kw_bin = "${dir}/kw.bin"
     kw_log = "${dir}/kw.log"
     kw_out = "${dir}/kw.out"
     kw_code = compile_av(compiler, "${kw}/main.av", kw_bin, kw_log)
     c.eq_int(kw_code, 0, "keyword after a dot")
-    c.expect(file_exists(kw_bin), "keyword after a dot bin")
+    c.expect(fs.exists(kw_bin), "keyword after a dot bin")
     chmod_x(kw_bin)
     run_av_bin(kw_bin, kw_out)
-    if got = file_read(kw_out) {
+    if got = fs.read(kw_out) {
       c.eq_str(got, "1\n2\n3\n", "keyword segment and qualifier")
     } else {
       c.expect(false, "keyword segment and qualifier")
     }
 
     member = "${dir}/member.av"
-    _ = file_write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
+    _ = fs.write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
     member_bin = "${dir}/member.bin"
     member_log = "${dir}/member.log"
     member_code = compile_av(compiler, member, member_bin, member_log)
     c.expect(member_code != 0, "keyword member exits non-zero")
-    c.expect(!file_exists(member_bin), "keyword member bin absent")
-    if err = file_read(member_log) {
+    c.expect(!fs.exists(member_bin), "keyword member bin absent")
+    if err = fs.read(member_log) {
       c.expect(err.contains("no field for"), "keyword member is a name")
       c.expect(!err.contains("expected a name"), "keyword member is not a parse error")
     } else {
@@ -411,39 +413,39 @@ fn test_modules(c: Checks) {
     }
 
     lead = "${dir}/lead.av"
-    _ = file_write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
+    _ = fs.write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
     lead_bin = "${dir}/lead.bin"
     lead_log = "${dir}/lead.log"
     lead_code = compile_av(compiler, lead, lead_bin, lead_log)
     c.expect(lead_code != 0, "leading keyword import exits non-zero")
-    c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
-    if err = file_read(lead_log) {
+    c.expect(!fs.exists(lead_bin), "leading keyword import bin absent")
+    if err = fs.read(lead_log) {
       c.expect(err.contains("expected a name, found `spawn`"), "leading keyword import")
     } else {
       c.expect(false, "leading keyword import")
     }
 
     decl = "${dir}/decl.av"
-    _ = file_write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
+    _ = fs.write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
     decl_bin = "${dir}/decl.bin"
     decl_log = "${dir}/decl.log"
     decl_code = compile_av(compiler, decl, decl_bin, decl_log)
     c.expect(decl_code != 0, "keyword function name exits non-zero")
-    c.expect(!file_exists(decl_bin), "keyword function name bin absent")
-    if err = file_read(decl_log) {
+    c.expect(!fs.exists(decl_bin), "keyword function name bin absent")
+    if err = fs.read(decl_log) {
       c.expect(err.contains("expected function name"), "keyword function name")
     } else {
       c.expect(false, "keyword function name")
     }
 
     label = "${dir}/label.av"
-    _ = file_write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
+    _ = fs.write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
     label_bin = "${dir}/label.bin"
     label_log = "${dir}/label.log"
     label_code = compile_av(compiler, label, label_bin, label_log)
     c.expect(label_code != 0, "keyword field label exits non-zero")
-    c.expect(!file_exists(label_bin), "keyword field label bin absent")
-    if err = file_read(label_log) {
+    c.expect(!fs.exists(label_bin), "keyword field label bin absent")
+    if err = fs.read(label_log) {
       c.expect(err.contains("expected an expression, found `{`"), "keyword field label")
     } else {
       c.expect(false, "keyword field label")
@@ -457,7 +459,7 @@ fn test_modules(c: Checks) {
     c.eq_int(solo_code, 0, "single file")
     chmod_x(solo_bin)
     run_av_bin(solo_bin, solo_out)
-    if got = file_read(solo_out) {
+    if got = fs.read(solo_out) {
       c.eq_str(got, "1\n", "single file no import")
     } else {
       c.expect(false, "single file no import")
@@ -515,15 +517,15 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   boot = "${dir}/boot"
   mkdir_p("${boot}/compiler")
   mkdir_p("${boot}/runtime")
-  _ = file_write("${boot}/runtime/build.sh", "true\n")
-  _ = file_write("${boot}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
-  _ = file_write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
+  _ = fs.write("${boot}/runtime/build.sh", "true\n")
+  _ = fs.write("${boot}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
+  _ = fs.write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
   boot_bin = "${dir}/boot.bin"
   boot_log = "${dir}/boot.log"
   boot_code = compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
   c.expect(boot_code != 0, "a checkout's compiler/main.av is not exempt: exits non-zero")
-  c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
-  if err = file_read(boot_log) {
+  c.expect(!fs.exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
+  if err = fs.read(boot_log) {
     c.expect(err.contains("field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")

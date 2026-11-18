@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The scalar subset on the new back end (AVANT_BACKEND=llvm). For
 // every program of the subset: (a) it compiles (--debug), and its
@@ -112,7 +114,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     j = jobs[base + i]
     c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
     want = "(no golden)"
-    if t = file_read("${root}/${golden_of(gp[i])}") {
+    if t = fs.read("${root}/${golden_of(gp[i])}") {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
@@ -131,7 +133,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(jobs[base + 4].code, 1, "AVANT_BACKEND=myc: exit 1 (the old back end retired)")
   c.expect(log_text(jobs[base + 4].log).contains("AVANT_BACKEND must be unset, empty, or llvm (the only back end), not myc"), "AVANT_BACKEND=myc: refused, naming the variable")
   c.eq_int(jobs[base + 5].code, 0, "default (llvm): compile into a missing directory exits 0")
-  c.expect(file_exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
+  c.expect(fs.exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
 
   // The second wave: every program, then the one in the created directory.
   runs: Array(HJob) = []
@@ -159,7 +161,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_scalars.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_scalars(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

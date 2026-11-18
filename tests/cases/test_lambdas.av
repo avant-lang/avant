@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Lambdas written as functions without a name, `(x) { ... }`, as every
 // function's argument (the shorthand `xs.each (x) { ... }` when it is the
@@ -61,10 +63,10 @@ fn cases: Array(LCase) {
   xs.push(refused("each-return-value", "fn f: Int {\n  [1, 2].each (x) {\n    return x\n  }\n  0\n}\n\nfn main {\n  puts(f())\n}\n", "return type is Int, expected Void", "3:5"))
   xs.push(refused("parallel-return-untyped", "fn main {\n  ys = [1, 2].parallel (x) {\n    if x > 1 {\n      return 0\n    }\n    x\n  }\n  puts(ys[0])\n}\n", "return inside a lambda given to parallel, whose value is its last expression: to return early, write the lambda's result type", "4:7"))
   xs.push(refused("build-break", "fn main {\n  ys = Array(Int).new(3, (i) {\n    if i > 1 {\n      break\n    }\n    i\n  })\n  puts(ys[0])\n}\n", "break inside a lambda given to Array(T).new: the lambda has no loop of its own to leave; handle it with if-assign or ??", "4:7"))
-  xs.push(refused("inferred-bare-return", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
-  xs.push(refused("inferred-two-types", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return \"one\"\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns String at 4:7", "6:5"))
-  xs.push(refused("inferred-no-end-value", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return 1\n    }\n    puts(2)\n  }\n  pf()\n}\n", "this lambda ends without a value here and returns Int at 4:7", "6:5"))
-  xs.push(refused("inferred-pipes-bare-return", "fn main {\n  pf = { ||\n    if argv().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
+  xs.push(refused("inferred-bare-return", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\nimport std.process\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
+  xs.push(refused("inferred-two-types", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return \"one\"\n    }\n    0\n  }\n  puts(pf())\n}\nimport std.process\n", "this lambda ends with Int here and returns String at 4:7", "6:5"))
+  xs.push(refused("inferred-no-end-value", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return 1\n    }\n    puts(2)\n  }\n  pf()\n}\nimport std.process\n", "this lambda ends without a value here and returns Int at 4:7", "6:5"))
+  xs.push(refused("inferred-pipes-bare-return", "fn main {\n  pf = { ||\n    if process.args().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\nimport std.process\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
   xs.push(accepted("inferred-agree", "fn main {\n  pf = (n: Int) {\n    if n > 5 {\n      return n * 2\n    }\n    n\n  }\n  puts(pf(3) + pf(6))\n}\n", "15\n"))
   xs.push(refused("inferred-question", "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn main {\n  pf = () { parse_age(\"1\")? }\n  puts(1)\n}\n", "postfix ? inside a lambda whose result type is inferred cannot return the failure: write the result type with the failure in it", "15:27"))
   xs.push(accepted("question-written-result", "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn main {\n  pf = (): Int | ParseError { parse_age(\"12\")? + 1 }\n  bad = (): Int | ParseError { parse_age(\"x\")? + 1 }\n  puts(pf() ?? -1)\n  puts(bad() ?? -1)\n}\n", "13\n-1\n"))
@@ -72,7 +74,7 @@ fn cases: Array(LCase) {
   xs.push(accepted("for-capture-shared-body", "fn main {\n  fs: Array(fn(): Int) = []\n  n = 0\n  for i in 0..3 {\n    k = i * 2\n    fs.push(() { k + n })\n  }\n  n = 1\n  for f in fs {\n    puts(f())\n  }\n}\n", "1\n3\n5\n"))
   xs.push(refused("default-assigns", "fn count(a: Int, f: fn(): Int = () {\n  a = a + 1\n  a\n}): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "the default of f assigns to the earlier parameter a: a default only reads the parameters before it", "1:33"))
   xs.push(accepted("default-reads", "fn count(a: Int, f: fn(): Int = () { a + 1 }): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "11\n"))
-  xs.push(accepted("rebound-captured", "class Server {\n  pub n: Int = 7\n}\n\nfn main {\n  if argv().size < 5 {\n    server = Server.new()\n    f = () { server.n }\n    puts(f())\n  }\n  if argv().size < 6 {\n    server = \"text\"\n    puts(server)\n  }\n  if argv().size < 7 {\n    server = 3\n    g = () { server + 1 }\n    puts(g())\n  }\n}\n", "7\ntext\n4\n"))
+  xs.push(accepted("rebound-captured", "class Server {\n  pub n: Int = 7\n}\n\nfn main {\n  if process.args().size < 5 {\n    server = Server.new()\n    f = () { server.n }\n    puts(f())\n  }\n  if process.args().size < 6 {\n    server = \"text\"\n    puts(server)\n  }\n  if process.args().size < 7 {\n    server = 3\n    g = () { server + 1 }\n    puts(g())\n  }\n}\nimport std.process\n", "7\ntext\n4\n"))
   xs.push(accepted("pipes-transition", "fn first_big(xs: Array(Int)): Int {\n  found = -1\n  xs.each { |x|\n    if x > 10 {\n      found = x\n      break\n    }\n  }\n  found\n}\n\nfn report(xs: Array(Int)) {\n  xs.each { |x|\n    if x < 0 {\n      puts(\"negative: \${x}\")\n      return\n    }\n  }\n  puts(\"all good\")\n}\n\nfn main {\n  puts(first_big([3, 12, 40]))\n  report([1, -2, 3])\n  report([1, 2])\n  f = { |a: Int, b: Int| a + b }\n  puts(f(1, 2))\n}\n", "12\nnegative: -2\nall good\n3\n"))
   xs
 }
@@ -87,27 +89,27 @@ fn check_format_lambdas(c: Checks, compiler: String, dir: String) {
   src = "${dir}/lam-format.av"
   before = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  xs.each { |x|\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each { |x| puts(x) } // a comment\n  puts(twice(3) { |n| n * 2 })\n  if xs.any { |x| x > 2 } {\n    puts(\"big\")\n  }\n  f = { |a: Int, b: Int| a + b }\n  g = { || 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3) { |i| i * i }\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  h.each { |k, v|\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort { |a, b| a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each { |x| n += 1 }\n  n\n}\n"
   after = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  for x in xs {\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each (x) { puts(x) } // a comment\n  puts(twice(3, (n) { n * 2 }))\n  if xs.any((x) { x > 2 }) {\n    puts(\"big\")\n  }\n  f = (a: Int, b: Int) { a + b }\n  g = () { 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3, (i) { i * i })\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  for k, v in h {\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort (a, b) { a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each (x) { n += 1 }\n  n\n}\n"
-  _ = file_write(src, before)
-  _ = file_write("${dir}/lam-format-before.av", before)
+  _ = fs.write(src, before)
+  _ = fs.write("${dir}/lam-format-before.av", before)
   args: Array(String) = []
   args.push("format")
   args.push("--lambdas")
   args.push(src)
-  code = process_run_out(compiler, args, "${dir}/lam-format.log") ?? -1
+  code = run_out(compiler, args, "${dir}/lam-format.log") ?? -1
   log = log_text("${dir}/lam-format.log")
   c.eq_int(code, 1, "format --lambdas: exits 1 for the blocks it leaves")
   c.eq_str(log_text(src), after, "format --lambdas: the lambdas written")
   c.expect(log.contains("count for: array each that leaves with return: 1"), "format --lambdas: counts the for")
   c.expect(log.contains("count for: hash each that leaves with return: 1"), "format --lambdas: the hash walk made a for")
   c.expect(log.contains("lam-format.av:38:11: a block the checker does not reach whose body leaves with return"), "format --lambdas: reports the unreached body")
-  code2 = process_run_out(compiler, args, "${dir}/lam-format2.log") ?? -1
+  code2 = run_out(compiler, args, "${dir}/lam-format2.log") ?? -1
   c.eq_int(code2, 1, "format --lambdas again: exits 1")
   c.eq_str(log_text(src), after, "format --lambdas again: changes nothing")
   c.eq_int(compile_av(compiler, src, "${dir}/lam-format.bin", "${dir}/lam-format.clog"), 0, "format --lambdas: the result compiles")
   c.eq_int(compile_av(compiler, "${dir}/lam-format-before.av", "${dir}/lam-format-before.bin", "${dir}/lam-format-before.clog"), 0, "format --lambdas: the source compiles")
   none: Array(String) = []
-  _ = process_run_out("${dir}/lam-format.bin", none, "${dir}/lam-format.out")
-  _ = process_run_out("${dir}/lam-format-before.bin", none, "${dir}/lam-format-before.out")
+  _ = run_out("${dir}/lam-format.bin", none, "${dir}/lam-format.out")
+  _ = run_out("${dir}/lam-format-before.bin", none, "${dir}/lam-format-before.out")
   c.eq_str(log_text("${dir}/lam-format.out"), log_text("${dir}/lam-format-before.out"), "format --lambdas: the same output")
 }
 
@@ -115,7 +117,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/lam-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/lam-${f.tag}.bin", "${dir}/lam-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -136,7 +138,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
       c.eq_str(log_text("${dir}/lam-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/lam-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/lam-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("lam-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
@@ -145,7 +147,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_lambdas.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_format_lambdas(c, compiler, scratch_dir())
   } else {

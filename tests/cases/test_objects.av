@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Structs and classes on the new back end (AVANT_BACKEND=llvm).
 // For every program of the object subset: (a) it compiles
@@ -93,7 +95,7 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     j = jobs[base + i]
     c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
     want = "(no golden)"
-    if t = file_read("${root}/${golden_of(gp[i])}") {
+    if t = fs.read("${root}/${golden_of(gp[i])}") {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
@@ -139,7 +141,7 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_objects.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_objects(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

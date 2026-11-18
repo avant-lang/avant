@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The release and wave tools under tools/, through the shell scripts in
 // tests/tools/: each prints one line per check, `ok: NAME` or
@@ -22,7 +24,7 @@ fn tools_line(log: String, name: String): String {
 
 // Each script's checks, from its log, after the script ended with code.
 fn tools_checks(c: Checks, what: String, code: Int, log: String, names: Array(String)) {
-  text = file_read(log) ?? ""
+  text = fs.read(log) ?? ""
   c.eq_int(code, 0, "${what}: the script ran to its end")
   c.expect(text.contains("\ndone\n") || (text.size >= 5 && str_slice(text, 0, 5) == "done\n"), "${what}: the script printed every check")
   for n in names {
@@ -52,7 +54,7 @@ fn test_tools(c: Checks) {
   whats: Array(String) = []
   names: Array(Array(String)) = []
   // Two packages of one compiler are the same archive.
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     compiler = compiler_abs("tools", compiler)
     slash = 0
     for i in 0..compiler.size {
@@ -61,8 +63,8 @@ fn test_tools(c: Checks) {
       }
     }
     re2c = "${str_slice(compiler, 0, slash)}/re2c"
-    c.expect(file_exists(re2c), "package: the re2c beside the compiler under test exists (${re2c})")
-    c.expect(file_exists("${root}/runtime/build/avant-bind"), "package: runtime/build/avant-bind exists (sh runtime/build.sh)")
+    c.expect(fs.exists(re2c), "package: the re2c beside the compiler under test exists (${re2c})")
+    c.expect(fs.exists("${root}/runtime/build/avant-bind"), "package: runtime/build/avant-bind exists (sh runtime/build.sh)")
     w = "${scratch_dir()}/package"
     jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/package-repro.sh", compiler, re2c, w], "${w}.log"))
     whats.push("package.sh")

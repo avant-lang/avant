@@ -600,6 +600,12 @@ pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
   out
 }
 
+// Whether fnn may be the program's entry: it is in the root module (or
+// the program has none).
+pub fn (checker_self: Checker) entry_module(fnn: Function): Bool {
+  checker_self.root_module.size == 0 || fnn.mod_name.size == 0 || fnn.mod_name == checker_self.root_module
+}
+
 pub fn (checker_self: Checker) register_function(fnn: Function) {
   if is_op_fn_name(fnn.name) {
     checker_self.fail(fnn.loc, "operator methods need a receiver")
@@ -611,7 +617,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  if fnn.name == "run" {
+  if fnn.name == "run" && !fnn.vis {
+    // Another module's pub fn run is an ordinary function (std.process's
+    // run); only the root's is the entry.
     if checker_self.root_module.size > 0 && fnn.mod_name != checker_self.root_module && fnn.mod_name.size > 0 {
       checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
       return
@@ -640,7 +648,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  if fnn.name == "run" {
+  if fnn.name == "run" && checker_self.entry_module(fnn) {
     if tparams.size > 0 {
       checker_self.fail(fnn.loc, "run cannot be generic")
       return
@@ -706,7 +714,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   }
   checker_self.current_module = saved_mod
-  if fnn.name == "main" || fnn.name == "run" {
+  if fnn.name == "main" || (fnn.name == "run" && checker_self.entry_module(fnn)) {
     if ret.is_void() {
     } else if !ret.is_int() {
       checker_self.fail(fnn.loc, checker_self.entry_rule_text(fnn.name, ret.show()))

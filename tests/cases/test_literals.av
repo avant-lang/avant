@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Literals and constants. Character literals and the
 // String escapes; binary, octal and digit separators,
@@ -203,7 +205,7 @@ fn const_cases: Array(LCase) {
   xs.push(accepted("const-uses", "const max_depth = 64\nconst kb = 1024\nconst mb = kb * kb\nconst neg = -5\nconst ratio = 1.5 * 2\nconst debug = false\nconst big = 18446744073709551615u64\nconst letter = 'a'\nconst mask = (1 << 20) - 1\nconst min_int = -9223372036854775808\nconst later = early + 1\nconst early = 0x10\n\nclass C {\n  pub depth: Int32 = max_depth\n}\n\nfn half(n: Int32): Int32 {\n  n / 2\n}\n\nfn main {\n  puts(max_depth)\n  puts(mb)\n  puts(neg)\n  puts(ratio)\n  puts(debug)\n  puts(big)\n  puts(letter)\n  puts(mask)\n  puts(min_int)\n  puts(later)\n  x: Int32 = max_depth\n  puts(half(max_depth))\n  puts(x + kb)\n  puts(kb + x)\n  puts(-neg)\n  puts(C.new().depth)\n  f = 2.0 * max_depth\n  puts(f)\n  if !debug {\n    puts(\"ok\")\n  }\n  xs: Array(UInt32) = [kb, kb + 6]\n  puts(xs[1])\n  g = { |n: Int| n + max_depth }\n  puts(g(1))\n  switch 'a' {\n    case 'a' { puts(letter) }\n    else { puts(0) }\n  }\n  u: UInt64 = mb\n  puts(u)\n}\n", "64\n1048576\n-5\n3.0\nfalse\n18446744073709551615\n97\n1048575\n-9223372036854775808\n17\n32\n1088\n1088\n5\n64\n128.0\nok\n1030\n65\n97\n1048576\n"))
   xs.push(accepted("const-folding", "const a = 17 / 5\nconst b = -17 % 5\nconst c = -17 >> 1\nconst d = 0b1100 & 0b1010\nconst e = 0b1100 | 0b1010\nconst f = 0b1100 ^ 0b1010\nconst g = ~0\nconst h = 3 < 4 && 2 >= 2\nconst i = 1.0 / 4\nconst j = 0xffff_ffff_ffff_ffffu64 >> 60\nconst k = !(1 == 2)\nconst l = 1 << 63\nfn main {\n  puts(\"\${a} \${b} \${c} \${d} \${e} \${f} \${g} \${h} \${i} \${j} \${k} \${l}\")\n}\n", "3 -2 -9 8 14 6 -1 true 0.25 15 true -9223372036854775808\n"))
   xs.push(accepted("const-scopes", "const width = 3\nclass Box {\n  pub width: Int = 9\n  fn show: Int {\n    width\n  }\n  fn twice: Int {\n    size() * 2\n  }\n  fn size: Int {\n    4\n  }\n}\nconst size = 100\nfn f(n: Int = width): Int {\n  n * 10\n}\nfn g(width: Int): Int {\n  width + 1\n}\nfn main {\n  b = Box.new()\n  puts(b.show())\n  puts(b.twice())\n  puts(f())\n  puts(f(5))\n  puts(g(7))\n  h = spawn { width + size }\n  puts(h.join() ?? -1)\n}\n", "9\n8\n30\n50\n8\n103\n"))
-  xs.push(accepted("const-bindings", "const n = 1\nfn maybe: Int? {\n  if argv().size > 0 {\n    return 5\n  }\n  nil\n}\nfn main {\n  if n = maybe() {\n    puts(n)\n  }\n  x: Int | String = 7\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  [3].each { |n| puts(n) }\n  puts(n)\n}\n", "5\n7\n3\n1\n"))
+  xs.push(accepted("const-bindings", "const n = 1\nfn maybe: Int? {\n  if process.args().size > 0 {\n    return 5\n  }\n  nil\n}\nfn main {\n  if n = maybe() {\n    puts(n)\n  }\n  x: Int | String = 7\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  [3].each { |n| puts(n) }\n  puts(n)\n}\nimport std.process\n", "5\n7\n3\n1\n"))
   xs
 }
 
@@ -222,7 +224,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/lit-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/lit-${f.tag}.bin", "${dir}/lit-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -243,7 +245,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
       c.eq_str(log_text("${dir}/lit-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/lit-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/lit-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("lit-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -254,16 +256,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
 // and formatting its own output changes nothing.
 fn check_format(c: Checks, compiler: String, dir: String) {
   src = "${dir}/lit-format.av"
-  _ = file_write(src, "const  limit=1_000\npub   const  ratio = 0.5\n\nfn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a  =  1_000+0b1010_1010\n  b = 0o17*0xFF_ff\n  c = 1_000.5e1_0\n}\n")
+  _ = fs.write(src, "const  limit=1_000\npub   const  ratio = 0.5\n\nfn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a  =  1_000+0b1010_1010\n  b = 0o17*0xFF_ff\n  c = 1_000.5e1_0\n}\n")
   args: Array(String) = ["format", src]
-  code = process_run_out(compiler, args, "${dir}/lit-format.out") ?? -1
+  code = run_out(compiler, args, "${dir}/lit-format.out") ?? -1
   c.eq_int(code, 0, "format: exit 0")
   want = "const limit = 1_000\npub const ratio = 0.5\n\nfn main {\n  x = 'a' + '\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a = 1_000 + 0b1010_1010\n  b = 0o17 * 0xFF_ff\n  c = 1_000.5e1_0\n}\n"
   c.eq_str(log_text("${dir}/lit-format.out"), want, "format: as written")
   again = "${dir}/lit-format2.av"
-  _ = file_write(again, want)
+  _ = fs.write(again, want)
   args2: Array(String) = ["format", again]
-  code2 = process_run_out(compiler, args2, "${dir}/lit-format2.out") ?? -1
+  code2 = run_out(compiler, args2, "${dir}/lit-format2.out") ?? -1
   c.eq_int(code2, 0, "format twice: exit 0")
   c.eq_str(log_text("${dir}/lit-format2.out"), want, "format twice: unchanged")
 }
@@ -274,20 +276,20 @@ fn check_format(c: Checks, compiler: String, dir: String) {
 fn check_const_modules(c: Checks, compiler: String, dir: String) {
   d = "${dir}/kmods"
   mkdir_p(d)
-  _ = file_write("${d}/kmod.av", "pub const width = 80\nconst secret = 7\npub const half = width / 2\n")
-  _ = file_write("${d}/kmod2.av", "pub const width = 40\n")
+  _ = fs.write("${d}/kmod.av", "pub const width = 80\nconst secret = 7\npub const half = width / 2\n")
+  _ = fs.write("${d}/kmod2.av", "pub const width = 40\n")
   jobs: Array(HJob) = []
-  _ = file_write("${d}/kuse_ok.av", "import kmod\nfn main {\n  puts(width)\n  puts(kmod.width)\n  puts(half)\n  x: Int32 = kmod.half\n  puts(x + 1)\n  puts(kmod.half + x)\n}\n")
+  _ = fs.write("${d}/kuse_ok.av", "import kmod\nfn main {\n  puts(width)\n  puts(kmod.width)\n  puts(half)\n  x: Int32 = kmod.half\n  puts(x + 1)\n  puts(kmod.half + x)\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_ok.av", "${d}/kuse_ok.bin", "${d}/kuse_ok.log"))
-  _ = file_write("${d}/kuse_both_qualified.av", "import kmod\nimport kmod2\nfn main {\n  puts(kmod.width + kmod2.width)\n}\n")
+  _ = fs.write("${d}/kuse_both_qualified.av", "import kmod\nimport kmod2\nfn main {\n  puts(kmod.width + kmod2.width)\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_both_qualified.av", "${d}/kuse_both_qualified.bin", "${d}/kuse_both_qualified.log"))
-  _ = file_write("${d}/kuse_private.av", "import kmod\nfn main {\n  puts(secret)\n}\n")
+  _ = fs.write("${d}/kuse_private.av", "import kmod\nfn main {\n  puts(secret)\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_private.av", "${d}/kuse_private.bin", "${d}/kuse_private.log"))
-  _ = file_write("${d}/kuse_ambiguous.av", "import kmod\nimport kmod2\nfn main {\n  puts(width)\n}\n")
+  _ = fs.write("${d}/kuse_ambiguous.av", "import kmod\nimport kmod2\nfn main {\n  puts(width)\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_ambiguous.av", "${d}/kuse_ambiguous.bin", "${d}/kuse_ambiguous.log"))
-  _ = file_write("${d}/kuse_own_and_imported.av", "import kmod\nconst width = 5\nfn main {\n  puts(width)\n}\n")
+  _ = fs.write("${d}/kuse_own_and_imported.av", "import kmod\nconst width = 5\nfn main {\n  puts(width)\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_own_and_imported.av", "${d}/kuse_own_and_imported.bin", "${d}/kuse_own_and_imported.log"))
-  _ = file_write("${d}/kuse_assign_qualified.av", "import kmod\nfn main {\n  kmod.width = 1\n}\n")
+  _ = fs.write("${d}/kuse_assign_qualified.av", "import kmod\nfn main {\n  kmod.width = 1\n}\n")
   jobs.push(compile_job("", compiler, "${d}/kuse_assign_qualified.av", "${d}/kuse_assign_qualified.bin", "${d}/kuse_assign_qualified.log"))
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "modules ok: compiles")
@@ -319,8 +321,8 @@ fn check_const_ll(c: Checks, compiler: String, dir: String) {
   kb = "${dir}/kll-b"
   mkdir_p(ka)
   mkdir_p(kb)
-  _ = file_write("${ka}/k.av", "const n = 7\nconst neg = -3\nconst on = true\nfn main {\n  x: Int32 = n\n  puts(x + neg)\n  puts(n * 2)\n  if on {\n    puts(0)\n  }\n}\n")
-  _ = file_write("${kb}/k.av", "//\n//\n//\nfn main {\n  x: Int32 = 7\n  puts(x + -3)\n  puts(7 * 2)\n  if true {\n    puts(0)\n  }\n}\n")
+  _ = fs.write("${ka}/k.av", "const n = 7\nconst neg = -3\nconst on = true\nfn main {\n  x: Int32 = n\n  puts(x + neg)\n  puts(n * 2)\n  if on {\n    puts(0)\n  }\n}\n")
+  _ = fs.write("${kb}/k.av", "//\n//\n//\nfn main {\n  x: Int32 = 7\n  puts(x + -3)\n  puts(7 * 2)\n  if true {\n    puts(0)\n  }\n}\n")
   c.eq_int(emit_ll(compiler, "${ka}/k.av", "${ka}/k.ll", "${ka}/k.log"), 0, "const ll: emits")
   c.eq_int(emit_ll(compiler, "${kb}/k.av", "${kb}/k.ll", "${kb}/k.log"), 0, "literal ll: emits")
   c.eq_str(log_text("${ka}/k.ll").replace(ka, kb), log_text("${kb}/k.ll"), "const ll: the literal's")
@@ -328,7 +330,7 @@ fn check_const_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_literals.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     dir = scratch_dir()
     all: Array(LCase) = []
     for x in char_cases() {

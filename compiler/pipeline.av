@@ -342,7 +342,7 @@ pub fn compile_source(src: Source): IrBox {
   info = ModInfo.new(name, src.path)
   program.mods.push(info)
   if prelude_wanted(tokens) {
-    add_prelude(program, prelude_more_wanted(tokens))
+    add_prelude(program, prelude_more_wanted(tokens), prelude_old_wanted(tokens))
   }
   if task_prelude_wanted(tokens) {
     add_task_prelude(program)
@@ -606,10 +606,12 @@ pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable,
 
 pub fn fill_std_link(program: Program, box: IrBox) {
   root = avant_root()
+  sys = false
   for ldef in program.libs {
-    if ldef.name == "avant_sys_more" {
-      // The prelude's second part (prelude_src.av prelude_more_source)
-      // declares its runtime in this lib block.
+    if (ldef.name == "avant_sys_more" || ldef.name == "fs_sys" || ldef.name == "process_sys") && !sys {
+      // The prelude's second part (prelude_src.av prelude_more_source),
+      // std.fs and std.process declare their runtime in these lib blocks.
+      sys = true
       box.std_objects.push("${root}/runtime/build/avant_sys.o")
     }
   }

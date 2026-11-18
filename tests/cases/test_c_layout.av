@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // `release`: the checker's refusals. Each program
 // declares a C layout with a String, an Int, a Ptr(Void) and a nested
@@ -11,10 +13,10 @@ fn release_refused(c: Checks, compiler: String, stamp: Int, tag: String, body: S
   src = "${scratch()}/c_layout-${stamp}-release-${tag}.av"
   bin = "${scratch()}/c_layout-${stamp}-release-${tag}.bin"
   log = "${scratch()}/c_layout-${stamp}-release-${tag}.log"
-  _ = file_write(src, release_src(body))
+  _ = fs.write(src, release_src(body))
   code = compile_av(compiler, src, bin, log)
-  c.expect(code != 0 && !file_exists(bin), "release ${tag}: does not compile")
-  if err = file_read(log) {
+  c.expect(code != 0 && !fs.exists(bin), "release ${tag}: does not compile")
+  if err = fs.read(log) {
     c.expect(err.contains(needle), "release ${tag}: ${needle}")
   } else {
     c.expect(false, "release ${tag}: the log")
@@ -47,13 +49,13 @@ fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String,
   src = "${scratch()}/c_layout-${stamp}-null-${tag}.av"
   bin = "${scratch()}/c_layout-${stamp}-null-${tag}.bin"
   log = "${scratch()}/c_layout-${stamp}-null-${tag}.log"
-  _ = file_write(src, null_src(body))
+  _ = fs.write(src, null_src(body))
   code = compile_av(compiler, src, bin, log)
   c.eq_int(code, 0, "null ${tag}: compiles")
-  if file_exists(bin) {
+  if fs.exists(bin) {
     rlog = "${scratch()}/c_layout-${stamp}-null-${tag}.run"
     c.eq_int(run_av_bin(bin, rlog), status, "null ${tag}: exit status")
-    got = file_read(rlog) ?? ""
+    got = fs.read(rlog) ?? ""
     c.expect(got.contains(want), "null ${tag}: ${want} (${got})")
   } else {
     c.expect(false, "null ${tag}: runs")
@@ -88,21 +90,21 @@ fn test_null_traps(c: Checks, compiler: String) {
 fn test_cb_scalars(c: Checks, compiler: String) {
   stamp = now_ms()
   csrc = "${scratch()}/c_layout-${stamp}-cbs.c"
-  _ = file_write(csrc, "#include <stdint.h>\nint cbs_args(int (*f)(uint8_t, int8_t, uint16_t, int16_t, float)) {\n  return f(255, -128, 65535, -32768, 1.5f);\n}\nint cbs_u8(uint8_t (*f)(int), int x) {\n  return f(x);\n}\ndouble cbs_f32(float (*f)(float), float x) {\n  return (double)f(x);\n}\nint cbs_i8(int8_t (*f)(int8_t), int x) {\n  return f((int8_t)x);\n}\n")
+  _ = fs.write(csrc, "#include <stdint.h>\nint cbs_args(int (*f)(uint8_t, int8_t, uint16_t, int16_t, float)) {\n  return f(255, -128, 65535, -32768, 1.5f);\n}\nint cbs_u8(uint8_t (*f)(int), int x) {\n  return f(x);\n}\ndouble cbs_f32(float (*f)(float), float x) {\n  return (double)f(x);\n}\nint cbs_i8(int8_t (*f)(int8_t), int x) {\n  return f((int8_t)x);\n}\n")
   decls = "lib cbs {\n  fun cbs_args(f: fn(UInt8, Int8, UInt16, Int16, Float32): Int32): Int32\n  fun cbs_u8(f: fn(Int32): UInt8, x: Int32): Int32\n  fun cbs_f32(f: fn(Float32): Float32, x: Float32): Float64\n  fun cbs_i8(f: fn(Int8): Int8, x: Int32): Int32\n}\n"
   body = "fn all(a: Int, b: Int, d: Int, e: Int, f: Float64): Int32 {\n  puts(\"\${a} \${b} \${d} \${e} \${f}\")\n  (a + b + d + e).to_i32()\n}\nfn plus(x: Int32): Int {\n  x.to_i() + 1\n}\nfn third(x: Float64): Float64 {\n  x / 3.0\n}\nfn main {\n  puts(cbs.cbs_args(all))\n  puts(cbs.cbs_u8(plus, 254))\n  puts(cbs.cbs_f32(third, 1.0))\n  puts(cbs.cbs_i8({ |x| -x - 1 }, 127))\n  puts(cbs.cbs_u8(plus, 255))\n}\n"
   asrc = "${scratch()}/c_layout-${stamp}-cbs.av"
-  _ = file_write(asrc, "${decls}${body}")
+  _ = fs.write(asrc, "${decls}${body}")
   fl: Array(String) = []
   fl.push("--cc")
   fl.push(csrc)
   bin = "${scratch()}/c_layout-${stamp}-cbs.bin"
   code = compile_av_flags(compiler, asrc, bin, "${scratch()}/c_layout-${stamp}-cbs.clog", fl)
   c.eq_int(code, 0, "callback scalars: compiles")
-  if file_exists(bin) {
+  if fs.exists(bin) {
     log = "${scratch()}/c_layout-${stamp}-cbs.run"
     c.eq_int(run_av_bin(bin, log), 1, "callback scalars: the last callback's result out of range ends the program")
-    got = file_read(log) ?? ""
+    got = fs.read(log) ?? ""
     c.expect(got.contains("255 -128 65535 -32768 1.5\n32894\n255\n0.3333333432674408\n-128\navant runtime: 256 out of range for the C type UInt8 (0..255)"), "callback scalars: each converts exactly, the result checked (${got})")
   } else {
     c.expect(false, "callback scalars: runs")
@@ -115,13 +117,13 @@ fn test_cb_scalars(c: Checks, compiler: String) {
 fn test_frozen_to_c(c: Checks, compiler: String) {
   stamp = now_ms()
   src = "${scratch()}/c_layout-${stamp}-frozen.av"
-  _ = file_write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
+  _ = fs.write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
   bin = "${scratch()}/c_layout-${stamp}-frozen.bin"
   c.eq_int(compile_av(compiler, src, bin, "${scratch()}/c_layout-${stamp}-frozen.clog"), 0, "frozen to C: compiles")
-  if file_exists(bin) {
+  if fs.exists(bin) {
     log = "${scratch()}/c_layout-${stamp}-frozen.run"
     c.eq_int(run_av_bin(bin, log), 1, "frozen to C: the write traps")
-    got = file_read(log) ?? ""
+    got = fs.read(log) ?? ""
     c.expect(got.contains("before\navant runtime: an element store on an array a running task reads"), "frozen to C: names the store (${got})")
   } else {
     c.expect(false, "frozen to C: runs")
@@ -130,7 +132,7 @@ fn test_frozen_to_c(c: Checks, compiler: String) {
 
 fn test_c_layout(c: Checks) {
   c.suite("tests/cases/test_c_layout.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
     flags: Array(String) = []
@@ -139,7 +141,7 @@ fn test_c_layout(c: Checks) {
     log = "${scratch()}/c_layout-${stamp}-layout.txt"
     code = run_av_cmd_flags(compiler, "${root}/examples/layout.av", log, flags)
     c.eq_int(code, 0, "run layout.av")
-    if got = file_read(log) {
+    if got = fs.read(log) {
       c.eq_str(got, "25.0\n25.0\nok\nok\nok\nok\ntrue\n5\nfalse\n6.5\n6\nok\nok\nok\n1.0\n2.0\ntrue\n4.0\n9.0\nok\nok\nok\nok\n1600000\n11\n99\n1.5\nhelloworld\nhelloworld\n7\n7\n", "layout.av stdout")
     } else {
       c.expect(false, "layout stdout")
@@ -147,14 +149,14 @@ fn test_c_layout(c: Checks) {
     csrc = "${scratch()}/c_layout-${stamp}-fields.c"
     asrc = "${scratch()}/c_layout-${stamp}-fields.av"
     clog = "${scratch()}/c_layout-${stamp}-fields.txt"
-    _ = file_write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; int y; } Point;\nPoint *point_new(int x, int y) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  p->y = y;\n  return p;\n}\n")
-    _ = file_write(asrc, "lib math {\n  struct Point {\n    x: Int32\n    y: Int32\n  }\n  fun point_new(x: Int32, y: Int32): Ptr(Point)\n}\ncomptime {\n  for f in Point.fields {\n    quote {\n      fn #(f.name)(p: Ptr(Point)): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  p = math.point_new(3, 4)\n  puts(x(p))\n  puts(y(p))\n}\n")
+    _ = fs.write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; int y; } Point;\nPoint *point_new(int x, int y) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  p->y = y;\n  return p;\n}\n")
+    _ = fs.write(asrc, "lib math {\n  struct Point {\n    x: Int32\n    y: Int32\n  }\n  fun point_new(x: Int32, y: Int32): Ptr(Point)\n}\ncomptime {\n  for f in Point.fields {\n    quote {\n      fn #(f.name)(p: Ptr(Point)): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  p = math.point_new(3, 4)\n  puts(x(p))\n  puts(y(p))\n}\n")
     fflags: Array(String) = []
     fflags.push("--cc")
     fflags.push(csrc)
     fcode = run_av_cmd_flags(compiler, asrc, clog, fflags)
     c.eq_int(fcode, 0, "layout field walk compile")
-    if fg = file_read(clog) {
+    if fg = fs.read(clog) {
       c.eq_str(fg, "3\n4\n", "layout field walk")
     } else {
       c.expect(false, "layout field walk stdout")

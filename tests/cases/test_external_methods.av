@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // External methods and names across modules. Each case is a program of
 // one or more modules, written into a directory of its own and compiled
@@ -215,7 +217,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
       c.eq_str(log_text("${d3}/prog.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i2].code != 0 && !file_exists("${d3}/prog.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i2].code != 0 && !fs.exists("${d3}/prog.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("/${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -224,7 +226,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_external_methods.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     all = builtin_cases()
     for t in twin_cases() {
       all.push(t)

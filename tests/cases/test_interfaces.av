@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 interface Show {
   fn to_s: String
@@ -137,7 +139,7 @@ fn test_interfaces(c: Checks) {
   c.eq_str(word(s), "hi", "fold string")
   c.eq_int(touch(Box.new(9)), 1, "each on another box")
   c.eq_int(take(Def { }), 7, "default fills the full witness")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     dir = "${scratch()}/interfaces-${stamp}"
     mkdir_p(dir)
@@ -148,11 +150,11 @@ fn test_interfaces(c: Checks) {
     out = "${dir}/ok.out"
     code = compile_av(compiler, "${dir}/main.av", bin, log)
     c.eq_int(code, 0, "pub later opt-in")
-    c.expect(file_exists(bin), "pub later opt-in bin")
+    c.expect(fs.exists(bin), "pub later opt-in bin")
     chmod_x(bin)
     run_code = run_av_bin(bin, out)
     c.eq_int(run_code, 0, "pub later opt-in run")
-    if got = file_read(out) {
+    if got = fs.read(out) {
       c.eq_str(got, "tag\n", "imported show")
     } else {
       c.expect(false, "imported show")
@@ -161,14 +163,14 @@ fn test_interfaces(c: Checks) {
     csrc = "${dir}/point.c"
     asrc = "${dir}/point.av"
     clog = "${dir}/point.txt"
-    _ = file_write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; } Point;\nPoint *point_new(int x) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  return p;\n}\n")
-    _ = file_write(asrc, "interface Show {\n  fn to_s: String\n}\nlib math {\n  struct Point {\n    x: Int\n  }\n  fun point_new(x: Int): Ptr(Point)\n}\nfn (p: Ptr(Point)) to_s: String {\n  \"pt\"\n}\nPtr(Point): Show\nfn present(v: T: Show): String {\n  v.to_s()\n}\nfn main {\n  puts(present(math.point_new(1)))\n}\n")
+    _ = fs.write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; } Point;\nPoint *point_new(int x) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  return p;\n}\n")
+    _ = fs.write(asrc, "interface Show {\n  fn to_s: String\n}\nlib math {\n  struct Point {\n    x: Int\n  }\n  fun point_new(x: Int): Ptr(Point)\n}\nfn (p: Ptr(Point)) to_s: String {\n  \"pt\"\n}\nPtr(Point): Show\nfn present(v: T: Show): String {\n  v.to_s()\n}\nfn main {\n  puts(present(math.point_new(1)))\n}\n")
     flags: Array(String) = []
     flags.push("--cc")
     flags.push(csrc)
     pcode = run_av_cmd_flags(compiler, asrc, clog, flags)
     c.eq_int(pcode, 0, "ptr opt-in")
-    if pg = file_read(clog) {
+    if pg = fs.read(clog) {
       c.eq_str(pg, "pt\n", "ptr show")
     } else {
       c.expect(false, "ptr show")

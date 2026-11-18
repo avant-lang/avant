@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The thread-locals generated code reads in its hot loops (the
 // allocation cursor and limits, the start bits' base, the frame chain's
@@ -15,7 +17,7 @@ import harness
 // them and fails this test.
 fn test_tls_place(c: Checks) {
   c.suite("tests/cases/test_tls_place.av")
-  compiler = env_get("AVANT_COMPILER") ?? ""
+  compiler = process.env("AVANT_COMPILER") ?? ""
   if compiler.size == 0 {
     return
   }
@@ -35,9 +37,9 @@ fn test_tls_place(c: Checks) {
     args: Array(String) = []
     args.push("-c")
     args.push(script)
-    status = process_run_out("/bin/sh", args, log) ?? -1
+    status = run_out("/bin/sh", args, log) ?? -1
     c.eq_int(status, 0, "tls place: readelf reads the ${prog} program")
-    out = file_read(log) ?? ""
+    out = fs.read(log) ?? ""
     lines = out.split("\n")
     seen = 0
     for line in lines {

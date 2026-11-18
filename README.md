@@ -342,7 +342,7 @@ fn main: Void | Missing {
 }
 ```
 
-Command-line arguments come from `argv()` ([Program arguments](#program-arguments)).
+Command-line arguments come from `process.args()` ([Program arguments](#program-arguments)).
 
 ### Names and scope
 
@@ -692,8 +692,10 @@ fn main {
 When `x` can be an error (`T | E`), the loop must read it: `while v = x { ... } else e { ... }` runs the `else` block once, when `x` gives no value, with the failure in `e` (the error, or `nil` at the end), and then the loop ends; a `break` in the body skips it. Without the `else`, such a loop is a compile error (`this while would end silently when the value is an error`), so an error never ends a loop as quietly as the end does. A loop over an optional (`T?`) needs no `else`: its only failure is `nil`.
 
 ```avant
+import std.fs
+
 fn total(path: String): Int | IoError {
-  r = file_open(path)?
+  r = fs.open(path)?
   n = 0
   while line = r.read_line() {
     n += line.size
@@ -706,7 +708,7 @@ fn total(path: String): Int | IoError {
 }
 
 fn main {
-  _ = file_write("t.txt", "ab\ncde\n")
+  _ = fs.write("t.txt", "ab\ncde\n")
   puts(total("t.txt") ?? -1)     // => 5
   puts(total("none.txt") ?? -1)  // => -1
 }
@@ -1590,7 +1592,7 @@ fn main {
 
 ### Size limits
 
-A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147,483,647 elements (32-bit sizes), a `Hash` 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`); `file_read` of a larger file is an `IoError` (`File too large`).
+A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147,483,647 elements (32-bit sizes), a `Hash` 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`); `fs.read` of a larger file is an `IoError` (`File too large`).
 
 ## Hashes
 
@@ -2311,7 +2313,7 @@ fn main {
 - `save("a", "b")` alone is a compile error ([Errors cannot be dropped](#errors-cannot-be-dropped)): write `?`, `else e { ... }`, `?? return`, or `_ =`.
 - `if v = save(...)` and `v = save(...) else e` are refused (no value to bind); a `switch` reads the failure (`case e: SaveError { ... } else { ... }`).
 - `Void` stands only beside failures marked `Error` (`Void | IoError`, `Void | A | B`; `Void | Int` and `Void | E?` are refused). `Void | E` with a class `E` is one pointer, `Void` its null.
-- `dir_make` and `file_delete` return `Void | IoError`, and so does a [`Mutex.try_with`](#channel-and-mutex) whose block ends without a value.
+- `fs.make_dir` and `fs.delete` return `Void | IoError`, and so does a [`Mutex.try_with`](#channel-and-mutex) whose block ends without a value.
 
 ### Declaring an error
 
@@ -2349,6 +2351,7 @@ A field `cause` holds the error that caused this one: an `Error` type, a union o
 
 ```avant
 import std.json
+import std.fs
 
 class ConfigError: Error {
   message: String
@@ -2361,7 +2364,7 @@ class ConfigError: Error {
 }
 
 fn load(path: String): Json | ConfigError {
-  text = file_read(path) else e {
+  text = fs.read(path) else e {
     return ConfigError.new("cannot load ${path}", e)
   }
   json = Json.parse(text) else e {
@@ -2371,7 +2374,7 @@ fn load(path: String): Json | ConfigError {
 }
 
 fn main {
-  _ = file_write("app.json", "{\"port\": ")
+  _ = fs.write("app.json", "{\"port\": ")
   _ = load("app.json") else e {
     puts("${e}")       // => bad config in app.json: invalid JSON at byte 9: unexpected end of data
     switch e.cause {
@@ -2569,7 +2572,7 @@ A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), 
 | The operation can fail, and the caller should know why | `T \| SomeError` | must handle it, pass it up, or discard it visibly |
 | The program is wrong: a bug, not an input | a trap (`panic("why")` raises one) | cannot continue; fix the code |
 
-In the library, `h[k]` and `"42".to_i` return optionals, `file_read` and `Json.parse` errors, and `xs[9]` on three elements traps.
+In the library, `h[k]` and `"42".to_i` return optionals, `fs.read` and `Json.parse` errors, and `xs[9]` on three elements traps.
 
 ## Function values
 
@@ -3479,15 +3482,16 @@ fn main {
 
 The pool runs at most `N` tasks at once, its size; further tasks queue. `N` is the number of CPUs the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), unless one of these sets it:
 
-- `--avant-threads=N` on **your program's** command line, `N` from 1 to 1,024. The runtime takes it out before `argv()` sees it; a bare `--avant-threads` or a bad value stops the program before `main` with one line on standard error and status 1 (`avant runtime: --avant-threads=0: the thread pool's size is --avant-threads=N, N from 1 to 1024`). Every other argument, `--threads` included, is the program's. After a literal `--` nothing is taken.
+- `--avant-threads=N` on **your program's** command line, `N` from 1 to 1,024. The runtime takes it out before `process.args()` sees it; a bare `--avant-threads` or a bad value stops the program before `main` with one line on standard error and status 1 (`avant runtime: --avant-threads=0: the thread pool's size is --avant-threads=N, N from 1 to 1024`). Every other argument, `--threads` included, is the program's. After a literal `--` nothing is taken.
 - `set_pool_size(n)` from `std.sync`, for a program with its own option (a `--threads`, a config file); `pool_size()` reads the size.
 
 <!-- check: run args=--threads,2 -->
 ```avant
 import std.sync
+import std.process
 
 fn main {
-  args = argv()
+  args = process.args()
   if args.size >= 3 && args[1] == "--threads" {
     set_pool_size(args[2].to_i() ?? 1)
   }
@@ -3979,13 +3983,11 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 ## Builtins
 
-The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Sets](#sets), [Bytes and Buf](#bytes-and-buf)) and these free functions:
+The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Sets](#sets), [Bytes and Buf](#bytes-and-buf)) and these free functions; files and directories are [std.fs](#files-and-directories)'s, processes and the environment [std.process](#processes-and-environment)'s:
 
 | Area | Names |
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
-| Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `file_size`, `file_delete`, `dir_list`, `dir_walk`, `dir_exists`, `dir_make` |
-| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output`, `process_output_into` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
@@ -4022,7 +4024,7 @@ fn main {
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
 | `read_line()` | — | `String \| IoError \| Nil`: the next line of standard input without its newline (or a `\r` before it), an unterminated last line included | `nil` at the end; an `IoError` if the read fails | when stdout is a terminal, `read_line` flushes it first, so a `print` prompt shows |
-| `file_read("/dev/stdin")` | — | `String \| IoError` | as [`file_read`](#files-and-directories) | reads all of standard input |
+| `fs.read("/dev/stdin")` | — | `String \| IoError` | as [`fs.read`](#files-and-directories) | reads all of standard input |
 
 `while line = read_line() { ... } else e { ... }` walks the lines; the `else` runs once at the end, with `e` the `IoError` or `nil` ([While](#while)).
 
@@ -4045,43 +4047,51 @@ With an empty input it prints 0. `read_line() ?? ""` reads one answer, the end a
 
 ### Files and directories
 
-Every `path` is a `String`.
+`std.fs` (`import std.fs`, then `fs.read(path)`): every `path` is a `String`.
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `file_read(path)` | `path` | `String \| IoError`: the whole file | an `IoError` | |
-| `file_write(path, body)` | `path`, `body: String` | `Int \| IoError`: the bytes written | an `IoError` | the file is created or replaced |
-| `file_open(path)` | `path` | `FileReader \| IoError`: the file, to read line by line | an `IoError` | `file_open` never holds the whole file |
-| `r.read_line()` | — | `String \| IoError \| Nil` | as [`read_line`](#input) | a `FileReader`'s `r.read_line()` is [`read_line`](#input) on its file |
+| `fs.read(path)` | `path` | `String \| IoError`: the whole file | an `IoError` | |
+| `fs.write(path, body)` | `path`, `body: String` | `Int \| IoError`: the bytes written | an `IoError` | the file is created or replaced |
+| `fs.append(path, body)` | `path`, `body: String` | `Int \| IoError`: the bytes written | an `IoError` | `body` goes at the file's end; a missing file is created |
+| `fs.open(path)` | `path` | `fs.Reader \| IoError`: the file, to read line by line | an `IoError` | `fs.open` never holds the whole file |
+| `r.read_line()` | — | `String \| IoError \| Nil` | as [`read_line`](#input) | a `Reader`'s `r.read_line()` is [`read_line`](#input) on its file |
 | `r.close()` | — | — | — | closes the file; it also closes at the end, or on an error; a reader dropped earlier keeps it open until the program ends |
 | `r.scoped((f) { ... })` | a lambda taking the reader | — | — | runs the lambda with the reader, then closes the file, however much the lambda read: the way to stop early without keeping the descriptor (the collector closes nothing) |
-| `file_size(path)` | `path` | `Int \| IoError`: its size in bytes | an `IoError` | |
-| `file_delete(path)` | `path` | `Void \| IoError`: nothing when the file is removed | an `IoError`; a directory is an error | |
-| `file_exists(path)` | `path` | `Bool`: a file or a directory is there | — | |
-| `dir_list(path)` | `path` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` | an `IoError` | |
-| `dir_walk(path)` | `path` | `Array(String) \| IoError`: every name below it, as a path relative to it | an `IoError` | `dir_walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed |
-| `dir_make(path)` | `path` | `Void \| IoError`: nothing when the directory and its missing parents are made | an `IoError` | one that is there already is fine |
-| `dir_exists(path)` | `path` | `Bool`: a directory is there | — | |
+| `fs.size(path)` | `path` | `Int \| IoError`: its size in bytes | an `IoError` | |
+| `fs.delete(path)` | `path` | `Void \| IoError`: nothing when the file is removed | an `IoError`; a directory is an error | |
+| `fs.rename(from, to)` | `from`, `to` | `Void \| IoError`: nothing when it moved | an `IoError` naming `from` | a file at `to` is replaced |
+| `fs.exists(path)` | `path` | `Bool`: a file or a directory is there | — | |
+| `fs.is_dir(path)` | `path` | `Bool`: a directory is there | — | |
+| `fs.list(path)` | `path` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` | an `IoError` | |
+| `fs.walk(path)` | `path` | `Array(String) \| IoError`: every name below it, as a path relative to it | an `IoError` | `fs.walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed |
+| `fs.make_dir(path)` | `path` | `Void \| IoError`: nothing when the directory and its missing parents are made | an `IoError` | one that is there already is fine |
 
 ```avant
+import std.fs
+
 fn copy(from: String, to: String): Int | IoError {
-  text = file_read(from)?
-  file_write(to, text)?
+  text = fs.read(from)?
+  fs.write(to, text)?
 }
 
 fn main {
-  _ = file_write("notes.txt", "remember the milk\n")
+  _ = fs.write("notes.txt", "remember the milk\n")
   puts(copy("notes.txt", "copy.txt") ?? -1)       // => 18
   puts(copy("missing.txt", "copy.txt") ?? -1)     // => -1
-  puts(file_exists("copy.txt"))                   // => true
-  names = dir_list(".") ?? []
+  puts(fs.exists("copy.txt"))                     // => true
+  names = fs.list(".") ?? []
   puts(names.has("copy.txt"))                     // => true
+  _ = fs.append("copy.txt", "and eggs\n")
+  puts(fs.size("copy.txt") ?? -1)                 // => 27
 }
 ```
 
 ```avant
+import std.fs
+
 fn longest(path: String): Int | IoError {
-  r = file_open(path)?
+  r = fs.open(path)?
   best = 0
   while line = r.read_line() {
     if line.size > best {
@@ -4096,7 +4106,7 @@ fn longest(path: String): Int | IoError {
 }
 
 fn main {
-  _ = file_write("poem.txt", "one\nthree\n")
+  _ = fs.write("poem.txt", "one\nthree\n")
   puts(longest("poem.txt") ?? -1)                 // => 5
   puts(longest("missing.txt") ?? -1)              // => -1
 }
@@ -4105,8 +4115,10 @@ fn main {
 A directory walk and housekeeping:
 
 ```avant
+import std.fs
+
 fn remove(path: String) {
-  file_delete(path) else e {
+  fs.delete(path) else e {
     puts(e.message())
     return
   }
@@ -4114,51 +4126,55 @@ fn remove(path: String) {
 }
 
 fn main {
-  dir_make("logs/old") ?? return
-  _ = file_write("logs/old/a.txt", "one\n")
-  names = dir_walk("logs") ?? []
+  fs.make_dir("logs/old") ?? return
+  _ = fs.write("logs/old/a.txt", "one\n")
+  names = fs.walk("logs") ?? []
   puts(names.size)                                // => 2
   puts(names[1])                                  // => old/a.txt
-  puts(dir_exists("logs/old"))                    // => true
-  puts(file_size("logs/old/a.txt") ?? -1)         // => 4
+  puts(fs.is_dir("logs/old"))                     // => true
+  puts(fs.size("logs/old/a.txt") ?? -1)           // => 4
   remove("logs")                                  // => cannot delete logs: Is a directory
-  remove("logs/old/a.txt")                        // => removed logs/old/a.txt
-  puts(file_exists("logs/old/a.txt"))             // => false
+  fs.rename("logs/old/a.txt", "logs/b.txt") ?? return
+  remove("logs/b.txt")                            // => removed logs/b.txt
+  puts(fs.exists("logs/old/a.txt"))               // => false
 }
 ```
 
-An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. The names `IoError`, `ProcessError`, `FileReader` and `ProcessOutput` are taken only in a program that calls these functions.
+An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"`, `"rename"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. `IoError` and `ProcessError` are the prelude's, since [`read_line`](#input) gives an `IoError` too: they are named bare, and a program that uses neither `read_line`, `std.fs` nor `std.process` may declare its own. The module's names are also reached bare (`read(path)`), so a function of the program with one of them and the same parameters makes a bare call ambiguous: `fs.read` names the module's.
 
 ### Processes and environment
 
-A `program` is a `String` and `args` an `Array(String)`; a program name without `/` is looked up on `PATH`.
+`std.process` (`import std.process`): a `program` is a `String` and `args` an `Array(String)`; a program name without `/` is looked up on `PATH`.
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `argv()` | — | `Array(String)`: the program's name, then its arguments ([Program arguments](#program-arguments)) | — | |
-| `env_get(name)` | `name: String` | `String?` | `nil` when the variable is not set | |
-| `process_run(program, args)` | `program`, `args` | `Int \| ProcessError`: its exit status | a `ProcessError` (below) | runs the program and waits; `process_run`'s child shares the program's stdin, stdout and stderr |
-| `process_run_out(program, args, out)` | `program`, `args`, `out: String` | the same | the same, with `output` when the output file could not be opened | the same, with stdout and stderr written to the file `out` |
-| `process_output(program, args, input)` | `program`, `args`, `input: String` (`""` when left out) | `ProcessOutput \| ProcessError`: its `status`, `stdout` and `stderr` | a `ProcessError` | runs the program with `input` on its stdin, then end of input, waits, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error) |
-| `process_output_into(program, args, out, err, input)` | `program`, `args`, `out: Buf`, `err: Buf`, `input` (`""` when left out) | `Int \| ProcessError`: its exit status | a `ProcessError` | `process_output` into the caller's buffers: the child's stdout is appended to `out` and its stderr to `err`, so a loop that runs many programs reuses two `Buf`s instead of making two strings each time |
+| `process.args()` | — | `Array(String)`: the program's name, then its arguments ([Program arguments](#program-arguments)) | — | |
+| `process.env(name)` | `name: String` | `String?` | `nil` when the variable is not set | |
+| `process.env_set(name, value)` | `name`, `value: String` | — | a name that is empty or holds `=` traps | sets it for this program and the programs it runs after; the environment is the process's, so set it before starting tasks that read it |
+| `process.run(program, args)` | `program`, `args` | `Int \| ProcessError`: its exit status | a `ProcessError` (below) | runs the program and waits; the child shares the program's stdin, stdout and stderr |
+| `process.output(program, args, input)` | `program`, `args`, `input: String` (`""` when left out) | `process.Output \| ProcessError`: its `status`, `stdout` and `stderr` | a `ProcessError` | runs the program with `input` on its stdin, then end of input, waits, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error) |
+| `process.output_into(program, args, out, err, input)` | `program`, `args`, `out: Buf`, `err: Buf`, `input` (`""` when left out) | `Int \| ProcessError`: its exit status | a `ProcessError` | `process.output` into the caller's buffers: the child's stdout is appended to `out` and its stderr to `err`, so a loop that runs many programs reuses two `Buf`s instead of making two strings each time |
 
 ```avant
+import std.process
+
 fn main {
-  status = process_run("sh", ["-c", "exit 3"]) ?? -1
+  status = process.run("sh", ["-c", "exit 3"]) ?? -1
   puts(status)                                           // => 3
-  puts(process_run("no-such-program", ["x"]) ?? -1)      // => -1
-  if home = env_get("HOME") {
+  puts(process.run("no-such-program", ["x"]) ?? -1)      // => -1
+  if home = process.env("HOME") {
     puts(home.size > 0)                                  // => true
   }
-  puts(argv().size)                                      // => 1
-  if r = process_output("tr", ["a-z", "A-Z"], "shout") {
-    puts(r.stdout)                                       // => SHOUT
+  puts(process.args().size)                              // => 1
+  process.env_set("GREETING", "shout")
+  if r = process.output("sh", ["-c", "echo $GREETING | tr a-z A-Z"]) {
+    puts(r.stdout.strip())                               // => SHOUT
     puts(r.status)                                       // => 0
   }
 }
 ```
 
-**A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`; `output` when the output file could not be opened) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
+**A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. To keep a child's output in a file, write `process.output`'s `stdout` with `fs.write`, or let a shell redirect it (`process.run("sh", ["-c", "make > build.log 2>&1"])`).
 
 ### Time, hashing and math
 
@@ -4194,6 +4210,8 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
 | [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
 | [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
+| [`std.fs`](#files-and-directories) | `fs.read`, `fs.write`, `fs.open`, `fs.walk` and the rest of the file system | the C library |
+| [`std.process`](#processes-and-environment) | `process.args()`, `process.env(name)`, `process.run`, `process.output` | the C library |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
@@ -4711,11 +4729,12 @@ fn main: Int {
 
 ```avant
 import std.testing
+import std.fs
 
 fn main: Int {
   t = Test.new()
   dir = t.temp_dir()
-  t.check((file_write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
+  t.check((fs.write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
   t.finish()
 }
 ```
@@ -4889,12 +4908,14 @@ Options may sit before or after the file, up to `--`.
 
 ### Program arguments
 
-Arguments after `--` are the program's. `argv()` returns the program's name at index 0 and the arguments from index 1.
+Arguments after `--` are the program's. `process.args()` ([std.process](#processes-and-environment)) returns the program's name at index 0 and the arguments from index 1.
 
 <!-- check: run args=hello -->
 ```avant
+import std.process
+
 fn main: Int {
-  args = argv()
+  args = process.args()
   if args.size > 1 {
     puts(args[1])      // => hello
   }

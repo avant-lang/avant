@@ -1,14 +1,16 @@
 import harness
+import std.fs
+import std.process
 
 fn diag_expect_multi(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needles: Array(String)) {
   src = "${scratch()}/diagnostics-waved-${stamp}-${tag}.av"
   bin = "${scratch()}/diagnostics-waved-${stamp}-${tag}.bin"
   log = "${scratch()}/diagnostics-waved-${stamp}-${tag}.log"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  c.expect(!file_exists(bin), "${tag} bin absent")
-  if err = file_read(log) {
+  c.expect(!fs.exists(bin), "${tag} bin absent")
+  if err = fs.read(log) {
     i = 0
     while i < needles.size {
       c.expect(err.contains(needles[i]), "${tag} reports ${needles[i]}")
@@ -21,7 +23,7 @@ fn diag_expect_multi(c: Checks, compiler: String, stamp: Int, tag: String, body:
 
 fn test_diagnostics(c: Checks) {
   c.suite("tests/cases/test_diagnostics.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
 
     multi: Array(String) = []
@@ -66,8 +68,8 @@ fn test_diagnostics(c: Checks) {
     mlog = "${dir}/waved_main.log"
     mcode = compile_av(compiler, "${dir}/waved_main.av", mbin, mlog)
     c.expect(mcode != 0, "multi-import exits non-zero")
-    c.expect(!file_exists(mbin), "multi-import bin absent")
-    if err = file_read(mlog) {
+    c.expect(!fs.exists(mbin), "multi-import bin absent")
+    if err = fs.read(mlog) {
       c.expect(err.contains("nosuch_a"), "multi-import reports first file")
       c.expect(err.contains("nosuch_b"), "multi-import reports second file")
       c.expect(err.contains("^"), "multi-import renders carets")

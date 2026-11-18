@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn pkg_mkdir(path: String) {
   mkdir_p(path)
@@ -12,7 +14,7 @@ fn pkg_git(dir: String, a1: String, a2: String, log: String): Int {
   if a2.size > 0 {
     args.push(a2)
   }
-  process_run_out("/usr/bin/git", args, log) ?? -1
+  run_out("/usr/bin/git", args, log) ?? -1
 }
 
 fn pkg_git_commit(dir: String, msg: String, log: String): Int {
@@ -26,7 +28,7 @@ fn pkg_git_commit(dir: String, msg: String, log: String): Int {
   args.push("commit")
   args.push("-qm")
   args.push(msg)
-  process_run_out("/usr/bin/git", args, log) ?? -1
+  run_out("/usr/bin/git", args, log) ?? -1
 }
 
 fn pkg_fetch(compiler: String, dir: String, update: Bool, log: String): Int {
@@ -36,7 +38,7 @@ fn pkg_fetch(compiler: String, dir: String, update: Bool, log: String): Int {
   if update {
     args.push("--update")
   }
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 // The compiler run with extra environment (NAME=VALUE words) through env.
@@ -45,7 +47,7 @@ fn pkg_env_run(env: Array(String), compiler: String, args: Array(String), log: S
   all.concat(env)
   all.push(compiler)
   all.concat(args)
-  process_run_out("/usr/bin/env", all, log) ?? -1
+  run_out("/usr/bin/env", all, log) ?? -1
 }
 
 fn pkg_repo(c: Checks, dir: String, msg: String, log: String) {
@@ -60,13 +62,13 @@ fn pkg_commit(c: Checks, dir: String, msg: String, log: String) {
 }
 
 fn pkg_rev(dir: String, rev: String, log: String): String {
-  _ = process_run_out("/usr/bin/git", ["-C", dir, "rev-parse", rev], log)
-  (file_read(log) ?? "").strip()
+  _ = run_out("/usr/bin/git", ["-C", dir, "rev-parse", rev], log)
+  (fs.read(log) ?? "").strip()
 }
 
 fn pkg_run_out(compiler: String, src: String, log: String): String {
   code = run_av_cmd(compiler, src, log)
-  "${code}: ${file_read(log) ?? ""}"
+  "${code}: ${fs.read(log) ?? ""}"
 }
 
 // What the project's deps/ holds, the lockfile and the manifests say is
@@ -79,38 +81,38 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   mkdir_p("${tlib}/text")
   mkdir_p(app)
   mkdir_p(away)
-  _ = file_write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v1\"\n}\n")
-  _ = file_write("${tlib}/text/loud.av", "pub fn loud: String {\n  \"LOUD\"\n}\n")
-  _ = file_write("${tlib}/avant.toml", "[package]\nname = \"textlib\"\nversion = \"1.0.0\"\n")
+  _ = fs.write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v1\"\n}\n")
+  _ = fs.write("${tlib}/text/loud.av", "pub fn loud: String {\n  \"LOUD\"\n}\n")
+  _ = fs.write("${tlib}/avant.toml", "[package]\nname = \"textlib\"\nversion = \"1.0.0\"\n")
   pkg_repo(c, tlib, "textlib v1", glog)
   c.eq_int(pkg_git(tlib, "tag", "v1", glog), 0, "git tag v1")
   v1 = pkg_rev(tlib, "v1", "${base}/rev-v1.log")
-  _ = file_write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v2\"\n}\n")
+  _ = fs.write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v2\"\n}\n")
   pkg_commit(c, tlib, "textlib v2", glog)
   c.eq_int(pkg_git(tlib, "tag", "v2", glog), 0, "git tag v2")
   v2 = pkg_rev(tlib, "v2", "${base}/rev-v2.log")
 
   // A relative git path is read from the manifest's directory, whatever
   // directory fetch runs from.
-  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
-  _ = file_write("${app}/main.av", "import greeter\nimport text.loud\nfn main {\n  puts(greeting())\n  puts(loud())\n}\n")
+  _ = fs.write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  _ = fs.write("${app}/main.av", "import greeter\nimport text.loud\nfn main {\n  puts(greeting())\n  puts(loud())\n}\n")
   flog = "${base}/state-fetch.log"
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "a relative git path fetches from another directory")
-  lock = file_read("${app}/avant.lock") ?? ""
+  lock = fs.read("${app}/avant.lock") ?? ""
   c.expect(lock.contains("source = \"git+../textlib#${v1}\"\nrev = \"v1\"\n"), "the lockfile records the git as written and the rev it resolved")
-  c.eq_str((file_read("${app}/deps/textlib/.git/HEAD") ?? "").strip(), v1, "the checkout is detached at the locked commit")
+  c.eq_str((fs.read("${app}/deps/textlib/.git/HEAD") ?? "").strip(), v1, "the checkout is detached at the locked commit")
   rlog = "${base}/state-run.log"
   c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "a nested module of a fetched dependency is imported by its path")
 
   // A checkout moved by hand is not compiled.
-  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--detach", v2], glog) ?? -1, 0, "move the checkout by hand")
+  c.eq_int(run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--detach", v2], glog) ?? -1, 0, "move the checkout by hand")
   moved = pkg_run_out(compiler, "${app}/main.av", rlog)
   c.expect(moved.contains("deps/textlib is at ${v2}, avant.lock pins ${v1} (run: avant fetch ${app})"), "a checkout at another commit than the lockfile's is refused")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch puts the checkout back")
   c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "the locked commit again")
 
   // A changed rev is not compiled until fetched, and a plain fetch takes it.
-  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v2\" }\n")
+  _ = fs.write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v2\" }\n")
   stale = pkg_run_out(compiler, "${app}/main.av", rlog)
   c.expect(stale.contains("avant.toml asks for textlib at v2, avant.lock was fetched at v1 (run: avant fetch ${app})"), "a rev the lockfile was not fetched at is refused")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the rev changed")
@@ -118,48 +120,48 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
 
   // fetch --update updates a checkout in place: what git keeps in it
   // stays, nothing is cloned again.
-  _ = file_write("${app}/deps/textlib/.git/avant-marker", "kept\n")
+  _ = fs.write("${app}/deps/textlib/.git/avant-marker", "kept\n")
   c.eq_int(pkg_fetch(compiler, app, true, flog), 0, "fetch --update")
-  c.expect(file_exists("${app}/deps/textlib/.git/avant-marker"), "fetch --update does not clone the checkout again")
+  c.expect(fs.exists("${app}/deps/textlib/.git/avant-marker"), "fetch --update does not clone the checkout again")
 
   // A checkout with its own changes is neither moved nor removed.
-  _ = file_write("${app}/deps/textlib/greeter.av", "pub fn greeting: String {\n  \"edited\"\n}\n")
-  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  _ = fs.write("${app}/deps/textlib/greeter.av", "pub fn greeting: String {\n  \"edited\"\n}\n")
+  _ = fs.write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
   dlog = "${base}/state-dirty.log"
   c.expect(pkg_fetch(compiler, app, false, dlog) != 0, "fetch refuses to move a checkout with changes")
-  c.expect((file_read(dlog) ?? "").contains("deps/textlib has changes git does not have"), "the refusal names the checkout")
-  c.eq_str(file_read("${app}/deps/textlib/greeter.av") ?? "", "pub fn greeting: String {\n  \"edited\"\n}\n", "the change is kept")
-  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--", "greeter.av"], glog) ?? -1, 0, "discard the change")
+  c.expect((fs.read(dlog) ?? "").contains("deps/textlib has changes git does not have"), "the refusal names the checkout")
+  c.eq_str(fs.read("${app}/deps/textlib/greeter.av") ?? "", "pub fn greeting: String {\n  \"edited\"\n}\n", "the change is kept")
+  c.eq_int(run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--", "greeter.av"], glog) ?? -1, 0, "discard the change")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch back to v1")
 
   // A directory of deps/ the lockfile does not name is not searched.
   mkdir_p("${app}/deps/stray")
-  _ = file_write("${app}/deps/stray/strayed.av", "pub fn strayed: Int {\n  1\n}\n")
-  _ = file_write("${app}/stray.av", "import strayed\nfn main {\n  puts(strayed())\n}\n")
+  _ = fs.write("${app}/deps/stray/strayed.av", "pub fn strayed: Int {\n  1\n}\n")
+  _ = fs.write("${app}/stray.av", "import strayed\nfn main {\n  puts(strayed())\n}\n")
   sout = pkg_run_out(compiler, "${app}/stray.av", rlog)
   c.expect(sout.contains("deps/stray/strayed.av is in deps/, but avant.lock does not name stray, so it is not a dependency"), "a directory the lockfile does not name is not a dependency")
   rm_rf("${app}/deps/stray")
 
   // A dependency removed from the manifest is refused until fetch removes
   // its checkout.
-  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n")
-  _ = file_write("${app}/plain.av", "fn main {\n  puts(7)\n}\n")
+  _ = fs.write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n")
+  _ = fs.write("${app}/plain.av", "fn main {\n  puts(7)\n}\n")
   gone = pkg_run_out(compiler, "${app}/plain.av", rlog)
   c.expect(gone.contains("avant.lock pins textlib, which avant.toml no longer needs (run: avant fetch ${app}: it removes deps/textlib)"), "a removed dependency is refused while the lockfile pins it")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the removal")
-  c.expect((file_read(flog) ?? "").contains("removed ${app}/deps/textlib: no dependency names it any more"), "fetch says what it removed")
-  c.expect(!file_exists("${app}/deps/textlib"), "fetch removes the checkout of a removed dependency")
+  c.expect((fs.read(flog) ?? "").contains("removed ${app}/deps/textlib: no dependency names it any more"), "fetch says what it removed")
+  c.expect(!fs.exists("${app}/deps/textlib"), "fetch removes the checkout of a removed dependency")
   c.eq_str(pkg_run_out(compiler, "${app}/plain.av", rlog), "0: 7\n", "the project compiles without it")
 
   // git is looked up on PATH.
   gbin = "${base}/gitbin"
   mkdir_p(gbin)
-  c.eq_int(process_run_out("/usr/bin/ln", ["-s", "/usr/bin/git", "${gbin}/git"], glog) ?? -1, 0, "a git elsewhere")
-  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  c.eq_int(run_out("/usr/bin/ln", ["-s", "/usr/bin/git", "${gbin}/git"], glog) ?? -1, 0, "a git elsewhere")
+  _ = fs.write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
   plog = "${base}/state-path.log"
   c.eq_int(pkg_env_run(["PATH=${gbin}"], compiler, ["fetch", app], plog), 0, "fetch runs the git on PATH")
   c.eq_int(pkg_env_run(["PATH=${base}/nowhere"], compiler, ["fetch", app], plog), 1, "fetch without git on PATH fails")
-  c.expect((file_read(plog) ?? "").contains("avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
+  c.expect((fs.read(plog) ?? "").contains("avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
 }
 
 // A package names the C it carries and links in its avant.toml; the root
@@ -173,28 +175,28 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   cache = "${base}/c-cache"
   mkdir_p("${pkg}/c")
   mkdir_p(app)
-  _ = file_write("${pkg}/zver.av", "lib z {\n  fun zlibVersion: String\n}\n\npub fn zversion: String {\n  z.zlibVersion()\n}\n")
-  _ = file_write("${pkg}/c/zver.c", "#include \"zver.h\"\nconst char *zlibVersion(void) { return ZVER_TEXT; }\n")
-  _ = file_write("${pkg}/c/zver.h", "#define ZVER_TEXT \"vendored \" ZVER_EXTRA\n")
-  _ = file_write("${pkg}/avant.toml", "[package]\nname = \"zpkg\"\nversion = \"1.0.0\"\n\n[c]\nsources = [\n  \"c/zver.c\",  # the vendored copy\n]\ninclude = [\"c\"]\nflags = [\"-DZVER_EXTRA=\\\"copy\\\"\"]\nsystem = [\"z\"]\n")
+  _ = fs.write("${pkg}/zver.av", "lib z {\n  fun zlibVersion: String\n}\n\npub fn zversion: String {\n  z.zlibVersion()\n}\n")
+  _ = fs.write("${pkg}/c/zver.c", "#include \"zver.h\"\nconst char *zlibVersion(void) { return ZVER_TEXT; }\n")
+  _ = fs.write("${pkg}/c/zver.h", "#define ZVER_TEXT \"vendored \" ZVER_EXTRA\n")
+  _ = fs.write("${pkg}/avant.toml", "[package]\nname = \"zpkg\"\nversion = \"1.0.0\"\n\n[c]\nsources = [\n  \"c/zver.c\",  # the vendored copy\n]\ninclude = [\"c\"]\nflags = [\"-DZVER_EXTRA=\\\"copy\\\"\"]\nsystem = [\"z\"]\n")
   pkg_repo(c, pkg, "zpkg", glog)
   manifest = "[package]\nname = \"capp\"\nversion = \"0.1.0\"\n\n[dependencies]\nzpkg = { git = \"${pkg}\", rev = \"HEAD\" }\n"
-  _ = file_write("${app}/avant.toml", manifest)
-  _ = file_write("${app}/main.av", "import zver\nfn main {\n  puts(zversion())\n}\n")
-  _ = file_write("${app}/plain.av", "fn main {\n  puts(1)\n}\n")
+  _ = fs.write("${app}/avant.toml", manifest)
+  _ = fs.write("${app}/main.av", "import zver\nfn main {\n  puts(zversion())\n}\n")
+  _ = fs.write("${app}/plain.av", "fn main {\n  puts(1)\n}\n")
   flog = "${base}/c-fetch.log"
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch a package with C")
-  c.expect((file_read(flog) ?? "").contains("note: zpkg links C code: opt in with [link] zpkg = \"source\""), "fetch says the package links C and how to opt in")
+  c.expect((fs.read(flog) ?? "").contains("note: zpkg links C code: opt in with [link] zpkg = \"source\""), "fetch says the package links C and how to opt in")
   env = ["AVANT_CACHE_DIR=${cache}"]
   rlog = "${base}/c-run.log"
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a package's C does not link without the root's opt-in")
-  c.expect((file_read(rlog) ?? "").contains("the dependency zpkg links C code (1 C source; the system's z instead of its sources), and nothing links unless this project opts in"), "the refusal says what the package links and how to opt in")
+  c.expect((fs.read(rlog) ?? "").contains("the dependency zpkg links C code (1 C source; the system's z instead of its sources), and nothing links unless this project opts in"), "the refusal says what the package links and how to opt in")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/plain.av"], rlog), 0, "a program that imports no module of the package needs no opt-in")
 
-  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"source\"\n")
+  _ = fs.write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"source\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source: the package's C compiled")
-  c.eq_str(file_read(rlog) ?? "", "vendored copy\n", "source: its sources, include directory and flags")
-  objs = dir_walk("${cache}/c") ?? []
+  c.eq_str(fs.read(rlog) ?? "", "vendored copy\n", "source: its sources, include directory and flags")
+  objs = fs.walk("${cache}/c") ?? []
   cached = ""
   for o in objs {
     if o.size > 2 && str_slice(o, o.size - 2, o.size) == ".o" {
@@ -204,37 +206,37 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   c.expect(cached.size > 0, "the object is kept in the cache")
   // The cached object is linked as it is: replaced by another object, the
   // next link uses that one.
-  _ = file_write("${base}/other.c", "const char *zlibVersion(void) { return \"from the cache\"; }\n")
-  c.eq_int(process_run_out("/usr/bin/cc", ["-c", "-o", "${base}/other.o", "${base}/other.c"], glog) ?? -1, 0, "cc another object")
+  _ = fs.write("${base}/other.c", "const char *zlibVersion(void) { return \"from the cache\"; }\n")
+  c.eq_int(run_out("/usr/bin/cc", ["-c", "-o", "${base}/other.o", "${base}/other.c"], glog) ?? -1, 0, "cc another object")
   c.eq_int(copy_file("${base}/other.o", cached), 0, "replace the cached object")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source again")
-  c.eq_str(file_read(rlog) ?? "", "from the cache\n", "a second link takes the cached object")
+  c.eq_str(fs.read(rlog) ?? "", "from the cache\n", "a second link takes the cached object")
   // A header's change is another key.
-  _ = file_write("${app}/deps/zpkg/c/zver.h", "#define ZVER_TEXT \"edited \" ZVER_EXTRA\n")
+  _ = fs.write("${app}/deps/zpkg/c/zver.h", "#define ZVER_TEXT \"edited \" ZVER_EXTRA\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source after a header changed")
-  c.eq_str(file_read(rlog) ?? "", "edited copy\n", "a changed header compiles the sources again")
-  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/zpkg", "checkout", "-q", "--", "c/zver.h"], glog) ?? -1, 0, "restore the header")
+  c.eq_str(fs.read(rlog) ?? "", "edited copy\n", "a changed header compiles the sources again")
+  c.eq_int(run_out("/usr/bin/git", ["-C", "${app}/deps/zpkg", "checkout", "-q", "--", "c/zver.h"], glog) ?? -1, 0, "restore the header")
 
-  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"system\"\n")
+  _ = fs.write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"system\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "system: the system's library")
-  out = file_read(rlog) ?? ""
+  out = fs.read(rlog) ?? ""
   c.expect(out.size > 1 && !out.contains("vendored") && !out.contains("cache"), "system: the system's zlib answers, not the package's copy")
 
-  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"vendored\"\n")
+  _ = fs.write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"vendored\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "an unknown choice")
-  c.expect((file_read(rlog) ?? "").contains("[link] zpkg is \"vendored\": want \"source\""), "an unknown choice is named")
-  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nnope = \"source\"\n")
+  c.expect((fs.read(rlog) ?? "").contains("[link] zpkg is \"vendored\": want \"source\""), "an unknown choice is named")
+  _ = fs.write("${app}/avant.toml", "${manifest}\n[link]\nnope = \"source\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a choice for no dependency")
-  c.expect((file_read(rlog) ?? "").contains("[link] names nope, which is not a dependency of this project"), "a choice for no dependency is named")
+  c.expect((fs.read(rlog) ?? "").contains("[link] names nope, which is not a dependency of this project"), "a choice for no dependency is named")
 
   // The root project's own [c] needs no opt-in.
   own = "${base}/own"
   mkdir_p("${own}/c")
-  _ = file_write("${own}/c/own.c", "int own_twice(int x) { return 2 * x; }\n")
-  _ = file_write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\nsources = [\"c/own.c\"]\n")
-  _ = file_write("${own}/main.av", "lib own {\n  fun own_twice(x: Int32): Int32\n}\n\nfn main {\n  puts(own.own_twice(21))\n}\n")
+  _ = fs.write("${own}/c/own.c", "int own_twice(int x) { return 2 * x; }\n")
+  _ = fs.write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\nsources = [\"c/own.c\"]\n")
+  _ = fs.write("${own}/main.av", "lib own {\n  fun own_twice(x: Int32): Int32\n}\n\nfn main {\n  puts(own.own_twice(21))\n}\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 0, "the root's own C sources")
-  c.eq_str(file_read(rlog) ?? "", "42\n", "the root's own C is compiled and linked")
+  c.eq_str(fs.read(rlog) ?? "", "42\n", "the root's own C is compiled and linked")
   bad = [
     ["flags = [\"-o\", \"/x\"]", "c flag -o is not allowed"],
     ["sources = [\"../x.c\"]", "c source ../x.c must be a .c file inside the package"],
@@ -243,26 +245,26 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
     ["sources = [\"c/own.c\"", "unterminated list"],
   ]
   for b in bad {
-    _ = file_write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\n${b[0]}\n")
+    _ = fs.write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\n${b[0]}\n")
     c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 1, "refused: ${b[0]}")
-    c.expect((file_read(rlog) ?? "").contains(b[1]), "the message: ${b[1]}")
+    c.expect((fs.read(rlog) ?? "").contains(b[1]), "the message: ${b[1]}")
   }
 
   // --lib PATH links a library file.
-  _ = file_write("${base}/half.c", "int half_of(int x) { return x / 2; }\n")
-  c.eq_int(process_run_out("/usr/bin/cc", ["-c", "-o", "${base}/half.o", "${base}/half.c"], glog) ?? -1, 0, "cc half.o")
-  c.eq_int(process_run_out("/usr/bin/ar", ["rcs", "${base}/libhalf.a", "${base}/half.o"], glog) ?? -1, 0, "ar libhalf.a")
-  _ = file_write("${base}/half.av", "lib half {\n  fun half_of(x: Int32): Int32\n}\n\nfn main {\n  puts(half.half_of(42))\n}\n")
+  _ = fs.write("${base}/half.c", "int half_of(int x) { return x / 2; }\n")
+  c.eq_int(run_out("/usr/bin/cc", ["-c", "-o", "${base}/half.o", "${base}/half.c"], glog) ?? -1, 0, "cc half.o")
+  c.eq_int(run_out("/usr/bin/ar", ["rcs", "${base}/libhalf.a", "${base}/half.o"], glog) ?? -1, 0, "ar libhalf.a")
+  _ = fs.write("${base}/half.av", "lib half {\n  fun half_of(x: Int32): Int32\n}\n\nfn main {\n  puts(half.half_of(42))\n}\n")
   c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/libhalf.a"]), 0, "--lib PATH")
-  c.eq_str(file_read(rlog) ?? "", "21\n", "--lib PATH links the library file")
+  c.eq_str(fs.read(rlog) ?? "", "21\n", "--lib PATH links the library file")
   c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/nope.a"]), 1, "--lib PATH of no file")
-  c.expect((file_read(rlog) ?? "").contains("--lib ${base}/nope.a: no such library file"), "--lib PATH of no file is named")
+  c.expect((fs.read(rlog) ?? "").contains("--lib ${base}/nope.a: no such library file"), "--lib PATH of no file is named")
 }
 
 fn test_packages(c: Checks) {
   c.suite("tests/cases/test_packages.av")
-  if compiler = env_get("AVANT_COMPILER") {
-    c.expect(file_exists("/usr/bin/git"), "git is available for package tests")
+  if compiler = process.env("AVANT_COMPILER") {
+    c.expect(fs.exists("/usr/bin/git"), "git is available for package tests")
     stamp = now_ms()
     base = "${scratch()}/packages-waveh-${stamp}"
     dep = "${base}/dep"
@@ -287,20 +289,20 @@ fn test_packages(c: Checks) {
     pkg_mkdir(malformed)
     glog = "${base}/git.log"
 
-    _ = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello from greeter\"\n}\n")
-    _ = file_write("${dep}/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello from greeter\"\n}\n")
+    _ = fs.write("${dep}/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
     c.eq_int(pkg_git(dep, "init", "-q", glog), 0, "git init dep")
     c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep")
     c.eq_int(pkg_git_commit(dep, "v1", glog), 0, "git commit dep v1")
 
-    _ = file_write("${app}/main.av", "import greeter\nfn main {\n  puts(greeting())\n}\n")
-    _ = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${dep}\", rev = \"HEAD\" }\n")
+    _ = fs.write("${app}/main.av", "import greeter\nfn main {\n  puts(greeting())\n}\n")
+    _ = fs.write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${dep}\", rev = \"HEAD\" }\n")
 
     pre_bin = "${base}/pre-bin"
     pre_log = "${base}/pre.log"
     pre_code = compile_av(compiler, "${app}/main.av", pre_bin, pre_log)
     c.expect(pre_code != 0, "compile before fetch fails")
-    if pre_txt = file_read(pre_log) {
+    if pre_txt = fs.read(pre_log) {
       c.expect(pre_txt.contains("run: avant fetch"), "missing dep diagnostic points at avant fetch")
     } else {
       c.expect(false, "read pre-fetch log")
@@ -308,9 +310,9 @@ fn test_packages(c: Checks) {
 
     fetch_log = "${base}/fetch.log"
     c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "avant fetch succeeds")
-    c.expect(file_exists("${app}/avant.lock"), "fetch writes avant.lock")
-    c.expect(file_exists("${app}/deps/greeter/greeter.av"), "fetch clones the dep under deps/")
-    if lock_txt = file_read("${app}/avant.lock") {
+    c.expect(fs.exists("${app}/avant.lock"), "fetch writes avant.lock")
+    c.expect(fs.exists("${app}/deps/greeter/greeter.av"), "fetch clones the dep under deps/")
+    if lock_txt = fs.read("${app}/avant.lock") {
       c.expect(lock_txt.contains("name = \"greeter\""), "lockfile names the dep")
       c.expect(lock_txt.contains("source = \"git+${dep}#"), "lockfile pins the dep source")
     } else {
@@ -321,10 +323,10 @@ fn test_packages(c: Checks) {
     app_clog = "${base}/app-compile.log"
     app_rlog = "${base}/app-run.log"
     c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile with fetched dep")
-    if file_exists(app_bin) {
+    if fs.exists(app_bin) {
       chmod_x(app_bin)
       c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run app with fetched dep")
-      if out = file_read(app_rlog) {
+      if out = fs.read(app_rlog) {
         c.eq_str(out, "hello from greeter\n", "app uses the git dependency")
       } else {
         c.expect(false, "read app output")
@@ -333,14 +335,14 @@ fn test_packages(c: Checks) {
       c.expect(false, "app binary exists")
     }
 
-    _ = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello v2\"\n}\n")
+    _ = fs.write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello v2\"\n}\n")
     c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep v2")
     c.eq_int(pkg_git_commit(dep, "v2", glog), 0, "git commit dep v2")
     c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "second fetch succeeds")
     c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile after second fetch")
     chmod_x(app_bin)
     c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run after second fetch")
-    if out2 = file_read(app_rlog) {
+    if out2 = fs.read(app_rlog) {
       c.eq_str(out2, "hello from greeter\n", "locked fetch keeps the pinned commit")
     } else {
       c.expect(false, "read locked output")
@@ -349,7 +351,7 @@ fn test_packages(c: Checks) {
     c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile after update")
     chmod_x(app_bin)
     c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run after update")
-    if out3 = file_read(app_rlog) {
+    if out3 = fs.read(app_rlog) {
       c.eq_str(out3, "hello v2\n", "fetch --update advances to the new commit")
     } else {
       c.expect(false, "read updated output")
@@ -358,11 +360,11 @@ fn test_packages(c: Checks) {
     // A module beside the root file and a fetched one of the same name are
     // two files for one import, an error naming both: the lookup has no
     // priority order.
-    _ = file_write("${app}/greeter.av", "pub fn greeting: String {\n  \"local\"\n}\n")
+    _ = fs.write("${app}/greeter.av", "pub fn greeting: String {\n  \"local\"\n}\n")
     loc_log = "${base}/local.log"
     loc_code = compile_av(compiler, "${app}/main.av", "${base}/local-bin", loc_log)
     c.expect(loc_code != 0, "a local module beside a fetched one does not compile")
-    loc_txt = file_read(loc_log) ?? ""
+    loc_txt = fs.read(loc_log) ?? ""
     c.expect(loc_txt.contains("import greeter is ambiguous:"), "a local module beside a fetched one is ambiguous")
     c.expect(loc_txt.contains("${app}/greeter.av") && loc_txt.contains("${app}/deps/greeter/greeter.av"), "the ambiguity names both files")
     rm_f("${app}/greeter.av")
@@ -371,53 +373,53 @@ fn test_packages(c: Checks) {
     // branch, named by the manifest's git and rev; a plain fetch replaces
     // the checkout from the old URL and records the new source.
     fork = "${base}/fork"
-    c.eq_int(process_run_out("/usr/bin/git", ["clone", "-q", dep, fork], glog) ?? -1, 0, "git clone the dep")
-    c.eq_int(process_run_out("/usr/bin/git", ["-C", fork, "checkout", "-q", "-b", "patch"], glog) ?? -1, 0, "git branch patch")
-    _ = file_write("${fork}/greeter.av", "pub fn greeting: String {\n  \"hello patched\"\n}\n")
+    c.eq_int(run_out("/usr/bin/git", ["clone", "-q", dep, fork], glog) ?? -1, 0, "git clone the dep")
+    c.eq_int(run_out("/usr/bin/git", ["-C", fork, "checkout", "-q", "-b", "patch"], glog) ?? -1, 0, "git branch patch")
+    _ = fs.write("${fork}/greeter.av", "pub fn greeting: String {\n  \"hello patched\"\n}\n")
     c.eq_int(pkg_git(fork, "add", "-A", glog), 0, "git add the patch")
     c.eq_int(pkg_git_commit(fork, "patch", glog), 0, "git commit the patch")
-    _ = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${fork}\", rev = \"patch\" }\n")
+    _ = fs.write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${fork}\", rev = \"patch\" }\n")
     c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "fetch after the manifest names the patched clone")
-    c.expect((file_read("${app}/avant.lock") ?? "").contains("source = \"git+${fork}#"), "the lockfile records the patched clone")
+    c.expect((fs.read("${app}/avant.lock") ?? "").contains("source = \"git+${fork}#"), "the lockfile records the patched clone")
     c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile with the patched dep")
     chmod_x(app_bin)
     c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run with the patched dep")
-    c.eq_str(file_read(app_rlog) ?? "", "hello patched\n", "the program runs the patched dependency")
+    c.eq_str(fs.read(app_rlog) ?? "", "hello patched\n", "the program runs the patched dependency")
 
-    _ = file_write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
-    _ = file_write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
+    _ = fs.write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
+    _ = fs.write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
     c.eq_int(pkg_git(dep_a, "init", "-q", glog), 0, "git init depA")
     c.eq_int(pkg_git(dep_a, "add", "-A", glog), 0, "git add depA")
     c.eq_int(pkg_git_commit(dep_a, "a1", glog), 0, "git commit depA")
     c.eq_int(pkg_git(dep_b, "init", "-q", glog), 0, "git init depB")
     c.eq_int(pkg_git(dep_b, "add", "-A", glog), 0, "git add depB")
     c.eq_int(pkg_git_commit(dep_b, "b1", glog), 0, "git commit depB")
-    _ = file_write("${app2}/main.av", "import shared\nfn main {\n  puts(who())\n}\n")
-    _ = file_write("${app2}/avant.toml", "[package]\nname = \"app2\"\nversion = \"0.1.0\"\n\n[dependencies]\ndepa = { git = \"${dep_a}\", rev = \"HEAD\" }\ndepb = { git = \"${dep_b}\", rev = \"HEAD\" }\n")
+    _ = fs.write("${app2}/main.av", "import shared\nfn main {\n  puts(who())\n}\n")
+    _ = fs.write("${app2}/avant.toml", "[package]\nname = \"app2\"\nversion = \"0.1.0\"\n\n[dependencies]\ndepa = { git = \"${dep_a}\", rev = \"HEAD\" }\ndepb = { git = \"${dep_b}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_fetch(compiler, app2, false, fetch_log), 0, "fetch for ambiguity case")
     amb_bin = "${base}/amb-bin"
     amb_log = "${base}/amb.log"
     amb_code = compile_av(compiler, "${app2}/main.av", amb_bin, amb_log)
     c.expect(amb_code != 0, "ambiguous import does not compile")
-    if amb_txt = file_read(amb_log) {
+    if amb_txt = fs.read(amb_log) {
       c.expect(amb_txt.contains("import shared is ambiguous"), "ambiguous import diagnostic")
     } else {
       c.expect(false, "read ambiguity log")
     }
 
-    _ = file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
+    _ = fs.write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
     c.eq_int(pkg_git(inner, "init", "-q", glog), 0, "git init inner")
     c.eq_int(pkg_git(inner, "add", "-A", glog), 0, "git add inner")
     c.eq_int(pkg_git_commit(inner, "i1", glog), 0, "git commit inner")
-    _ = file_write("${outer}/outer.av", "import deep\npub fn outer_msg: String {\n  \"outer+\" + deep()\n}\n")
-    _ = file_write("${outer}/avant.toml", "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"HEAD\" }\n")
+    _ = fs.write("${outer}/outer.av", "import deep\npub fn outer_msg: String {\n  \"outer+\" + deep()\n}\n")
+    _ = fs.write("${outer}/avant.toml", "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_git(outer, "init", "-q", glog), 0, "git init outer")
     c.eq_int(pkg_git(outer, "add", "-A", glog), 0, "git add outer")
     c.eq_int(pkg_git_commit(outer, "o1", glog), 0, "git commit outer")
-    _ = file_write("${app3}/main.av", "import outer\nfn main {\n  puts(outer_msg())\n}\n")
-    _ = file_write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
+    _ = fs.write("${app3}/main.av", "import outer\nfn main {\n  puts(outer_msg())\n}\n")
+    _ = fs.write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_fetch(compiler, app3, false, fetch_log), 0, "fetch transitive deps")
-    if lock3 = file_read("${app3}/avant.lock") {
+    if lock3 = fs.read("${app3}/avant.lock") {
       c.expect(lock3.contains("name = \"inner\""), "lockfile records the transitive dep")
     } else {
       c.expect(false, "read transitive lockfile")
@@ -426,10 +428,10 @@ fn test_packages(c: Checks) {
     app3_clog = "${base}/app3-compile.log"
     app3_rlog = "${base}/app3-run.log"
     c.eq_int(compile_av(compiler, "${app3}/main.av", app3_bin, app3_clog), 0, "compile transitive app")
-    if file_exists(app3_bin) {
+    if fs.exists(app3_bin) {
       chmod_x(app3_bin)
       c.eq_int(run_av_bin(app3_bin, app3_rlog), 0, "run transitive app")
-      if out4 = file_read(app3_rlog) {
+      if out4 = fs.read(app3_rlog) {
         c.eq_str(out4, "outer+deep\n", "transitive dep resolves through the fallback")
       } else {
         c.expect(false, "read transitive output")
@@ -445,40 +447,40 @@ fn test_packages(c: Checks) {
     pkg_mkdir(app4)
     pkg_mkdir(outer2)
     c.eq_int(pkg_git(inner, "tag", "v1", glog), 0, "git tag inner v1")
-    _ = file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep2\"\n}\n")
+    _ = fs.write("${inner}/deep.av", "pub fn deep: String {\n  \"deep2\"\n}\n")
     c.eq_int(pkg_git(inner, "add", "-A", glog), 0, "git add inner v2")
     c.eq_int(pkg_git_commit(inner, "i2", glog), 0, "git commit inner v2")
     c.eq_int(pkg_git(inner, "tag", "v2", glog), 0, "git tag inner v2")
-    _ = file_write("${outer2}/outer2.av", "import deep\npub fn outer2_msg: String {\n  deep()\n}\n")
-    _ = file_write("${outer2}/avant.toml", "[package]\nname = \"outer2\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v2\" }\n")
+    _ = fs.write("${outer2}/outer2.av", "import deep\npub fn outer2_msg: String {\n  deep()\n}\n")
+    _ = fs.write("${outer2}/avant.toml", "[package]\nname = \"outer2\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v2\" }\n")
     c.eq_int(pkg_git(outer2, "init", "-q", glog), 0, "git init outer2")
     c.eq_int(pkg_git(outer2, "add", "-A", glog), 0, "git add outer2")
     c.eq_int(pkg_git_commit(outer2, "o2", glog), 0, "git commit outer2")
-    _ = file_write("${app4}/avant.toml", "[package]\nname = \"app4\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v1\" }\nouter2 = { git = \"${outer2}\", rev = \"HEAD\" }\n")
+    _ = fs.write("${app4}/avant.toml", "[package]\nname = \"app4\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v1\" }\nouter2 = { git = \"${outer2}\", rev = \"HEAD\" }\n")
     two_log = "${base}/two.log"
     c.expect(pkg_fetch(compiler, app4, false, two_log) != 0, "fetch of one name at two commits fails")
-    c.expect((file_read(two_log) ?? "").contains("avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
-    c.expect((file_read(two_log) ?? "").contains("; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
+    c.expect((fs.read(two_log) ?? "").contains("avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
+    c.expect((fs.read(two_log) ?? "").contains("; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
 
     test_package_state(c, compiler, base)
     test_package_c(c, compiler, base)
 
-    _ = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
+    _ = fs.write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
     bad_log = "${base}/bad.log"
     bad_code = pkg_fetch(compiler, bad, false, bad_log)
     c.expect(bad_code != 0, "fetch of a missing repo fails")
-    c.expect(!file_exists("${bad}/avant.lock"), "failed fetch writes no lockfile")
-    if bad_txt = file_read(bad_log) {
+    c.expect(!fs.exists("${bad}/avant.lock"), "failed fetch writes no lockfile")
+    if bad_txt = fs.read(bad_log) {
       c.expect(bad_txt.contains("avant fetch:"), "failed fetch diagnostic")
     } else {
       c.expect(false, "read bad fetch log")
     }
 
-    _ = file_write("${malformed}/avant.toml", "[package]\nname = \"oops\n")
+    _ = fs.write("${malformed}/avant.toml", "[package]\nname = \"oops\n")
     mal_log = "${base}/malformed.log"
     mal_code = pkg_fetch(compiler, malformed, false, mal_log)
     c.expect(mal_code != 0, "malformed manifest fails")
-    if mal_txt = file_read(mal_log) {
+    if mal_txt = fs.read(mal_log) {
       c.expect(mal_txt.contains("unterminated string"), "malformed manifest diagnostic")
     } else {
       c.expect(false, "read malformed log")

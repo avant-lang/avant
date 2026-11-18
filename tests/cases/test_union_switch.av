@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Switch over a union's members and a
 // statement switch's arms. Each program is compiled in parallel;
@@ -61,7 +63,7 @@ fn cases: Array(RCase) {
   xs.push(refused("binding-wrong-type", "fn main {\n  x: Int | String = 1\n  switch x {\n    case s: String { puts(s + 1) }\n    case Int { puts(0) }\n  }\n}\n", "binary operator expects numeric operands, got String and Int", "4:29"))
   xs.push(refused("stmt-arm-drops-error", pre + "fn main {\n  switch 1 {\n    case 1 { r(1) }\n    else { puts(0) }\n  }\n}\n", "this statement drops a value that can be an error", "15:14"))
   xs.push(refused("value-mixed-arms", "fn main {\n  x = switch 1 {\n    case 1 { 2 }\n    else { puts(0) }\n  }\n  puts(x)\n}\n", "switch cases must all produce a value, or none", "2:7"))
-  xs.push(accepted("stmt-arm-value", "fn main {\n  switch argv().size {\n    case 1 {\n      argv().size + 1\n    }\n    else {\n      puts(0)\n    }\n  }\n  puts(\"done\")\n}\n", "done\n"))
+  xs.push(accepted("stmt-arm-value", "fn main {\n  switch process.args().size {\n    case 1 {\n      process.args().size + 1\n    }\n    else {\n      puts(0)\n    }\n  }\n  puts(\"done\")\n}\nimport std.process\n", "done\n"))
   xs.push(accepted("stmt-arm-discard", pre + "fn main {\n  switch 1 {\n    case 1 { _ = r(1) }\n    else { puts(0) }\n  }\n  puts(\"done\")\n}\n", "done\n"))
   xs.push(accepted("cover-neighbours", pre + "fn show(x: Int | Oops | Nil): String {\n  switch x {\n    case n: Int { \"n\${n}\" }\n    case e: Oops { \"e:\${e}\" }\n    case nil { \"nil\" }\n  }\n}\nfn main {\n  puts(show(r(2)))\n  puts(show(r(-1)))\n  puts(show(r(0)))\n  switch r(3) {\n    case n: Int { puts(n) }\n    else { puts(0) }\n  }\n}\n", "n2\ne:oops\nnil\n3\n"))
   xs.push(accepted("binding-shadows", "fn main {\n  n = \"outer\"\n  x: Int | String = 5\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  puts(n)\n}\n", "5\nouter\n"))
@@ -74,7 +76,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/us-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/us-${f.tag}.bin", "${dir}/us-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -95,7 +97,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/us-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/us-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/us-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("us-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -106,7 +108,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 // arm the default (a tag is always a member: no trap, no unreachable).
 fn check_ll(c: Checks, compiler: String, dir: String) {
   sw = "${dir}/us-ll-switch.av"
-  _ = file_write(sw, "fn f(x: Int | String | Float64): Int {\n  switch x {\n    case n: Int { n }\n    case s: String { s.size }\n    case Float64 { 0 }\n  }\n}\nfn main {\n  puts(f(\"ab\"))\n}\n")
+  _ = fs.write(sw, "fn f(x: Int | String | Float64): Int {\n  switch x {\n    case n: Int { n }\n    case s: String { s.size }\n    case Float64 { 0 }\n  }\n}\nfn main {\n  puts(f(\"ab\"))\n}\n")
   c.eq_int(emit_ll(compiler, sw, "${dir}/us-ll-switch.ll", "${dir}/us-ll-switch.log"), 0, "ll-switch: emits")
   ll = log_text("${dir}/us-ll-switch.ll")
   c.expect(ll.contains("switch i32 "), "ll-switch: one switch on the tag")
@@ -116,7 +118,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_union_switch.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_ll(c, compiler, scratch_dir())
   } else {

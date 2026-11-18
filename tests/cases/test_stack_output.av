@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // A stack overflow inside the C library (a recursion that prints a
 // Float64 at every level overflows while the C library formats it)
@@ -42,10 +44,10 @@ fn lines_whole(out: String): String {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_stack_output.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     dir = scratch_dir()
     src = "${dir}/so-print.av"
-    _ = file_write(src, program())
+    _ = fs.write(src, program())
     modes = ["--debug", "--release"]
     jobs: Array(HJob) = []
     for m in modes {

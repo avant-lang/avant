@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Declarations: one spelling for a function without parameters, named
 // arguments for parameters with defaults, struct fields with defaults,
@@ -106,7 +108,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/decl-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/decl-${f.tag}.bin", "${dir}/decl-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -128,7 +130,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/decl-${f3.tag}.run.err"), f3.err, "${f3.tag}: stderr")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/decl-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/decl-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("decl-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -137,7 +139,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_declarations.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

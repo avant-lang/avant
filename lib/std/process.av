@@ -1,0 +1,103 @@
+// std.process: the program's arguments and environment, and other
+// programs run from it.
+//
+// A program is a String (a name without / is looked up on PATH) and its
+// arguments an Array(String). A program that could not start, or that a
+// signal killed, is a ProcessError (the prelude's error type); a
+// non-zero exit status is no error, only the Int.
+
+lib process_sys {
+  fun avant_sys_run(path: String, args: Array(String), out: String): Int
+  fun avant_sys_errno: Int
+  fun avant_sys_signal: Int
+  fun avant_sys_capture(path: String, args: Array(String), input: String): Int
+  fun avant_sys_captured(which: Int): String
+  fun avant_sys_captured_into(which: Int, dst: Buf): Int
+  fun avant_sys_env_set(name: String, value: String): Int
+  fun avant_sys_more_errno: Int
+  fun avant_sys_more_signal: Int
+}
+
+// The program's name, then its arguments.
+pub fn args: Array(String) {
+  argv()
+}
+
+// The environment variable's value; nil when it is not set.
+pub fn env(name: String): String? {
+  env_get(name)
+}
+
+// Sets the environment variable for this program and the programs it
+// runs after. The environment is the process's: set it before starting
+// tasks that read it.
+pub fn env_set(name: String, value: String) {
+  if process_sys.avant_sys_env_set(name, value) != 0 {
+    none: Int? = nil
+    _ = none.expect("process.env_set(name, value) needs a name without = or a zero byte, got \"${name}\"")
+  }
+}
+
+// Runs the program and waits; the child shares this program's stdin,
+// stdout and stderr. Its exit status.
+pub fn run(path: String, args: Array(String)): Int | ProcessError {
+  st = process_sys.avant_sys_run(path, args, "")
+  if st == -2 {
+    return ProcessError.new(path, 0, process_sys.avant_sys_signal(), "")
+  }
+  if st < 0 {
+    return ProcessError.new(path, process_sys.avant_sys_errno(), 0, "")
+  }
+  st
+}
+
+// What a finished program gave: its exit status and what it wrote.
+pub class Output {
+  pub status: Int
+  pub stdout: String
+  pub stderr: String
+
+  fn initialize(status: Int, stdout: String, stderr: String) {
+    self.status = status
+    self.stdout = stdout
+    self.stderr = stderr
+  }
+}
+
+// Runs the program with input on its stdin, then the end of its input,
+// and captures its stdout and stderr as they come, so it never stalls.
+pub fn output(path: String, args: Array(String), input: String = ""): Output | ProcessError {
+  st = process_sys.avant_sys_capture(path, args, input)
+  if st < 0 {
+    return failure(path, st)
+  }
+  Output.new(st, process_sys.avant_sys_captured(1), process_sys.avant_sys_captured(2))
+}
+
+// output into the caller's buffers: the child's stdout is appended to out
+// and its stderr to err, and the exit status is the value, so a loop
+// that runs many programs reuses two Bufs.
+pub fn output_into(path: String, args: Array(String), out: Buf, err: Buf, input: String = ""): Int | ProcessError {
+  st = process_sys.avant_sys_capture(path, args, input)
+  if st < 0 {
+    return failure(path, st)
+  }
+  e1 = process_sys.avant_sys_captured_into(1, out)
+  e2 = process_sys.avant_sys_captured_into(2, err)
+  if e1 != 0 {
+    return ProcessError.new(path, e1, 0, "")
+  }
+  if e2 != 0 {
+    return ProcessError.new(path, e2, 0, "")
+  }
+  st
+}
+
+// Why a captured run failed: a signal, or a start (or an output too large
+// to hold) that failed.
+fn failure(path: String, st: Int): ProcessError {
+  if st == -2 {
+    return ProcessError.new(path, 0, process_sys.avant_sys_more_signal(), "")
+  }
+  ProcessError.new(path, process_sys.avant_sys_more_errno(), 0, "")
+}

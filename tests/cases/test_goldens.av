@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn prefix_at(s: String, at: Int, p: String): Bool {
   if at + p.size > s.size {
@@ -38,8 +40,8 @@ fn strip_root(text: String, root: String): String {
 }
 
 fn expect_file(c: Checks, got_path: String, want_path: String, msg: String, root: String) {
-  if got = file_read(got_path) {
-    if want = file_read(want_path) {
+  if got = fs.read(got_path) {
+    if want = fs.read(want_path) {
       c.eq_str(strip_root(got, root), want, msg)
     } else {
       c.expect(false, "read golden ${want_path}")
@@ -103,7 +105,7 @@ fn check_through_loader(c: Checks, compiler: String, stamp: Int) {
   write_av(dir, "lroot", "import lmod\n\nfn main {\n  puts(lmod_value() + 1)\n}\n")
   out = "${dir}/lroot.check"
   c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot.av", out), 0, "dump --check follows an import")
-  got = file_read(out) ?? ""
+  got = fs.read(out) ?? ""
   c.expect(got.contains("(fn main : Void"), "dump --check prints the root's main")
   c.expect(got.contains("(call lmod_value : Int)"), "dump --check types a call into the imported module")
   c.expect(!got.contains("(fn lmod_value"), "dump --check prints the root file only")
@@ -111,16 +113,16 @@ fn check_through_loader(c: Checks, compiler: String, stamp: Int) {
   write_av(dir, "lroot2", "import lbad\n\nfn main {\n  puts(lbad_value())\n}\n")
   bad = "${dir}/lroot2.check"
   c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot2.av", bad), 1, "dump --check fails on an error in an imported module")
-  c.expect((file_read(bad) ?? "").contains("unknown name nosuch_name"), "dump --check reports the imported module's error")
+  c.expect((fs.read(bad) ?? "").contains("unknown name nosuch_name"), "dump --check reports the imported module's error")
   write_av(dir, "lroot3", "import lnone\n\nfn main {\n  puts(1)\n}\n")
   none = "${dir}/lroot3.check"
   c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot3.av", none), 1, "dump --check fails on a missing import")
-  c.expect((file_read(none) ?? "").contains("cannot find lnone.av"), "dump --check names the missing import")
+  c.expect((fs.read(none) ?? "").contains("cannot find lnone.av"), "dump --check names the missing import")
 }
 
 fn test_goldens(c: Checks) {
   c.suite("tests/cases/test_goldens.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
     for row in golden_rows(c, "test_goldens") {

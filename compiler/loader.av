@@ -305,6 +305,7 @@ pub class Loader {
   wants_prelude: Bool = false
   wants_task: Bool = false
   wants_prelude_more: Bool = false
+  wants_prelude_old: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
   pub dep_set: DepSet? = nil
@@ -636,7 +637,7 @@ pub class Loader {
     }
     if merged = merge(path) {
       if self.wants_prelude {
-        add_prelude(merged, self.wants_prelude_more)
+        add_prelude(merged, self.wants_prelude_more, self.wants_prelude_old)
       }
       if self.wants_task {
         add_task_prelude(merged)
@@ -682,6 +683,9 @@ pub class Loader {
       if !self.wants_prelude_more && prelude_more_wanted(tokens) {
         self.wants_prelude_more = true
       }
+      if !self.wants_prelude_old && prelude_old_wanted(tokens) {
+        self.wants_prelude_old = true
+      }
       parser = Parser.new(file, tokens)
       program = parser.parse()
       if e2 = parser.err {
@@ -690,6 +694,10 @@ pub class Loader {
         return nil
       }
       name = module_label(path)
+      if name == "std.fs" || name == "std.process" {
+        // Their functions give the prelude's IoError and ProcessError.
+        self.wants_prelude = true
+      }
       note_module_path(name, path, program.loc)
       tag_module(program, name, path)
       self.programs.push(program)
@@ -808,9 +816,13 @@ pub fn merge_decls(merged: Program, p: Program) {
 // Adds the prelude module (prelude_src.av) to a merged program: its
 // declarations after every other module's, so the program's own types
 // keep their order, and an import of it in every module. more adds the
-// module's second part (prelude_more_source) after the first.
-pub fn add_prelude(merged: Program, more: Bool) {
+// module's second part (prelude_more_source) after the first, old the
+// old file and process functions (prelude_old_source).
+pub fn add_prelude(merged: Program, more: Bool, old: Bool) {
   text = prelude_source()
+  if old {
+    text = text + prelude_old_source()
+  }
   if more {
     text = text + prelude_more_source()
   }
