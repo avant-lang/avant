@@ -4391,7 +4391,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Http.get(url, follow = true, timeout_ms = 10000)` | `url: String`, `follow: Bool`, `timeout_ms: Int` | `Response \| HttpError` | below | |
+| `Http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
 | `Http.post(url, body, ...)` | `body`, a `String`; then as `get` | `Response \| HttpError` | below | |
 | `Http.request(method, url, body, headers, ...)` | `method: String`, `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
@@ -4400,11 +4400,12 @@ fn main {
 | its method and header names are not tokens, a header value holds a control character but tab (`Response.header`'s rules), or its URL a space or control character: the call sends nothing | naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`) |
 | the response has more than one `Content-Length` value (even identical) or a non-number | `invalid HTTP response body from …` |
 | `timeout_ms` passed, whatever had arrived | `request to 127.0.0.1:8080 timed out` |
+| with `idle_ms` above 0, no byte arrived or left for that long (the connect included) | `request to 127.0.0.1:8080 stalled: nothing arrived or left for 2000 ms` |
 
 - The client sets `Content-Length` and `Connection`, skipping a caller's. It sends one `Host`: the URL's, or the caller's in its place (to reach a virtual host by address).
 - A redirect to another authority (another host or port) is sent the caller's headers without `Authorization`, `Proxy-Authorization`, `Cookie` and `Host`, which were set for the first server; a redirect on the same authority is sent them all.
 - A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped.
-- `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Zero or less means the default, 10000.
+- `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Zero or less means the default, 10000. `idle_ms` (0, none, by default) is a second limit, kept to within a quarter of itself: an exchange that sees no byte arrive or leave for that long ends, however much of the deadline is left, so a long download can have a large deadline and still be cut soon when it stalls.
 
 #### WebSocket server
 

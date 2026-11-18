@@ -60,7 +60,7 @@ lib httpc {
   fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
   fun avant_ws_client_close(id: Int): Int
   fun avant_ws_client_key: String
-  fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int): Bytes
+  fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int, idle_ms: Int): Bytes
   fun avant_http_resp_status(raw: Bytes): Int
   fun avant_http_resp_headers(raw: Bytes): Bytes
   fun avant_http_resp_body(raw: Bytes): Bytes
@@ -1250,7 +1250,7 @@ fn url_refusal(url: String): HttpError? {
 
 // One exchange, no redirects. `deadline` is a reading of `now_ms()`:
 // the exchange gets what is left until then when it starts.
-fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
+fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int, idle_ms: Int): Response | HttpError {
   if refused = request_refusal(method, url, headers) {
     return refused
   }
@@ -1302,13 +1302,16 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left)
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left, idle_ms)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
     }
     if code == 2 {
       return HttpError.new("request to ${p.authority} timed out")
+    }
+    if code == 3 {
+      return HttpError.new("request to ${p.authority} stalled: nothing arrived or left for ${idle_ms} ms")
     }
     if code != 0 {
       return HttpError.new("request to ${p.authority} failed")
@@ -1376,28 +1379,33 @@ pub class Http {
     httpc.avant_http_decode_component(text)
   }
 
-  pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+  pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
     hs: Array(Header) = []
-    Http.request("GET", url, "".bytes, hs, follow, timeout_ms)
+    Http.request("GET", url, "".bytes, hs, follow, timeout_ms, idle_ms)
   }
 
-  pub fn self.post(url: String, body: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+  pub fn self.post(url: String, body: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
     hs: Array(Header) = []
     hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" })
-    Http.request("POST", url, body.bytes, hs, follow, timeout_ms)
+    Http.request("POST", url, body.bytes, hs, follow, timeout_ms, idle_ms)
   }
 
   // `timeout_ms` is a deadline for the whole call: every redirect it
   // follows, each one's connect, request and complete response. When
   // it passes first the call returns an HttpError, whatever has
-  // arrived. Zero or less means the default, 10000.
+  // arrived. Zero or less means the default, 10000. `idle_ms`, when
+  // more than 0, is a second limit: an exchange that sees no byte
+  // arrive or leave for that long (its connect included) ends with an
+  // HttpError, however much of the deadline is left, so a long transfer
+  // that moves can be given a large deadline and one that stalls is
+  // still cut soon (to within a quarter of `idle_ms`).
   //
   // A redirect to another authority (another host or port) is sent the
   // caller's headers without its credentials and its Host: an
   // Authorization, a Proxy-Authorization, a Cookie or a Host set for one
   // server reached the server a redirect named, as browsers and curl
   // never let them.
-  pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+  pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
     cur_method = method
     cur_url = url
     cur_body = body
@@ -1419,7 +1427,7 @@ pub class Http {
       if hops > 0 && !same_authority(origin, http_parse_url(cur_url)) {
         hop_headers = elsewhere
       }
-      resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline)?
+      resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline, idle_ms)?
       redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
       if !follow || !redirect {
         return resp

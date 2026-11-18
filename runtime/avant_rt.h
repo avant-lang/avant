@@ -851,7 +851,7 @@ avant_int avant_ws_client_send_bytes(avant_int id, const char *data);
 avant_int avant_ws_client_close(avant_int id);
 char *avant_ws_client_key(void);
 char *avant_http_fetch(const char *host, avant_int port, const char *request,
-                       avant_int timeout_ms);
+                       avant_int timeout_ms, avant_int idle_ms);
 avant_int avant_http_resp_status(const char *raw);
 char *avant_http_resp_headers(const char *raw);
 char *avant_http_resp_body(const char *raw);

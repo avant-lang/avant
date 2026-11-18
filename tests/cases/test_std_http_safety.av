@@ -686,6 +686,16 @@ fn client_request_cases(c: Checks, root: String) {
   creds.push(Header { name: "Host", value: "example.test" })
   c.eq_str(outcome(Http.request("GET", "${base}/to?http://127.0.0.1:${port}/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: example.test|Authorization: Bearer secret|cookie: s=1|Proxy-Authorization: Basic x|X-Keep: 1|Content-Length: 0|Connection: close", "a redirect to the same authority is sent every header")
   c.eq_str(outcome(Http.request("GET", "${base}/to?/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: example.test|Authorization: Bearer secret|cookie: s=1|Proxy-Authorization: Basic x|X-Keep: 1|Content-Length: 0|Connection: close", "a relative redirect is sent every header")
+  // timeout_ms is a deadline for the whole call, so a long transfer
+  // needed a large one and a stalled one was noticed only then. idle_ms
+  // cuts an exchange that sees no byte for that long: a body arriving a
+  // byte every 0.25 s completes under an idle limit of 1000 ms, one that
+  // stops is cut at about 500 ms, long before its 8 s deadline.
+  c.eq_str(outcome(Http.get("${base}/drip", false, 8000, 1000)), "200 0123456789", "a slow transfer that moves goes on under the idle limit")
+  stall_t0 = now_ms()
+  c.eq_str(outcome(Http.get("${base}/stall", false, 8000, 500)), "request to 127.0.0.1:${port} stalled: nothing arrived or left for 500 ms", "a stalled transfer is cut by the idle limit")
+  stall_ms = now_ms() - stall_t0
+  c.expect(stall_ms >= 500 && stall_ms < 1500, "the idle limit cuts within a quarter of itself (${stall_ms} ms)")
   other_file = "${scratch()}/http-request-${stamp}-other.port"
   other_log = "${scratch()}/http-request-${stamp}-other.log"
   other = spawn {

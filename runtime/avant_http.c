@@ -4712,6 +4712,10 @@ typedef struct FetchState {
   size_t body_want;
   size_t scanned;
   struct phr_chunked_decoder chunks;
+  /* The idle limit (Http.request's idle_ms, 0: none) and the last time
+   * a byte arrived or left (http_now_ms), read by fetch_on_idle. */
+  uint32_t idle_ms;
+  int64_t progress_at;
 } FetchState;
 
 enum {
@@ -4734,8 +4738,12 @@ static FetchState *fetch_of_socket(struct us_socket_t *s) {
  * pinned until the loop ends, so the rest is sent from it, in order,
  * each time the socket is writable again. */
 static void fetch_send(FetchState *st, struct us_socket_t *s) {
+  size_t before = st->sent;
   (void)sock_write_rest(s, st->request, st->request_len, &st->sent,
                         st->write_chunk);
+  if (st->idle_ms && st->sent > before) {
+    st->progress_at = http_now_ms();
+  }
 }
 
 static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
@@ -4877,6 +4885,9 @@ static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
   }
   memcpy(st->buf + st->len, data, (size_t)length);
   st->len += (size_t)length;
+  if (st->idle_ms) {
+    st->progress_at = http_now_ms();
+  }
   if (fetch_complete(st)) {
     /* The whole response is here: the exchange ends now, whether or not
      * the server closes. */
@@ -4928,6 +4939,19 @@ static void fetch_on_deadline(struct us_timer_t *t) {
   }
 }
 
+/* The idle limit: a repeating timer of a quarter of it (at least
+ * 10 ms) that ends the exchange as stalled when nothing has arrived or
+ * left for idle_ms, the connect included. The deadline above bounds the
+ * whole call; this one cuts a transfer that stopped, however long the
+ * deadline, and lets a slow one that moves go on. */
+static void fetch_on_idle(struct us_timer_t *t) {
+  FetchState *st = *(FetchState **)us_timer_ext(t);
+  if (st->sock && http_now_ms() - st->progress_at >= (int64_t)st->idle_ms) {
+    st->failed = 3;
+    us_socket_close(0, st->sock, 0, NULL);
+  }
+}
+
 static struct us_socket_t *fetch_on_connect_error(struct us_socket_t *s,
                                                   int code) {
   FetchState *st = fetch_of_socket(s);
@@ -4947,12 +4971,13 @@ static void fetch_wakeup(struct us_loop_t *loop) {
 
 /* gc-lint: holds nothing (the fetched body is C memory; nothing heap is read after make_bytes). */
 char *avant_http_fetch(const char *host, avant_int port, const char *request,
-                       avant_int timeout_ms) {
+                       avant_int timeout_ms, avant_int idle_ms) {
   struct us_loop_t *loop;
   struct us_socket_context_t *ctx;
   struct us_socket_context_options_t options;
   struct us_socket_t *sock;
   struct us_timer_t *deadline;
+  struct us_timer_t *idle = NULL;
   FetchState *st;
   char *out;
   int deadline_ms;
@@ -4967,6 +4992,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     return avant_str_empty();
   }
   st->write_chunk = http_ws_write_chunk();
+  st->idle_ms = idle_ms <= 0 ? 0 : idle_ms > INT32_MAX ? INT32_MAX : (uint32_t)idle_ms;
   loop = us_create_loop(0, fetch_wakeup, srv_pre, srv_post,
                         (unsigned int)sizeof(FetchState *));
   if (!loop) {
@@ -5014,6 +5040,15 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   st->sock = sock;
   deadline_ms = timeout_ms <= 0 ? 10000 : (timeout_ms > INT32_MAX ? INT32_MAX : (int)timeout_ms);
   us_timer_set(deadline, fetch_on_deadline, deadline_ms, 0);
+  if (st->idle_ms) {
+    idle = us_create_timer(loop, 1, (unsigned int)sizeof(FetchState *));
+    if (idle) {
+      int period = (int)(st->idle_ms / 4 < 10 ? 10 : st->idle_ms / 4);
+      *(FetchState **)us_timer_ext(idle) = st;
+      st->progress_at = http_now_ms();
+      us_timer_set(idle, fetch_on_idle, period, period);
+    }
+  }
   st->request = request;
   st->request_len = avant_str_n(request);
   /* The loop runs native (rule 3); its callbacks read the request, which
@@ -5025,8 +5060,17 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   avant_gc_native_end();
   avant_unpin((void *)request);
   us_timer_close(deadline);
+  if (idle) {
+    us_timer_close(idle);
+  }
   us_socket_context_free(0, ctx);
   us_loop_free(loop);
+  if (st->failed == 3) {
+    set_status(3);
+    free(st->buf);
+    free(st);
+    return avant_str_empty();
+  }
   if (st->failed == 1) {
     set_status(1);
     free(st->buf);
