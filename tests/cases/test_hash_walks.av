@@ -1,0 +1,117 @@
+import harness
+import backends
+
+// Hashes and sets: what their own hash and equality may do, and walks.
+// Each program is compiled in parallel; an accepted one must print what
+// it should, a refused one must leave no binary, say the expected words
+// and point at the expected line and column, and one that traps must
+// compile, end with a failure and say why.
+//   - a key type's own hash or equals that stores into, deletes from or
+//     clears the hash it is called for traps (the probe that called it
+//     would read moved entries); a lookup there, or a change to another
+//     hash, is allowed.
+
+class PCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 1 accepted, 2 refused, 3 compiles and traps.
+  pub kind: Int = 0
+}
+
+fn accepted(tag: String, src: String, out: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.kind = 2
+  f
+}
+
+fn traps(tag: String, src: String, needle: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 3
+  f
+}
+
+fn cases: Array(PCase) {
+  xs: Array(PCase) = []
+  xs.push(traps("uk-equals-store", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.h[Key { id: 100, hold: hold }] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "a store on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-equals-delete", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      _ = hold.h.delete(Key { id: 5, hold: hold })\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "delete on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-equals-clear", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.h.clear()\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "clear on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-hash-store", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    if hold.armed {\n      hold.armed = false\n      hold.h[Key { id: 100, hold: hold }] = 1\n    }\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "a store on a Hash while its key's own hash or equals runs for it"))
+  xs.push(accepted("uk-equals-lookup", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      _ = hold.h[Key { id: 7, hold: hold }]\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "3\n10\n"))
+  xs.push(accepted("uk-equals-other-hash", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.other[1] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "3\n10\n"))
+  xs.push(accepted("uk-store-after-probe", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.other[1] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  hd.h[Key { id: 50, hold: hd }] = 50\n  puts(hd.h.size)\n}\n", "3\n11\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/hw-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/hw-${f.tag}.bin", "${dir}/hw-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind != 2 {
+      runs.push(run_job(dir, "hw-${f2.tag}.bin", "hw-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/hw-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/hw-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 3 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.expect(runs[k].code != 0, "${f3.tag}: fails")
+      c.expect(log_text("${dir}/hw-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/hw-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("hw-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_hash_walks.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

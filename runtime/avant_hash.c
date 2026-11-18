@@ -109,6 +109,10 @@ static inline int32_t hash_frozen(const AvantHash *h) {
   return __atomic_load_n(&h->frozen, __ATOMIC_RELAXED);
 }
 
+/* The guard of a change made while the key's own hash or equality runs
+ * for this hash (the _uk entries, below). */
+static inline void probe_guard(const AvantHash *h, int32_t op);
+
 #define HASH_FROZEN_TRAP(h, op)                                  \
   do {                                                           \
     if (__builtin_expect(hash_frozen(h) != 0, 0)) {              \
@@ -1043,6 +1047,7 @@ void avant_hash_clear(void *hp) {
     return;
   }
   HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_CLEAR);
+  probe_guard(h, AVANT_FROZEN_HASH_CLEAR);
   if (!h->cap) {
     return;
   }
@@ -1683,6 +1688,67 @@ void avant_hash_user(void *hp, void *hashfn, void *eqfn) {
   x->ueq = (int32_t (*)(const void *, const void *))eqfn;
 }
 
+/* The hashes whose key's own hash or equality this thread is running:
+ * the handles of the entries' callers, innermost last. That code may
+ * reach the hash it is called for (a key can hold a class that holds the
+ * hash), and a store, a deletion or a clear there would move the entries
+ * under the probe that called it, which then reads the old positions:
+ * each of those traps while the hash is here (probe_guard). A lookup
+ * stays allowed: it changes nothing. A trap that ends a task or an HTTP
+ * handler drops the ones noted below its recovery point
+ * (avant_hash_probe_drop, from avant_task_trapped). Past PROBE_MAX
+ * nested probes the count goes on and the handles are not kept, so the
+ * deeper ones are not guarded. */
+#define PROBE_MAX 64
+static __thread AvantHash *const *g_probes[PROBE_MAX];
+static __thread int g_probe_n;
+
+static inline void probe_push(AvantHash *const *hh) {
+  int n = g_probe_n;
+  if (n < PROBE_MAX) {
+    g_probes[n] = hh;
+  }
+  g_probe_n = n + 1;
+}
+
+static inline void probe_pop(void) {
+  g_probe_n--;
+}
+
+__attribute__((visibility("hidden"))) int avant_hash_probe_depth(void) {
+  return g_probe_n;
+}
+
+__attribute__((visibility("hidden"))) void avant_hash_probe_drop(int n) {
+  if (g_probe_n > n) {
+    g_probe_n = n;
+  }
+}
+
+static __attribute__((noinline, cold)) void probe_guard_slow(const AvantHash *h, int32_t op) {
+  static const char *names[] = {"a store", "delete", "clear"};
+  int i;
+  int n = g_probe_n < PROBE_MAX ? g_probe_n : PROBE_MAX;
+  for (i = 0; i < n; i++) {
+    if (*g_probes[i] == h) {
+      char text[256];
+      snprintf(text, sizeof(text),
+               "%s on a Hash while its key's own hash or equals runs for it: the probe that called them would read moved entries; a key type's hash and equals must not change the table they are called for",
+               op >= 0 && op <= 2 ? names[op] : "a change");
+      avant_trap_text(text);
+    }
+  }
+}
+
+/* The test of every change to a hash whose key may have its own hash
+ * and equality, and of clear: one thread-local load while no such code
+ * runs. */
+static inline void probe_guard(const AvantHash *h, int32_t op) {
+  if (__builtin_expect(g_probe_n != 0, 0)) {
+    probe_guard_slow(h, op);
+  }
+}
+
 /* The hash of the user key at K, by the type's hash; *HH is the caller's
  * handle of the hash (the call may collect). */
 static uint32_t ukey_hash(AvantHash *const *hh, const void *k) {
@@ -1690,7 +1756,9 @@ static uint32_t ukey_hash(AvantHash *const *hh, const void *k) {
   void (*fn)(const void *, void *) = hx(*hh)->uhash;
   s.seed = (*hh)->seed;
   s.a = (uint64_t)s.seed ^ 0x2545f4914f6cdd1dull;
+  probe_push(hh);
   fn(k, &s);
+  probe_pop();
   return hash_i32((int32_t)(uint32_t)(s.a ^ (s.a >> 32)));
 }
 
@@ -1714,7 +1782,10 @@ static int find_user(AvantHash *const *hh, const char *k, uint32_t hv, int32_t *
     }
     if (hashes_of(h)[e] == hv) {
       const char *slot = (const char *)h->keys + (size_t)e * hx(h)->kw;
-      if (hx(h)->ueq(slot, k)) {
+      probe_push(hh);
+      int32_t eq = hx(h)->ueq(slot, k);
+      probe_pop();
+      if (eq) {
         *ent = e;
         return 1;
       }
@@ -1734,6 +1805,7 @@ static void *put_uk(AvantHash *h, const char *k, int32_t *found, int grow_first)
     avant_trap_text("a Hash with a struct key was used before it was created");
   }
   HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
+  probe_guard(h, AVANT_FROZEN_HASH_STORE);
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
   uint32_t hv = ukey_hash(&h, k);
@@ -1818,6 +1890,7 @@ void *avant_hash_take_uk(void *hp, const void *key, int32_t *found) {
     return (void *)g_hash_none;
   }
   HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  probe_guard(h, AVANT_FROZEN_HASH_DELETE);
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
   if (!find_user(&h, (const char *)key, ukey_hash(&h, key), &e, &pos)) {

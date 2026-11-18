@@ -193,6 +193,7 @@ typedef struct AvantRecover {
   int pins;
   int holds;
   int arr_holds;
+  int hash_probes;
   char *what;
   char *site;
   /* The light jump buffer of a handler's recovery point
@@ -209,6 +210,11 @@ typedef struct AvantRecover {
  * those taken below it. */
 int avant_array_hold_depth(void);
 void avant_array_hold_drop(int n);
+/* The hashes whose key's own hash or equality this thread is running
+ * (avant_hash.c): their count at a recovery point, and the drop of those
+ * noted below it. */
+int avant_hash_probe_depth(void);
+void avant_hash_probe_drop(int n);
 
 static __thread AvantRecover *g_recover;
 static __thread int g_cb_depth;
@@ -307,6 +313,7 @@ void avant_task_trapped(const char *what, const char *site) {
   /* The arrays the block's method calls froze are thawed while their
    * holders' frames are still intact. */
   avant_array_hold_drop(r->arr_holds);
+  avant_hash_probe_drop(r->hash_probes);
   /* The block's frames are left: the chain is the entry's again. */
   avant_gc_top = r->top;
   if (r->is_light) {
@@ -631,6 +638,7 @@ int avant_task_recover_call(int32_t (*fn)(void *, void *), void *a, void *b) {
   rec.pins = g_pin_n;
   rec.holds = g_hold_n;
   rec.arr_holds = avant_array_hold_depth();
+  rec.hash_probes = avant_hash_probe_depth();
   rec.what = NULL;
   rec.site = NULL;
   rec.is_light = 1;
@@ -700,6 +708,7 @@ static void run_task(AvantTask *t) {
   rec.pins = g_pin_n;
   rec.holds = g_hold_n;
   rec.arr_holds = avant_array_hold_depth();
+  rec.hash_probes = avant_hash_probe_depth();
   rec.what = NULL;
   rec.site = NULL;
   rec.is_light = 0;
@@ -753,6 +762,7 @@ static void run_par(Job *job) {
   rec.pins = g_pin_n;
   rec.holds = g_hold_n;
   rec.arr_holds = avant_array_hold_depth();
+  rec.hash_probes = avant_hash_probe_depth();
   rec.what = NULL;
   rec.site = NULL;
   rec.is_light = 1;
