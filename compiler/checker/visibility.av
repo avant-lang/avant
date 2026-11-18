@@ -150,6 +150,12 @@ pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String,
   if mod_name != from_mod && std_needs_qualifier(mod_name) {
     return false
   }
+  if mod_name == "prelude" && from_mod != mod_name {
+    // A module's own IoError or ProcessError wins over the prelude's.
+    if own = checker_self.type_vis.get(type_slot(from_mod, name)) {
+      return false
+    }
+  }
   checker_self.type_slot_visible_q(name, mod_name, from_mod)
 }
 

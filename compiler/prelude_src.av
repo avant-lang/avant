@@ -6,17 +6,19 @@
 // only for the compiler's own sources, which the seed builds: the checker
 // refuses them anywhere else, naming the new spelling (moved_io_name).
 // The loader adds this module, named `prelude`, to a program whose source
-// names one of the functions (prelude_wanted); every module of the
+// names one of the functions or one of the two types (prelude_wanted); every module of the
 // program then sees its pub names, the two error types included. The runtime entries are
 // avant_sys_* in runtime/avant_io.c. The text is built line by line
 // because the seed has no multi-line string literal yet.
 
 import token
 
-// The names that bring the module in: its functions. A program that
-// calls none of them may declare its own IoError or ProcessError.
+// The names that bring the module in: its functions and its two types.
+// A program's own IoError or ProcessError is its own: where a module
+// declares one, the prelude's type of that name is not seen bare in it
+// (checker/visibility.av type_slot_visible, resolve.av seen_owners).
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "read_line", "dir_exists", "dir_walk"]
+  ["file_read", "file_write", "dir_list", "process_run", "read_line", "dir_exists", "dir_walk", "IoError", "ProcessError"]
 }
 
 // The old functions of prelude_old_source: a program gets them only when

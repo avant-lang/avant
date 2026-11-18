@@ -420,7 +420,9 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == mod_name {
           for imp in info.imports {
-            if imp != mod_name && !imp.starts_with("std.") && type_is_pub(p, imp, name) {
+            // A module's own type wins over the prelude's of its name.
+            own_wins = imp == "prelude" && out.size > 0
+            if imp != mod_name && !imp.starts_with("std.") && !own_wins && type_is_pub(p, imp, name) {
               if t2 = get_named_in(imp, name) {
                 out.push(imp)
               }
