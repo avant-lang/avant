@@ -1627,6 +1627,7 @@ fn main {
 | `h.keys()`, `h.values()` | arrays, in the order the keys were inserted |
 | `for k, v in h { ... }`, `h.each (k, v) { ... }` | walk every key with its value, in that order |
 | `h.delete_if (k, v) { ... }` | remove the entries the lambda says `true` for, in one pass, keeping the others in order |
+| `a == b`, `a != b` | the same keys with equal values (`==` on the values), in any order |
 
 ```avant
 fn main {
@@ -1656,6 +1657,7 @@ fn main {
   for name, n in stock {
     puts("${name} ${n}")                  // => cake 3
   }
+  puts(stock == ["cake": 3])              // => true
 }
 ```
 
@@ -1774,11 +1776,12 @@ fn main {
 | `s.values()` | the elements as an array, in the order they were added |
 | `for v in s`, `s.each (v) { ... }` | walk every element in that order, in place; during the walk, deleting the visited element is allowed, and adding an element or deleting another stops the program after that step, as in a hash's walk |
 | `s.delete_if (v) { ... }` | remove the elements the lambda says `true` for, keeping the others in order |
+| `a == b`, `a != b` | the same elements, in any order |
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
 - **Iteration order is the order of insertion**, as a hash's.
 - An array literal passed to a `Set` parameter is that set (`count([1, 2, 2])` with `fn count(s: Set(Int))`); where an overload takes an `Array` in that place, the literal is the array.
-- Not built yet: `==` on sets, and union, intersection and difference (a loop over `for` does them).
+- Not built yet: union, intersection and difference (a loop over `for` does them).
 
 ## Structs and classes
 
@@ -5002,7 +5005,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
-| `==` on hashes | planned | a loop |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A pre-forked server mode | decided | a supervisor that restarts the process |

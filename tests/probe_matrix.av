@@ -236,7 +236,7 @@ fn rules: Array(PRule) {
   // written); a compound assignment through a type's operator reads its
   // place without side effects; contains compares by the element's ==;
   // a generic type's bound holds for its argument.
-  nsite = "struct PV {\n  x: Int\n\n  fn +(o: PV): PV {\n    PV { x: x + o.x }\n  }\n}\n\ninterface PRanked {\n  fn rank: Int\n}\n\nstruct PCard: PRanked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass PTop(T: PRanked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n}\n\nfn main {\n  nf = 1.5\n  ni = probe_k()\n  nvs = [PV { x: 1 }]\n  nhs = [Hash(String, Int).new()]\n@\n}\n"
+  nsite = "struct PF {\n  f: fn(): Int\n}\n\nstruct PV {\n  x: Int\n\n  fn +(o: PV): PV {\n    PV { x: x + o.x }\n  }\n}\n\ninterface PRanked {\n  fn rank: Int\n}\n\nstruct PCard: PRanked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass PTop(T: PRanked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n}\n\nfn main {\n  nf = 1.5\n  ni = probe_k()\n  nvs = [PV { x: 1 }]\n  nhs = [PF { f: () { 1 } }]\n@\n}\n"
   xs.push(rule("int-float-mix", "stmt", "", nsite, "", "puts(nf * ni)", "puts(nf * ni.to_f())", "an integer and a Float64 do not mix"))
   xs.push(rule("int-float-compare", "stmt", "", nsite, "", "puts(ni == nf)", "puts(ni.to_f() == nf)", "cannot compare Int with Float64"))
   xs.push(rule("compound-method-place", "stmt", "", nsite, "", "nvs[probe_k() - probe_k()] += PV { x: 1 }", "nvs[0] += PV { x: 1 }", "needs a place read without side effects"))
