@@ -196,9 +196,7 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
   first = "avant runtime: index 4 out of bounds (size 3) in at (mutex_recover.av:15:1)\n"
   second = "avant runtime: index 3 out of bounds (size 1) in at (mutex_recover.av:15:1)\n"
   wants_err = [first, first, first, "${first}${second}", first, first, first, "${first}${first}${first}${first}", "${first}${second}"]
-  i = 0
-  while i < kinds.size {
-    kind = kinds[i]
+  for i, kind in kinds {
     log = "${scratch()}/tasks-recover-${stamp}-${kind}.log"
     elog = "${scratch()}/tasks-recover-${stamp}-${kind}.err"
     args: Array(String) = []
@@ -213,7 +211,6 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
     if statuses[i] == 1 {
       c.expect(!str_has(out, "after"), "mutex recover ${kind}: the program ends there")
     }
-    i += 1
   }
 }
 
@@ -272,9 +269,7 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
   kinds = ["json", "regex-limit", "regex-closed", "main"]
   statuses = [0, 0, 0, 1]
   texts = ["JsonBuilder.end: nothing open", "Regex.compile: match_limit must be at least 1 (got 0)", "Regex used after close", "JsonBuilder.key: not inside an object"]
-  i = 0
-  while i < kinds.size {
-    kind = kinds[i]
+  for i, kind in kinds {
     log = "${scratch()}/tasks-libtrap-${stamp}-${kind}.log"
     elog = "${scratch()}/tasks-libtrap-${stamp}-${kind}.err"
     args: Array(String) = []
@@ -290,7 +285,6 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
       c.eq_str(out, "before\n", "lib trap ${kind}: the output before the trap")
     }
     c.eq_str(err, "avant runtime: ${texts[i]}\n", "lib trap ${kind}: the trap is printed")
-    i += 1
   }
 }
 
@@ -343,9 +337,7 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     "avant runtime: division by zero in cmp_trap",
     "avant runtime: index",
     "avant runtime: heap limit"]
-  i = 0
-  while i < kinds.size {
-    kind = kinds[i]
+  for i, kind in kinds {
     log = "${scratch()}/tasks-trap-${stamp}-${kind}.log"
     elog = "${scratch()}/tasks-trap-${stamp}-${kind}.err"
     args: Array(String) = []
@@ -369,7 +361,6 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     if statuses[i] == 1 {
       c.expect(!str_has(out, "after"), "task trap ${kind}: the program ends there")
     }
-    i += 1
   }
   task_flood_cases(c, bin, stamp)
 }

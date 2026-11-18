@@ -32,9 +32,7 @@ fn test_coverage(c: Checks) {
     // beside the binary, and AVANT_COVERAGE_MAP; on both back ends until
     // the old one retired).
     backs = ["llvm"]
-    bi = 0
-    while bi < backs.size {
-      bk = backs[bi]
+    for bk in backs {
       nd = "${scratch()}/coverage-${stamp}-newdir-${bk}"
       nd_args: Array(String) = []
       nd_args.push("AVANT_BACKEND=${bk}")
@@ -79,7 +77,6 @@ fn test_coverage(c: Checks) {
       c.eq_int(lm_code, 1, "${bk}: a coverage build whose slot map cannot be written fails")
       c.expect(!file_exists("${nd}/lost/cov.bin"), "${bk}: and builds no binary")
       c.eq_str(file_read("${nd}-lost.log") ?? "", "error: the coverage map was not written: cannot write ${nd}/isdir: Is a directory\n", "${bk}: and names the file and the reason")
-      bi += 1
     }
     chmod_x(bin)
     // The fixture writes its own lcov. The compiler's report is a different file.
@@ -252,15 +249,12 @@ fn test_coverage(c: Checks) {
     if walk_text = file_read(walk_rc) {
       walk_code = 0
       wt = walk_text.strip()
-      wi = 0
-      while wi < wt.size {
-        wc = wt[wi]
+      for wc in wt.bytes {
         if wc < 48 || wc > 57 {
           walk_code = 1
           break
         }
         walk_code = walk_code * 10 + (wc - 48)
-        wi += 1
       }
     }
     c.eq_int(walk_code, 0, "std walks up from the compiler")
@@ -287,15 +281,12 @@ fn test_coverage(c: Checks) {
     if proj_text = file_read(proj_rc) {
       proj_code = 0
       pt = proj_text.strip()
-      pi = 0
-      while pi < pt.size {
-        pc = pt[pi]
+      for pc in pt.bytes {
         if pc < 48 || pc > 57 {
           proj_code = 1
           break
         }
         proj_code = proj_code * 10 + (pc - 48)
-        pi += 1
       }
     }
     c.eq_int(proj_code, 0, "avant test --coverage")

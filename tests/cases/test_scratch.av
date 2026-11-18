@@ -223,9 +223,7 @@ fn test_scratch(c: Checks) {
     iwant: Array(Int) = []
     iwant.push(143)
     iwant.push(130)
-    q = 0
-    while q < isigs.size {
-      sig = isigs[q]
+    for q, sig in isigs {
       base_dir = scratch_dir()
       rc = "${work}/int-${sig}.rc"
       script = "#!/bin/sh\ncd '${proj}' || exit 9\nrm -f started sleep.pid\nAVANT_KEEP_TMP= TMPDIR='${base_dir}' env --default-signal=${sig} '${abs_c}' test --jobs 2 > '${work}/int-${sig}.log' 2>&1 &\nr=$!\nn=0\nwhile [ ! -f started ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\nkill -${sig} $r\nwait $r\necho $? > '${rc}'\n"
@@ -245,7 +243,6 @@ fn test_scratch(c: Checks) {
       c.eq_int(stopped, 0, "SIG${sig} stops the runner's jobs")
       left = dir_list(base_dir) ?? empty_strs()
       c.eq_int(left.size, 0, "SIG${sig} leaves nothing in TMPDIR")
-      q += 1
     }
 
     unset_args: Array(String) = []

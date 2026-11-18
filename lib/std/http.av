@@ -418,24 +418,18 @@ class HttpState {
   }
 
   fn ws_open_dispatch(path: String, conn: WsConn) {
-    i = 0
-    while i < self.ws_open_routes.size {
-      r = self.ws_open_routes[i]
+    for r in self.ws_open_routes {
       if r.path == path {
         (r.handler)(conn)
       }
-      i += 1
     }
   }
 
   fn dispatch(req: Request): Response {
-    i = 0
-    while i < self.routes.size {
-      r = self.routes[i]
+    for r in self.routes {
       if r.method == req.method && r.path == req.path {
         return (r.handler)(req)
       }
-      i += 1
     }
     Response.text("not found", 404)
   }
@@ -931,9 +925,7 @@ fn request_refusal(method: String, url: String, headers: Array(Header)): HttpErr
   if refused = url_refusal(url) {
     return refused
   }
-  i = 0
-  while i < headers.size {
-    h = headers[i]
+  for i, h in headers {
     n = httpc.avant_http_token_bad(h.name)
     if n >= 0 {
       return HttpError.new("invalid request header name (header ${i}, ${bad_byte(h.name, n)}): a header name is ${token_rule}")
@@ -942,7 +934,6 @@ fn request_refusal(method: String, url: String, headers: Array(Header)): HttpErr
     if v >= 0 {
       return HttpError.new("invalid request header value of ${h.name} (${bad_byte(h.value, v)}): a header value holds no CR, LF or other control character but tab (RFC 9110)")
     }
-    i += 1
   }
   nil
 }
