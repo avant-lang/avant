@@ -4,20 +4,12 @@ import std.sync
 // Server.every and Server.on_close. A timer every 20 ms counts its
 // runs, traps on its third and panics on its fourth: each is printed
 // and the server goes on, so the timer runs again. A task closes the
-// server after 400 ms, through its closer; the two close hooks run
-// then, in their order, on the thread that called serve, after the
-// loops stopped and before serve returns. A server closed without
-// serving runs its hooks in close, and one its closer stopped before it
-// served runs them in serve, which returns at once. The run goldens run
-// it as it is.
-
-lib c {
-  fun usleep(micros: UInt32): Int32
-}
-
-fn sleep_ms(ms: Int) {
-  _ = c.usleep((ms * 1000).to_u32())
-}
+// server after the timer's sixth run, through its closer; the two close
+// hooks run then, in their order, on the thread that called serve,
+// after the loops stopped and before serve returns. A server closed
+// without serving runs its hooks in close, and one its closer stopped
+// before it served runs them in serve, which returns at once. The run
+// goldens run it as it is.
 
 fn at(xs: Array(Int), i: Int): Int {
   xs[i]
@@ -27,6 +19,7 @@ fn main: Int {
   if opened = http.listen(0, "127.0.0.1", 1048576, 2) {
     server = opened
     runs = sync.Mutex(Int).new(0)
+    sixth = sync.Channel(Bool).new(1)
     xs = [1, 2]
     server.every(20, () {
       n = runs.with((v) {
@@ -38,6 +31,9 @@ fn main: Int {
       }
       if n == 4 {
         panic("the timer panicked on run ${n}")
+      }
+      if n == 6 {
+        _ = sixth.send(true)
       }
     })
     server.on_close(() {
@@ -55,7 +51,7 @@ fn main: Int {
     // a task where the Server cannot.
     closer = server.closer()
     stopper = spawn {
-      sleep_ms(400)
+      _ = sixth.recv()
       closer.close()
     }
     server.serve()
