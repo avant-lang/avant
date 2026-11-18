@@ -472,6 +472,7 @@ fn test_modules(c: Checks) {
     test_c_binding_twice(c, compiler, dir)
     test_ptr_crossing(c, compiler, dir)
     test_layout_twins(c, compiler, dir)
+    test_last_name(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -649,6 +650,35 @@ fn test_layout_twins(c: Checks, compiler: String, dir: String) {
   write_av(dir, "tlb", "lib twinb {\n  struct Pair {\n    k: Int32\n    j: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twinb.malloc(Pair.size)\n  p.k = 7\n  p.j = 8\n  p\n}\n\npub fn (p: Ptr(Pair)) n: Int {\n  99\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n()\n}\n")
   write_av(dir, "tlmain", "import tla\nimport tlb\n\nfn main {\n  q = tlb.make()\n  puts(q.twice())\n}\n")
   mod_fails(c, compiler, dir, "tlmain", "no method twice on Ptr(Pair)", "a method of one module's Ptr(Pair) is not another module's")
+}
+
+// A module's last name qualifies its names, as its whole name does
+// (`import std.time`, then `time.now()`), in calls, function values,
+// constants, types and struct literals. A local or a field of that name
+// is the local or the field; a module named in whole by the name is that
+// module; two imports ending in the name make it an error naming both.
+fn test_last_name(c: Checks, compiler: String, dir: String) {
+  mkdir_p("${dir}/ln/a")
+  mkdir_p("${dir}/ln/b")
+  write_av(dir, "ln/a/util", "pub const width = 3\n\npub fn who: Int {\n  1\n}\n\npub struct Box {\n  pub v: Int\n}\n\npub fn twice(x: Int): Int {\n  x * 2\n}\n")
+  write_av(dir, "ln/b/util", "pub fn who: Int {\n  2\n}\n")
+  write_av(dir, "ln/b/tool", "pub fn who: Int {\n  5\n}\n")
+  write_av(dir, "ln/one", "import a.util\n\nfn get(x: util.Box): Int {\n  x.v\n}\n\nfn main {\n  b = util.Box { v: 4 }\n  f = util.twice\n  puts(util.who() + util.width + get(b) + f(10) + a.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "one", "29\n", "last name: util qualifies a.util's call, constant, type, literal and function value")
+  write_av(dir, "ln/local", "import a.util\n\nfn main {\n  util = 7\n  puts(util)\n  puts(a.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "local", "7\n1\n", "last name: a local of the name is the local")
+  write_av(dir, "ln/tool", "pub fn who: Int {\n  9\n}\n")
+  write_av(dir, "ln/whole", "import tool\nimport b.tool\n\nfn main {\n  puts(tool.who() + b.tool.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "whole", "14\n", "last name: a module named tool in whole is tool; b.tool keeps its whole name")
+  write_av(dir, "ln/clash", "import a.util\nimport b.util\n\nfn main {\n  puts(util.who())\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "clash", "clash.av:5:8", "last name clash: the error points at the name")
+  mod_fails(c, compiler, "${dir}/ln", "clash", "util is the last name of both a.util and b.util: write the whole name (a.util.… or b.util.…)", "last name clash: a call asks for the whole name")
+  write_av(dir, "ln/clashty", "import a.util\nimport b.util\n\nfn f(x: util.Box): Int {\n  x.v\n}\n\nfn main {\n  puts(0)\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "clashty", "util is the last name of both a.util and b.util", "last name clash: a type asks for the whole name")
+  write_av(dir, "ln/bothok", "import a.util\nimport b.util\n\nfn main {\n  puts(a.util.who() + b.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "bothok", "3\n", "last name clash: the whole names still work")
+  write_av(dir, "ln/unimported", "import a.util\n\nfn main {\n  puts(tool.who())\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "unimported", "unknown name tool", "last name: a module not imported is not reached")
 }
 
 fn main: Int {

@@ -123,9 +123,13 @@ pub class Parser {
   pub pipe_heads: Array(Bool) = []
   pub stmt_starts: Hash(String, Int)
   stmt_start_now: Int = 0
+  // The modules this file imports, as written, so a type's qualifier may
+  // be a module's last name (whole_qualifier).
+  import_names: Array(String) = []
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
+    self.import_names = []
     self.tokens = tokens
     self.stmt_starts = Hash(String, Int).new()
     self.index = 0
@@ -711,7 +715,47 @@ pub class Parser {
       buf.push_str(".")
       buf.push_str(next.value)
     }
+    self.import_names.push(buf.to_s())
     ImportDecl.new(loc, buf.to_s())
+  }
+
+  // A type's qualifier as the whole module name: `time` in `time.Time`
+  // when this file imports std.time and no module named time in whole
+  // (the checker's last_name_module reads expressions the same way); two
+  // imports ending in the name make it an error naming both.
+  pub fn whole_qualifier(qual: String, loc: Location): String {
+    if qual.size == 0 {
+      return qual
+    }
+    found = ""
+    other = ""
+    for imp in self.import_names {
+      if imp == qual {
+        return qual
+      }
+      i = imp.size - 1
+      while i >= 0 && imp[i] != 46 {
+        i -= 1
+      }
+      if i >= 0 && str_slice(imp, i + 1, imp.size) == qual {
+        if found.size == 0 {
+          found = imp
+        } else if other.size == 0 && imp != found {
+          other = imp
+        }
+      }
+    }
+    if found == "std.gc" {
+      return qual
+    }
+    if other.size > 0 {
+      fail(loc, "${qual} is the last name of both ${found} and ${other}: write the whole name (${found}.… or ${other}.…)")
+      return qual
+    }
+    if found.size > 0 {
+      return found
+    }
+    qual
   }
 
   pub fn parse_quote_decl(owner: String): QuoteDecl {
@@ -1927,7 +1971,7 @@ pub class Parser {
       qual = buf.to_s()
     }
     tn = TypeName.new(tok.loc, tok.value)
-    tn.mod_name = qual
+    tn.mod_name = whole_qualifier(qual, tok.loc)
     if self.current().kind == tk_l_paren() {
       self.bump()
       self.skip_newlines()
@@ -3759,7 +3803,7 @@ pub class Parser {
     self.skip_newlines()
     e = Expr.new(ex_struct(), name.loc)
     e.type_name = name.value
-    e.mod_name = qual
+    e.mod_name = whole_qualifier(qual, name.loc)
     while true {
       if self.current().kind == tk_r_brace() {
         break

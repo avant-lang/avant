@@ -172,6 +172,9 @@ pub class Checker {
   pub lib_mod: Hash(String, String)
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
+  // The last names of the imports that have a dot (std.time: time), so a
+  // name that is none of them is not looked at twice (qualify_last_name).
+  pub last_names: Hash(String, Int)
   // The module constants (checker/consts.av), and each one's index
   // there by module and name (const_slot).
   pub const_list: Array(ConstVal)
@@ -397,6 +400,8 @@ pub class Checker {
     self.lib_vis = lv
     km = Hash(String, Int).new()
     self.known_mods = km
+    lnm = Hash(String, Int).new()
+    self.last_names = lnm
     self.const_list = []
     self.const_vals = Hash(String, Int).new()
     self.inline_kinds = Hash(String, String).new()
@@ -2129,6 +2134,9 @@ pub class Checker {
 
   pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
+    if k == ex_name() || k == ex_field() || k == ex_call() {
+      qualify_last_name(expr)
+    }
     // Only the expression a C array's reader names directly may be one.
     carray_flag = self.carray_ok
     self.carray_ok = false

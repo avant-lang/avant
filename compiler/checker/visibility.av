@@ -23,6 +23,16 @@ pub fn (checker_self: Checker) note_modules {
     }
   }
   checker_self.known_mods = km
+  ln = Hash(String, Int).new()
+  for info in checker_self.program.mods {
+    for imp in info.imports {
+      last = module_last_name(imp)
+      if last.size > 0 {
+        ln[last] = 1
+      }
+    }
+  }
+  checker_self.last_names = ln
   tm = Hash(String, String).new()
   tv = Hash(String, Int).new()
   checker_self.type_mod = tm
@@ -924,4 +934,94 @@ pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
   }
   checker_self.fail(expr.loc, "unknown function gc.${expr.callee}; std.gc has gc.hold { } and gc.collect()")
   checker_self.t_void()
+}
+
+// A module's last name qualifies its names (`import std.time`, then
+// `time.now()`), as the whole name does. q is a last name in from_mod
+// when no import (nor from_mod itself) is named q in whole and one import
+// ends in `.q`: that import's whole name, else "". Two imports ending in
+// `.q` make a use of q an error naming both whole names. std.gc keeps
+// its own reading of `gc` (names_std_gc).
+pub fn (checker_self: Checker) last_name_module(q: String, from_mod: String, loc: Location): String {
+  if q == from_mod || q == "gc" {
+    return ""
+  }
+  if k = checker_self.known_mods.get(q) {
+    return ""
+  }
+  found = ""
+  other = ""
+  for info in checker_self.program.mods {
+    if info.name == from_mod {
+      for imp in info.imports {
+        if module_last_name(imp) == q && imp != q {
+          if found.size == 0 {
+            found = imp
+          } else if imp != found && other.size == 0 {
+            other = imp
+          }
+        }
+      }
+    }
+  }
+  if other.size > 0 {
+    checker_self.fail(loc, "${q} is the last name of both ${found} and ${other}: write the whole name (${found}.… or ${other}.…)")
+    return ""
+  }
+  found
+}
+
+// The name after a module name's last dot ("" for a name without one).
+pub fn module_last_name(m: String): String {
+  i = m.size - 1
+  while i >= 0 {
+    if m[i] == 46 {
+      return str_slice(m, i + 1, m.size)
+    }
+    i -= 1
+  }
+  ""
+}
+
+// Rewrites the root name of a name chain (`time` in `time.now()`,
+// `fs.read`, `fs.Reader.x`) to the whole module name its last name
+// stands for, unless the name is a local, a field or a module's whole
+// name; the readers after this see the whole name, as written.
+pub fn (checker_self: Checker) qualify_last_name(expr: Expr) {
+  root = expr
+  if root.kind == ex_call() {
+    if r = root.receiver {
+      root = r
+    } else {
+      return
+    }
+  }
+  while root.kind == ex_field() {
+    if o = root.object {
+      root = o
+    } else {
+      return
+    }
+  }
+  if root.kind != ex_name() || root.type_args.size > 0 || root.ident.size == 0 {
+    return
+  }
+  q = root.ident
+  if k = checker_self.last_names.get(q) {
+  } else {
+    return
+  }
+  if k2 = checker_self.known_mods.get(q) {
+    return
+  }
+  if found = checker_self.lookup(q) {
+    return
+  }
+  if f = checker_self.implicit_field(q) {
+    return
+  }
+  full = checker_self.last_name_module(q, checker_self.current_module, root.loc)
+  if full.size > 0 {
+    root.ident = full
+  }
 }

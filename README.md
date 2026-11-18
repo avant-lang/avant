@@ -3020,7 +3020,7 @@ A module importing only one names it bare. Generic types alike: two modules may 
 
 - Functions with different parameter types still meet as one overload set across modules: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments.
 - A qualified call reaches only that module's `pub` functions. A module may qualify its own names (`main.helper()`).
-- A nested module is qualified by its full name: `http.server.Server`.
+- A nested module is qualified by its whole name, `http.server.Server`, or by its last name, `server.Server`, as Go's packages are: after `import std.time`, `time.now()` is `std.time.now()`. A local or a field of that name is the local or the field; a module whose whole name it is (`import time` beside `import std.time`) is that module; two imports that end in it (`a.util` and `b.util`) make `util.f()` an error that asks for the whole name.
 
 ## Packages
 
