@@ -473,7 +473,7 @@ void avant_set_pool_size(avant_int n) {
   char msg[320];
   long s;
   if (n < 1 || n > AVANT_POOL_SIZE_MAX) {
-    snprintf(msg, sizeof msg, "set_pool_size(%lld): the thread pool's size is from 1 to %d", (long long)n,
+    snprintf(msg, sizeof msg, "sync.set_pool_size(%lld): the thread pool's size is from 1 to %d", (long long)n,
              AVANT_POOL_SIZE_MAX);
     avant_trap_text(msg);
   }
@@ -481,7 +481,7 @@ void avant_set_pool_size(avant_int n) {
   for (;;) {
     if (s & POOL_SIZE_FIXED) {
       snprintf(msg, sizeof msg,
-               "set_pool_size(%lld) after the thread pool's size was fixed: it is fixed when the pool starts (the "
+               "sync.set_pool_size(%lld) after the thread pool's size was fixed: it is fixed when the pool starts (the "
                "first spawn or .parallel) or when Http.listen without loops: takes its loop count from it",
                (long long)n);
       avant_trap_text(msg);
