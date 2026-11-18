@@ -91,13 +91,6 @@ avant_int avant_pin_count(void);
 void avant_pin_field(void *field, void *payload);
 void avant_release_range(void *lo, uint64_t n);
 int avant_is_heap(void *payload);
-/* Bumped by every collection. A length cache tagged with the generation
- * cannot outlive a move or a free, because both happen only inside a
- * collection. */
-extern _Atomic uint32_t g_avant_str_gen;
-static inline uint32_t avant_str_generation(void) {
-  return atomic_load_explicit(&g_avant_str_gen, memory_order_acquire);
-}
 int32_t avant_is_young(void *payload);
 void avant_gc_heap_goal_collect(void);
 void avant_gc_defer_enter(void);
@@ -905,9 +898,7 @@ static inline char *avant_str_static_empty(void) {
  *    updates it like any field. A view is made only where it is worth an
  *    object (AVANT_VIEW_MIN bytes or more) and where it cannot hold a much
  *    larger parent alive (at least 1 / AVANT_VIEW_SHARE of its bytes);
- *    any other slice is a copy.
- * The previous release's compiler (avant_str_headered 0) makes neither: its
- * code passes literals without a header, and no view is made for it. */
+ *    any other slice is a copy. */
 typedef struct AvantStrView {
   char *base;
   uint32_t off;
@@ -915,7 +906,6 @@ typedef struct AvantStrView {
 } AvantStrView;
 #define AVANT_VIEW_MIN 64u
 #define AVANT_VIEW_SHARE 4u
-extern int32_t avant_str_headered;
 size_t avant_str_n(const char *s);
 
 /* The bytes of a String or Bytes value S and their count in *N: a flat
@@ -928,10 +918,6 @@ static inline const char *avant_str_bytes(const char *s, size_t *n) {
     *n = 0;
     return AVANT_STR_EMPTY;
   }
-  if (__builtin_expect(!avant_str_headered, 0)) {
-    *n = avant_str_n(s);
-    return s;
-  }
   h = avant_header((void *)s);
   if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
     const AvantStrView *v = (const AvantStrView *)(const void *)s;
@@ -942,9 +928,9 @@ static inline const char *avant_str_bytes(const char *s, size_t *n) {
   return s;
 }
 
-/* Whether S is a view (never under the previous compiler's code). */
+/* Whether S is a view. */
 static inline int avant_str_is_view(const char *s) {
-  return s && avant_str_headered && avant_header((void *)s)->type_id == AVANT_TYPE_STRVIEW;
+  return s && avant_header((void *)s)->type_id == AVANT_TYPE_STRVIEW;
 }
 
 /* S as a flat string: itself, or a fresh copy of a view's bytes (a

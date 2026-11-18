@@ -79,13 +79,6 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     }
     out.push_str("\n")
   }
-  if ll_has_main(m) {
-    // The program's promise to the runtime: every string it makes or
-    // takes from C carries its length in its header (the runtime's weak
-    // default, 0, is the previous compiler's code, which reads a C
-    // string's length by its terminator).
-    out.push_str("@avant_str_headered = constant i32 1, align 4\n\n")
-  }
   if e.used_str_nil {
     out.push_str("@str.nil = private constant { i64, [1 x i8] } { i64 ${ll_str_header(0)}, [1 x i8] zeroinitializer }, align 8\n\n")
   }
@@ -701,16 +694,6 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   e.loop_md_n += 1
   e.loop_md[key] = e.loop_md_n
   ", !llvm.loop !${e.loop_md_n}"
-}
-
-// Whether the module defines the program's entry, `main`.
-fn ll_has_main(m: MModule): Bool {
-  for f in m.funcs {
-    if f.symbol == "main" {
-      return true
-    }
-  }
-  false
 }
 
 // The metadata: !0 the loops' unroll hint, !1 to !14 the alias tags and

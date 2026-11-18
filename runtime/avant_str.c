@@ -25,142 +25,20 @@ static char *empty_str(void);
 /* A string's length is its header's: every String and Bytes value a
  * program holds is a string object (a heap one, or a literal the
  * compiler emitted with the same header), whose header size is the bytes
- * and the terminator. A C function's result, a C field's string and a C
- * callback's string argument are copied into the heap on the way in
- * (avant_c_str), so no bare C pointer is ever a String.
- *
- * The program says so by defining avant_str_headered as 1 (the compiler
- * emits it beside `main`). This weak 0 is what the previous release's
- * compiler gets, whose code still passes literals without a header and
- * C strings as they are: the bootstrap's B is that code, and for it the
- * length is read as before (str_n_compat, below). Not `const`: GCC
- * folds a weak constant's value into its readers. */
-__attribute__((weak)) int32_t avant_str_headered = 0;
-
-static size_t str_n_compat(const char *s);
-
+ * and the terminator, or a view (AvantStrView) holding its length. A C
+ * function's result, a C field's string and a C callback's string
+ * argument are copied into the heap on the way in (avant_c_str), so no
+ * bare C pointer is ever a String. */
 size_t avant_str_n(const char *s) {
+  const AvantHeader *h;
   if (!s) {
-    return 0;
-  }
-  if (__builtin_expect(avant_str_headered != 0, 1)) {
-    const AvantHeader *h = avant_header((void *)s);
-    if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
-      return ((const AvantStrView *)(const void *)s)->len;
-    }
-    return (size_t)h->size - 1;
-  }
-  return str_n_compat(s);
-}
-
-/* ---- the previous compiler's strings (avant_str_headered 0) ---- */
-
-/* Short tagged strings keep the length in the header. The NUL check stays
- * inside the same page, so a lookalike header cannot fault. Longer strings
- * and raw C pointers still take the block walk or strlen. */
-static int str_meta_len(const char *s, size_t *out) {
-  uintptr_t u;
-  AvantHeader *h;
-  uint32_t sz;
-  uintptr_t last;
-  if (!s) {
-    return 0;
-  }
-  u = (uintptr_t)s;
-  if (u & 7u) {
     return 0;
   }
   h = avant_header((void *)s);
-  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) != (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) {
-    return 0;
+  if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
+    return ((const AvantStrView *)(const void *)s)->len;
   }
-  if (h->type_id != AVANT_TYPE_BYTES) {
-    return 0;
-  }
-  sz = h->size;
-  if (sz == 0 || sz > 128) {
-    return 0;
-  }
-  last = u + (sz - 1);
-  if (((last ^ u) & ~(uintptr_t)4095) != 0) {
-    return 0;
-  }
-  if (s[sz - 1] != 0) {
-    return 0;
-  }
-  *out = (size_t)sz - 1;
-  return 1;
-}
-
-/* One-entry length cache. A hit needs the same pointer, a generation
- * with no collection since the entry was stored (so the object cannot
- * have moved or been freed: both happen only inside a collection),
- * the identical 8 header bytes, and the terminator still in place.
- * Strings are immutable, so that object still has the stored length.
- * Entries are stored only after avant_is_heap or str_meta_len has
- * validated the pointer, so a raw C pointer is never promoted into a
- * heap reading: it reaches the cache only by occupying the exact
- * address of a validated heap string with its header bytes untouched
- * and no collection in between, in which case the uncached heap path
- * would read the same header and return the same length. */
-typedef struct {
-  const char *ptr;
-  size_t n;
-  uint64_t hdr;
-  uint32_t gen;
-} LenSlot;
-
-static __thread LenSlot g_len_slots[4];
-static __thread unsigned g_len_victim;
-
-static void len_cache_store(const char *s, size_t n) {
-  LenSlot *slot = &g_len_slots[g_len_victim & 3u];
-  uint64_t hdr = 0;
-  g_len_victim++;
-  memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
-  slot->ptr = s;
-  slot->n = n;
-  slot->hdr = hdr;
-  slot->gen = avant_str_generation();
-}
-
-static size_t str_n_long(const char *s) __attribute__((noinline));
-static size_t str_n_long(const char *s) {
-  uint32_t gen = avant_str_generation();
-  int i;
-  for (i = 0; i < 4; i++) {
-    LenSlot *slot = &g_len_slots[i];
-    uint64_t hdr = 0;
-    if (s != slot->ptr || gen != slot->gen) {
-      continue;
-    }
-    memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
-    if (hdr == slot->hdr && s[slot->n] == 0) {
-      return slot->n;
-    }
-  }
-  if (((uintptr_t)s % 8) == 0) {
-    AvantHeader *h = avant_header((void *)s);
-    if ((h->flags & AVANT_FLAG_HEAP) && h->type_id == AVANT_TYPE_BYTES && h->size > 0
-        && avant_is_heap((void *)s)) {
-      size_t n = (size_t)h->size - 1;
-      len_cache_store(s, n);
-      return n;
-    }
-  }
-  /* A C string: within the String ceiling, or a trap (a heap string is
-   * within it by construction). */
-  size_t n = strlen(s);
-  avant_size_check(n, AVANT_SIZE_STRING);
-  return n;
-}
-
-static size_t str_n_compat(const char *s) {
-  size_t meta = 0;
-  if (str_meta_len(s, &meta)) {
-    return meta;
-  }
-  return str_n_long(s);
+  return (size_t)h->size - 1;
 }
 
 char *avant_str_empty(void) {
@@ -221,7 +99,7 @@ static char *str_part(const char *s, size_t off, size_t n) {
   if (off == 0 && n == sn) {
     return (char *)s;
   }
-  if (!avant_str_headered || n < AVANT_VIEW_MIN) {
+  if (n < AVANT_VIEW_MIN) {
     return dup_bytes_at(s, off, n);
   }
   if (avant_str_is_view(s)) {

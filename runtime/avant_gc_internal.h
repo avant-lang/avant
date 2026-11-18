@@ -1219,8 +1219,8 @@ typedef struct GcProof {
  * collector unit and guarded by the world lock unless a field says
  * otherwise. The fields are grouped by the unit that owns them. What the
  * generated code reads or writes by name stays outside (the inline
- * allocation path's thread-locals and counters, avant_g_stats,
- * g_avant_str_gen), as does g_avant_shared, which the
+ * allocation path's thread-locals and counters, avant_g_stats), as
+ * does g_avant_shared, which the
  * runtime's other units read. Per-thread state is GcThread. */
 typedef struct GcHeap {
   /* avant_gc_heap.c. The reservation: base is 4 MiB

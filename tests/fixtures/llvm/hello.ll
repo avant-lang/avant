@@ -12,10 +12,12 @@
 ;   a barrier on the holder before a reference store into a heap field
 ;   (the generational barrier)
 ;   avant_gc_leave before the return
+;   a string literal with the header a heap string has (its size word: the
+;   bytes and the terminator), which the runtime reads its length from
 ; Output: "Hello Avant 42" and exit status 0. Run under AVANT_GC_VERIFY=1
 ; and AVANT_YOUNG_MB=1 by tests/cases/test_llvm_glue.av.
 
-@str.hello = private constant [13 x i8] c"Hello Avant \00", align 1
+@str.hello = private constant { i64, [13 x i8] } { i64 4611686018427387917, [13 x i8] c"Hello Avant \00" }, align 8
 @fmt.s = private constant [4 x i8] c"%s\0A\00", align 1
 
 declare void @avant_gc_enter()
@@ -75,7 +77,7 @@ entry:
   %f = load ptr, ptr %b2, align 8
 
   ; "Hello Avant " + box.value (collecting), then puts
-  %m0 = call ptr @avant_str_concat(ptr @str.hello, ptr %f)
+  %m0 = call ptr @avant_str_concat(ptr getelementptr inbounds (i8, ptr @str.hello, i64 8), ptr %f)
   store volatile ptr %m0, ptr %str, align 8
   %m1 = load volatile ptr, ptr %str, align 8
   %p = call i32 (ptr, ...) @printf(ptr @fmt.s, ptr %m1)

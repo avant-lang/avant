@@ -347,9 +347,6 @@ __attribute__((visibility("hidden"))) void avant_gc_lock(pthread_mutex_t *m);
 __attribute__((visibility("hidden"))) void avant_gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
 __attribute__((visibility("hidden"))) int avant_gc_cond_timedwait(pthread_cond_t *cv, pthread_mutex_t *m,
                                                                  const struct timespec *deadline);
-/* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
- * collection bumps. */
-extern _Atomic uint32_t g_avant_str_gen;
 extern atomic_int g_avant_shared;
 
 /* RC4's no-GC regions (the contract above). Hidden: only

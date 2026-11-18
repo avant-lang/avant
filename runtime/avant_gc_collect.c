@@ -139,8 +139,6 @@ static void gc_settings_read(GcSettings *s) {
   }
 }
 
-_Atomic uint32_t g_avant_str_gen;
-
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
@@ -372,7 +370,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
   t0 = now_ns();
   gc_thread.collecting = 1;
-  atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
   /* Every thread's remembered-set buffer joins the set
    * before anything reads it. */
