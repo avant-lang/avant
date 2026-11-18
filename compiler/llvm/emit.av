@@ -37,6 +37,9 @@ pub fn ll_triple: String {
 pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   e = LlEmit.new(m)
   e.inline_fast = inline_fast
+  if m.globals.size > 0 {
+    ll_const_facts(e)
+  }
   i = 0
   while i < m.funcs.size {
     ll_function(e, m.funcs[i])
@@ -317,9 +320,160 @@ fn ll_type_maps(e: LlEmit) {
 
 // ---- functions
 
+// The constants computed before main (mir/lower_const.av) never change
+// after the start-up, so a read of one tells LLVM so, which lets a loop
+// or a function load a slot (and an Array's buffer and size, a class
+// object's fields) once:
+// - a slot's load is !invariant.load; a reference also !nonnull, !align
+//   8 and !dereferenceable (its layout's size). True from the start-up
+//   on: nothing writes a slot but the start-up and the collector, and
+//   the runtime pins each object a slot names (avant_const_ready), so the
+//   collector never moves it and never rewrites the slot;
+// - a field of the object loaded from a slot is !invariant.load when it
+//   is an Array's buffer reference or size (a frozen array never
+//   changes either: every change traps before it writes) or a class
+//   object's field (a constant's class has no field assigned outside
+//   initialize); the runtime pins those fields' objects too, so the
+//   collector never rewrites them; only when no C function of the
+//   program is handed a reference (an Array, a Hash, a class: C could
+//   write it), else the plain load;
+// - the start-up function, and every function it reaches by a call or
+//   a function value, loads plainly (before main a slot does change),
+//   and the start-up is never inlined into main.
+// Measured on a loop that reads constants with a runtime call in it:
+// the slot's marks 4.0% fewer instructions, the fields' 4.1% more (9.1%
+// on a loop without calls); an accessor function marked memory(none),
+// a distinct alias tag for the slots, and no frame slot for a local
+// holding a constant changed nothing and were not kept.
+fn ll_const_facts(e: LlEmit) {
+  todo: Array(String) = []
+  for f in e.m.funcs {
+    if f.symbol.ends_with("/__consts") {
+      todo.push(f.symbol)
+      e.startup_reach.add(f.symbol)
+    }
+  }
+  i = 0
+  while i < todo.size {
+    if g = e.m.func(todo[i]) {
+      for blk in g.blocks {
+        for st in blk.stmts {
+          names: Array(String) = []
+          if st.kind == msk_call() && st.callee.size > 0 {
+            names.push(st.callee)
+          }
+          for o in st.args {
+            if o.kind == mok_fn() {
+              names.push(o.text)
+            }
+          }
+          if r = st.rv {
+            for o2 in [r.a, r.b] {
+              if x = o2, x.kind == mok_fn() {
+                names.push(x.text)
+              }
+            }
+            for o3 in r.ops {
+              if o3.kind == mok_fn() {
+                names.push(o3.text)
+              }
+            }
+          }
+          for n in names {
+            if e.startup_reach.add(n) {
+              todo.push(n)
+            }
+          }
+        }
+      }
+    }
+    i += 1
+  }
+  // A C function handed a reference could change a constant object.
+  fields = true
+  for f2 in e.m.funcs {
+    for blk2 in f2.blocks {
+      for st2 in blk2.stmts {
+        if st2.kind == msk_call() && st2.callee.size > 0 && !st2.callee.starts_with("av.") {
+          if xr = e.m.rt.find(st2.callee) {
+          } else {
+            for a in st2.args {
+              at = a.ty
+              if p = a.place {
+                at = mt_ref()
+                if p.proj.size == 0 && p.local < f2.locals.size {
+                  at = f2.locals[p.local].ty
+                }
+              }
+              if e.ts.is_refkind(at) && at != mt_str() {
+                fields = false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  e.const_fields = fields
+}
+
+// The locals of f holding a slot's address, and those holding the value
+// loaded from one, each assigned nothing else (none in a function the
+// start-up reaches).
+fn ll_const_locals(e: LlEmit, f: MFunc) {
+  e.cslots = Set(Int).new()
+  e.cvals = Set(Int).new()
+  if e.startup_reach.has(f.symbol) {
+    return
+  }
+  slots = Set(Int).new()
+  vals = Set(Int).new()
+  other = Set(Int).new()
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if st.kind == msk_assign() {
+        if pl = st.place, pl.proj.size == 0 {
+          kind = 0
+          if r = st.rv, r.kind == mrk_use() {
+            if a = r.a {
+              if a.kind == mok_global() {
+                kind = 1
+              } else if ap = a.place, ap.proj.size == 1 && ap.proj[0].kind == mpk_deref() && slots.has(ap.local) {
+                kind = 2
+              }
+            }
+          }
+          if kind == 1 {
+            slots.add(pl.local)
+          } else if kind == 2 {
+            vals.add(pl.local)
+          } else {
+            other.add(pl.local)
+          }
+        }
+      } else if st.kind == msk_call() && st.dest >= 0 {
+        other.add(st.dest)
+      }
+    }
+  }
+  for k in slots {
+    if !other.has(k) && !f.is_param(k) {
+      e.cslots.add(k)
+    }
+  }
+  for k2 in vals {
+    if !other.has(k2) && !f.is_param(k2) {
+      e.cvals.add(k2)
+    }
+  }
+}
+
 fn ll_function(e: LlEmit, f: MFunc) {
   e.f = f
   e.v.func = f
+  if e.m.globals.size > 0 {
+    ll_const_locals(e, f)
+  }
   e.tn = 0
   e.trap_ovf = false
   e.trap_div0 = false
@@ -355,7 +509,13 @@ fn ll_function(e: LlEmit, f: MFunc) {
     }
     e.out.push_str("i32 %caller.site")
   }
-  e.out.push_str(") #0 {\nalloca:\n")
+  if e.m.globals.size > 0 && f.symbol.ends_with("/__consts") {
+    // The start-up stays a call of its own: the slots it writes are
+    // read as never changing (ll_const_facts) only outside it.
+    e.out.push_str(") noinline #0 {\nalloca:\n")
+  } else {
+    e.out.push_str(") #0 {\nalloca:\n")
+  }
   e.label = "alloca"
   // The frame record first: a slot local's address is in it.
   ll_gc_frame_layout(e, f)

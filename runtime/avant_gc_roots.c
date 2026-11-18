@@ -678,7 +678,11 @@ void avant_release_range(void *lo, uint64_t n) {
 /* The constants computed before main (avant_rt.h). The reference words
  * of a constant's global slot (bit i of words: the slot's word i) become
  * static roots for good, read and rewritten with the task roots
- * (EACH_TASK_ROOT); then every Array and Hash the value reaches, at any
+ * (EACH_TASK_ROOT); the object each names, and the objects its own
+ * reference words name, are pinned for good, so the collector never
+ * moves them and never rewrites the slot or those words (what the
+ * compiler tells LLVM about them, compiler/llvm/emit.av ll_const_facts,
+ * holds); then every Array and Hash the value reaches, at any
  * depth, is frozen for good (the freeze a task's capture takes, never
  * thawed), so no path changes it. The walk follows each object's
  * reference words by its type map, once per object (a set of the
@@ -767,23 +771,32 @@ static void const_freeze(void *root) {
 
 void avant_const_ready(void *slot, uint64_t words) {
   void **base = (void **)slot;
-  uint32_t i;
+  uint64_t w;
   gc_init();
+  /* The inline path's objects since its last sync are counted first:
+   * a pin changes their headers, which the sync's checks read as the
+   * inline sequence wrote them. */
+  gc_alloc_sync();
   pthread_mutex_lock(&gc_heap.world);
-  for (i = 0; i < 64; i++) {
-    if (words & (1ull << i)) {
-      if (gc_heap.nstatic == gc_heap.static_cap) {
-        gc_heap.static_cap = gc_heap.static_cap ? gc_heap.static_cap * 2 : 16;
-        gc_heap.static_roots = (void ***)gc_xrealloc(gc_heap.static_roots, gc_heap.static_cap * sizeof(void **));
-      }
-      gc_heap.static_roots[gc_heap.nstatic++] = base + i;
+  for (w = words; w; w &= w - 1) {
+    void **ws = base + __builtin_ctzll(w);
+    if (gc_heap.nstatic == gc_heap.static_cap) {
+      gc_heap.static_cap = gc_heap.static_cap ? gc_heap.static_cap * 2 : 16;
+      gc_heap.static_roots = (void ***)gc_xrealloc(gc_heap.static_roots, gc_heap.static_cap * sizeof(void **));
+    }
+    gc_heap.static_roots[gc_heap.nstatic++] = ws;
+    if (*ws && gc_is_heap_payload(*ws, NULL, NULL)) {
+      (void)pin_locked(*ws);
+      EACH_REF_SLOT(*ws, fs, {
+        if (*fs && gc_is_heap_payload(*fs, NULL, NULL)) {
+          (void)pin_locked(*fs);
+        }
+      });
     }
   }
   pthread_mutex_unlock(&gc_heap.world);
-  for (i = 0; i < 64; i++) {
-    if (words & (1ull << i)) {
-      const_freeze(base[i]);
-    }
+  for (w = words; w; w &= w - 1) {
+    const_freeze(base[__builtin_ctzll(w)]);
   }
 }
 

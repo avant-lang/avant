@@ -65,6 +65,20 @@ pub class LlEmit {
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
   pub ov_ty: Int = 0
+  // What LLVM is told about the constants computed before main
+  // (ll_const_facts): the functions the start-up reaches, which read
+  // the slots plainly; whether a constant object's own fields may be
+  // marked (no C function is handed a reference); in the function being
+  // emitted, the locals holding a slot's address and those holding the
+  // value loaded from one; for the place just formed, the type a slot
+  // holds (-1 when it is no slot) and whether it is a constant object's
+  // field.
+  pub startup_reach: Set(String) = Set(String).new()
+  pub const_fields: Bool = false
+  pub cslots: Set(Int) = Set(Int).new()
+  pub cvals: Set(Int) = Set(Int).new()
+  pa_cslot: Int = -1
+  pa_cfield: Bool = false
 
   fn initialize(m: MModule) {
     self.m = m
@@ -308,6 +322,11 @@ pub class LlEmit {
     region = 0
     pend = 0
     arr = false
+    self.pa_cslot = -1
+    self.pa_cfield = false
+    if self.cslots.size > 0 {
+      const_place(p, ty)
+    }
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
@@ -374,6 +393,40 @@ pub class LlEmit {
     ptr
   }
 
+  // A read of a constant computed before main (ll_const_facts): `*_a`
+  // with _a a slot's address, or a field of the object loaded from one
+  // (`(*_v).f`): an Array's buffer reference or size (not its capacity
+  // word, which a task's freeze counts in), or any field of a class
+  // object (none is assigned outside initialize).
+  fn const_place(p: MPlace, ty: Int) {
+    if p.proj.size == 1 && p.proj[0].kind == mpk_deref() && self.cslots.has(p.local) {
+      self.pa_cslot = self.ts.get(ty).pointee
+      return
+    }
+    if self.const_fields && p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && self.cvals.has(p.local) {
+      l = self.ts.get(ty).layout
+      if l >= 0 {
+        lk = self.ts.layouts[l].kind
+        self.pa_cfield = lk == mlk_class() || (lk == mlk_array() && p.proj[1].field < 2)
+      }
+    }
+  }
+
+  // The marks of such a read: the slot's value never changes after the
+  // start-up (its object is pinned) and, a reference, is never null and
+  // spans its layout; a pinned constant object's field never changes.
+  fn const_marks: String {
+    t = ", !invariant.load !13"
+    if self.pa_cslot >= 0 && self.ts.is_refkind(self.pa_cslot) {
+      t = "${t}, !nonnull !13, !align !{i64 8}"
+      l = self.ts.get(self.pa_cslot).layout
+      if l >= 0 && self.ts.layouts[l].size > 0 {
+        t = "${t}, !dereferenceable !{i64 ${self.ts.layouts[l].size}}"
+      }
+    }
+    t
+  }
+
   // An index operand as i64 (sign-extended from i32).
   fn index64(o: MOperand): String {
     if o.kind == mok_int() {
@@ -410,6 +463,9 @@ pub class LlEmit {
       tag = self.pa_tbaa
       if self.pa_size {
         tag = tag + ll_size_range()
+      }
+      if self.pa_cslot >= 0 || self.pa_cfield {
+        tag = tag + const_marks()
       }
       x = load_tagged(ty, ptr, self.pa_vol, tag)
       self.ov_ty = ty

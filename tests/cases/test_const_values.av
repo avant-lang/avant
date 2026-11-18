@@ -163,6 +163,42 @@ fn check_modules(c: Checks, compiler: String, dir: String) {
   c.eq_str(log_text("${d}/kvmain.run.out"), "a+b|a+b\na+b|a+b/2\n", "modules: stdout")
 }
 
+// What LLVM is told: a slot's load in a function after the start-up
+// never changes (an Array's: never null, 8-aligned, its header's size),
+// nor does the Array's buffer reference and size, or a class object's
+// field; the start-up reads its slots plainly and is never inlined; a
+// program that hands a reference to a C function keeps the fields'
+// loads plain. And a constant read in a loop that collects, held in a
+// local, in a release build: its object is pinned, so the loop may keep
+// it in a register.
+fn check_facts(c: Checks, compiler: String, dir: String) {
+  d = "${dir}/kvfacts"
+  mkdir_p(d)
+  body = "class Conf {\n  pub scale: Int = 3\n}\n\nconst table = [5, 6, 7]\nconst conf = Conf.new()\nconst twice = table[1] * 2\n\nfn weight(i: Int): Int {\n  table[i] * conf.scale\n}\n"
+  _ = fs.write("${d}/kf.av", "${body}\nfn main {\n  puts(weight(2) + twice)\n}\n")
+  _ = fs.write("${d}/kfc.av", "${body}\nlib cside {\n  fun cside_sum(xs: Array(Int)): Int\n}\n\nfn main {\n  puts(weight(2) + cside.cside_sum(table))\n}\n")
+  c.eq_int(emit_ll(compiler, "${d}/kf.av", "${d}/kf.ll", "${d}/kf.log"), 0, "facts: emits")
+  c.eq_int(emit_ll(compiler, "${d}/kfc.av", "${d}/kfc.ll", "${d}/kfc.log"), 0, "facts with C: emits")
+  ll = log_text("${d}/kf.ll")
+  llc = log_text("${d}/kfc.ll")
+  c.expect(ll.contains("!invariant.load !13, !nonnull !13, !align !{i64 8}, !dereferenceable !{i64 16}"), "facts: the slot's load never changes and names a 16-byte header")
+  c.expect(ll.contains("!tbaa !5, !invariant.load !13"), "facts: the Array's buffer reference never changes")
+  c.expect(ll.contains("!tbaa !11, !invariant.load !13"), "facts: the class object's field never changes")
+  c.expect(ll.contains("/__consts\"() noinline #0"), "facts: the start-up is never inlined")
+  c.expect(llc.contains("!invariant.load !13, !nonnull !13"), "facts with C: the slot's load never changes")
+  c.expect(!llc.contains("!tbaa !5, !invariant.load !13") && !llc.contains("!tbaa !11, !invariant.load !13"), "facts with C: the fields' loads are plain")
+  src = "const table = make()\n\nfn make: Array(Int) {\n  xs: Array(Int) = []\n  for i in 0..1024 {\n    xs.push(i * 3)\n  }\n  xs\n}\n\nfn fill(n: Int, out: Array(Int)): Int {\n  t = table\n  s = 0\n  for i in 0..n {\n    out.push(t[i & 1023])\n    s += t[(i * 7) & 1023]\n  }\n  s\n}\n\nfn main {\n  total = 0\n  for r in 0..20 {\n    out: Array(Int) = []\n    total += fill(100000, out) + out.size\n  }\n  puts(total)\n}\n"
+  _ = fs.write("${d}/kheld.av", src)
+  jobs: Array(HJob) = []
+  jobs.push(env_job("", compiler, ["compile", "${d}/kheld.av", "${d}/kheld.bin", "--release"], "${d}/kheld.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "held release: compiles")
+  runs: Array(HJob) = [run_job(d, "kheld.bin", "kheld.run")]
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "held release: exit 0")
+  c.eq_str(log_text("${d}/kheld.run.out"), "3069926720\n", "held release: stdout")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_const_values.av")
   if compiler = process.env("AVANT_COMPILER") {
@@ -173,6 +209,7 @@ fn test_main(c: Checks) {
     all.concat(start_cases())
     run_cases(c, compiler, dir, all)
     check_modules(c, compiler, dir)
+    check_facts(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
