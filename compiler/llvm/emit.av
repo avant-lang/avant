@@ -878,24 +878,21 @@ fn ll_bits_u64(e: LlEmit, name: String, args: Array(MOperand)): String {
     return r2
   }
   if (name == "avant_bits_divq_u64" || name == "avant_bits_divr_u64") && xs.size == 3 {
-    hi = e.tmp()
-    e.line("${hi} = zext i64 ${xs[0]} to i128")
-    hs = e.tmp()
-    e.line("${hs} = shl i128 ${hi}, 64")
-    lo = e.tmp()
-    e.line("${lo} = zext i64 ${xs[1]} to i128")
-    n = e.tmp()
-    e.line("${n} = or i128 ${hs}, ${lo}")
-    d = e.tmp()
-    e.line("${d} = zext i64 ${xs[2]} to i128")
-    op2 = "udiv"
+    // x86's divq: rdx:rax (hi, lo) divided by the divisor, the quotient
+    // in rax and the remainder in rdx. LLVM's i128 udiv cannot use it
+    // (it does not know the quotient fits 64 bits, and calls libgcc's
+    // __udivti3); bits.div, the only caller, has checked that it does
+    // (y > hi, so y is not 0). The asm has no side effect, so the
+    // quotient's and the remainder's rows, the same instruction on the
+    // same operands, become one.
+    qr = e.tmp()
+    e.line("${qr} = call { i64, i64 } asm \"divq $4\", \"={rax},={rdx},0,1,r,~{dirflag},~{fpsr},~{flags}\"(i64 ${xs[1]}, i64 ${xs[0]}, i64 ${xs[2]}) nounwind willreturn memory(none)")
+    k = 0
     if name == "avant_bits_divr_u64" {
-      op2 = "urem"
+      k = 1
     }
-    q = e.tmp()
-    e.line("${q} = ${op2} i128 ${n}, ${d}")
     r3 = e.tmp()
-    e.line("${r3} = trunc i128 ${q} to i64")
+    e.line("${r3} = extractvalue { i64, i64 } ${qr}, ${k}")
     return r3
   }
   if name == "avant_bits_rotl_u64" && xs.size == 2 {
