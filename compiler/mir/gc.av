@@ -73,14 +73,7 @@ import mir.runtime
 import mir.flow
 import mir.fresh
 
-fn mir_in_set(cand: Hash(String, Int), name: String): Bool {
-  if v = cand.get(name) {
-    return v == 1
-  }
-  false
-}
-
-fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Hash(String, Int)): Bool {
+fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Set(String)): Bool {
   if st.kind != msk_call() {
     return false
   }
@@ -88,7 +81,7 @@ fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Hash(String, Int)): Bool {
     return true
   }
   if f = m.func(st.callee) {
-    return !mir_in_set(cand, st.callee)
+    return !cand.has(st.callee)
   }
   if str_starts(st.callee, "av.") {
     return true
@@ -96,7 +89,7 @@ fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Hash(String, Int)): Bool {
   st.collects
 }
 
-fn mir_func_blocks_leaf(m: MModule, f: MFunc, cand: Hash(String, Int)): Bool {
+fn mir_func_blocks_leaf(m: MModule, f: MFunc, cand: Set(String)): Bool {
   for blk in f.blocks {
     for stmt in blk.stmts {
       if mir_call_blocks_leaf(m, stmt, cand) {
@@ -133,24 +126,24 @@ fn mir_mark_calls(m: MModule, f: MFunc) {
 
 // The leaf pass (the first pass after the lowering).
 pub fn mir_leaf_pass(m: MModule) {
-  cand = Hash(String, Int).new()
+  cand = Set(String).new()
   for f in m.funcs {
     if f.kind == mfk_unset() && f.symbol != "main" && !(m.shared && mir_holds_roots(m, f)) {
-      cand[f.symbol] = 1
+      cand.add(f.symbol)
     }
   }
   changed = true
   while changed {
     changed = false
     for f in m.funcs {
-      if mir_in_set(cand, f.symbol) && mir_func_blocks_leaf(m, f, cand) {
-        cand[f.symbol] = 0
+      if cand.has(f.symbol) && mir_func_blocks_leaf(m, f, cand) {
+        cand.delete(f.symbol)
         changed = true
       }
     }
   }
   for f in m.funcs {
-    if mir_in_set(cand, f.symbol) {
+    if cand.has(f.symbol) {
       f.kind = mfk_leaf()
     }
   }

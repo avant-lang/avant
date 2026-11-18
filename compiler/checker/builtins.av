@@ -1029,10 +1029,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return ty_array(checker_self.t_int())
   }
-  // `has`, the one membership test of every collection; `has_key`, its
-  // old name, stays until the compiler's own source (built by a seed
-  // that knows only has_key) moves to has.
-  if expr.callee == "has" || expr.callee == "has_key" {
+  // `has`, the one membership test of every collection.
+  if expr.callee == "has" {
     if expr.args.size == 1 {
       if b = expr.block {
         checker_self.fail(expr.loc, "${expr.callee} takes one key")
@@ -1282,7 +1280,11 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     none: Ty? = nil
     return checker_self.dispatch_method(expr, hash, none)
   }
-  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", checker_self.builtin_hint(hash, expr.callee))
+  hint = checker_self.builtin_hint(hash, expr.callee)
+  if expr.callee == "has_key" || expr.callee == "contains" || expr.callee == "includes" || expr.callee == "contains_key" {
+    hint = " (write `h.has(k)`)"
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", hint)
   checker_self.t_int()
 }
 

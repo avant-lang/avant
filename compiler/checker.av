@@ -99,7 +99,7 @@ pub class Checker {
   pub cfun_index: Hash(String, Int)
   pub lib_names: Hash(String, Int)
   pub c_symbols: Hash(String, String)
-  pub reserved: Hash(String, Int)
+  pub reserved: Set(String)
   pub scopes: Array(Scope)
   failed: Bool = false
   pub err: CompileError? = nil
@@ -196,7 +196,7 @@ pub class Checker {
   pub guarded_at: Array(Location) = []
   // "spawn" for a class a spawn takes by move, else "".
   pub guarded_by: Array(String) = []
-  pub guarded_ok: Hash(String, Int) = Hash(String, Int).new()
+  pub guarded_ok: Set(String) = Set(String).new()
   // The method calls on an element of an Array a running task reads
   // (`xs[0].bump`), in a spawn block (1), in the sender (2) or in a
   // `.parallel` body (3), with the
@@ -6423,7 +6423,7 @@ pub class Checker {
         fail(cond.loc, "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got ${ct.show()}")
       }
     }
-    covered = Hash(Int, Int).new()
+    covered = Set(Int).new()
     seen = Hash(Int, Int).new()
     seen_str = Hash(String, Int).new()
     // An integer switch's labels, for the overlaps of its ranges.
@@ -6472,7 +6472,7 @@ pub class Checker {
           }
         }
         seen[lab] = 1
-        covered[lab] = 1
+        covered.add(lab)
       }
     }
     if has_range && !self.has_err() {
@@ -6931,19 +6931,19 @@ pub class Checker {
   // The countable cases of a discriminant type that the labels in
   // covered (by value) leave out, in declaration order (an enum's
   // members, a union's members, Bool's true and false).
-  pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
+  pub fn switch_missing_cases(disc: Ty, covered: Set(Int)): Array(String) {
     missing: Array(String) = []
     if disc.is_bool() {
-      if !covered.has_key(1) {
+      if !covered.has(1) {
         missing.push("true")
       }
-      if !covered.has_key(0) {
+      if !covered.has(0) {
         missing.push("false")
       }
     }
     if disc.is_union() {
       for ui in 0..disc.members.size {
-        if !covered.has_key(ui) {
+        if !covered.has(ui) {
           missing.push(union_case_name(disc, ui))
         }
       }
@@ -6952,7 +6952,7 @@ pub class Checker {
       names = disc.enum_names()
       vals = disc.enum_vals()
       for i in 0..names.size {
-        if covered.has_key(vals[i]) {
+        if covered.has(vals[i]) {
           continue
         }
         missing.push(names[i])

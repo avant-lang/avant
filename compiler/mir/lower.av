@@ -69,7 +69,7 @@ pub class MirClosures {
   pub env: Int = -1
   pub boxed: Array(String) = []
   pub box_local: Hash(String, Int) = Hash(String, Int).new()
-  pub box_ready: Hash(String, Int) = Hash(String, Int).new()
+  pub box_ready: Set(String) = Set(String).new()
   pub cap_at: Hash(String, Int) = Hash(String, Int).new()
   pub cap_tys: Array(Ty) = []
   pub pending: Array(MirLam) = []
@@ -100,14 +100,14 @@ pub class MirCb {
 // loop depth, lw_heads.size, where each was opened).
 pub class MirFfi {
   pub cbs: Array(MirCb) = []
-  pub cb_seen: Hash(String, Int) = Hash(String, Int).new()
+  pub cb_seen: Set(String) = Set(String).new()
   // The key types of the hashes keyed by their type's own hash and
   // equality, each once (by its MIR text), and where its first hash is
   // made: their two thunks are written after the functions
   // (lower_hash.av lower_key_thunks).
   pub ukeys: Array(Ty) = []
   pub ukey_locs: Array(Location) = []
-  pub ukey_seen: Hash(String, Int) = Hash(String, Int).new()
+  pub ukey_seen: Set(String) = Set(String).new()
   pub pins: Array(Int) = []
   pub pin_depth: Array(Int) = []
   // A `Mutex.with` block's pin entry is -2 - h, h the local holding the
@@ -369,7 +369,7 @@ pub class MirLower {
     }
     // Symbols are collision-free by construction; a collision
     // would be a defect of the scheme, so it stops the lowering.
-    taken = Hash(String, Int).new()
+    taken = Set(String).new()
     i = 0
     while i < fns.size {
       sym = ""
@@ -381,11 +381,10 @@ pub class MirLower {
       if self.failed() {
         return
       }
-      if taken.has_key(sym) {
+      if !taken.add(sym) {
         refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
         return
       }
-      taken[sym] = 1
       self.lw_fn_syms[fns[i].emit_name] = sym
       i += 1
     }
@@ -452,9 +451,9 @@ pub class MirLower {
   // new call reaches one (one may call another: an error enum's text
   // calls its message, which calls name).
   pub fn lower_lazy(fns: Array(Function)) {
-    called = Hash(String, Int).new()
+    called = Set(String).new()
     scanned = 0
-    done = Hash(String, Int).new()
+    done = Set(String).new()
     grow = true
     while grow && !self.failed() {
       grow = false
@@ -462,7 +461,7 @@ pub class MirLower {
         for bb in self.lw_m.funcs[scanned].blocks {
           for st in bb.stmts {
             if st.kind == msk_call() && st.callee.size > 0 {
-              called[st.callee] = 1
+              called.add(st.callee)
             }
           }
         }
@@ -474,10 +473,10 @@ pub class MirLower {
           continue
         }
         if sym = self.lw_fn_syms.get(f.emit_name) {
-          if done.has_key(sym) || !called.has_key(sym) {
+          if done.has(sym) || !called.has(sym) {
             continue
           }
-          done[sym] = 1
+          done.add(sym)
           self.lw_cov.rank = i
           lower_function(f)
           self.lower_pending_lambdas()
@@ -569,7 +568,7 @@ pub class MirLower {
     self.lw_cl.base = ""
     self.lw_cl.boxed = mir_no_names()
     self.lw_cl.box_local = Hash(String, Int).new()
-    self.lw_cl.box_ready = Hash(String, Int).new()
+    self.lw_cl.box_ready = Set(String).new()
   }
 
   // The checked signature of a function or a method (methods are in the

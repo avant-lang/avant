@@ -1265,9 +1265,9 @@ pub class ClassWalk {
   pub method: String = ""
   // name -> 1 rooted at self, 2 at a parameter, 3 either.
   pub roots: Hash(String, Int) = Hash(String, Int).new()
-  pub params: Hash(String, Int) = Hash(String, Int).new()
+  pub params: Set(String) = Set(String).new()
   // The methods of the checked types, by emit name.
-  pub checked: Hash(String, Int) = Hash(String, Int).new()
+  pub checked: Set(String) = Set(String).new()
   pub changed: Bool = false
 
   pub fn root_of(name: String): Int {
@@ -1297,8 +1297,7 @@ pub fn (checker_self: Checker) check_guarded_types {
       return
     }
     t = checker_self.guarded[i]
-    if !checker_self.guarded_ok.has_key(t.show()) {
-      checker_self.guarded_ok[t.show()] = 1
+    if checker_self.guarded_ok.add(t.show()) {
       checker_self.check_guarded(t, checker_self.guarded_at[i], checker_self.guarded_by[i])
     }
     i += 1
@@ -1308,14 +1307,13 @@ pub fn (checker_self: Checker) check_guarded_types {
 // The classes and structs a value of type t can reach, t included (a
 // Channel, a Mutex and a plain type end a path: they hold nothing the
 // guarded value's lock protects).
-pub fn (checker_self: Checker) guarded_reach(t: Ty, seen: Hash(String, Int), out: Array(Ty)) {
+pub fn (checker_self: Checker) guarded_reach(t: Ty, seen: Set(String), out: Array(Ty)) {
   if checker_self.is_share_ty(t) || checker_self.leaves_mutex_with(t) {
     return
   }
-  if seen.has_key(t.show()) {
+  if !seen.add(t.show()) {
     return
   }
-  seen[t.show()] = 1
   if t.is_class() || t.is_struct() {
     out.push(t)
     for f in t.fields {
@@ -1347,17 +1345,17 @@ pub fn (checker_self: Checker) guarded_method_of(ms: FuncSig, t: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location, by: String) {
-  seen = Hash(String, Int).new()
+  seen = Set(String).new()
   types: Array(Ty) = []
   checker_self.guarded_reach(t, seen, types)
   if types.size == 0 {
     return
   }
-  checked = Hash(String, Int).new()
+  checked = Set(String).new()
   for ct in types {
     for ms in checker_self.methods {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
-        checked[ms.node.emit_name] = 1
+        checked.add(ms.node.emit_name)
       }
     }
   }
@@ -1387,7 +1385,7 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location, by: String) {
         i = 0
         while i < ms.node.params.size && i < ms.params.size {
           if !checker_self.leaves_mutex_with(ms.params[i]) {
-            w.params[ms.node.params[i].name] = 1
+            w.params.add(ms.node.params[i].name)
             w.roots[ms.node.params[i].name] = 2
           }
           i += 1
@@ -1578,7 +1576,7 @@ pub fn (checker_self: Checker) cw_expr_names(w: ClassWalk, e: Expr): Int {
 pub fn (checker_self: Checker) cw_local_base(w: ClassWalk, e: Expr): String {
   k = e.kind
   if k == ex_name() {
-    if e.ident == "self" || e.implicit_field || w.params.has_key(e.ident) {
+    if e.ident == "self" || e.implicit_field || w.params.has(e.ident) {
       return ""
     }
     return e.ident
@@ -1870,7 +1868,7 @@ pub fn (checker_self: Checker) cw_call(w: ClassWalk, e: Expr) {
     }
   } else if e.resolved.size > 0 || e.indirect {
     ctor = e.callee == "new" && !e.indirect
-    known = !e.indirect && w.checked.has_key(e.resolved)
+    known = !e.indirect && w.checked.has(e.resolved)
     for a in e.args {
       bits = checker_self.cw_root(w, a)
       if bits != 0 && !known {

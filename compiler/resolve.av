@@ -1478,7 +1478,7 @@ pub class TypeResolver {
 // the module's own; elsewhere, only a name no lib block writes is (a
 // module's Ptr(Ctx) beside a package's lib that writes Ctx means the
 // package's: collect_opaques reads the lib blocks first).
-pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int), mod_name: String, in_lib: Bool) {
+pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Set(String), mod_name: String, in_lib: Bool) {
   if r = tn.ret {
     note_ptr_opaque_skip(r, resolver, skip, mod_name, in_lib)
   }
@@ -1503,7 +1503,7 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
         if existing = resolver.get_named(inner.name) {
           return
         }
-        if skipped = skip.get(inner.name) {
+        if skip.has(inner.name) {
           return
         }
         if !in_lib {
@@ -1518,7 +1518,7 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
 }
 
 pub fn note_type_name(tn: TypeName, resolver: TypeResolver, mod_name: String, in_lib: Bool) {
-  empty = Hash(String, Int).new()
+  empty = Set(String).new()
   note_ptr_opaque_skip(tn, resolver, empty, mod_name, in_lib)
 }
 
@@ -1557,9 +1557,9 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   fns = program_all_functions(program)
   for fnn in fns {
     names = collect_fn_type_params(fnn, resolver.named)
-    skip = Hash(String, Int).new()
+    skip = Set(String).new()
     for name in names {
-      skip[name] = 1
+      skip.add(name)
     }
     for param in fnn.params {
       note_ptr_opaque_skip(param.type, resolver, skip, fnn.mod_name, false)

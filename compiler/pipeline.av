@@ -439,7 +439,7 @@ pub fn insert_call_parens(text: String, places: Array(Location), names: Array(St
     }
     j += 1
   }
-  seen: Hash(Int, Int) = Hash(Int, Int).new()
+  seen: Set(Int) = Set(Int).new()
   at: Array(Int) = []
   i = 0
   while i < places.size {
@@ -451,10 +451,9 @@ pub fn insert_call_parens(text: String, places: Array(Location), names: Array(St
       continue
     }
     o = starts[pl.line() - 1] + pl.column() - 1 + n.size
-    if seen.has_key(o) {
+    if !seen.add(o) {
       continue
     }
-    seen[o] = 1
     if o < n.size || o > text.size {
       out.missed += 1
       continue
