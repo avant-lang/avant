@@ -595,6 +595,23 @@ pub class Checker {
     }
   }
 
+  // Marks a bound name failed, as bind does after a failed statement:
+  // its readers add no message (a for loop's operand that cannot be
+  // walked, whose element reads would each say so again).
+  pub fn mark_failed(name: String) {
+    i = lookup_index(name)
+    if i < 0 {
+      return
+    }
+    if fs = self.scopes[i].failed {
+      fs[name] = 1
+    } else {
+      fs2 = Hash(String, Int).new()
+      fs2[name] = 1
+      self.scopes[i].failed = fs2
+    }
+  }
+
   // A name bound by a statement that failed (bind), in the scope that
   // binds it now.
   pub fn name_failed(name: String): Bool {
@@ -1118,6 +1135,7 @@ pub class Checker {
     if k == st_while() {
       has_pre = stmt.pre.size > 0
       saved_for = self.for_names.size
+      walk_problem = ""
       if has_pre {
         refuse_for_outer_name(stmt)
         self.push_scope()
@@ -1128,8 +1146,9 @@ pub class Checker {
           check_stmt(stmt.pre[pi], t_void(), false)
           if stmt.for_kind == 2 && pi == 0 {
             set_for_operand(stmt.pre[0])
+            walk_problem = for_walk_operand(stmt)
           }
-          if !self.has_err() {
+          if !self.has_err() && pi < stmt.pre.size {
             fact_after_stmt(stmt.pre[pi])
           }
           pi += 1
@@ -1147,9 +1166,13 @@ pub class Checker {
         if stmt.for_kind == 2 {
           // The array's own error, if it failed, is the loop's (the
           // cascade rule): the hidden name holds the failed value.
-          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_array(), !name_failed(pt.ident) {
-            fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show()}")
+          if walk_problem.size > 0 {
+            fail(stmt.loc, walk_problem)
+            if pt = stmt.pre[0].target {
+              mark_failed(pt.ident)
+            }
           }
+          note_for_position(stmt)
         }
       }
       saved_places = self.place_names.size
@@ -1320,12 +1343,27 @@ pub class Checker {
   pub fn check_if_assign(stmt: Stmt, expected: Ty, at_tail: Bool) {
     if cond = stmt.cond {
       got = check_expr(cond)
+      if stmt.for_kind == 7 && !(got.is_nilable() && ty_failures(got).size == 1) && !self.has_err() {
+        // A for loop's step over a type with next (checker/places.av).
+        // A step that can fail is the while form's, which reads it.
+        hint = ""
+        for m in ty_failures(got) {
+          if !m.is_nil() {
+            hint = ": a walk whose step can fail (${m.show()}) is written while v = it.${cond.callee}() { ... } else e { ... }, whose else reads the failure"
+            break
+          }
+        }
+        fail(stmt.loc, "for calls ${cond.callee} at each step: it must return T?, nil ending the loop, got ${got.show()}${hint}")
+      }
       success = if_assign_success(got, cond.loc)
       if stmt.loop_head && stmt.else_bind.size == 0 && !self.has_err() {
         loop_drops_error(got, cond.loc)
       }
       self.push_scope()
       bind(stmt.bind, success)
+      if stmt.for_kind == 7 {
+        note_for_var(stmt.bind, 11)
+      }
       check_body(stmt.then_body, expected, false)
       self.pop_scope()
       if stmt.else_bind.size > 0 {

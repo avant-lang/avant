@@ -766,7 +766,9 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     b.at(bt)
     lw.cov_branch(st.loc)
     v = lw.unwrap(src, uty, success, st.loc)
-    lw.bind_name(st.bind, success, sty, v, st.loc, false)
+    // A `for` loop's step over next (for_kind 7): a lambda that captures
+    // the variable keeps that iteration's value, as over an array.
+    lw.bind_name(st.bind, success, sty, v, st.loc, st.for_kind == 7)
     lw.lower_stmts(st.then_body)
     lw.goto_if_open(join, st.loc)
     if st.else_body.size > 0 || lw.lw_cov.on {

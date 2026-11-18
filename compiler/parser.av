@@ -94,6 +94,9 @@ pub class Parser {
   // The end of the inclusive range whose body for_advance walks ("" for
   // `..` and an array): its step stops after the last value.
   for_last: String = ""
+  // The step of the range whose body for_advance walks (`by k`; 1
+  // without one).
+  for_by: UInt64 = 1u64
   // The nesting bound: depth counts the blocks, expressions and type
   // names open on the parser's stack; peak is the deepest level the
   // expression being parsed reaches, which a chain built in a loop
@@ -2412,21 +2415,33 @@ pub class Parser {
   }
 
   pub fn for_inc(loc: Location, name: String): Stmt {
-    for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, 1u64)))
+    for_inc_by(loc, name, 1u64)
+  }
+
+  pub fn for_inc_by(loc: Location, name: String, by: UInt64): Stmt {
+    for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, by)))
   }
 
   // The step of a `for` loop to its next value: the counter's increment;
   // over an inclusive range (`a..=b`), a break after the last value
   // first, so a range that ends at the type's maximum never computes the
   // value after it (the increment would overflow and trap).
+  // With a step `by k` (k above 1), the break comes when fewer than k
+  // values are left before the end (`end - i < k`), which never
+  // overflows either: i is at most the end.
   pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
     if self.for_last.size > 0 {
       stop = Stmt.new(st_if(), loc)
-      stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
+      if self.for_by == 1u64 {
+        stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
+      } else {
+        left = for_binary(loc, tk_minus(), for_name_expr(loc, self.for_last), for_name_expr(loc, counter))
+        stop.cond = for_binary(loc, tk_less(), left, for_int_expr(loc, self.for_by))
+      }
       stop.then_body.push(Stmt.new(st_break(), loc))
       into.push(stop)
     }
-    inc = for_inc(loc, counter)
+    inc = for_inc_by(loc, counter, self.for_by)
     inc.step = true
     into.push(inc)
   }
@@ -2504,11 +2519,60 @@ pub class Parser {
     }
   }
 
+  // `by k` after a range: k a positive integer literal, the stride (the
+  // values a, a + k, a + 2k, ... inside the range).
+  pub fn parse_for_by: UInt64 {
+    by_tok = self.bump()
+    self.skip_newlines()
+    neg = false
+    if self.current().kind == tk_minus() {
+      neg = true
+      self.bump()
+    }
+    if self.current().kind != tk_integer() {
+      fail(self.current().loc, "for ... by takes a positive integer literal (by 2): the step is fixed when the loop is compiled; for a step computed at run time, use a while loop")
+      return 1u64
+    }
+    tok = self.bump()
+    ok = parse_int_tok(tok)
+    lit = Expr.new(ex_int(), tok.loc)
+    lit.int_bits = self.int_bits
+    lit.int_suffix = self.int_suffix
+    if !ok {
+      return 1u64
+    }
+    if neg {
+      fail(by_tok.loc, "for ... by -k: a step down is not supported; walk down with a while loop (i = n - 1, while i >= 0 { ...; i -= 1 })")
+      return 1u64
+    }
+    if lit.int_bits == 0u64 {
+      fail(lit.loc, "for ... by 0 would never move: the step is a positive integer")
+      return 1u64
+    }
+    if lit.int_bits > 9223372036854775807u64 || lit.int_suffix.size > 0 {
+      fail(lit.loc, "for ... by takes a positive Int literal")
+      return 1u64
+    }
+    lit.int_bits
+  }
+
   pub fn parse_for: Stmt {
     loc = expect(tk_for()).loc
     self.skip_newlines()
     var_tok = expect(tk_ident())
     self.skip_newlines()
+    // `for i, x in xs`: the position, then the element.
+    pos_name = ""
+    if self.current().kind == tk_comma() {
+      self.bump()
+      self.skip_newlines()
+      pos_name = var_tok.value
+      var_tok = expect(tk_ident())
+      self.skip_newlines()
+      if var_tok.value == pos_name {
+        fail(var_tok.loc, "for ${pos_name}, ${pos_name} in ...: the position and the element need two names")
+      }
+    }
     expect(tk_in())
     self.skip_newlines()
     // The array and the range's ends are read like a while or if
@@ -2527,6 +2591,14 @@ pub class Parser {
       self.skip_newlines()
       end_expr = self.parse_for_operand()
       self.skip_newlines()
+      if pos_name.size > 0 {
+        fail(loc, "for ${pos_name}, ${var_tok.value} in a range: a range's loop has one variable, its value (for ${var_tok.value} in ...)")
+      }
+      by = 1u64
+      if self.current().kind == tk_ident() && self.current().value == "by" {
+        by = self.parse_for_by()
+        self.skip_newlines()
+      }
       raw_body = self.parse_block()
       end_name = "__for${id}_end"
       s = Stmt.new(st_while(), loc)
@@ -2540,15 +2612,25 @@ pub class Parser {
         self.for_last = end_name
       }
       s.cond = for_binary(loc, op, for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
+      self.for_by = by
       s.body = for_advance(raw_body, var_tok.value, loc)
       for_step(loc, var_tok.value, s.body)
       self.for_last = ""
+      self.for_by = 1u64
       return s
+    }
+    if self.current().kind == tk_ident() && self.current().value == "by" {
+      fail(self.current().loc, "for ... by takes a range (for i in a..b by 2); to visit every k-th element, walk the positions: for i in 0..xs.size by k")
+      self.bump()
     }
     raw_body2 = self.parse_block()
     self.for_last = ""
     xs_name = "__for${id}_xs"
     idx_name = "__for${id}_i"
+    if pos_name.size > 0 {
+      // The position is the loop's own counter, under the program's name.
+      idx_name = pos_name
+    }
     s2 = Stmt.new(st_while(), loc)
     s2.for_kind = 2
     s2.pre.push(for_assign(loc, xs_name, first))
@@ -2569,7 +2651,13 @@ pub class Parser {
       s2.body.push(adv[bi])
       bi += 1
     }
-    s2.body.push(for_inc(loc, idx_name))
+    if pos_name.size > 0 {
+      // A step, as a range's: a lambda that captures the position keeps
+      // that iteration's value.
+      for_step(loc, idx_name, s2.body)
+    } else {
+      s2.body.push(for_inc(loc, idx_name))
+    }
     s2
   }
 
