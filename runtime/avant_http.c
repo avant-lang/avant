@@ -583,13 +583,12 @@ typedef struct Conn {
    * while it waits (its Content-Length), 0 when none. */
   int64_t budget;
   /* Pipelined answers gathered for one write (conn_process): while
-   * corking is set, conn_send appends to cork instead of writing, and
-   * the batch goes out in one write when the requests in the buffer are
-   * answered. cork_len is 0 outside conn_process. */
+   * corking is set, conn_send appends to the loop thread's batch buffer
+   * (t_cork) instead of writing, and the batch goes out in one write
+   * when the requests in the buffer are answered. cork_len is this
+   * connection's bytes in it, 0 outside conn_process. */
   int corking;
-  char *cork;
   size_t cork_len;
-  size_t cork_cap;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -1003,6 +1002,25 @@ conn_send_raw(Conn *conn, struct us_socket_t *s, const char *a, size_t an,
  * a large answer goes out by itself rather than be copied. */
 #define HTTP_CORK_MAX 65536
 
+/* The batch buffer, one per loop thread: a connection's answers are
+ * gathered and written within its conn_process, which no other
+ * connection's processing interrupts on that thread, so the loop's
+ * connections share it (one per connection held about 4 KiB each for the
+ * connection's life: 3.5 MB more at 900 pipelining connections).
+ * t_cork_owner is the connection whose bytes are in it. */
+static __thread char *t_cork;
+static __thread size_t t_cork_cap;
+static __thread Conn *t_cork_owner;
+
+/* A loop thread's batch buffer is given back when its loop ends. */
+static void cork_release(void) {
+  free(t_cork);
+  t_cork = NULL;
+  t_cork_cap = 0;
+  t_cork_owner = NULL;
+}
+
+
 /* Writes the gathered answers, in one write (conn_send_raw queues what
  * the socket does not take). */
 static __attribute__((noinline)) void conn_uncork(Conn *conn, struct us_socket_t *s) {
@@ -1011,27 +1029,36 @@ static __attribute__((noinline)) void conn_uncork(Conn *conn, struct us_socket_t
     return;
   }
   conn->cork_len = 0;
-  conn_send_raw(conn, s, conn->cork, n, NULL, 0);
+  conn_send_raw(conn, s, t_cork, n, NULL, 0);
 }
 
-/* Appends n bytes to the batch; 0 when it would pass HTTP_CORK_MAX or
- * memory ran out. */
+/* Appends n bytes to the batch; 0 when it would pass HTTP_CORK_MAX,
+ * memory ran out, or another connection's batch is in the buffer (not
+ * expected: the answer is then written alone). */
 static int cork_append(Conn *conn, const char *p, size_t n) {
-  if (conn->cork_len + n > conn->cork_cap) {
-    size_t want = conn->cork_cap ? conn->cork_cap : 4096;
+  if (conn->cork_len == 0) {
+    if (t_cork_owner && t_cork_owner != conn && t_cork_owner->cork_len) {
+      return 0;
+    }
+    t_cork_owner = conn;
+  } else if (t_cork_owner != conn) {
+    return 0;
+  }
+  if (conn->cork_len + n > t_cork_cap) {
+    size_t want = t_cork_cap ? t_cork_cap : 4096;
     char *next;
     while (want < conn->cork_len + n) {
       want *= 2;
     }
-    next = (char *)realloc(conn->cork, want);
+    next = (char *)realloc(t_cork, want);
     if (!next) {
       return 0;
     }
-    conn->cork = next;
-    conn->cork_cap = want;
+    t_cork = next;
+    t_cork_cap = want;
   }
   if (n > 0) {
-    memcpy(conn->cork + conn->cork_len, p, n);
+    memcpy(t_cork + conn->cork_len, p, n);
   }
   conn->cork_len += n;
   return 1;
@@ -3163,11 +3190,11 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
   node->conn.out_len = 0;
   node->conn.out_off = 0;
   node->conn.out_cap = 0;
-  free(node->conn.cork);
-  node->conn.cork = NULL;
   node->conn.cork_len = 0;
-  node->conn.cork_cap = 0;
   node->conn.corking = 0;
+  if (t_cork_owner == &node->conn) {
+    t_cork_owner = NULL;
+  }
   if (hl) {
     link = &hl->conns_head;
     while (*link && *link != node) {
@@ -3709,6 +3736,7 @@ static void *loop_thread_main(void *arg) {
   loop_run_native(hl->loop);
   avant_gc_leave();
   avant_gc_unregister_thread();
+  cork_release();
   return NULL;
 }
 
@@ -3776,6 +3804,7 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb,
     }
   }
   loop_run_native(srv->loops[0].loop);
+  cork_release();
   avant_gc_native_begin();
   for (i = 1; i < srv->nloops; i++) {
     if (srv->loops[i].spawned) {
