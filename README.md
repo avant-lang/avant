@@ -3805,6 +3805,7 @@ Every `path` is a `String`.
 | `file_open(path)` | `path` | `FileReader \| IoError`: the file, to read line by line | an `IoError` | `file_open` never holds the whole file |
 | `r.read_line()` | — | `String \| IoError \| Nil` | as [`read_line`](#input) | a `FileReader`'s `r.read_line()` is [`read_line`](#input) on its file |
 | `r.close()` | — | — | — | closes the file; it also closes at the end, or on an error; a reader dropped earlier keeps it open until the program ends |
+| `r.scoped((f) { ... })` | a lambda taking the reader | — | — | runs the lambda with the reader, then closes the file, however much the lambda read: the way to stop early without keeping the descriptor (the collector closes nothing) |
 | `file_size(path)` | `path` | `Int \| IoError`: its size in bytes | an `IoError` | |
 | `file_delete(path)` | `path` | `Void \| IoError`: nothing when the file is removed | an `IoError`; a directory is an error | |
 | `file_exists(path)` | `path` | `Bool`: a file or a directory is there | — | |
