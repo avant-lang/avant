@@ -75,6 +75,9 @@ t0=$(now)
 e=$(sh "$here/base-cache.sh" "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache failed (run.log)" >&2; exit 1; }
 lap=$(sh "$here/base-cache.sh" --la "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache's LangArena part failed (run.log)" >&2; exit 1; }
 echo "base cache: $e, $lap ($(secs "$t0" "$(now)") s, $(grep -c 'built ' "$log") built)" >> "$out/cache.txt"
+# The entry's lock held shared while it is read: tools/base-cache.sh
+# --prune removes no entry a run holds.
+exec 7>> "$e.lock" && flock -s 7
 cp "$e/ll.tsv" "$out/state/corpus.tsv"
 cp "$lap/ll.tsv" "$out/state/la.tsv"
 cp "$lap/ins.tsv" "$out/state/ins.tsv"

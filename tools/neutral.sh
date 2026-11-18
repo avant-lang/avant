@@ -119,6 +119,9 @@ if [ $cached = 1 ]; then
   # tree is its key, so any revision with that tree names it).
   lap=$(BASE_CACHE=$(dirname "$BW") sh "$here/base-cache.sh" --la "$(basename "$BW")" < /dev/null) \
     || { echo "neutral.sh: no LangArena part for $BW (tools/base-cache.sh --la failed)" >&2; exit 2; }
+  # The entry's lock held shared while it is read: tools/base-cache.sh
+  # --prune removes no entry a run holds.
+  exec 7>> "$BW.lock" && flock -s 7
 fi
 mkdir -p "$OUT/a" "$OUT/b"
 export BW NW OUT LA

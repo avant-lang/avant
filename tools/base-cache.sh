@@ -4,6 +4,9 @@
 #
 #   sh tools/base-cache.sh REV        the entry's directory on stdout
 #   sh tools/base-cache.sh --la REV   its LangArena part's directory
+#   sh tools/base-cache.sh --prune DAYS [--dry-run]
+#                                     remove the entries unread for DAYS
+#                                     days (below), the space freed said
 #
 # REV is any revision of this repository (a branch, a commit); the entry
 # is keyed by its tree id, so two commits with the same tree share one,
@@ -69,13 +72,17 @@
 set -u
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
-la=0
-[ "${1:-}" = --la ] && { la=1; shift; }
-[ $# -eq 1 ] || usage
+la=0 prune="" dry=0
+case "${1:-}" in
+  --la) la=1; shift ;;
+  --prune) prune=${2:-}; shift 2 2>/dev/null || usage
+    [ "${1:-}" = --dry-run ] && { dry=1; shift; }
+    echo "$prune" | grep -Eq '^([0-9]+\.?[0-9]*|\.[0-9]+)$' && awk -v d="$prune" 'BEGIN { exit !(d > 0) }' \
+      || { echo "base-cache.sh: --prune DAYS: DAYS is a number of days above 0" >&2; exit 2; } ;;
+esac
+if [ -n "$prune" ]; then [ $# -eq 0 ] || usage; else [ $# -eq 1 ] || usage; fi
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/.." && pwd -P)
-rev=$1
-tree=$(git -C "$root" rev-parse --verify -q "$rev^{tree}") || { echo "base-cache.sh: $rev: no such revision in $root" >&2; exit 2; }
 
 cache=${BASE_CACHE:-}
 if [ -z "$cache" ]; then
@@ -85,6 +92,50 @@ fi
 [ -n "$cache" ] || cache=${HOME:-/nonexistent}/.cache/avant/base-cache
 mkdir -p "$cache" || exit 2
 cache=$(realpath "$cache")
+
+# --prune DAYS: remove the entries unread for DAYS days. An entry's last
+# read is its stamp ENTRY.read (touched by every call that returns it or
+# its LangArena part), else its newest COMPLETE or MANIFEST (an entry from
+# before the stamps). Each is removed under its lock held exclusively and
+# only when no process holds it: a run reading an entry holds ENTRY.lock
+# shared (tools/neutral.sh, change-check.sh and wave-final.sh do, for as
+# long as they read it), and a build holds it exclusively, so neither is
+# ever broken; such an entry reads "in use" and is kept. The lock files
+# stay (0 bytes): removing one another caller has open would let two
+# builds of one tree run at once. --dry-run lists what would go.
+if [ -n "$prune" ]; then
+  now_s=$(date +%s)
+  limit=$(awk -v n="$now_s" -v d="$prune" 'BEGIN { printf "%d", n - d * 86400 }')
+  last_read() { # ENTRY: the epoch second it was last read
+    for x in "$1.read" "$1/COMPLETE" "$1"/la-*/COMPLETE "$1/MANIFEST" "$1"; do [ -e "$x" ] && stat -c %Y "$x"; done | sort -n | tail -n 1
+  }
+  freed=0 nrm=0 nkept=0 nuse=0
+  for d in "$cache"/*; do
+    [ -d "$d" ] || continue
+    t=$(basename "$d")
+    echo "$t" | grep -Eq '^[0-9a-f]{40}$' || continue
+    r=$(last_read "$d")
+    when=$(date -u -d "@$r" +%Y-%m-%dT%H:%M:%SZ)
+    if [ "$r" -ge "$limit" ]; then nkept=$((nkept + 1)); echo "kept $t: read $when, within $prune days"; continue; fi
+    exec 9>> "$d.lock" || exit 1
+    if ! flock -x -n 9; then nuse=$((nuse + 1)); echo "kept $t: in use (its lock is held: a run reads it or a build writes it)"; exec 9>&-; continue; fi
+    # Read again under the lock: a call may have stamped it meanwhile.
+    r=$(last_read "$d")
+    if [ "$r" -ge "$limit" ]; then nkept=$((nkept + 1)); echo "kept $t: read $(date -u -d "@$r" +%Y-%m-%dT%H:%M:%SZ), within $prune days"; exec 9>&-; continue; fi
+    kb=$(du -sk "$d" | cut -f1); mb=$(awk -v k="$kb" 'BEGIN { printf "%.1f", k / 1024 }')
+    if [ $dry = 1 ]; then echo "would remove $t: last read $when, $mb MB"
+    else rm -rf "$d" "$d.read"; echo "removed $t: last read $when, $mb MB"; fi
+    exec 9>&-
+    freed=$((freed + kb)); nrm=$((nrm + 1))
+  done
+  freed=$(awk -v k="$freed" 'BEGIN { printf "%.1f", k / 1024 }')
+  if [ $dry = 1 ]; then echo "base-cache.sh: --prune $prune --dry-run: would remove $nrm entries, $freed MB; kept $nkept read within $prune days, $nuse in use"
+  else echo "base-cache.sh: --prune $prune: removed $nrm entries, $freed MB freed; kept $nkept read within $prune days, $nuse in use"; fi
+  exit 0
+fi
+
+rev=$1
+tree=$(git -C "$root" rev-parse --verify -q "$rev^{tree}") || { echo "base-cache.sh: $rev: no such revision in $root" >&2; exit 2; }
 e=$cache/$tree
 
 now() { date +%s.%N; }
@@ -220,7 +271,18 @@ ensure() {
   exec 9>&-
 }
 
-ensure "$e" build_entry
+# The entry complete, then its read stamp touched under its lock held
+# shared, so a --prune holding it exclusively never removes an entry this
+# call returns (an entry pruned between the two is built again).
+for i in 1 2 3; do
+  ensure "$e" build_entry
+  exec 8>> "$e.lock" || exit 1
+  flock -s 8 || exit 1
+  if [ -f "$e/COMPLETE" ]; then touch "$e.read"; break; fi
+  exec 8>&-
+done
+[ -f "$e/COMPLETE" ] || { echo "base-cache.sh: $e removed while it was asked for, three times" >&2; exit 1; }
+exec 8>&-
 if [ $la -eq 0 ]; then echo "$e"; exit 0; fi
 d=$(la_digest) || exit 2
 ensure "$e/la-$d" build_la

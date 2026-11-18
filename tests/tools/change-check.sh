@@ -44,7 +44,14 @@
 #     the part is complete with refused.txt (how many, the first message),
 #     tools/neutral.sh reads the tasks `not-comparable` with a summary line
 #     saying so and status 0, the sources still judged; change-check reads
-#     their counts as new, not as a failure.
+#     their counts as new, not as a failure;
+#   prune-dry-run, prune-removes-unread, prune-keeps-read, prune-keeps-in-use,
+#     prune-after-reader, prune-days-checked, cache-read-stamp: --prune DAYS
+#     on a stub cache: --dry-run lists and removes nothing; an entry unread
+#     for longer is removed, its lock file kept, the space said; one read
+#     within DAYS (its COMPLETE, or its read stamp) is kept; one whose lock
+#     a reader holds shared is kept "in use", and removed once the reader
+#     is gone; DAYS must be above 0; a call returning an entry stamps it.
 # Where `perf stat -e instructions:u` cannot count (a container without
 # the counters), the LangArena part and change-check cannot be built: their
 # checks print `skip: NAME: why`. Prints one line per check, `ok: NAME`,
@@ -176,6 +183,44 @@ sh "$r/tools/ll-digests.sh" "$e2/avant" "$w/list.txt" "$w/d1.tsv" < /dev/null
 sh "$r/tools/ll-digests.sh" "$r" "$w/list.txt" "$w/d2.tsv" < /dev/null
 cmp -s "$w/d1.tsv" "$w/d2.tsv" && [ "$(wc -l < "$w/d1.tsv")" = 6 ] && ! grep -q "$r" "$w/d2.tsv"
 say digests-normalized $? "$(diff "$w/d1.tsv" "$w/d2.tsv" | head -n 4 | tr '\n' ';')"
+
+# 3b. --prune: a stub cache of four entries, by their last read.
+pc=$w/pcache
+mk() { # HEX AGE: an entry read AGE ago (a date for touch -d)
+  mkdir -p "$pc/$1/avant" && echo "tree: $1" > "$pc/$1/MANIFEST" && : > "$pc/$1/COMPLETE"
+  head -c 2097152 /dev/zero > "$pc/$1/avant/blob"
+  touch -d "$2" "$pc/$1/MANIFEST" "$pc/$1/COMPLETE" "$pc/$1"
+}
+old_e=1111111111111111111111111111111111111111 new_e=2222222222222222222222222222222222222222
+use_e=3333333333333333333333333333333333333333 stamp_e=4444444444444444444444444444444444444444
+mk $old_e '10 days ago'; mk $new_e '1 day ago'; mk $use_e '10 days ago'; mk $stamp_e '10 days ago'
+touch "$pc/$stamp_e.read"
+# a reader of the third entry: its lock held shared, as tools/neutral.sh does
+mkdir -p "$w/holder"
+(exec 7>> "$pc/$use_e.lock"; flock -s 7; : > "$w/holder/up"; while [ ! -e "$w/holder/done" ]; do sleep 0.1; done) &
+hp=$!
+while [ ! -e "$w/holder/up" ]; do sleep 0.05; done
+BASE_CACHE=$pc sh "$r/tools/base-cache.sh" --prune 5 --dry-run < /dev/null > "$w/prune-dry.out" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -d "$pc/$old_e" ] && grep -q "^would remove $old_e: last read .*, 2.0 MB\$" "$w/prune-dry.out" \
+  && grep -q 'would remove 1 entries, 2.0 MB; kept 2 read within 5 days, 1 in use$' "$w/prune-dry.out"
+say prune-dry-run $? "rc=$rc $(tr '\n' ';' < "$w/prune-dry.out")"
+BASE_CACHE=$pc sh "$r/tools/base-cache.sh" --prune 5 < /dev/null > "$w/prune.out" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ ! -e "$pc/$old_e" ] && [ -f "$pc/$old_e.lock" ] && grep -q "^removed $old_e: last read .*, 2.0 MB\$" "$w/prune.out" \
+  && grep -q 'removed 1 entries, 2.0 MB freed; kept 2 read within 5 days, 1 in use$' "$w/prune.out"
+say prune-removes-unread $? "rc=$rc $(tr '\n' ';' < "$w/prune.out")"
+[ -f "$pc/$new_e/COMPLETE" ] && [ -f "$pc/$stamp_e/COMPLETE" ] && grep -q "^kept $stamp_e: read .*, within 5 days\$" "$w/prune.out"
+say prune-keeps-read $? "$(ls "$pc" | tr '\n' ' ')"
+[ -f "$pc/$use_e/avant/blob" ] && grep -q "^kept $use_e: in use" "$w/prune.out"
+say prune-keeps-in-use $? "$(grep "$use_e" "$w/prune.out")"
+: > "$w/holder/done"; wait $hp
+BASE_CACHE=$pc sh "$r/tools/base-cache.sh" --prune 5 < /dev/null > "$w/prune2.out" 2>&1
+[ ! -e "$pc/$use_e" ] && grep -q "^removed $use_e" "$w/prune2.out"
+say prune-after-reader $? "$(tr '\n' ';' < "$w/prune2.out")"
+BASE_CACHE=$pc sh "$r/tools/base-cache.sh" --prune 0 < /dev/null > /dev/null 2>&1; rc=$?
+[ $rc -eq 2 ]; say prune-days-checked $? "status $rc for --prune 0"
+# every call that returns an entry stamps it
+[ -f "$e.read" ] && [ "$(stat -c %Y "$e.read")" -ge "$(stat -c %Y "$e/COMPLETE")" ]
+say cache-read-stamp $? "$(ls -l "$e.read" 2>&1)"
 
 perf_ok=0
 perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -q '^[0-9]' "$w/perf.txt" && perf_ok=1
