@@ -674,6 +674,31 @@ def handler_trap(port_file):
     return ",".join(out)
 
 
+def later():
+    # Requests answered later (req.reply, Response.later): pipelined
+    # behind a slow one, a fast one waits, so answers keep their order;
+    # an answer the handler sends itself before returning later; one
+    # that never comes is answered 503 at the reply timeout; later
+    # without a reply is the handler's trap (500); a request that closes
+    # is answered later and closed. The connection goes on after each.
+    s = connect()
+    s.settimeout(5)
+    s.sendall(get("/slow?who=a") + get("/fast") + get("/slow?who=b") + get("/inline"))
+    got = read_answers(s, 4)
+    out = ["%d %s" % (st, body.decode("latin1")) for st, body in got]
+    t0 = time.time()
+    s.sendall(get("/expire"))
+    got = read_answers(s, 1)
+    waited = time.time() - t0
+    out += ["%d %s %s" % (st, body.decode("latin1"), "in time" if 0.25 <= waited < 2.5 else "after %.2f s" % waited) for st, body in got]
+    s.sendall(get("/bare-later") + get("/fast"))
+    out += ["%d %s" % (st, body.decode("latin1")) for st, body in read_answers(s, 2)]
+    s.close()
+    status, data, closed = exchange(get("/slow?who=c", "Connection: close\r\n"))
+    out.append("%d %s %s" % (status, data.split(b"\r\n\r\n", 1)[-1].decode("latin1"), "closed" if closed else "open"))
+    return "|".join(out)
+
+
 def callback_trap(port_file):
     # A trap in a C callback the handler made ends the program: the
     # request is never answered.
@@ -1054,6 +1079,8 @@ try:
         result = emfile(arg)
     elif mode == "ws_cut":
         result = ws_cut(arg)
+    elif mode == "later":
+        result = later()
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:

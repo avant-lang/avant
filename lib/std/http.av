@@ -16,12 +16,18 @@ lib httpc {
   fun avant_http_param_has(data: Bytes, name: String): Int
   fun avant_http_param_at(data: Bytes, name: String, index: Int): String
   fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
+  fun avant_http_req_seq(req: Ptr(Void)): Int
+  fun avant_http_req_reply(seq: Int): Int
+  fun avant_http_req_later(req: Ptr(Void))
+  fun avant_http_reply_send(id: Int, status: Int, ctype: String, head: String, body: Bytes): Int
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void)), timer_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_add_timer(srv: Ptr(Void), ms: Int): Int
   fun avant_http_timer_index(ev: Ptr(Void)): Int
   fun avant_http_close(srv: Ptr(Void)): Int
+  fun avant_http_closer_id(srv: Ptr(Void)): Int
+  fun avant_http_close_by_id(id: Int): Int
   fun avant_http_route_while_serving(what: String)
   fun avant_http_limit_while_serving(name: String)
   fun avant_http_trap(message: String)
@@ -231,6 +237,7 @@ pub struct Request {
   raw_query: String?
   hs: Headers
   data: Bytes
+  seq: Int
 
   pub fn query: String? {
     self.raw_query
@@ -275,6 +282,15 @@ pub struct Request {
     httpc.avant_http_headers_peer(self.hs.data)
   }
 
+  // The reply of this request, for answering it later: the handler
+  // hands it to a task and returns Response.later(); the task sends the
+  // answer through it (HttpReply.send), from any thread. Called by the
+  // request's own handler while it runs (anywhere else it traps); a
+  // second call gives the same reply.
+  pub fn reply: HttpReply {
+    HttpReply { id: httpc.avant_http_req_reply(self.seq) }
+  }
+
   // A request built in memory, as the server would hand it to a handler:
   // for a framework's or a program's tests, which call a handler or a
   // router with it. `target` is the path with an optional query (`/a?b`);
@@ -288,7 +304,7 @@ pub struct Request {
       block.push_str("${h.name}: ${h.value}\r\n")
     }
     parts = split_target(target)
-    Request { method: method, path: parts.path, raw_query: parts.query, hs: headers_of(block.to_s()), data: body }
+    Request { method: method, path: parts.path, raw_query: parts.query, hs: headers_of(block.to_s()), data: body, seq: 0 }
   }
 }
 
@@ -312,6 +328,7 @@ pub struct Response {
   ctype: String
   head: String
   pub body: Bytes
+  deferred: Bool
 
   // The response's headers: those received, or those a built response
   // will send (its Content-Type first).
@@ -331,11 +348,20 @@ pub struct Response {
   }
 
   pub fn self.text(body: String, status: Int = 200): Response {
-    Response { status: status, hs: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes }
+    Response { status: status, hs: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes, deferred: false }
   }
 
   pub fn self.bytes(body: Bytes, status: Int = 200): Response {
-    Response { status: status, hs: empty_headers(), ctype: "application/octet-stream", head: "", body: body }
+    Response { status: status, hs: empty_headers(), ctype: "application/octet-stream", head: "", body: body, deferred: false }
+  }
+
+  // What a handler returns when it answers later: it took the request's
+  // reply (req.reply()) and handed it to a task, which sends the answer.
+  // Pipelined requests behind it wait, so answers keep their order; an
+  // answer that does not come within the server's reply_timeout is
+  // answered 503 by the server.
+  pub fn self.later: Response {
+    Response { status: 0, hs: empty_headers(), ctype: "", head: "", body: "".bytes, deferred: true }
   }
 
   // A name that is not a token, or a value with a control character
@@ -349,9 +375,9 @@ pub struct Response {
       return self
     }
     if name.eq_ignore_ascii_case("content-type") {
-      return Response { status: self.status, hs: self.hs, ctype: value, head: self.head, body: self.body }
+      return Response { status: self.status, hs: self.hs, ctype: value, head: self.head, body: self.body, deferred: false }
     }
-    Response { status: self.status, hs: self.hs, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body }
+    Response { status: self.status, hs: self.hs, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body, deferred: false }
   }
 }
 
@@ -689,7 +715,8 @@ fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
     path: path,
     raw_query: query,
     hs: Headers { data: raw_headers },
-    data: req_body
+    data: req_body,
+    seq: httpc.avant_http_req_seq(raw)
   }
 }
 
@@ -740,9 +767,15 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
     path: path,
     raw_query: query,
     hs: Headers { data: raw_headers },
-    data: req_body
+    data: req_body,
+    seq: httpc.avant_http_req_seq(raw)
   }
   resp = state.dispatch(req)
+  if resp.deferred {
+    // Answered later, through the reply a task holds.
+    httpc.avant_http_req_later(raw)
+    return
+  }
   // The response head and body travel into C as raw heap pointers; the
   // respond entry is no safepoint, so no thread collects while it writes
   // (until the handshake a defer region here and a second one in the
@@ -793,6 +826,46 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
       if rc.path == path {
         (rc.handler)(conn, code, reason)
       }
+    }
+  }
+}
+
+// Why a reply's answer was not sent: the reply has nothing left to
+// answer, since its request was answered already (a send before, or
+// the server's 503 at its reply_timeout) or its connection closed.
+pub enum ReplyError: Error {
+  gone
+
+  fn message: String {
+    "the request was answered already or its connection closed"
+  }
+}
+
+// The reply of a request answered later (Request.reply): a number, so
+// it crosses to any task, as WsSender does. `send` gives the answer, once;
+// it is written by the connection's loop, in order with the requests
+// pipelined behind it.
+pub struct HttpReply {
+  id: Int
+
+  pub fn send(resp: Response): Void | ReplyError {
+    if resp.deferred {
+      httpc.avant_http_trap("http.HttpReply.send(Response.later()): a reply sends the final answer")
+    }
+    if httpc.avant_http_reply_send(self.id, resp.status, resp.ctype, resp.head, resp.body) == 0 {
+      return ReplyError.gone
+    }
+  }
+}
+
+// Stops a server from any task (Server.closer). Closing a server that
+// stopped already, or through a second copy, does nothing.
+pub struct ServerCloser {
+  id: Int
+
+  pub fn close {
+    if self.id != 0 {
+      _ = httpc.avant_http_close_by_id(self.id)
     }
   }
 }
@@ -984,6 +1057,13 @@ pub struct Server {
     self.set_limit("shutdown_timeout", 6, ms, 0)
   }
 
+  // How long a request answered later (Request.reply, Response.later)
+  // may wait for its answer before the server answers it 503 (30000 ms
+  // by default; read about once a second).
+  pub fn reply_timeout(ms: Int): Server {
+    self.set_limit("reply_timeout", 9, ms, 0)
+  }
+
   fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
     if self.state.serving {
       httpc.avant_http_limit_while_serving(name)
@@ -1006,11 +1086,31 @@ pub struct Server {
       return
     }
     self.state.serving = true
+    served = 0
     pin(self.state) {
-      httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch, timer_dispatch)
+      served = httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch, timer_dispatch)
     }
     self.state.serving = false
+    if served == 2 {
+      // A closer stopped it before it served: nothing ran, release it.
+      _ = httpc.avant_http_close(self.handle)
+    }
+    // The C record is gone now (serve released it): a later close must
+    // not reach it.
+    self.state.closed = true
     self.state.run_close_hooks()
+  }
+
+  // A closer: a value that may cross to any task (a number, as WsSender
+  // is) whose `close()` stops this server as `close` does. A task that
+  // waits for a signal, a deadline or a message on a channel stops the
+  // server through it; `spawn { server.close() }` is refused, since a
+  // Server holds the routes' state.
+  pub fn closer: ServerCloser {
+    if self.state.closed {
+      return ServerCloser { id: 0 }
+    }
+    ServerCloser { id: httpc.avant_http_closer_id(self.handle) }
   }
 
   // Stops the server: wakes the loop, closes the listen socket and
@@ -1391,7 +1491,8 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       hs: Headers { data: resp_headers },
       ctype: "",
       head: "",
-      body: resp_body
+      body: resp_body,
+      deferred: false
     }
   }
   HttpError.new("invalid URL: ${url}")

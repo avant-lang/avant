@@ -3,11 +3,13 @@ import std.sync
 
 // Server.every and Server.on_close. A timer every 20 ms counts its
 // runs, traps on its third and panics on its fourth: each is printed
-// and the server goes on, so the timer runs again. A task closes the server after 400 ms;
-// the two close hooks run then, in their order, on the thread that
-// called serve, after the loops stopped and before serve returns. A
-// server closed without serving runs its hooks in close. The run
-// goldens run it as it is.
+// and the server goes on, so the timer runs again. A task closes the
+// server after 400 ms, through its closer; the two close hooks run
+// then, in their order, on the thread that called serve, after the
+// loops stopped and before serve returns. A server closed without
+// serving runs its hooks in close, and one its closer stopped before it
+// served runs them in serve, which returns at once. The run goldens run
+// it as it is.
 
 lib c {
   fun usleep(micros: UInt32): Int32
@@ -49,15 +51,12 @@ fn main: Int {
     server.on_close(() {
       puts("hook 2")
     })
-    server.get("/__stop", (req) {
-      server.close()
-      http.Response.text("bye")
-    })
-    port = server.port()
+    // The task stops the server through its closer, which crosses to
+    // a task where the Server cannot.
+    closer = server.closer()
     stopper = spawn {
       sleep_ms(400)
-      url = "http://127.0.0.1:${port}/__stop"
-      _ = http.get(url)
+      closer.close()
     }
     server.serve()
     puts("served")
@@ -70,6 +69,16 @@ fn main: Int {
     quiet.close()
     quiet.close()
     quiet.serve()
+  }
+  if early = http.listen(0) {
+    early.on_close(() {
+      puts("stopped by its closer before serving")
+    })
+    closer = early.closer()
+    closer.close()
+    early.serve()
+    closer.close()
+    early.close()
   }
   0
 }

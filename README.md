@@ -4669,6 +4669,7 @@ fn main {
 | `http.Request.build(method, target, headers = [], body = "".bytes)` | `method`, `target: String` (a path with an optional `?query`), `headers: Array(Header)`, `body: Bytes` | a `Request`, as a handler would get it, with no peer (`""`) | a header that `.header` would refuse traps | **a request in memory**, for tests that call a handler or a framework's router with it |
 | `serve` | — | — | — | runs until `close` |
 | `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
+| `server.closer()` | — | a `ServerCloser` | — | **stopping from a task**: a value that crosses to any task (a number, as a WebSocket sender is), whose `close()` stops the server as `close` does; `spawn { server.close() }` is refused, since a `Server` holds its routes' state. A closer used before `serve` makes `serve` return at once (its `on_close` hooks run); one used after it returned does nothing |
 
 **Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed:
 
@@ -4707,10 +4708,42 @@ fn main {
 ```
 
 - **Connections** are kept alive; pipelined requests are answered in order, and the answers to the requests one read brought are written together, in one system call (up to 64 KiB of them; a larger answer goes by itself, in order). One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port. When the process runs out of file descriptors (or the system of memory for sockets), new connections wait in the kernel's backlog and accepting them is tried again at most once a second, instead of spinning a core.
-- **Handlers must not block the loop**: hand slow work to `spawn`.
+- **Handlers must not block the loop**: hand slow work to `spawn`, and answer from there through the request's reply (below).
 - **What a handler captures is checked as a task's** ([What may cross a task](#what-may-cross-a-task)), since every loop thread runs the same handlers at once (the fallback, `every` and `on_close` too): a number, `Bool`, `String`, `Bytes`, enum, struct of those, `Channel`, `Mutex` or the `Server` itself may be captured, and an `Array` or `Hash` of those; a class or a function value may not (keep what handlers change in a `Mutex`), the handler cannot assign a captured variable, and a captured `Array` or `Hash` is frozen from the handler's registration on (a change through its name is a compile error, through any other path a trap that fails the request). A handler is a lambda written at the call or a named function; a function value from a variable is refused, since what it captures was not checked.
 - **An idle HTTP connection is closed** after its `idle_timeout` with no bytes in or out (a request in parts has the limits above too). A WebSocket connection silent for its `websocket_idle_timeout` is pinged, and closed when it stays silent as long again, so a peer gone without a FIN or a reset is noticed.
 - **A trap in a handler fails its request, not the server**: it is printed to standard error when it happens (`avant runtime: index 7 out of bounds …`), the handler's stack is dropped without unwinding, and the request is answered 500 (the connection kept or closed as any answer's would be); the next request is served. A trap in a WebSocket handler closes that connection with 1011. What the handler held is given back as for a [task that traps](#when-a-task-traps): a `Mutex` it held in `with` is poisoned, its `pin` blocks and `gc.hold`s end. A trap inside a C callback the handler made, and the runtime's own stops, still end the program.
+
+**Answering later.** A handler whose answer needs slow work (a client request, a query, a child process) takes the request's reply, hands it to a task and returns `http.Response.later()`; the task sends the answer, from any thread:
+
+<!-- check: compile -->
+```avant
+import std.http
+
+fn main {
+  if server = http.listen(8080) {
+    server.get("/report", (req) {
+      reply = req.reply()
+      _ = spawn {
+        switch http.get("http://127.0.0.1:9090/data") {
+          case answer: http.Response { _ = reply.send(http.Response.text("report: ${answer.body_text() ?? ""}")) }
+          case e: http.HttpError { _ = reply.send(http.Response.text("upstream: ${e}", 502)) }
+        }
+      }
+      http.Response.later()
+    })
+    server.serve()
+  }
+}
+```
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `req.reply()` | — | an `HttpReply` | called outside the request's own handler while it runs (a request built in memory, one kept past its handler), or for a WebSocket upgrade's request, traps | a number, so it crosses to any task (as `conn.sender()` does); a second call gives the same reply |
+| `http.Response.later()` | — | a `Response` | returned by a handler that took no reply, traps (the request is answered 500) | the handler's answer comes through its reply |
+| `reply.send(resp)` | a `Response` | `Void \| ReplyError` | `ReplyError.gone` when the request was answered already (a send before, or the server's 503) or its connection closed | written by the connection's loop; a status outside 200 to 599 traps, as in a handler |
+| `server.reply_timeout(ms)` | `ms: Int` | the `Server` | as the other limits | how long a request answered later waits for its answer before the server answers it 503 (30000 ms by default) |
+
+Requests pipelined behind one answered later wait for it, so answers keep their order; the connection's idle timeout is off while it waits. A reply kept after its answer, after its connection closed or after `serve` returned answers `ReplyError.gone` and touches nothing else.
 
 #### HTTP client
 

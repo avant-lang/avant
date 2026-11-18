@@ -624,6 +624,11 @@ typedef struct Conn {
    * connection's bytes in it, 0 outside conn_process. */
   int corking;
   size_t cork_len;
+  /* The request being answered later (req.reply and Response.later):
+   * while set the connection takes no further request (pipelined ones
+   * wait in the buffer, answers stay in order) and its idle timeout is
+   * off; the answer comes from a task through reply_deliver. */
+  struct HttpReply *reply;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -689,6 +694,9 @@ struct AvantHttpServer {
   int64_t mem_ceiling;
   int64_t max_conns;
   uint32_t shutdown_ms;
+  /* How long a request answered later may wait for its answer
+   * (Server.reply_timeout) before the server answers it 503. */
+  uint32_t reply_ms;
   int over_mem;
   int64_t body_held;
   int64_t conns;
@@ -698,7 +706,37 @@ struct AvantHttpServer {
   AvantHttpDispatch timer_dispatch;
   HttpTimer *timers;
   int ntimers;
+  /* The server's number for Server.closer (never given twice) and its
+   * link in the list of live servers, both under g_srv_mu. */
+  int64_t closer_id;
+  struct AvantHttpServer *next_live;
 };
+
+/* The live servers, so a closer (a bare number that crosses to any
+ * task) finds its server, or nothing once serve has torn it down. */
+static pthread_mutex_t g_srv_mu = PTHREAD_MUTEX_INITIALIZER;
+static AvantHttpServer *g_srv_live;
+static int64_t g_srv_next_id;
+
+static void srv_live_add(AvantHttpServer *srv) {
+  pthread_mutex_lock(&g_srv_mu);
+  srv->closer_id = ++g_srv_next_id;
+  srv->next_live = g_srv_live;
+  g_srv_live = srv;
+  pthread_mutex_unlock(&g_srv_mu);
+}
+
+static void srv_live_remove(AvantHttpServer *srv) {
+  AvantHttpServer **link;
+  pthread_mutex_lock(&g_srv_mu);
+  for (link = &g_srv_live; *link; link = &(*link)->next_live) {
+    if (*link == srv) {
+      *link = srv->next_live;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&g_srv_mu);
+}
 
 /* conn comes first: a Conn's address is its node's. peer is the peer's
  * address as accept gave it, kept for Request.peer: copied at open and
@@ -721,6 +759,7 @@ typedef struct ConnNode {
 #define HTTP_BODY_BUDGET (256LL * 1024 * 1024)
 #define HTTP_MAX_CONNS 10000
 #define HTTP_SHUTDOWN_MS 30000
+#define HTTP_REPLY_MS 30000
 /* A connection's buffer past this is given back once it is empty: a
  * large body left every connection that ever received one holding its
  * size for good. */
@@ -1248,7 +1287,44 @@ typedef struct AvantHttpReq {
   int responded;
   char ws_key[128];
   AvantWsConn *ws_conn;
+  /* The dispatch's number on its thread (std.http's Request.seq): a
+   * reply is taken only by the handler of the request that runs now. */
+  int64_t seq;
+  struct HttpReply *reply; /* req.reply took one */
+  int later;               /* the handler returned Response.later() */
 } AvantHttpReq;
+
+/* A request answered later: the reply a task sends (HttpReply.send) is
+ * held here until the connection's loop writes it. Every reply is in
+ * g_replies under g_reply_mu, found by its id (a number never given
+ * twice, which crosses to any task); the loop thread owns node and the
+ * connection, and the connection's close removes its reply, so a send
+ * after that finds nothing. */
+typedef struct HttpReply {
+  int64_t id;
+  HttpLoop *loop;
+  ConnNode *node;
+  int keep_alive;
+  int minor_version;
+  int later;
+  int ready;
+  int64_t deadline;
+  int32_t status;
+  char *ctype;
+  size_t ctype_len;
+  char *head;
+  char *body;
+  size_t body_len;
+  struct HttpReply *next;
+} HttpReply;
+
+static pthread_mutex_t g_reply_mu = PTHREAD_MUTEX_INITIALIZER;
+static HttpReply *g_replies;
+static int64_t g_reply_next;
+/* The request whose handler runs on this thread (its dispatch), and the
+ * thread's count of dispatches (AvantHttpReq.seq). */
+static __thread AvantHttpReq *t_dispatch;
+static __thread int64_t t_dispatch_seq;
 
 char *avant_http_req_method(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
@@ -1341,6 +1417,135 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *ctype,
   write_response(req->conn, req->sock, (int32_t)status, ctype,
                  avant_str_n(ctype), head, body, avant_str_n(body), conn_header);
 }
+
+/* ---- answering later (req.reply, Response.later, HttpReply.send) ---- */
+
+avant_int avant_http_req_seq(void *reqp) {
+  return ((AvantHttpReq *)reqp)->seq;
+}
+
+/* req.reply(): the reply of the request whose handler runs now on this
+ * thread (its seq), made on the first call. */
+avant_int avant_http_req_reply(avant_int seq) {
+  AvantHttpReq *req = t_dispatch;
+  HttpReply *r;
+  if (!req || seq == 0 || req->seq != seq) {
+    avant_trap_text("http.Request.reply() is called by the request's own handler while it runs: a request built in memory, or one kept past its handler, has no connection to answer");
+  }
+  if (req->is_ws) {
+    avant_trap_text("http.Request.reply(): a WebSocket upgrade's request is answered by the upgrade, never later");
+  }
+  if (req->reply) {
+    return req->reply->id;
+  }
+  r = (HttpReply *)calloc(1, sizeof(HttpReply));
+  if (!r) {
+    avant_trap_text("out of memory taking a reply");
+  }
+  r->loop = loop_of_socket(req->sock);
+  r->node = (ConnNode *)req->conn;
+  r->keep_alive = req->keep_alive;
+  r->minor_version = req->minor_version;
+  r->deadline = http_now_ms() + (int64_t)req->srv->reply_ms;
+  pthread_mutex_lock(&g_reply_mu);
+  r->id = ++g_reply_next;
+  r->next = g_replies;
+  g_replies = r;
+  pthread_mutex_unlock(&g_reply_mu);
+  req->reply = r;
+  return r->id;
+}
+
+/* The handler returned Response.later(): its reply answers. */
+void avant_http_req_later(void *reqp) {
+  AvantHttpReq *req = (AvantHttpReq *)reqp;
+  if (!req->reply) {
+    avant_trap_text("http.Response.later() from a handler that took no reply: call req.reply() first and hand it to the task that answers");
+  }
+  req->responded = 1;
+  req->later = 1;
+}
+
+/* Unlinks r from g_replies (under g_reply_mu) and frees it. */
+static void reply_free_locked(HttpReply *r) {
+  HttpReply **link;
+  for (link = &g_replies; *link; link = &(*link)->next) {
+    if (*link == r) {
+      *link = r->next;
+      break;
+    }
+  }
+  free(r->ctype);
+  free(r->head);
+  free(r->body);
+  free(r);
+}
+
+static void reply_drop(HttpReply *r) {
+  pthread_mutex_lock(&g_reply_mu);
+  reply_free_locked(r);
+  pthread_mutex_unlock(&g_reply_mu);
+}
+
+static char *reply_copy(const char *p, size_t n) {
+  char *out = (char *)malloc(n + 1);
+  if (!out) {
+    avant_trap_text("out of memory holding a reply");
+  }
+  if (n > 0) {
+    memcpy(out, p, n);
+  }
+  out[n] = 0;
+  return out;
+}
+
+/* HttpReply.send, from any thread: 1 the answer is held and the
+ * connection's loop woken to write it, 0 the reply has nothing left to
+ * answer (an answer is held or written already, the server's 503 at its
+ * reply_timeout among them, or the connection closed). The answer is
+ * copied into C memory before the lock (the pieces are Avant heap
+ * objects held in registers; nothing here is a safepoint). */
+avant_int avant_http_reply_send(avant_int id, avant_int status, const char *ctype,
+                                const char *head, const char *body) {
+  HttpReply *r;
+  char *c, *h, *b;
+  size_t cn, bn;
+  if (status < 200 || status > 599) {
+    http_status_trap(status);
+  }
+  cn = avant_str_n(ctype);
+  bn = avant_str_n(body);
+  c = reply_copy(ctype, cn);
+  h = reply_copy(head, avant_str_n(head));
+  b = reply_copy(body, bn);
+  pthread_mutex_lock(&g_reply_mu);
+  for (r = g_replies; r; r = r->next) {
+    if (r->id == id) {
+      break;
+    }
+  }
+  if (!r || r->ready) {
+    pthread_mutex_unlock(&g_reply_mu);
+    free(c);
+    free(h);
+    free(b);
+    return 0;
+  }
+  r->status = (int32_t)status;
+  r->ctype = c;
+  r->ctype_len = cn;
+  r->head = h;
+  r->body = b;
+  r->body_len = bn;
+  r->ready = 1;
+  if (r->later && r->loop->loop) {
+    us_wakeup_loop(r->loop->loop);
+  }
+  pthread_mutex_unlock(&g_reply_mu);
+  return 1;
+}
+
+static void reply_deliver(Conn *conn, struct us_socket_t *s);
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
   size_t needle_len = strlen(needle);
@@ -2562,6 +2767,8 @@ static int http_host_valid(const char *p, size_t n) {
   return 1;
 }
 
+static void conn_process(Conn *conn, struct us_socket_t *s);
+
 static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
   AvantHttpServer *srv = conn->srv;
 
@@ -2569,9 +2776,10 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
     return;
   }
   for (;;) {
-    /* An answer's tail is still queued: the next request waits in the
-     * buffer until srv_on_writable has sent it. */
-    if (conn_out_pending(conn)) {
+    /* An answer's tail is still queued, or a request waits for its
+     * answer from a task: the next request waits in the buffer until
+     * srv_on_writable has sent it, or reply_deliver has written it. */
+    if (conn_out_pending(conn) || conn->reply) {
       return;
     }
     const char *method = NULL;
@@ -2795,9 +3003,40 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
      * connection kept or closed as an answer's would be; the server
      * goes on. A trap after the upgrade, in a websocket_open handler,
      * closes the new WebSocket with 1011. */
+    req.seq = ++t_dispatch_seq;
+    t_dispatch = &req;
     enter_avant();
     trapped = avant_task_recover_call(srv->dispatch, srv->state, &req);
     leave_avant();
+    t_dispatch = NULL;
+    if (__builtin_expect(req.reply != NULL, 0)) {
+      if (req.later && !trapped && !us_socket_is_closed(0, s)) {
+        /* Answered later: the connection waits for the reply (its idle
+         * timeout off, its next requests in the buffer), which the
+         * task may have sent already. */
+        int ready;
+        pthread_mutex_lock(&g_reply_mu);
+        req.reply->later = 1;
+        ready = req.reply->ready;
+        pthread_mutex_unlock(&g_reply_mu);
+        conn->reply = req.reply;
+        us_socket_timeout(0, s, 0);
+        if (total < conn->len) {
+          memmove(conn->buf, conn->buf + total, conn->len - total);
+        }
+        conn->len -= total;
+        conn->sent_continue = 0;
+        conn->corking = 0;
+        if (ready) {
+          conn_uncork(conn, s);
+          reply_deliver(conn, s);
+        }
+        return;
+      }
+      /* The handler answered itself, or trapped: the reply is void. */
+      reply_drop(req.reply);
+      req.reply = NULL;
+    }
     if (us_socket_is_closed(0, s)) {
       /* The answer could not be queued (conn_send closed the socket);
        * srv_on_close has freed the buffers. */
@@ -2910,6 +3149,103 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
   }
 }
 
+/* Loop thread only: writes the answer a task sent for the connection's
+ * reply (or the server's 503), when it is there, and takes up what
+ * waited behind it: the requests in the buffer, the close a request
+ * without keep-alive, the server's close or the peer's FIN asked for. */
+static void reply_deliver(Conn *conn, struct us_socket_t *s) {
+  HttpReply *r = conn->reply;
+  const char *conn_header = NULL;
+  int keep;
+  if (!r) {
+    return;
+  }
+  pthread_mutex_lock(&g_reply_mu);
+  if (!r->ready) {
+    pthread_mutex_unlock(&g_reply_mu);
+    return;
+  }
+  /* Out of the list: a later send finds nothing (closed). */
+  {
+    HttpReply **link;
+    for (link = &g_replies; *link; link = &(*link)->next) {
+      if (*link == r) {
+        *link = r->next;
+        break;
+      }
+    }
+  }
+  pthread_mutex_unlock(&g_reply_mu);
+  conn->reply = NULL;
+  keep = r->keep_alive && !conn->srv->closing && !conn->answered && !conn->peer_ended;
+  if (!keep) {
+    conn_header = "close";
+  } else if (r->minor_version == 0) {
+    conn_header = "keep-alive";
+  }
+  write_response(conn, s, r->status, r->ctype, r->ctype_len, r->head, r->body, r->body_len,
+                 conn_header);
+  free(r->ctype);
+  free(r->head);
+  free(r->body);
+  free(r);
+  if (us_socket_is_closed(0, s)) {
+    return;
+  }
+  idle_arm(s, conn->srv->idle_secs, conn->srv->idle_mins);
+  if (!keep) {
+    if (conn->peer_ended && !conn_out_pending(conn)) {
+      us_socket_shutdown(0, s);
+      us_socket_close(0, s, 0, NULL);
+      return;
+    }
+    conn_finish(conn, s);
+    return;
+  }
+  if (!conn_out_pending(conn)) {
+    conn_poll(s, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (conn->len > 0) {
+      conn_process(conn, s);
+    }
+  }
+}
+
+/* Loop thread only: the loop's replies a task answered (from its
+ * wakeup), and with expire those past their reply_timeout, answered
+ * 503 (from its sweep). */
+static void loop_replies(HttpLoop *hl, int expire) {
+  ConnNode *due[64];
+  int n;
+  int64_t now = expire ? http_now_ms() : 0;
+  do {
+    HttpReply *r;
+    n = 0;
+    pthread_mutex_lock(&g_reply_mu);
+    for (r = g_replies; r && n < 64; r = r->next) {
+      if (r->loop != hl || !r->later || !r->node) {
+        continue;
+      }
+      if (!r->ready && expire && now >= r->deadline) {
+        static const char unavailable[] = "Service Unavailable";
+        r->status = 503;
+        r->ctype = reply_copy("text/plain", 10);
+        r->ctype_len = 10;
+        r->head = reply_copy("", 0);
+        r->body = reply_copy(unavailable, sizeof unavailable - 1);
+        r->body_len = sizeof unavailable - 1;
+        r->ready = 1;
+      }
+      if (r->ready) {
+        due[n++] = r->node;
+      }
+    }
+    pthread_mutex_unlock(&g_reply_mu);
+    for (int i = 0; i < n; i++) {
+      reply_deliver(&due[i]->conn, due[i]->sock);
+    }
+  } while (n == 64);
+}
+
 /* The process's resident memory in bytes (/proc/self/statm), 0 when it
  * cannot be read. */
 static int64_t http_rss(void) {
@@ -2974,6 +3310,10 @@ static void loop_sweep(struct us_timer_t *t) {
   }
   if (srv->mem_ceiling > 0 && hl == &srv->loops[0]) {
     __atomic_store_n(&srv->over_mem, http_rss() >= srv->mem_ceiling, __ATOMIC_RELAXED);
+  }
+  if (srv->reply_ms && __atomic_load_n(&g_replies, __ATOMIC_RELAXED)) {
+    /* Requests answered later whose answer did not come in time. */
+    loop_replies(hl, 1);
   }
   if (hl->close_at && srv->shutdown_ms &&
       now - hl->close_at >= (int64_t)srv->shutdown_ms) {
@@ -3070,6 +3410,9 @@ static int sweep_interval(const AvantHttpServer *srv) {
   }
   if (srv->shutdown_ms && srv->shutdown_ms / 4 < iv) {
     iv = srv->shutdown_ms / 4;
+  }
+  if (srv->reply_ms && srv->reply_ms / 4 < iv) {
+    iv = srv->reply_ms / 4;
   }
   return iv < 25 ? 25 : (int)iv;
 }
@@ -3181,6 +3524,13 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   }
   memcpy(conn->buf + conn->len, data, (size_t)length);
   conn->len += (size_t)length;
+  if (__builtin_expect(conn->reply != NULL, 0) &&
+      conn->len > (size_t)HTTP_MAX_HEADER_BLOCK + (size_t)conn->srv->max_body) {
+    /* Requests pile up behind one answered later: the connection is
+     * read again when the answer has gone. */
+    conn_poll(s, 0);
+    return s;
+  }
   if (conn->ws) {
     ws_process(conn, s);
     if (conn->ws && (conn->len || conn->ws->frag_opcode >= 0 || conn->body_at)) {
@@ -3231,6 +3581,11 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
     pthread_mutex_unlock(&g_ws_mu);
     ws_record_release(ws);
   }
+  if (node->conn.reply) {
+    /* The connection is gone: a send to its reply finds nothing. */
+    reply_drop(node->conn.reply);
+    node->conn.reply = NULL;
+  }
   conn_unwatch(&node->conn, s);
   if (node->conn.budget) {
     __atomic_sub_fetch(&node->conn.srv->body_held, node->conn.budget, __ATOMIC_RELAXED);
@@ -3273,6 +3628,14 @@ static struct us_socket_t *srv_on_end(struct us_socket_t *s) {
     conn_poll(s, LIBUS_SOCKET_WRITABLE);
     return s;
   }
+  if (!node->conn.ws && node->conn.reply) {
+    /* The same for an answer still to come from a task: it is written,
+     * then the connection closes (reply_deliver); the socket is not
+     * polled meanwhile (its end of file would be read again and again). */
+    node->conn.peer_ended = 1;
+    conn_poll(s, 0);
+    return s;
+  }
   us_socket_shutdown(0, s);
   return us_socket_close(0, s, 0, NULL);
 }
@@ -3313,6 +3676,8 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
   if (!hl) {
     return;
   }
+  /* A task answered a reply of this loop's (HttpReply.send). */
+  loop_replies(hl, 0);
   if (!hl->srv->closing) {
     /* A cross-thread WebSocket send queued frames and woke the loop, or
      * a frame was cut (ws_cut): that connection is closed. */
@@ -3371,6 +3736,11 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
          * not taken. */
         node->conn.answered = 1;
         node->conn.close_after_flush = 1;
+      } else if (node->conn.reply) {
+        /* A request waits for its answer from a task: it is written
+         * when it comes (reply_deliver closes after it), or the shutdown
+         * deadline closes the connection. */
+        node->conn.answered = 1;
       }
       if (!node->conn.answered) {
         us_socket_close(0, node->sock, 0, NULL);
@@ -3534,6 +3904,8 @@ static void loop_teardown(HttpLoop *hl) {
 
 static void srv_teardown(AvantHttpServer *srv) {
   int i;
+  /* First: a closer that found the server finishes before it is freed. */
+  srv_live_remove(srv);
   listen_reg_remove(srv);
   /* Live connections free their own WsConn in srv_on_close; anything
    * registered here at teardown belongs to a socket already gone. */
@@ -3738,6 +4110,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->mem_ceiling = -1;
   srv->max_conns = HTTP_MAX_CONNS;
   srv->shutdown_ms = HTTP_SHUTDOWN_MS;
+  srv->reply_ms = HTTP_REPLY_MS;
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);
@@ -3765,7 +4138,40 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
     }
   }
   listen_reg_add(host, srv->port, srv);
+  srv_live_add(srv);
   return srv;
+}
+
+avant_int avant_http_closer_id(void *srvp) {
+  AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  return srv ? srv->closer_id : 0;
+}
+
+/* Server.closer's close, from any thread: the server stops as close
+ * stops it (its loops are woken and close their listening sockets and
+ * connections; serve returns). Under g_srv_mu, so the server cannot be
+ * torn down meanwhile; a server served no more is not found. A server
+ * not serving yet keeps the request: serve returns at once (its wakeup
+ * waits in the loop when serve starts it). Returns 1 when found. */
+avant_int avant_http_close_by_id(avant_int id) {
+  AvantHttpServer *srv;
+  int i;
+  pthread_mutex_lock(&g_srv_mu);
+  for (srv = g_srv_live; srv; srv = srv->next_live) {
+    if (srv->closer_id == id) {
+      break;
+    }
+  }
+  if (srv) {
+    srv->closing = 1;
+    for (i = 0; i < srv->nloops; i++) {
+      if (srv->loops[i].loop) {
+        us_wakeup_loop(srv->loops[i].loop);
+      }
+    }
+  }
+  pthread_mutex_unlock(&g_srv_mu);
+  return srv ? 1 : 0;
 }
 
 avant_int avant_http_port(void *srvp) {
@@ -3803,6 +4209,10 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb,
   if (!srv || !srv->loops || srv->nloops < 1) {
     set_status(1);
     return 1;
+  }
+  if (srv->closing) {
+    /* A closer stopped it before it served: std.http releases it. */
+    return 2;
   }
   /* srv (C memory) holds the state across every dispatch, which
    * collects; with one loop the program can stay unshared, where a young
@@ -3951,6 +4361,9 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
       break;
     case 8:
       idle_limit((uint32_t)a, &srv->ws_idle_secs, &srv->ws_idle_mins);
+      break;
+    case 9:
+      srv->reply_ms = (uint32_t)a;
       break;
     default:
       break;

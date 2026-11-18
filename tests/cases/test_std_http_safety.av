@@ -1152,6 +1152,86 @@ fn ws_live_cases(c: Checks, root: String) {
   }
 }
 
+// Answering later: a handler takes its request's reply, hands it to a
+// task and returns Response.later(); the task's answer is written in
+// order with the requests pipelined behind it (tests/fixtures/http/
+// raw_client.py, mode later). A reply kept past its answer, past its
+// connection's close or past serve answers ReplyError.gone and touches
+// nothing (the runtime finds a reply by its number, never by a kept
+// address).
+fn later_cases(c: Checks, root: String) {
+  if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.reply_timeout(300)
+    kept = sync.Channel(http.HttpReply).new(8)
+    said = sync.Channel(String).new(8)
+    server.get("/slow", (req) {
+      reply = req.reply()
+      who = req.param("who") ?? "nobody"
+      _ = spawn {
+        sleep_ms(80)
+        _ = reply.send(Response.text("slow ${who}"))
+        0
+      }
+      Response.later()
+    })
+    server.get("/fast", (req) {
+      Response.text("fast")
+    })
+    server.get("/inline", (req) {
+      // Sent before the handler returns: written when it returns.
+      reply = req.reply()
+      reply.send(Response.text("inline", 201)) else e {
+        return Response.text("first send failed", 500)
+      }
+      switch reply.send(Response.text("twice")) {
+        case e: http.ReplyError { said.send("inline twice: ${e}") }
+        else { said.send("inline twice: sent") }
+      }
+      Response.later()
+    })
+    server.get("/expire", (req) {
+      kept.send(req.reply())
+      Response.later()
+    })
+    server.get("/bare-later", (req) {
+      Response.later()
+    })
+    server.get("/self", (req) {
+      kept.send(req.reply())
+      Response.text("self")
+    })
+    port = server.port()
+    stamp = now_ms()
+    closer = server.closer()
+    out = sync.Channel(String).new(2)
+    task = spawn {
+      out.send(raw_client(port, root, stamp, "later", ""))
+      if resp = http.get("http://127.0.0.1:${port}/self") {
+        out.send("self ${resp.status} ${resp.body_text() ?? "?"}")
+      }
+      closer.close()
+      0
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "the later client")
+    c.eq_str(out.recv() ?? "none", "later=200 slow a|200 fast|200 slow b|201 inline|503 Service Unavailable in time|500 Internal Server Error|200 fast|200 slow c closed", "answers given later keep their order; 503 at the reply timeout; later without a reply is a trap")
+    c.eq_str(out.recv() ?? "none", "self 200 self", "a handler that took a reply may still answer itself")
+    c.eq_str(said.recv() ?? "none", "inline twice: the request was answered already or its connection closed", "a second send answers ReplyError.gone")
+    expired = kept.recv() ?? return
+    answered_self = kept.recv() ?? return
+    c.eq_str("${went_reply(expired.send(Response.text("too late")))} ${went_reply(answered_self.send(Response.text("too late")))}", "gone gone", "a reply past its 503 or its handler's own answer, kept past serve, answers ReplyError.gone")
+  } else {
+    c.expect(false, "listen for the later test")
+  }
+}
+
+fn went_reply(r: Void | http.ReplyError): String {
+  switch r {
+    case http.ReplyError { "gone" }
+    else { "sent" }
+  }
+}
+
 fn ws_deadline_cases(c: Checks, root: String) {
   if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
@@ -1660,5 +1740,6 @@ fn main: Int {
   ws_cut_cases(c, avant_test_root())
   emfile_cases(c, avant_test_root())
   ws_live_cases(c, avant_test_root())
+  later_cases(c, avant_test_root())
   c.finish()
 }
