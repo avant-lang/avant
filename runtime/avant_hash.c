@@ -2524,20 +2524,6 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
   return 0;
 }
 
-/* ---- the names the seed's compiler calls ----
- *
- * The compiler B, built by the seed release, deletes through these two
- * names, and links this runtime. They go when a release that emits
- * avant_hash_del_sk and avant_hash_del_ik is the seed. */
-
-void avant_hash_del(void *hp, const char *key) {
-  avant_hash_del_sk(hp, key);
-}
-
-void avant_hash_del_i32k(void *hp, avant_int key) {
-  avant_hash_del_ik(hp, key);
-}
-
 /* ---- the freeze of a value holding a hash (avant_rt.h) ---- */
 
 /* One more (up) or one fewer task reads h. A thaw of a hash that is not

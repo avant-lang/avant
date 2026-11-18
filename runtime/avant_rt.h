@@ -268,9 +268,6 @@ extern uint64_t avant_gc_heap_lo;
 extern uint64_t avant_gc_heap_len;
 char *avant_str_cat_int(const char *prefix, avant_int n);
 char *avant_str_from_int_bytes(void *arr);
-/* The names the seed's compiler calls (avant_str.c). */
-char *avant_str_cat_i32(const char *prefix, avant_int n);
-char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);
 char *avant_str_slice(const char *s, avant_int start, avant_int stop);
 char *avant_str_from_int(avant_int n);
@@ -465,9 +462,6 @@ avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_in
 const char *avant_hash_last_key(void);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
-/* The names the seed's compiler calls (avant_hash.c, the last section). */
-void avant_hash_del(void *h, const char *key);
-void avant_hash_del_i32k(void *h, avant_int key);
 
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
 void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id);

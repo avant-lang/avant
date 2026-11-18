@@ -1579,17 +1579,6 @@ char *avant_str_from_c(const void *p, avant_int n) {
   return s;
 }
 
-/* The names the seed's compiler calls: the compiler B, built by the seed
- * release, links this runtime. They go when a release that emits
- * avant_str_cat_int and avant_str_from_int_bytes is the seed. */
-char *avant_str_cat_i32(const char *prefix, avant_int n) {
-  return avant_str_cat_int(prefix, n);
-}
-
-char *avant_str_from_i32_bytes(void *arr) {
-  return avant_str_from_int_bytes(arr);
-}
-
 /* s.replace(from, to): every FROM in S, left to right and without
  * overlapping, replaced by TO; an empty FROM traps (as split's empty
  * separator does). No FROM: S itself. RC1: the three strings are handles
