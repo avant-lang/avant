@@ -616,7 +616,8 @@ def handler_trap(port_file):
     # request on it is answered; a trap in a request that closes (or an
     # HTTP/1.0 one) is answered 500 and closed; a trap in a WebSocket
     # message handler closes that connection with 1011, and a new one
-    # echoes. Then the server is stopped.
+    # echoes. A panic does the same as each trap. Then the server is
+    # stopped.
     if not wait_port(port_file):
         return "no port"
     out = []
@@ -628,7 +629,7 @@ def handler_trap(port_file):
         got = read_answers(s, 1)
         return (got[0][0], got[0][1].decode("latin1")) if got else (0, "")
 
-    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route"]:
+    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route", "panic", "panic-or", "fb-panic"]:
         st, _ = ask("/" + name)
         st2, body = ask("/ok")
         out.append("%s:%d,ok:%d %s" % (name, st, st2, body))
@@ -654,6 +655,13 @@ def handler_trap(port_file):
     op, payload, buf = ws_read_frame(w, buf)
     code = (payload[0] << 8 | payload[1]) if op == 8 and len(payload) >= 2 else -1
     out.append("ws-trap:%d %d" % (op, code))
+    w.close()
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
+    ws_frame(w, 1, b"panic")
+    op, payload, buf = ws_read_frame(w, buf)
+    code = (payload[0] << 8 | payload[1]) if op == 8 and len(payload) >= 2 else -1
+    out.append("ws-panic:%d %d" % (op, code))
     w.close()
     w, buf = ws_open("/ws")
     w.settimeout(5)

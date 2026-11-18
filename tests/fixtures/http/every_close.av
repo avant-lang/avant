@@ -2,8 +2,8 @@ import std.http
 import std.sync
 
 // Server.every and Server.on_close. A timer every 20 ms counts its
-// runs and traps on its third: the trap is printed and the server goes
-// on, so the timer runs again. A task closes the server after 400 ms;
+// runs, traps on its third and panics on its fourth: each is printed
+// and the server goes on, so the timer runs again. A task closes the server after 400 ms;
 // the two close hooks run then, in their order, on the thread that
 // called serve, after the loops stopped and before serve returns. A
 // server closed without serving runs its hooks in close. The run
@@ -33,6 +33,9 @@ fn main: Int {
       })
       if n == 3 {
         _ = at(xs, 5)
+      }
+      if n == 4 {
+        panic("the timer panicked on run ${n}")
       }
     })
     server.on_close(() {

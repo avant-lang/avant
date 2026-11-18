@@ -11,7 +11,10 @@ import std.gc
 // registered while serving, a trap inside a mutex's `with` (the mutex
 // is poisoned: the next `with` on it traps too, and `try_with` reads
 // it), a trap inside `pin` and `gc.hold` (both given back), and a trap
-// in a WebSocket message handler (the connection is closed 1011). A trap
+// in a WebSocket message handler (the connection is closed 1011). The
+// trap a program raises, `panic(message)`, fails its request the same
+// way, in a route, after `??`, in the fallback and in a WebSocket
+// handler, its message and site printed. A trap
 // in a C callback the handler made still ends the program (GET
 // /callback). The program spawns nothing. With an argument (a path) it
 // writes its port there and waits for tests/fixtures/http/raw_client.py
@@ -140,6 +143,19 @@ fn main: Int {
       before = mark.with (acc) { acc.n }
       Response.text("pins left ${gc_rt.avant_pin_count() - before}, ${t}")
     })
+    server.get("/panic", (req) {
+      panic("a handler panicked at ${req.path}")
+    })
+    server.get("/panic-or", (req) {
+      n = req.param("n") ?? panic("no n in ${req.path}")
+      Response.text("n ${n}")
+    })
+    server.fallback((req) {
+      if req.path == "/fb-panic" {
+        panic("the fallback panicked")
+      }
+      Response.text("not found", 404)
+    })
     server.get("/callback", (req) {
       buf = libc.calloc(4, 4)
       buf.v = 3
@@ -149,6 +165,9 @@ fn main: Int {
     server.websocket("/ws", (conn, msg) {
       if (msg.text() ?? "") == "trap" {
         _ = at(xs, 5)
+      }
+      if (msg.text() ?? "") == "panic" {
+        panic("a WebSocket handler panicked")
       }
       _ = conn.send_message(msg)
     })

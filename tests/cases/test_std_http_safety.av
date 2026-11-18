@@ -1251,7 +1251,7 @@ fn handler_trap_cases(c: Checks, root: String) {
       text = fs.read(log) ?? ""
       if mode == "handler_trap" {
         c.eq_int(status, 0, "a handler's trap: the server goes on to its stop, status 0")
-        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,grow-hash:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
+        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,grow-hash:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,panic:500,ok:200 ok,panic-or:500,ok:200 ok,fb-panic:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-panic:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
         whats = [
           "index 7 out of bounds (size 3)",
           "division by zero",
@@ -1260,12 +1260,16 @@ fn handler_trap_cases(c: Checks, root: String) {
           "a response's status 99 is not 200 to 599",
           "http.Response.header value of X-A holds a control character (byte 13 at 1)",
           "route GET /late registered while the server is serving",
+          "a handler panicked at /panic at handler_trap.av:147:7",
+          "no n in /panic-or at handler_trap.av:150:29",
+          "the fallback panicked at handler_trap.av:155:9",
           "index 9 out of bounds (size 3)",
           "sync.Mutex.with on a poisoned mutex",
           "index 8 out of bounds (size 3)",
           "index 7 out of bounds (size 3)",
           "index 7 out of bounds (size 3)",
-          "index 5 out of bounds (size 3)"
+          "index 5 out of bounds (size 3)",
+          "a WebSocket handler panicked at handler_trap.av:170:9"
         ]
         lines = text.split("\n")
         c.eq_int(lines.size, whats.size + 2, "one line per trap, then served (${text})")
