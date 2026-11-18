@@ -55,7 +55,7 @@ fn gc_envs: Array(String) {
 // the only volatile stores the emitter writes.
 fn without_frame_links(ll: String): String {
   lines = ll.split("\n")
-  out = buf_new()
+  out = Buf.new()
   for l in lines {
     if !(l.contains("store volatile ptr ") && l.contains(", ptr @avant_gc_top, align 8")) {
       out.push_str(l)
@@ -232,8 +232,8 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
 fn lib_relative(text: String, compiler: String): String {
   if t = fs.read("${compiler}.versions.txt") {
     for line in t.split("\n") {
-      if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
-        return text.replace("${str_slice(line, 5, line.size)}/", "lib/")
+      if line.size > 5 && line[..5] == "lib: " {
+        return text.replace("${line[5..]}/", "lib/")
       }
     }
   }

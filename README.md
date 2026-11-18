@@ -1321,7 +1321,7 @@ fn main {
 }
 ```
 
-A string knows its length (`size` is a read, never a scan), and a long slice shares its string's bytes instead of copying them: `str_slice(s, start, stop)` of 64 bytes or more that is at least a quarter of `s` keeps `s` alive as long as the slice lives; a shorter slice is a copy.
+A string knows its length (`size` is a read, never a scan), and a long slice shares its string's bytes instead of copying them: `s[start..stop]` of 64 bytes or more that is at least a quarter of `s` keeps `s` alive as long as the slice lives; a shorter slice is a copy.
 
 ### String operations
 
@@ -1357,7 +1357,6 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.eq_ignore_ascii_case(t)` | `Bool`: `s == t` with ASCII letters compared without their case (`"Content-Type".eq_ignore_ascii_case("content-type")`); `t` a `String`, `Bytes` or `Buf` |
 | `xs.join(sep)` | the strings of an `Array(String)` with `sep` between them |
 | `a += b` | `a = a + b`: a new string (to build a long text piece by piece, a [`Buf`](#bytes-and-buf) copies less) |
-| `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
@@ -1459,7 +1458,7 @@ fn main {
 
 | `Buf` operation | Result |
 | --- | --- |
-| `Buf.new()`, `Buf.new(capacity)`, `buf_new()` | an empty buffer |
+| `Buf.new()`, `Buf.new(capacity)` | an empty buffer |
 | `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
 | `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |
@@ -1541,7 +1540,7 @@ There are no negative indexes: `xs[-1]` is an index outside the array and traps;
 
 ### Slices
 
-`xs[a..b]` is a copy of the elements `a` up to `b`, excluded; `xs[a..=b]` includes `b`, `xs[a..]` runs to the end and `xs[..b]` starts at `0` (`xs[..]` is a whole copy). The same forms work on `String`, `Bytes`, `Buf` and `Array`, and the slice has the receiver's type: a new `Bytes`, `Buf` or `Array(T)` holding a copy, which a change to either one never shows in the other, or a `String` (immutable, so a long slice shares its string's bytes as `str_slice` does, [Strings](#strings)). `xs.slice(a, b)` and `xs.slice(a)` are the same slices written as calls.
+`xs[a..b]` is a copy of the elements `a` up to `b`, excluded; `xs[a..=b]` includes `b`, `xs[a..]` runs to the end and `xs[..b]` starts at `0` (`xs[..]` is a whole copy). The same forms work on `String`, `Bytes`, `Buf` and `Array`, and the slice has the receiver's type: a new `Bytes`, `Buf` or `Array(T)` holding a copy, which a change to either one never shows in the other, or a `String` (immutable, so a long slice shares its string's bytes, [Bytes, not characters](#bytes-not-characters)). `xs.slice(a, b)` and `xs.slice(a)` are the same slices written as calls.
 
 ```avant
 fn main {
@@ -4010,7 +4009,7 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Time | `now_ms`, `now_us` |
 | Hashing and formatting | `sha256`, `fmt_float` |
-| Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `buf_new` ([String operations](#string-operations)) |
+| Strings | `str_to_f_slice`, `chr`, `repeat_byte` ([String operations](#string-operations)) |
 
 Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`. In the tables below, a dash means there is nothing to say: no parameter, no result, or no failure.
 

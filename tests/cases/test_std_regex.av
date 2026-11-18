@@ -18,7 +18,7 @@ fn set_env(name: String, value: String) {
 }
 
 fn repeated(piece: String, n: Int, tail: String): String {
-  b = buf_new()
+  b = Buf.new()
   for i in 0..n {
     b.push_str(piece)
   }
@@ -27,7 +27,7 @@ fn repeated(piece: String, n: Int, tail: String): String {
 }
 
 fn rx_quote(s: String): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("'")
   for i in 0..s.size {
     if s[i] == 39 {
@@ -480,7 +480,7 @@ fn test_std_regex(c: Checks) {
   parts = iter_re.split("aa ba a")
   c.eq_int(parts.size, 4, "split size")
   c.eq_str(parts[1], " b", "split piece")
-  dst = buf_new()
+  dst = Buf.new()
   iter_re.replace_into(dst, "aa ba", "[$0]")
   c.eq_str(dst.to_s(), "[aa] b[a]", "replace_into")
   iter_re.close()
@@ -618,7 +618,7 @@ fn test_std_regex(c: Checks) {
     // three a's), but the attempt at the first a backtracks past the
     // limit. It used to read as "no match": find nil, count 0, replace
     // and split the text unchanged, the iterator done.
-    limits = "import std.regex\n\nfn main {\n  args = process.args()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = buf_new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s()\n  if re = regex.Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next() {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\nimport std.process\n"
+    limits = "import std.regex\n\nfn main {\n  args = process.args()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = Buf.new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s()\n  if re = regex.Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next() {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\nimport std.process\n"
     lsrc = "${scratch()}/regex-${stamp}-limits.av"
     lbin = "${scratch()}/regex-${stamp}-limits.bin"
     _ = fs.write(lsrc, limits)

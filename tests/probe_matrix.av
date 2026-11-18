@@ -425,12 +425,12 @@ fn program(r: PRule, w: String, safe: Bool): String {
   }
   filled = fill(site, body)
   // An import stays the program's first line.
-  if filled.size > 7 && str_slice(filled, 0, 7) == "import " {
+  if filled.size > 7 && filled[..7] == "import " {
     nl = 0
     while filled[nl] != 10 {
       nl += 1
     }
-    return "${str_slice(filled, 0, nl + 1)}\n${decls}\n${str_slice(filled, nl + 1, filled.size)}\nimport std.process\n"
+    return "${filled[..nl + 1]}\n${decls}\n${filled[nl + 1..]}\nimport std.process\n"
   }
   // The opaque values read process.args(): its import goes last, so no
   // line moves.
@@ -467,7 +467,7 @@ fn first_error(log: String): String {
   while e < log.size && log[e] != 10 {
     e += 1
   }
-  str_slice(log, at, e)
+  log[at..e]
 }
 
 // The dumps of the rows n (1-based) with n % parts == part: each row's
@@ -543,7 +543,7 @@ fn main: Int {
     puts("tests/probe_matrix.av: ${ran} of ${total} programs were checked")
     return 1
   }
-  table = buf_new()
+  table = Buf.new()
   table.push_str("# The probe matrix (tests/probe_matrix.av writes it; tests/cases/test_probe_matrix.av compares it).\n")
   table.push_str("# rule wrapper variant verdict class | first error line\n")
   for i in 0..total {

@@ -80,7 +80,7 @@ fn test_errors(c: Checks) {
     // lowering's lines are internal errors now, and none is reachable.
     expect_err(c, compiler, stamp, "hash-member-block", "fn main {\n  h = Hash(String, Int).new()\n  xs = h.keys() { |k|\n    puts(k)\n  }\n}\n", "error[E4003]: keys takes no arguments")
     expect_err(c, compiler, stamp, "hash-field", "fn main {\n  h = Hash(String, Int).new()\n  m = h.count\n  puts(m)\n}\n", "error[E4000]: no method count on Hash")
-    expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = buf_new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
+    expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = Buf.new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
     for tag in ["hash-member-block", "hash-field", "buf-field"] {
       log_text = fs.read("${scratch()}/errors-${stamp}-${tag}.log") ?? ""
       c.expect(!log_text.contains("back end") && !log_text.contains("internal error"), "${tag}: refused by the checker, not the lowering")

@@ -56,8 +56,8 @@ fn peak_rss_kb: Int {
     i = 0
     while i < count_lines(text) {
       line = nth_line(text, i)
-      if line.size > 6 && str_slice(line, 0, 6) == "VmHWM:" {
-        digits = buf_new()
+      if line.size > 6 && line[..6] == "VmHWM:" {
+        digits = Buf.new()
         for k in 6..line.size {
           if line[k] >= 48 && line[k] <= 57 {
             digits.push_byte(line[k])
@@ -136,7 +136,7 @@ fn timeout_round(port: Int, out: sync.Channel(String)): Int {
     case e: http.HttpError { out.send(timed("get", t0, 1000, e.message)) }
     case http.Response { out.send("get=answered") }
   }
-  b = buf_new()
+  b = Buf.new()
   for i in 0..8388608 {
     b.push_byte(97 + i % 26)
   }
@@ -155,7 +155,7 @@ fn timeout_round(port: Int, out: sync.Channel(String)): Int {
 }
 
 fn post_big_round(port: Int, out: sync.Channel(String), n: Int): Int {
-  b = buf_new()
+  b = Buf.new()
   for i in 0..n {
     b.push_byte(97 + i % 26)
   }
@@ -166,7 +166,7 @@ fn post_big_round(port: Int, out: sync.Channel(String), n: Int): Int {
   }
   // A body that is not valid UTF-8: it was sent as
   // nothing after a Content-Length of its size.
-  raw = buf_new()
+  raw = Buf.new()
   raw.push_byte(255)
   raw.push_byte(0)
   raw.push_byte(65)
@@ -469,10 +469,10 @@ fn header_split_cases(c: Checks, root: String) {
       } else if kind == "status-200" || kind == "status-599" {
         // The ends of the range are answered.
         c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
-        c.eq_str(wire, "header_split=1 answer(s) ${str_slice(kind, 7, kind.size)} Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
+        c.eq_str(wire, "header_split=1 answer(s) ${kind[7..]} Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
         what = "Response.header ${kind}"
-        if kind.size > 7 && str_slice(kind, 0, 7) == "status-" {
+        if kind.size > 7 && kind[..7] == "status-" {
           what = "a response's ${kind}"
         }
         c.eq_int(status, 0, "${what}: the server goes on, status 0")
@@ -526,7 +526,7 @@ fn wait_port(path: String): Int {
   while tries < 500 {
     if text = fs.read(path) {
       if text.size > 1 && text[text.size - 1] == 10 {
-        return str_slice(text, 0, text.size - 1).to_i() ?? 0
+        return text[..text.size - 1].to_i() ?? 0
       }
     }
     sleep_ms(20)
@@ -739,7 +739,7 @@ fn client_response_round(c: Checks, root: String, what: String, paths: Array(Str
   c.expect(port > 0, "the answering server is listening (${what})")
   for i in 0..paths.size {
     want = wants[i]
-    if want.size > 5 && str_slice(want, want.size - 5, want.size) == " from" {
+    if want.size > 5 && want[want.size - 5..] == " from" {
       want = "${want} 127.0.0.1:${port}"
     }
     c.eq_str(outcome(http.get("http://127.0.0.1:${port}${paths[i]}", false, 4000)), want, "${what}: ${paths[i]}")
@@ -797,9 +797,9 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
     big = sync.Mutex(String).new("nothing")
     server.websocket("/ws-big", (conn, msg) {
       text = msg.text() ?? ""
-      if text.size > 4 && str_slice(text, 0, 4) == "big " {
-        n = str_slice(text, 4, text.size).to_i() ?? 0
-        b = buf_new()
+      if text.size > 4 && text[..4] == "big " {
+        n = text[4..].to_i() ?? 0
+        b = Buf.new()
         for i in 0..n {
           b.push_byte(97 + i % 26)
         }
@@ -854,7 +854,7 @@ fn ws_big_cases(c: Checks, root: String) {
 // needed 2 GiB, too much for the suite.)
 fn write_piece_cases(c: Checks) {
   n = 1048581
-  b = buf_new()
+  b = Buf.new()
   for i in 0..n {
     b.push_byte(97 + i % 26)
   }
@@ -1081,7 +1081,7 @@ fn emfile_cases(c: Checks, root: String) {
 fn ws_live_cases(c: Checks, root: String) {
   if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.websocket_idle_timeout(4000).min_rate(1000, 500)
-    chunk = buf_new()
+    chunk = Buf.new()
     for i in 0..65536 {
       chunk.push_byte(97 + i % 26)
     }
@@ -1175,7 +1175,7 @@ fn deadline_cases(c: Checks, root: String) {
   stamp = now_ms()
   if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.head_timeout(1000).min_rate(1000, 500)
-    huge = buf_new()
+    huge = Buf.new()
     for i in 0..33554432 {
       huge.push_byte(97 + i % 26)
     }
@@ -1500,14 +1500,14 @@ fn test_std_http_safety(c: Checks, root: String) {
   listened = http.listen(0, "127.0.0.1", 1048576, 1)
   if opened = listened {
     server = opened.idle_timeout(4000)
-    big = buf_new()
+    big = Buf.new()
     for i in 0..8388608 {
       big.push_byte(97 + i % 26)
     }
     big_bytes = big.to_s().bytes
     digits: Array(Bytes) = []
     for d in 0..10 {
-      b = buf_new()
+      b = Buf.new()
       for i in 0..65536 {
         b.push_byte(48 + d)
       }

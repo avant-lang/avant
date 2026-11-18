@@ -3,7 +3,7 @@ import std.fs
 import std.process
 
 fn ut_quote(s: String): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("'")
   for i in 0..s.size {
     if s[i] == 39 {
@@ -26,7 +26,7 @@ fn ut_has(hay: String, needle: String): Bool {
   last = hay.size - needle.size
   i = 0
   while i <= last {
-    if str_slice(hay, i, i + needle.size) == needle {
+    if hay[i..i + needle.size] == needle {
       return true
     }
     i += 1
@@ -35,7 +35,7 @@ fn ut_has(hay: String, needle: String): Bool {
 }
 
 fn ut_starts(s: String, prefix: String): Bool {
-  s.size >= prefix.size && str_slice(s, 0, prefix.size) == prefix
+  s.size >= prefix.size && s[..prefix.size] == prefix
 }
 
 fn ut_sh(body: String, rc_path: String): Int {
@@ -81,7 +81,7 @@ fn ut_index(hay: String, needle: String): Int {
   last = hay.size - needle.size
   i = 0
   while i <= last {
-    if str_slice(hay, i, i + needle.size) == needle {
+    if hay[i..i + needle.size] == needle {
       return i
     }
     i += 1
@@ -98,7 +98,7 @@ fn ut_read_ms(path: String): Int {
 
 fn ut_fill(template: String, dir: String): String {
   parts = template.split("DIR")
-  b = buf_new()
+  b = Buf.new()
   for i in 0..parts.size {
     if i > 0 {
       b.push_str(dir)
@@ -390,9 +390,9 @@ fn test_user_test(c: Checks) {
     // report, with the escapes visible.
     mkdir_p("${root}/ctlchar/tests")
     _ = fs.write("${root}/ctlchar/avant.toml", "[package]\nname = \"ctlchar\"\nversion = \"0.1.0\"\n")
-    ctlchar_ctl = "fn main: Int {\n  b = buf_new()\n  b.push_str(\"before \")\n  b.push_byte(27)\n  b.push_str(\"[31mred\")\n  b.push_byte(27)\n  b.push_str(\"[0m bell\")\n  b.push_byte(7)\n  b.push_str(\" ff\")\n  b.push_byte(255)\n  b.push_str(\" fffe\")\n  b.push_byte(239)\n  b.push_byte(191)\n  b.push_byte(190)\n  b.push_str(\" tab\\tcaf\")\n  b.push_byte(195)\n  b.push_byte(169)\n  b.push_str(\" after\")\n  puts(b.to_s())\n  1\n}\n"
+    ctlchar_ctl = "fn main: Int {\n  b = Buf.new()\n  b.push_str(\"before \")\n  b.push_byte(27)\n  b.push_str(\"[31mred\")\n  b.push_byte(27)\n  b.push_str(\"[0m bell\")\n  b.push_byte(7)\n  b.push_str(\" ff\")\n  b.push_byte(255)\n  b.push_str(\" fffe\")\n  b.push_byte(239)\n  b.push_byte(191)\n  b.push_byte(190)\n  b.push_str(\" tab\\tcaf\")\n  b.push_byte(195)\n  b.push_byte(169)\n  b.push_str(\" after\")\n  puts(b.to_s())\n  1\n}\n"
     _ = fs.write("${root}/ctlchar/tests/test_ctl.av", ctlchar_ctl)
-    ctlchar_name = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  b = buf_new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s())\n  t.finish()\n}\n"
+    ctlchar_name = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  b = Buf.new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s())\n  t.finish()\n}\n"
     _ = fs.write("${root}/ctlchar/tests/test_name.av", ctlchar_name)
     ctlchar_rc = "${root}/ctlchar.rc"
     ctlchar_sh = "#!/bin/sh\ncd ${ut_quote(root)}/ctlchar && ${ut_quote(compiler)} test --junit ${ut_quote(root)}/ctlchar.xml > ${ut_quote(root)}/ctlchar.log 2>&1; echo $? > ${ut_quote(ctlchar_rc)}\n"
@@ -403,7 +403,7 @@ fn test_user_test(c: Checks) {
     ctlchar_psh = "#!/bin/sh\n/usr/bin/python3 -I ${ut_quote(root)}/ctlchar.py ${ut_quote(root)}/ctlchar.xml > ${ut_quote(root)}/ctlchar-parse.out 2>&1; echo $? > ${ut_quote(ctlchar_prc)}\n"
     c.eq_int(ut_sh(ctlchar_psh, ctlchar_prc), 0, "control characters: an XML parser reads the JUnit report of an output and a name holding control characters")
     ctlchar_got = fs.read("${root}/ctlchar-parse.out") ?? ""
-    ctlchar_text = buf_new()
+    ctlchar_text = Buf.new()
     ctlchar_text.push_str("text before \\x1b[31mred\\x1b[0m bell\\x07 ff\\xff fffe\\xef\\xbf\\xbe tab\tcaf")
     ctlchar_text.push_byte(195)
     ctlchar_text.push_byte(169)
@@ -496,7 +496,7 @@ fn test_user_test(c: Checks) {
       toml_version = ""
       for line in (fs.read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
         if toml_version.size == 0 && ut_starts(line, "version = \"") && line.size > 12 {
-          toml_version = str_slice(line, 11, line.size - 1)
+          toml_version = line[11..line.size - 1]
         }
       }
       _ = run_out(compiler, v_args, "${vdir}/self.log")
@@ -724,7 +724,7 @@ fn test_user_test(c: Checks) {
 
 fn ut_sub(template: String, key: String, val: String): String {
   parts = template.split(key)
-  b = buf_new()
+  b = Buf.new()
   for i in 0..parts.size {
     if i > 0 {
       b.push_str(val)
@@ -736,7 +736,7 @@ fn ut_sub(template: String, key: String, val: String): String {
 
 fn ut_fill_name(template: String, name: String): String {
   parts = template.split("NAME")
-  b = buf_new()
+  b = Buf.new()
   for i in 0..parts.size {
     if i > 0 {
       b.push_str(name)

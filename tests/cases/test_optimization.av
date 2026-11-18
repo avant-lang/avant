@@ -125,7 +125,7 @@ fn test_optimization(c: Checks) {
   }
   c.eq_int(acc4, 140, "guarded index plus offset at size minus one boundary")
 
-  bsrc = buf_new()
+  bsrc = Buf.new()
   bsrc.push_byte(255)
   bsrc.push_byte(0)
   bsrc.push_byte(65)
@@ -151,7 +151,7 @@ fn test_optimization(c: Checks) {
   }
   c.eq_int(macc, 384, "masked byte index sum")
 
-  ssrc = buf_new()
+  ssrc = Buf.new()
   for ssi in 0..8 {
     ssrc.push_byte(255)
   }
@@ -164,7 +164,7 @@ fn test_optimization(c: Checks) {
   }
   c.eq_int(stab[2047], 8, "scaled byte index at 2047 boundary")
 
-  nsrc = buf_new()
+  nsrc = Buf.new()
   nsrc.push_byte(5)
   nsrc.push_byte(5)
   nsrc.push_byte(5)
@@ -281,7 +281,7 @@ fn test_optimization(c: Checks) {
   c.eq_int(long_s.size, 20000, "long string length")
   c.eq_int(long_s[0], 98, "long string first byte")
   c.eq_int(long_s[19999], 98, "long string last byte")
-  c.eq_str(str_slice(long_s, 19990, 20000), repeat_byte(98, 10), "long string tail slice")
+  c.eq_str(long_s[19990..20000], repeat_byte(98, 10), "long string tail slice")
   byte_sum = 0
   bi = 0
   while bi < long_s.size {
@@ -342,9 +342,9 @@ fn test_optimization(c: Checks) {
     expect_trap_opt(c, compiler, stamp, "window-offset-at-size", "fn main {\n  a = [10, 20, 30, 40, 50]\n  acc = 0\n  i = 0\n  while i < 5 {\n    acc = acc + a[i + 1]\n    i = i + 1\n  }\n  puts(acc)\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "invariant-index-negative", "fn main {\n  a = [7, 8, 9]\n  cell = 0 - 1\n  k = 0\n  while k < 3 {\n    puts(a[cell])\n    k = k + 1\n  }\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "invariant-index-at-size", "fn main {\n  a = [7, 8, 9]\n  cell = 3\n  k = 0\n  while k < 3 {\n    puts(a[cell])\n    k = k + 1\n  }\n}\n", "out of bounds")
-    expect_trap_opt(c, compiler, stamp, "byte-255-entry-table-traps", "fn main {\n  src = buf_new()\n  src.push_byte(255)\n  tab: Array(Int) = []\n  i = 0\n  while i < 255 {\n    tab.push(0)\n    i = i + 1\n  }\n  j = 0\n  while j < src.size {\n    tab[src[j]] = tab[src[j]] + 1\n    j = j + 1\n  }\n  puts(tab[0])\n}\n", "out of bounds")
+    expect_trap_opt(c, compiler, stamp, "byte-255-entry-table-traps", "fn main {\n  src = Buf.new()\n  src.push_byte(255)\n  tab: Array(Int) = []\n  i = 0\n  while i < 255 {\n    tab.push(0)\n    i = i + 1\n  }\n  j = 0\n  while j < src.size {\n    tab[src[j]] = tab[src[j]] + 1\n    j = j + 1\n  }\n  puts(tab[0])\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "byte-array-load-declines-traps", "fn main {\n  arr = [300]\n  tab: Array(Int) = []\n  i = 0\n  while i < 256 {\n    tab.push(i)\n    i = i + 1\n  }\n  j = 0\n  while j < 1 {\n    nb = arr[j]\n    puts(tab[nb])\n    j = j + 1\n  }\n}\n", "out of bounds")
-    expect_trap_opt(c, compiler, stamp, "byte-scaled-beyond-size-traps", "fn main {\n  src = buf_new()\n  src.push_byte(255)\n  tab: Array(Int) = []\n  i = 0\n  while i < 256 {\n    tab.push(0)\n    i = i + 1\n  }\n  j = 0\n  while j < src.size {\n    puts(tab[src[j] * 8])\n    j = j + 1\n  }\n}\n", "out of bounds")
+    expect_trap_opt(c, compiler, stamp, "byte-scaled-beyond-size-traps", "fn main {\n  src = Buf.new()\n  src.push_byte(255)\n  tab: Array(Int) = []\n  i = 0\n  while i < 256 {\n    tab.push(0)\n    i = i + 1\n  }\n  j = 0\n  while j < src.size {\n    puts(tab[src[j] * 8])\n    j = j + 1\n  }\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "dispatch-jump-negative-traps", "fn main {\n  cmds = [91, 43, 93]\n  jumps = [0 - 5, 0, 0]\n  tape = [0, 0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    pc = pc + 1\n  }\n  puts(tape[0])\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "dispatch-tape-beyond-size-traps", "fn main {\n  cmds = [62, 62, 43]\n  jumps = [0, 0, 0]\n  tape = [0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 62 {\n      pos = pos + 1\n    } else if c == 43 {\n      tape[pos] = (tape[pos] + 1) & 255\n    } else if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    pc = pc + 1\n  }\n  puts(tape[0])\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "dispatch-invalid-table-slow-tape-trap", "fn main {\n  cmds = [62, 43]\n  jumps = [0, 99]\n  tape = [0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 62 {\n      pos = pos + 1\n    } else if c == 43 {\n      tape[pos] = (tape[pos] + 1) & 255\n    } else if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    pc = pc + 1\n  }\n  puts(tape[0])\n}\n", "out of bounds")

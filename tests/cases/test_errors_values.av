@@ -119,7 +119,7 @@ fn discard_cases: Array(FCase) {
   xs.push(refused("discard-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  parse(\"ab\")\n  puts(1)\n}\n", "this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ..."))
   xs.push(refused("discard-error-alone", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  e = ParseError.new(\"x\")\n  e\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError)"))
   xs.push(refused("discard-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(n: Int): ParseError? {\n  nil\n}\nfn main {\n  check(1)\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError?); read the error with `if e = ... { }`, or discard it on purpose with _ = ..."))
-  xs.push(refused("discard-std-error", "import std.zlib\nfn main {\n  raw = \"hello\".bytes\n  dst = buf_new()\n  raw.compress_into(dst)\n  puts(dst.size)\n}\n", "this statement drops a value that can be an error (ZlibError?)"))
+  xs.push(refused("discard-std-error", "import std.zlib\nfn main {\n  raw = \"hello\".bytes\n  dst = Buf.new()\n  raw.compress_into(dst)\n  puts(dst.size)\n}\n", "this statement drops a value that can be an error (ZlibError?)"))
   xs.push(refused("discard-read", "fn main {\n  _ = 3\n  puts(_)\n}\n", "unknown name _"))
   xs.push(refused("discard-compound", "fn main {\n  _ += 3\n}\n", "_ discards a value with _ = ...; it holds nothing to read or update"))
   xs.push(refused("discard-typed", "fn main {\n  _: Int = 3\n}\n", "_ = ... discards a value; it takes no type"))
@@ -207,6 +207,9 @@ fn builtin_name_cases: Array(FCase) {
   xs.push(refused("removed-exp-value", "fn main {\n  f = exp\n  puts(f(1.0))\n}\n", "exp is a Float64 method: write x.exp()"))
   xs.push(accepted("removed-sqrt-own", "fn sqrt(n: Int): Int {\n  n / 2\n}\nfn main {\n  puts(sqrt(8))\n  puts(16.0.sqrt())\n}\n", "4\n4.0\n"))
   xs.push(refused("builtin-moved", "fn file_read(p: String): String {\n  p\n}\nfn main {\n  puts(file_read(\"a\"))\n}\n", "fn file_read: file_read is the prelude's old name of fs.read(path), and every call file_read(...) is refused with that spelling"))
+  xs.push(refused("twin-str-slice", "fn main {\n  s = \"abcd\"\n  puts(str_slice(s, 1, 3))\n}\n", "str_slice is gone: write s[start..stop]"))
+  xs.push(refused("twin-buf-new", "fn main {\n  b = buf_new()\n  puts(b.size)\n}\n", "buf_new is gone: write Buf.new()"))
+  xs.push(refused("twin-own-fn", "fn buf_new: Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "fn buf_new: buf_new is the prelude's old spelling of Buf.new()"))
   xs.push(accepted("builtin-join-free", "fn join(xs: Array(String)): String {\n  xs.join(\"+\")\n}\nfn main {\n  puts(join([\"a\", \"b\"]))\n}\n", "a+b\n"))
   xs.push(accepted("builtin-method-name", "class Log {\n  pub lines: Array(String) = []\n  fn puts(s: String) {\n    lines.push(s)\n  }\n}\nfn main {\n  l = Log.new()\n  l.puts(\"a\")\n  puts(l.lines.size)\n}\n", "1\n"))
   xs

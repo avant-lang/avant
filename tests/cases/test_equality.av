@@ -124,7 +124,7 @@ fn cases: Array(RCase) {
   xs.push(refused("clone-fn-field", "class Cb {\n  f: fn(Int): Int\n  fn initialize(self.f) {\n  }\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb.new(same)\n  d = c.clone()\n}\n", "cannot clone Cb: a function value (Cb.f) may capture mutable state, which the copy would share", "11:8"))
   xs.push(refused("clone-join-elem", "class Job {\n  h: JoinHandle(Int)?\n}\nfn main {\n  j = Job.new()\n  k = [j].clone()\n}\n", "cannot clone Array(Job): a JoinHandle (Job.h) is one task's result, waited for once", "6:10"))
   xs.push(refused("clone-union", "class Box {\n  n: Int = 0\n}\nclass Holder {\n  v: Int | Box = 0\n}\nfn main {\n  h = Holder.new()\n  g = h.clone()\n}\n", "cannot clone Holder: a union of several types that holds something to copy (Holder.v), Box | Int, is not copied yet", "9:8"))
-  xs.push(refused("clone-buf", "class W {\n  b: Buf = buf_new()\n}\nfn main {\n  w = W.new()\n  x = w.clone()\n}\n", "cannot clone W: a Buf (W.b) is not copied yet", "6:8"))
+  xs.push(refused("clone-buf", "class W {\n  b: Buf = Buf.new()\n}\nfn main {\n  w = W.new()\n  x = w.clone()\n}\n", "cannot clone W: a Buf (W.b) is not copied yet", "6:8"))
   xs.push(refused("clone-own", "class C {\n  n: Int = 0\n\n  fn clone: C {\n    self\n  }\n}\nfn main { }\n", "clone is derived for every type, a deep copy that shares nothing mutable with the original: a method cannot replace it; give the method another name", "4:3"))
   xs.push(refused("clone-own-external", "struct P {\n  x: Int\n}\nfn (p: P) clone: P {\n  p\n}\nfn main { }\n", "clone is derived for every type", "4:1"))
   xs.push(refused("clone-argument", "class C {\n  n: Int = 0\n}\nfn main {\n  c = C.new()\n  d = c.clone(1)\n}\n", "clone takes no arguments", "6:8"))

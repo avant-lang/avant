@@ -1247,12 +1247,26 @@ pub fn moved_io_name(name: String): String {
   ""
 }
 
+// The spelling that replaced a prelude twin (a free function beside the
+// form that says the same), "" for any other name. The compiler's own
+// sources keep the twin until the next seed builds them.
+pub fn retired_twin_name(name: String): String {
+  if name == "str_slice" {
+    return "s[start..stop]"
+  }
+  if name == "buf_new" {
+    return "Buf.new()"
+  }
+  ""
+}
+
 // Whether the current module may still call the prelude's old file and
-// process names: the compiler's own sources (built by the seed, which
-// has no std.fs) and the two modules that wrap them.
+// process names and its twins: the compiler's own sources (built by the
+// seed, which has no std.fs), the two modules that wrap them, and the
+// prelude's own parts.
 pub fn (checker_self: Checker) moved_io_allowed: Bool {
   m = checker_self.current_module
-  if m == "std.fs" || m == "std.process" || m == "prelude" {
+  if m == "std.fs" || m == "std.process" || m == "prelude" || str_starts(m, "prelude_") {
     return true
   }
   for info in checker_self.program.mods {
@@ -1279,6 +1293,11 @@ fn str_has_part(hay: String, part: String): Bool {
 // A call of a function that left the prelude, outside the modules that
 // may still name it: refused with the new spelling; true when refused.
 pub fn (checker_self: Checker) refuse_moved_io(expr: Expr): Bool {
+  twin = retired_twin_name(expr.callee)
+  if twin.size > 0 && !expr.derived && !checker_self.moved_io_allowed() {
+    checker_self.fail(expr.loc, "${expr.callee} is gone: write ${twin}")
+    return true
+  }
   spelled = moved_io_name(expr.callee)
   if spelled.size == 0 || checker_self.moved_io_allowed() {
     return false

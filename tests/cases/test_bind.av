@@ -20,7 +20,7 @@ fn body(text: String): String {
   i = 0
   while i < text.size {
     if text[i] == 10 {
-      return str_slice(text, i + 1, text.size)
+      return text[i + 1..]
     }
     i += 1
   }
@@ -29,14 +29,14 @@ fn body(text: String): String {
 
 fn head(text: String): String {
   if text.size > 240 {
-    return str_slice(text, 0, 240)
+    return text[..240]
   }
   text
 }
 
 fn has_lib(text: String): Bool {
   if text.size >= 4 {
-    if str_slice(text, 0, 4) == "lib " {
+    if text[..4] == "lib " {
       return true
     }
   }
@@ -332,7 +332,7 @@ fn test_bind(c: Checks) {
     c.expect(read_text(ld_log).contains("unsupported C type long double"), "long double diagnostic")
     // The generated text compiles against the C it describes and runs.
     sc_src = "${scratch()}/bind-${stamp}-cs.av"
-    sc_buf = buf_new()
+    sc_buf = Buf.new()
     sc_buf.push_str(sc_txt)
     sc_buf.push_str("\nfn main {\n  puts(hdr_cs.cs_neg_i8(-127))\n  puts(hdr_cs.cs_inc_u8(254))\n  puts(hdr_cs.cs_inc_u32(4294967294))\n  puts(hdr_cs.cs_half_f32(5.0))\n  puts(hdr_cs.cs_sum(-1, 2, -3, 4, 5, 0.5))\n  p = hdr_cs.cs_pix_new()\n  hdr_cs.cs_pix_fill(p)\n  puts(\"\${p.r} \${p.w} \${p.h} \${p.tag} \${p.id} \${p.gain}\")\n}\n")
     _ = fs.write(sc_src, sc_buf.to_s())
@@ -455,7 +455,7 @@ fn test_bind(c: Checks) {
     c.expect(u64_txt.contains("fun widen64(x: UInt64): UInt64"), "unsigned 64-bit maps to UInt64")
 
     gen_src = "${scratch()}/bind-${stamp}-gen.av"
-    gen_buf = buf_new()
+    gen_buf = Buf.new()
     gen_buf.push_str(add_txt)
     gen_buf.push_str("\nfn main {\n  puts(add.avant_add(20, 22))\n}\n")
     c.wrote(fs.write(gen_src, gen_buf.to_s()), "write generated add program")

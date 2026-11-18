@@ -19,7 +19,7 @@ fn test_std_base64(c: Checks) {
   } else {
     c.expect(false, "decode empty")
   }
-  bin = buf_new(4)
+  bin = Buf.new(4)
   bin.push_byte(0)
   bin.push_byte(1)
   bin.push_byte(254)
@@ -50,7 +50,7 @@ fn test_std_base64(c: Checks) {
   } else {
     c.expect(true, "short input is an error")
   }
-  dst = buf_new(64)
+  dst = Buf.new(64)
   dst.push_str("x")
   if err = "aaa".bytes.to_base64_into(dst) {
     c.expect(false, "encode_into ${err}")
@@ -63,7 +63,7 @@ fn test_std_base64(c: Checks) {
   } else {
     c.eq_str(dst.to_s(), "aaa", "decode_into after clear")
   }
-  keep = buf_new(64)
+  keep = Buf.new(64)
   keep.push_str("keep")
   if err3 = "!!!".bytes.from_base64_into(keep) {
     c.expect(true, "decode_into invalid is an error")
@@ -90,7 +90,7 @@ fn test_base64_url(c: Checks) {
   c.eq_str("aa".bytes.to_base64_url(), "YWE", "url: two bytes, no padding")
   c.eq_str("aaa".bytes.to_base64_url(), "YWFh", "url: three bytes")
   c.eq_str("hello world!".bytes.to_base64_url(), "aGVsbG8gd29ybGQh", "url: whole groups")
-  odd = buf_new(4)
+  odd = Buf.new(4)
   odd.push_byte(251)
   odd.push_byte(255)
   odd.push_byte(191)
@@ -114,7 +114,7 @@ fn test_base64_url(c: Checks) {
   c.eq_str(url_back("YQ="), "error", "url: a padded text whose length is not a multiple of four")
   c.eq_str(url_back("Y!Q"), "error", "url: invalid characters")
   for n in 0..40 {
-    raw = buf_new(n)
+    raw = Buf.new(n)
     for i in 0..n {
       raw.push_byte((i * 37 + 11) & 255)
     }
@@ -130,7 +130,7 @@ fn test_base64_url(c: Checks) {
     c.eq_int(enc.size, (n * 4 + 2) / 3, "url: length at ${n} bytes")
     c.expect(std.size >= enc.size, "url: not longer than standard at ${n} bytes")
   }
-  into = buf_new(16)
+  into = Buf.new(16)
   into.push_str(">")
   if err = "aa".bytes.to_base64_url_into(into) {
     c.expect(false, "url: encode_into ${err}")
@@ -143,7 +143,7 @@ fn test_base64_url(c: Checks) {
   } else {
     c.eq_int(into.size, 3, "url: decode_into")
   }
-  keep = buf_new(8)
+  keep = Buf.new(8)
   keep.push_str("k")
   if err3 = "a/b".bytes.from_base64_url_into(keep) {
     c.eq_str(err3.message, "invalid base64 data", "url: decode_into refuses /")

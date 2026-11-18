@@ -93,8 +93,8 @@ fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
 fn lib_dir_of(compiler: String): String {
   if t = fs.read("${compiler}.versions.txt") {
     for line in t.split("\n") {
-      if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
-        return str_slice(line, 5, line.size)
+      if line.size > 5 && line[..5] == "lib: " {
+        return line[5..]
       }
     }
   }
@@ -108,10 +108,10 @@ fn lib_relative(text: String, libdir: String): String {
     return text
   }
   prefix = "${libdir}/"
-  out = buf_new()
+  out = Buf.new()
   i = 0
   while i < text.size {
-    if i + prefix.size <= text.size && str_slice(text, i, i + prefix.size) == prefix {
+    if i + prefix.size <= text.size && text[i..i + prefix.size] == prefix {
       out.push_str("lib/")
       i += prefix.size
     } else {
@@ -183,7 +183,7 @@ fn path_dirname(p: String): String {
   if at <= 0 {
     return "."
   }
-  str_slice(p, 0, at)
+  p[..at]
 }
 
 fn main {

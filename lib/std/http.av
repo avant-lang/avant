@@ -219,7 +219,7 @@ fn split_target(target: String): TargetParts {
   q = 0
   while q < target.size {
     if target[q] == 63 {
-      return TargetParts { path: str_slice(target, 0, q), query: str_slice(target, q + 1, target.size) }
+      return TargetParts { path: target[..q], query: target[q + 1..] }
     }
     q += 1
   }
@@ -286,7 +286,7 @@ pub struct Request {
   // not a token, or a value with a control character but tab, traps).
   // Its peer is "".
   pub fn self.build(method: String, target: String, headers: Array(Header) = [], body: Bytes = "".bytes): Request {
-    block = buf_new()
+    block = Buf.new()
     for h in headers {
       httpc.avant_http_header_check(h.name, h.value)
       block.push_str("${h.name}: ${h.value}\r\n")
@@ -671,8 +671,8 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   q = 0
   while q < target.size {
     if target[q] == 63 {
-      path = str_slice(target, 0, q)
-      query = str_slice(target, q + 1, target.size)
+      path = target[..q]
+      query = target[q + 1..]
       q = target.size
     } else {
       q += 1
@@ -1032,7 +1032,7 @@ fn parse_port(text: String): Int {
 // well-formed absolute http URL with a host; the caller turns that
 // into an HttpError with a message.
 fn http_parse_url(url: String): UrlParts? {
-  rest = str_slice(url, 7, url.size)
+  rest = url[7..]
   auth_end = rest.size
   i = 0
   while i < rest.size {
@@ -1044,8 +1044,8 @@ fn http_parse_url(url: String): UrlParts? {
       i += 1
     }
   }
-  authority = str_slice(rest, 0, auth_end)
-  tail = str_slice(rest, auth_end, rest.size)
+  authority = rest[..auth_end]
+  tail = rest[auth_end..]
   if authority.size == 0 {
     return nil
   }
@@ -1056,7 +1056,7 @@ fn http_parse_url(url: String): UrlParts? {
   }
   host = authority
   port = 80
-  if str_slice(authority, 0, 1) == "[" {
+  if authority[..1] == "[" {
     close = 0
     j = 0
     while j < authority.size {
@@ -1070,12 +1070,12 @@ fn http_parse_url(url: String): UrlParts? {
     if close == 0 {
       return nil
     }
-    host = str_slice(authority, 1, close)
+    host = authority[1..close]
     if close + 1 < authority.size {
       if authority[close + 1] != 58 {
         return nil
       }
-      port = parse_port(str_slice(authority, close + 2, authority.size))
+      port = parse_port(authority[close + 2..])
       if port < 0 {
         return nil
       }
@@ -1088,8 +1088,8 @@ fn http_parse_url(url: String): UrlParts? {
       }
     }
     if colon >= 0 {
-      host = str_slice(authority, 0, colon)
-      port = parse_port(str_slice(authority, colon + 1, authority.size))
+      host = authority[..colon]
+      port = parse_port(authority[colon + 1..])
       if port < 0 {
         return nil
       }
@@ -1101,13 +1101,13 @@ fn http_parse_url(url: String): UrlParts? {
   target = tail
   if target.size == 0 {
     target = "/"
-  } else if str_slice(target, 0, 1) == "?" {
+  } else if target[..1] == "?" {
     target = "/${target}"
   }
   hash = 0
   while hash < target.size {
     if target[hash] == 35 {
-      target = str_slice(target, 0, hash)
+      target = target[..hash]
       hash = target.size
     } else {
       hash += 1
@@ -1130,7 +1130,7 @@ fn remove_dot_segments(path: String): String {
       kept.push(seg)
     }
   }
-  buf = buf_new()
+  buf = Buf.new()
   for i in 0..kept.size {
     if i > 0 {
       buf.push_str("/")
@@ -1141,7 +1141,7 @@ fn remove_dot_segments(path: String): String {
   if out.size == 0 {
     return "/"
   }
-  if str_slice(out, 0, 1) != "/" {
+  if out[..1] != "/" {
     out = "/${out}"
   }
   out
@@ -1174,7 +1174,7 @@ fn resolve_url(base: String, loc: String): String? {
     qi = 0
     while qi < base_path.size {
       if base_path[qi] == 63 {
-        base_path = str_slice(base_path, 0, qi)
+        base_path = base_path[..qi]
         qi = base_path.size
       } else {
         qi += 1
@@ -1186,7 +1186,7 @@ fn resolve_url(base: String, loc: String): String? {
         slash = j
       }
     }
-    merged = "${str_slice(base_path, 0, slash + 1)}${loc}"
+    merged = "${base_path[..slash + 1]}${loc}"
     return "${origin}${remove_dot_segments(merged)}"
   }
   nil
@@ -1227,7 +1227,7 @@ fn same_authority(a: UrlParts?, b: UrlParts?): Bool {
 }
 
 fn ascii_lower(s: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   for i in 0..s.size {
     ch = s[i]
     if ch >= 65 && ch <= 90 {
@@ -1290,7 +1290,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
   }
   parsed = http_parse_url(url)
   if p = parsed {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str(method)
     buf.push_str(" ")
     buf.push_str(p.target)
@@ -1543,7 +1543,7 @@ pub fn ws_connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpErro
   if refused = url_refusal(url) {
     return refused
   }
-  parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
+  parsed = http_parse_url("http://${url[5..]}")
   if p = parsed {
     key = httpc.avant_ws_client_key()
     id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
