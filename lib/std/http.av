@@ -631,6 +631,15 @@ pub struct Server {
     self.set_limit("max_connections", 5, n, 0)
   }
 
+  // How long an HTTP connection may stay idle, with no request bytes
+  // arriving and no answer bytes leaving, before it is closed (30000 ms
+  // by default; at most 14280000). uSockets counts in 4-second ticks:
+  // the close comes no earlier than `ms` and less than 8 s after it
+  // (past 952000 ms, in minutes: less than 2 minutes after it).
+  pub fn idle_timeout(ms: Int): Server {
+    self.set_limit("idle_timeout", 7, ms, 0)
+  }
+
   // How long `close` waits for the connections it leaves to finish (an
   // answer being sent, a WebSocket's closing handshake) before it closes
   // them, so `serve` returns by then (30000 ms by default).

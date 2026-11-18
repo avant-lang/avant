@@ -184,11 +184,9 @@ fn post_big_round(port: Int, out: Channel(String), n: Int): Int {
 // server receives every byte, in order. (The server's idle timeout is
 // shortened so that a cut request fails this check in 8 s, not 30.)
 fn client_cases(c: Checks) {
-  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "8")
   listened = Http.listen(0, "127.0.0.1", 33554432, 1)
-  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
   if opened = listened {
-    server = opened
+    server = opened.idle_timeout(4000)
     server.post("/raw", (req) {
       sum = 0
       for i in 0..req.body.size {
@@ -373,12 +371,13 @@ fn route_serving_cases(c: Checks, root: String) {
     // A limit is set before serving, like a route (from a handler, a
     // trap that fails its request); a negative one traps, before serving
     // a trap that ends the program.
-    limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative"]
+    limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative", "idle-big"]
     lines = [
       "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\nanswered 500\n",
       "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\nanswered 500\n",
       "avant runtime: Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
-      "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n"
+      "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n",
+      "avant runtime: Server.idle_timeout(14280001): a limit is 0 (off) to 14280000\n"
     ]
     for i in 0..limits.size {
       log = "${scratch()}/http-route-serving-${stamp}-${limits[i]}.log"
@@ -1414,15 +1413,12 @@ fn test_std_http_safety(c: Checks, root: String) {
   // The 30-second timeout was armed once, when the connection was
   // accepted, so a busy keep-alive connection was closed like an idle
   // one. It is an idle timeout now: request bytes, and queued answer
-  // bytes the client takes, start it again. The server is created with
-  // the timeout shortened to 8 s by AVANT_HTTP_IDLE_TIMEOUT_S (an
-  // internal variable for this test, read when the server is created);
-  // the idle round takes that long, so it runs beside the queue round.
-  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "8")
+  // bytes the client takes, start it again. The server's idle timeout
+  // is 4000 ms (the close comes 4 to 8 s after the last activity); the
+  // idle round takes that long, so it runs beside the queue round.
   listened = Http.listen(0, "127.0.0.1", 1048576, 1)
-  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
   if opened = listened {
-    server = opened
+    server = opened.idle_timeout(4000)
     big = buf_new()
     for i in 0..8388608 {
       big.push_byte(97 + i % 26)

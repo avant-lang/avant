@@ -203,8 +203,8 @@ def wait_closed(s, limit):
 
 def idle():
     # The server's timeout is an idle timeout. The test's server
-    # runs with it shortened to 8 s (two of uSockets' 4-second ticks, so
-    # a connection is closed between 4 and 8 s after its last activity).
+    # runs with it shortened to 4000 ms (two of uSockets' 4-second ticks,
+    # so a connection is closed between 4 and 8 s after its last activity).
     # Four connections, opened together: `busy` sends a request every
     # 0.4 s; `quiet` never sends; `once` sends one request and reads its
     # answer; `stalled` asks for 8 MiB and never reads. The server must

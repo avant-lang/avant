@@ -4339,6 +4339,7 @@ fn main {
 | `memory_ceiling(bytes)`: the process's resident memory, read about once a second | 90% of the container's memory limit (cgroup); off when there is none | new requests: 503, closed |
 | `max_connections(n)`: the open connections | 10000, at most the file-descriptor limit less 64 and 8 a loop | the loop's longest idle connection is closed; with none idle, the new one |
 | `shutdown_timeout(ms)`: how long `close` waits for what it left to finish (an answer being sent, a WebSocket's closing handshake) | 30000 ms | those connections are closed and `serve` returns |
+| `idle_timeout(ms)`: how long an HTTP connection may stay idle, no request bytes in and no answer bytes out (at most 14280000) | 30000 ms | the connection is closed, no earlier than `ms` and less than 8 s after it (uSockets counts in 4-second ticks; past 952000 ms in minutes, less than 2 minutes after) |
 
 <!-- check: compile -->
 ```avant
@@ -4358,7 +4359,7 @@ fn main {
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port. When the process runs out of file descriptors (or the system of memory for sockets), new connections wait in the kernel's backlog and accepting them is tried again at most once a second, instead of spinning a core.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
 - **What a handler captures is checked as a task's** ([What may cross a task](#what-may-cross-a-task)), since every loop thread runs the same handlers at once: a number, `Bool`, `String`, `Bytes`, enum, struct of those, `Channel`, `Mutex` or the `Server` itself may be captured, and an `Array` or `Hash` of those; a class or a function value may not (keep what handlers change in a `Mutex`), the handler cannot assign a captured variable, and a captured `Array` or `Hash` is frozen from the handler's registration on (a change through its name is a compile error, through any other path a trap that fails the request). A handler is a lambda written at the call or a named function; a function value from a variable is refused, since what it captures was not checked.
-- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
+- **An idle HTTP connection is closed** after its `idle_timeout` with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
 - **A trap in a handler fails its request, not the server**: it is printed to standard error when it happens (`avant runtime: index 7 out of bounds …`), the handler's stack is dropped without unwinding, and the request is answered 500 (the connection kept or closed as any answer's would be); the next request is served. A trap in a WebSocket handler closes that connection with 1011. What the handler held is given back as for a [task that traps](#when-a-task-traps): a `Mutex` it held in `with` is poisoned, its `pin` blocks and `gc.hold`s end. A trap inside a C callback the handler made, and the runtime's own stops, still end the program.
 
 #### HTTP client

@@ -372,7 +372,10 @@ struct AvantHttpServer {
   int port;
   int32_t max_body;
   int32_t max_message;
-  unsigned int idle_timeout;
+  /* The idle timeout in uSockets' clocks (idle_limit): idle_secs for its
+   * 4-second ticks, or idle_mins for its minutes; both 0: none. */
+  uint32_t idle_secs;
+  uint32_t idle_mins;
   size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
   /* The limits (Server's setters before serve; 0 is off):
    * head_ms, the time a request head may take from its first byte;
@@ -430,30 +433,40 @@ static int64_t http_now_ms(void) {
   return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 + 1;
 }
 
-/* An HTTP connection is closed when nothing has happened on it for this
- * long: no request bytes received and no queued answer bytes sent
- * (it used to be armed once at accept, so a busy
- * keep-alive connection was closed about 30 s after it was accepted).
- * uSockets counts timeouts in 4-second ticks, rounding the seconds up
- * to whole ticks (30 s is 8 ticks): the close comes at the eighth sweep
- * after the last activity, 28 to 32 s after it. A WebSocket connection
- * has none (cleared at the upgrade). */
-#define HTTP_IDLE_TIMEOUT_S 30
+/* An HTTP connection is closed when nothing has happened on it for
+ * idle_timeout milliseconds (Server.idle_timeout, 30000 by default): no
+ * request bytes received and no queued answer bytes sent. uSockets
+ * counts timeouts in ticks of 4 seconds (up to 239), and its long
+ * timeouts in minutes: idle_limit gives the setting in those clocks so
+ * that the close comes no earlier than the setting and less than 8 s
+ * after it (or, past 952 s, less than 2 minutes after it). It used to be
+ * a fixed 30 s that closed 28 to 32 s after the last activity, set only
+ * by an internal variable of the suite. */
+#define HTTP_IDLE_TIMEOUT_MS 30000
+#define HTTP_IDLE_MAX_MS 14280000
 
-/* AVANT_HTTP_IDLE_TIMEOUT_S is an internal variable for the suite, not
- * a user setting: a server created while it holds a number from 8 to 30
- * uses that many seconds, so tests/cases/test_std_http_safety.av can
- * watch an idle connection end without waiting 30 s. It can only
- * shorten the timeout; any other value is ignored. */
-static unsigned int http_idle_timeout(void) {
-  const char *v = getenv("AVANT_HTTP_IDLE_TIMEOUT_S");
-  if (v && v[0] >= '0' && v[0] <= '9') {
-    long n = strtol(v, NULL, 10);
-    if (n >= 8 && n <= HTTP_IDLE_TIMEOUT_S) {
-      return (unsigned int)n;
-    }
+static void idle_limit(uint32_t ms, uint32_t *secs, uint32_t *mins) {
+  uint32_t ticks;
+  *secs = 0;
+  *mins = 0;
+  if (ms == 0) {
+    return;
   }
-  return HTTP_IDLE_TIMEOUT_S;
+  ticks = (ms + 3999) / 4000 + 1;
+  if (ticks <= 239) {
+    *secs = ticks * 4;
+  } else {
+    *mins = (ms + 59999) / 60000 + 1;
+  }
+}
+
+/* Starts a connection's idle clock again (0 and 0: none). */
+static void idle_arm(struct us_socket_t *s, uint32_t secs, uint32_t mins) {
+  if (__builtin_expect(mins != 0, 0)) {
+    us_socket_long_timeout(0, s, mins);
+  } else {
+    us_socket_timeout(0, s, secs);
+  }
 }
 
 /* A write hands the socket at most 1 GiB at a time (the server's
@@ -1954,6 +1967,7 @@ avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   req->ws_conn = ws;
   req->upgraded = 1;
   us_socket_timeout(0, req->sock, 0);
+  us_socket_long_timeout(0, req->sock, 0);
   return 1;
 }
 
@@ -2320,7 +2334,7 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
                                conn->srv->ws_write_chunk);
     if (conn->out_off > before) {
       /* The client took queued bytes: it is not stalled. */
-      us_socket_timeout(0, s, conn->srv->idle_timeout);
+      idle_arm(s, conn->srv->idle_secs, conn->srv->idle_mins);
     }
     if (!done) {
       /* us_socket_write polls for readable again; this connection is
@@ -2541,7 +2555,7 @@ static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
   node->sock = s;
   node->next = hl->conns_head;
   hl->conns_head = node;
-  us_socket_timeout(0, s, srv->idle_timeout);
+  idle_arm(s, srv->idle_secs, srv->idle_mins);
   n = __atomic_add_fetch(&srv->conns, 1, __ATOMIC_RELAXED);
   if (srv->max_conns && n > srv->max_conns) {
     /* At the connection limit: the loop's longest idle connection makes
@@ -2564,7 +2578,7 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   }
   if (!conn->ws) {
     /* Request bytes arrived: the idle timeout starts again. */
-    us_socket_timeout(0, s, conn->srv->idle_timeout);
+    idle_arm(s, conn->srv->idle_secs, conn->srv->idle_mins);
   }
   if (conn->len + (size_t)length > conn->cap) {
     size_t want = conn->cap ? conn->cap : 8192;
@@ -2897,6 +2911,7 @@ static int loop_create(AvantHttpServer *srv, HttpLoop *hl, const char *host,
   us_socket_context_on_writable(0, hl->ctx, srv_on_writable);
   us_socket_context_on_close(0, hl->ctx, srv_on_close);
   us_socket_context_on_timeout(0, hl->ctx, srv_on_timeout);
+  us_socket_context_on_long_timeout(0, hl->ctx, srv_on_timeout);
   us_socket_context_on_end(0, hl->ctx, srv_on_end);
   hl->listen = us_socket_context_listen(0, hl->ctx, host, (int)port, 0,
                                         (int)sizeof(ConnNode));
@@ -3035,7 +3050,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   }
   srv->max_body = (int32_t)max_body;
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
-  srv->idle_timeout = http_idle_timeout();
+  idle_limit(HTTP_IDLE_TIMEOUT_MS, &srv->idle_secs, &srv->idle_mins);
   srv->ws_write_chunk = http_ws_write_chunk();
   srv->head_ms = HTTP_HEAD_TIMEOUT_MS;
   srv->rate = HTTP_MIN_RATE;
@@ -3199,7 +3214,7 @@ __attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *
 void avant_http_set_limit(void *srvp, const char *name, avant_int which,
                           avant_int a, avant_int b) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
-  long long top = (which == 3 || which == 4) ? (1LL << 62) : INT32_MAX;
+  long long top = (which == 3 || which == 4) ? (1LL << 62) : which == 7 ? HTTP_IDLE_MAX_MS : INT32_MAX;
   if (a < 0 || b < 0 || a > top || b > INT32_MAX) {
     char msg[200];
     if (which == 2) {
@@ -3232,6 +3247,9 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
       break;
     case 6:
       srv->shutdown_ms = (uint32_t)a;
+      break;
+    case 7:
+      idle_limit((uint32_t)a, &srv->idle_secs, &srv->idle_mins);
       break;
     default:
       break;
