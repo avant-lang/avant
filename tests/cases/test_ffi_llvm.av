@@ -102,16 +102,16 @@ fn gc_envs: Array(String) {
 // The suite's compile flags of a program (tools/backend-diff.sh flags_of).
 fn flags_of(rel: String, root: String): Array(String) {
   fl: Array(String) = []
-  if str_has(rel, "tests/fixtures/ffi/") {
+  if rel.contains("tests/fixtures/ffi/") {
     fl.push("--cc")
     fl.push("${root}/tests/fixtures/ffi/ffi.c")
-  } else if str_has(rel, "examples/add.av") {
+  } else if rel.contains("examples/add.av") {
     fl.push("--cc")
     fl.push("${root}/examples/c/add.c")
-  } else if str_has(rel, "examples/layout.av") {
+  } else if rel.contains("examples/layout.av") {
     fl.push("--cc")
     fl.push("${root}/examples/c/layout.c")
-  } else if str_has(rel, "examples/zlib.av") {
+  } else if rel.contains("examples/zlib.av") {
     fl.push("--lib")
     fl.push("z")
   }
@@ -292,7 +292,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   gr.push(run_job_env(dir, "root_guard", "root_guard.r", ""))
   run_waves(gr)
   c.expect(gr[0].code != 0, "root_guard.av: rg_bad stops the program")
-  c.expect(str_has(log_text("${dir}/root_guard.r.err"), "avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
+  c.expect(log_text("${dir}/root_guard.r.err").contains("avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
   // A frame record's root words in place (tests/fixtures/ffi/frame_layout.av):
   // locals of an inline map and of a constant map held across
   // collections; avant_gc_leave inside an Avant function's record stops
@@ -317,10 +317,10 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   }
   fi = fenvs.size
   c.expect(fr[fi].code != 0, "frame_layout.av leave: avant_gc_leave inside an Avant function's record stops the program")
-  c.expect(str_has(log_text("${dir}/frame_layout.leave.err"), "gc leave inside a generated function's frame (avant_gc_leave without its avant_gc_enter)"), "frame_layout.av leave: the runtime's message")
+  c.expect(log_text("${dir}/frame_layout.leave.err").contains("gc leave inside a generated function's frame (avant_gc_leave without its avant_gc_enter)"), "frame_layout.av leave: the runtime's message")
   c.eq_str(log_text("${dir}/frame_layout.leave.out"), "", "frame_layout.av leave: nothing after the call runs")
   c.expect(fr[fi + 1].code != 0, "frame_layout.av bottom: the checked mode stops the program")
-  c.expect(str_has(log_text("${dir}/frame_layout.bottom.err"), "a generated record linked inline with no frame below it"), "frame_layout.av bottom: the checked mode's message")
+  c.expect(log_text("${dir}/frame_layout.bottom.err").contains("a generated record linked inline with no frame below it"), "frame_layout.av bottom: the checked mode's message")
   // A stack overflow through 32 KB frames on a
   // pool thread faults in the thread's guard page on every one of 40
   // runs (the stack probe every function carries). Without the probe
@@ -362,7 +362,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   bs_err = log_text("${dir}/buf_stale.verify.err")
   bs_msg = "in a Buf's storage that a growth replaced after coll="
   c.eq_int(bs_err.split(bs_msg).size - 1, 2, "buf_stale.av under AVANT_GC_VERIFY=1: both stale reads reported (the small Buf and the large one)")
-  c.expect(str_has(bs_err, "a pointer from avant_buf_bytes kept across a growth of its Buf"), "buf_stale.av under AVANT_GC_VERIFY=1: the report names avant_buf_bytes")
+  c.expect(bs_err.contains("a pointer from avant_buf_bytes kept across a growth of its Buf"), "buf_stale.av under AVANT_GC_VERIFY=1: the report names avant_buf_bytes")
   // A struct C freed without `release` and a new one
   // at the same address; the values C still holds from the old struct stay
   // pinned (plain, under the stress mode's poison), and under
@@ -389,7 +389,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/release_reuse.r0.err"), "", "release_reuse.av: no stderr")
   rr_err = log_text("${dir}/release_reuse.r2.err")
   c.eq_int(rr_err.split("\n").size, 2, "release_reuse.av under AVANT_GC_VERIFY=1: one report line")
-  c.expect(str_has(rr_err, "found it no longer holding the value Avant last stored there") && str_has(rr_err, "a missing `release`?"), "release_reuse.av under AVANT_GC_VERIFY=1: the store's report")
+  c.expect(rr_err.contains("found it no longer holding the value Avant last stored there") && rr_err.contains("a missing `release`?"), "release_reuse.av under AVANT_GC_VERIFY=1: the store's report")
   // A task blocks 1.5 s in C without the native
   // transition while the main thread collects. The program is correct
   // (only slow); under AVANT_GC_VERIFY=1 with a 0.5 s bound the waiting
@@ -416,7 +416,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/stall.r0.err"), "", "stall.av: no stderr")
   c.eq_str(log_text("${dir}/stall.r1.err"), "", "stall.av under AVANT_GC_VERIFY=1 (the 10 s bound): no report")
   st_err = log_text("${dir}/stall.r2.err")
-  c.expect(str_has(st_err, "avant gc verify: a collection has waited 0.5 s for thread ") && str_has(st_err, "to reach a safepoint; it is running, and its innermost Avant frame is a generated function's frame record") && str_has(st_err, "(the collection keeps waiting)"), "stall.av under a 0.5 s bound: the handshake's report")
+  c.expect(st_err.contains("avant gc verify: a collection has waited 0.5 s for thread ") && st_err.contains("to reach a safepoint; it is running, and its innermost Avant frame is a generated function's frame record") && st_err.contains("(the collection keeps waiting)"), "stall.av under a 0.5 s bound: the handshake's report")
   // One collection frees 400 large Bufs C still
   // points into; every run is held and protected, so C's reads through
   // the last 100 pointers are reported (past the old cap of 256 runs they
@@ -439,7 +439,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/held_caps.verify.out"), "kept 38800 read 100\n", "held_caps.av under AVANT_GC_VERIFY=1: the known stdout")
   hc_err = log_text("${dir}/held_caps.verify.err")
   c.eq_int(hc_err.split(" in a large run freed at coll=").size - 1, 32, "held_caps.av under AVANT_GC_VERIFY=1: the reads past the old cap are reported (the first 32 printed)")
-  c.expect(str_has(hc_err, "verify_held_max=") && str_has(hc_err, "/400 verify_unprotected=0"), "held_caps.av under AVANT_GC_VERIFY=1: 400 runs held, none unprotected")
+  c.expect(hc_err.contains("verify_held_max=") && hc_err.contains("/400 verify_unprotected=0"), "held_caps.av under AVANT_GC_VERIFY=1: 400 runs held, none unprotected")
   // 64 C threads exit inside an Avant callback with a
   // user C frame (1 MiB of root slots) on their chain; the exit frees it
   // (about 64 MiB stayed resident at the base).

@@ -97,7 +97,7 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   flog = "${base}/state-fetch.log"
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "a relative git path fetches from another directory")
   lock = file_read("${app}/avant.lock") ?? ""
-  c.expect(str_has(lock, "source = \"git+../textlib#${v1}\"\nrev = \"v1\"\n"), "the lockfile records the git as written and the rev it resolved")
+  c.expect(lock.contains("source = \"git+../textlib#${v1}\"\nrev = \"v1\"\n"), "the lockfile records the git as written and the rev it resolved")
   c.eq_str((file_read("${app}/deps/textlib/.git/HEAD") ?? "").strip(), v1, "the checkout is detached at the locked commit")
   rlog = "${base}/state-run.log"
   c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "a nested module of a fetched dependency is imported by its path")
@@ -105,14 +105,14 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   // A checkout moved by hand is not compiled.
   c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--detach", v2], glog) ?? -1, 0, "move the checkout by hand")
   moved = pkg_run_out(compiler, "${app}/main.av", rlog)
-  c.expect(str_has(moved, "deps/textlib is at ${v2}, avant.lock pins ${v1} (run: avant fetch ${app})"), "a checkout at another commit than the lockfile's is refused")
+  c.expect(moved.contains("deps/textlib is at ${v2}, avant.lock pins ${v1} (run: avant fetch ${app})"), "a checkout at another commit than the lockfile's is refused")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch puts the checkout back")
   c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "the locked commit again")
 
   // A changed rev is not compiled until fetched, and a plain fetch takes it.
   _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v2\" }\n")
   stale = pkg_run_out(compiler, "${app}/main.av", rlog)
-  c.expect(str_has(stale, "avant.toml asks for textlib at v2, avant.lock was fetched at v1 (run: avant fetch ${app})"), "a rev the lockfile was not fetched at is refused")
+  c.expect(stale.contains("avant.toml asks for textlib at v2, avant.lock was fetched at v1 (run: avant fetch ${app})"), "a rev the lockfile was not fetched at is refused")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the rev changed")
   c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v2\nLOUD\n", "a plain fetch moves a dependency to its new rev")
 
@@ -127,7 +127,7 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
   dlog = "${base}/state-dirty.log"
   c.expect(pkg_fetch(compiler, app, false, dlog) != 0, "fetch refuses to move a checkout with changes")
-  c.expect(str_has(file_read(dlog) ?? "", "deps/textlib has changes git does not have"), "the refusal names the checkout")
+  c.expect((file_read(dlog) ?? "").contains("deps/textlib has changes git does not have"), "the refusal names the checkout")
   c.eq_str(file_read("${app}/deps/textlib/greeter.av") ?? "", "pub fn greeting: String {\n  \"edited\"\n}\n", "the change is kept")
   c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--", "greeter.av"], glog) ?? -1, 0, "discard the change")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch back to v1")
@@ -137,7 +137,7 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   _ = file_write("${app}/deps/stray/strayed.av", "pub fn strayed: Int {\n  1\n}\n")
   _ = file_write("${app}/stray.av", "import strayed\nfn main {\n  puts(strayed())\n}\n")
   sout = pkg_run_out(compiler, "${app}/stray.av", rlog)
-  c.expect(str_has(sout, "deps/stray/strayed.av is in deps/, but avant.lock does not name stray, so it is not a dependency"), "a directory the lockfile does not name is not a dependency")
+  c.expect(sout.contains("deps/stray/strayed.av is in deps/, but avant.lock does not name stray, so it is not a dependency"), "a directory the lockfile does not name is not a dependency")
   rm_rf("${app}/deps/stray")
 
   // A dependency removed from the manifest is refused until fetch removes
@@ -145,9 +145,9 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n")
   _ = file_write("${app}/plain.av", "fn main {\n  puts(7)\n}\n")
   gone = pkg_run_out(compiler, "${app}/plain.av", rlog)
-  c.expect(str_has(gone, "avant.lock pins textlib, which avant.toml no longer needs (run: avant fetch ${app}: it removes deps/textlib)"), "a removed dependency is refused while the lockfile pins it")
+  c.expect(gone.contains("avant.lock pins textlib, which avant.toml no longer needs (run: avant fetch ${app}: it removes deps/textlib)"), "a removed dependency is refused while the lockfile pins it")
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the removal")
-  c.expect(str_has(file_read(flog) ?? "", "removed ${app}/deps/textlib: no dependency names it any more"), "fetch says what it removed")
+  c.expect((file_read(flog) ?? "").contains("removed ${app}/deps/textlib: no dependency names it any more"), "fetch says what it removed")
   c.expect(!file_exists("${app}/deps/textlib"), "fetch removes the checkout of a removed dependency")
   c.eq_str(pkg_run_out(compiler, "${app}/plain.av", rlog), "0: 7\n", "the project compiles without it")
 
@@ -159,7 +159,7 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   plog = "${base}/state-path.log"
   c.eq_int(pkg_env_run(["PATH=${gbin}"], compiler, ["fetch", app], plog), 0, "fetch runs the git on PATH")
   c.eq_int(pkg_env_run(["PATH=${base}/nowhere"], compiler, ["fetch", app], plog), 1, "fetch without git on PATH fails")
-  c.expect(str_has(file_read(plog) ?? "", "avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
+  c.expect((file_read(plog) ?? "").contains("avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
 }
 
 // A package names the C it carries and links in its avant.toml; the root
@@ -184,11 +184,11 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   _ = file_write("${app}/plain.av", "fn main {\n  puts(1)\n}\n")
   flog = "${base}/c-fetch.log"
   c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch a package with C")
-  c.expect(str_has(file_read(flog) ?? "", "note: zpkg links C code: opt in with [link] zpkg = \"source\""), "fetch says the package links C and how to opt in")
+  c.expect((file_read(flog) ?? "").contains("note: zpkg links C code: opt in with [link] zpkg = \"source\""), "fetch says the package links C and how to opt in")
   env = ["AVANT_CACHE_DIR=${cache}"]
   rlog = "${base}/c-run.log"
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a package's C does not link without the root's opt-in")
-  c.expect(str_has(file_read(rlog) ?? "", "the dependency zpkg links C code (1 C source; the system's z instead of its sources), and nothing links unless this project opts in"), "the refusal says what the package links and how to opt in")
+  c.expect((file_read(rlog) ?? "").contains("the dependency zpkg links C code (1 C source; the system's z instead of its sources), and nothing links unless this project opts in"), "the refusal says what the package links and how to opt in")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/plain.av"], rlog), 0, "a program that imports no module of the package needs no opt-in")
 
   _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"source\"\n")
@@ -218,14 +218,14 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"system\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "system: the system's library")
   out = file_read(rlog) ?? ""
-  c.expect(out.size > 1 && !str_has(out, "vendored") && !str_has(out, "cache"), "system: the system's zlib answers, not the package's copy")
+  c.expect(out.size > 1 && !out.contains("vendored") && !out.contains("cache"), "system: the system's zlib answers, not the package's copy")
 
   _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"vendored\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "an unknown choice")
-  c.expect(str_has(file_read(rlog) ?? "", "[link] zpkg is \"vendored\": want \"source\""), "an unknown choice is named")
+  c.expect((file_read(rlog) ?? "").contains("[link] zpkg is \"vendored\": want \"source\""), "an unknown choice is named")
   _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nnope = \"source\"\n")
   c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a choice for no dependency")
-  c.expect(str_has(file_read(rlog) ?? "", "[link] names nope, which is not a dependency of this project"), "a choice for no dependency is named")
+  c.expect((file_read(rlog) ?? "").contains("[link] names nope, which is not a dependency of this project"), "a choice for no dependency is named")
 
   // The root project's own [c] needs no opt-in.
   own = "${base}/own"
@@ -245,7 +245,7 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   for b in bad {
     _ = file_write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\n${b[0]}\n")
     c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 1, "refused: ${b[0]}")
-    c.expect(str_has(file_read(rlog) ?? "", b[1]), "the message: ${b[1]}")
+    c.expect((file_read(rlog) ?? "").contains(b[1]), "the message: ${b[1]}")
   }
 
   // --lib PATH links a library file.
@@ -256,7 +256,7 @@ fn test_package_c(c: Checks, compiler: String, base: String) {
   c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/libhalf.a"]), 0, "--lib PATH")
   c.eq_str(file_read(rlog) ?? "", "21\n", "--lib PATH links the library file")
   c.eq_int(run_av_cmd_flags(compiler, "${base}/half.av", rlog, ["--lib", "${base}/nope.a"]), 1, "--lib PATH of no file")
-  c.expect(str_has(file_read(rlog) ?? "", "--lib ${base}/nope.a: no such library file"), "--lib PATH of no file is named")
+  c.expect((file_read(rlog) ?? "").contains("--lib ${base}/nope.a: no such library file"), "--lib PATH of no file is named")
 }
 
 fn test_packages(c: Checks) {
@@ -301,7 +301,7 @@ fn test_packages(c: Checks) {
     pre_code = compile_av(compiler, "${app}/main.av", pre_bin, pre_log)
     c.expect(pre_code != 0, "compile before fetch fails")
     if pre_txt = file_read(pre_log) {
-      c.expect(str_has(pre_txt, "run: avant fetch"), "missing dep diagnostic points at avant fetch")
+      c.expect(pre_txt.contains("run: avant fetch"), "missing dep diagnostic points at avant fetch")
     } else {
       c.expect(false, "read pre-fetch log")
     }
@@ -311,8 +311,8 @@ fn test_packages(c: Checks) {
     c.expect(file_exists("${app}/avant.lock"), "fetch writes avant.lock")
     c.expect(file_exists("${app}/deps/greeter/greeter.av"), "fetch clones the dep under deps/")
     if lock_txt = file_read("${app}/avant.lock") {
-      c.expect(str_has(lock_txt, "name = \"greeter\""), "lockfile names the dep")
-      c.expect(str_has(lock_txt, "source = \"git+${dep}#"), "lockfile pins the dep source")
+      c.expect(lock_txt.contains("name = \"greeter\""), "lockfile names the dep")
+      c.expect(lock_txt.contains("source = \"git+${dep}#"), "lockfile pins the dep source")
     } else {
       c.expect(false, "read lockfile")
     }
@@ -363,8 +363,8 @@ fn test_packages(c: Checks) {
     loc_code = compile_av(compiler, "${app}/main.av", "${base}/local-bin", loc_log)
     c.expect(loc_code != 0, "a local module beside a fetched one does not compile")
     loc_txt = file_read(loc_log) ?? ""
-    c.expect(str_has(loc_txt, "import greeter is ambiguous:"), "a local module beside a fetched one is ambiguous")
-    c.expect(str_has(loc_txt, "${app}/greeter.av") && str_has(loc_txt, "${app}/deps/greeter/greeter.av"), "the ambiguity names both files")
+    c.expect(loc_txt.contains("import greeter is ambiguous:"), "a local module beside a fetched one is ambiguous")
+    c.expect(loc_txt.contains("${app}/greeter.av") && loc_txt.contains("${app}/deps/greeter/greeter.av"), "the ambiguity names both files")
     rm_f("${app}/greeter.av")
 
     // Patching a dependency: a clone with the change committed on a
@@ -378,7 +378,7 @@ fn test_packages(c: Checks) {
     c.eq_int(pkg_git_commit(fork, "patch", glog), 0, "git commit the patch")
     _ = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${fork}\", rev = \"patch\" }\n")
     c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "fetch after the manifest names the patched clone")
-    c.expect(str_has(file_read("${app}/avant.lock") ?? "", "source = \"git+${fork}#"), "the lockfile records the patched clone")
+    c.expect((file_read("${app}/avant.lock") ?? "").contains("source = \"git+${fork}#"), "the lockfile records the patched clone")
     c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile with the patched dep")
     chmod_x(app_bin)
     c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run with the patched dep")
@@ -400,7 +400,7 @@ fn test_packages(c: Checks) {
     amb_code = compile_av(compiler, "${app2}/main.av", amb_bin, amb_log)
     c.expect(amb_code != 0, "ambiguous import does not compile")
     if amb_txt = file_read(amb_log) {
-      c.expect(str_has(amb_txt, "import shared is ambiguous"), "ambiguous import diagnostic")
+      c.expect(amb_txt.contains("import shared is ambiguous"), "ambiguous import diagnostic")
     } else {
       c.expect(false, "read ambiguity log")
     }
@@ -418,7 +418,7 @@ fn test_packages(c: Checks) {
     _ = file_write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_fetch(compiler, app3, false, fetch_log), 0, "fetch transitive deps")
     if lock3 = file_read("${app3}/avant.lock") {
-      c.expect(str_has(lock3, "name = \"inner\""), "lockfile records the transitive dep")
+      c.expect(lock3.contains("name = \"inner\""), "lockfile records the transitive dep")
     } else {
       c.expect(false, "read transitive lockfile")
     }
@@ -457,8 +457,8 @@ fn test_packages(c: Checks) {
     _ = file_write("${app4}/avant.toml", "[package]\nname = \"app4\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v1\" }\nouter2 = { git = \"${outer2}\", rev = \"HEAD\" }\n")
     two_log = "${base}/two.log"
     c.expect(pkg_fetch(compiler, app4, false, two_log) != 0, "fetch of one name at two commits fails")
-    c.expect(str_has(file_read(two_log) ?? "", "avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
-    c.expect(str_has(file_read(two_log) ?? "", "; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
+    c.expect((file_read(two_log) ?? "").contains("avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
+    c.expect((file_read(two_log) ?? "").contains("; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
 
     test_package_state(c, compiler, base)
     test_package_c(c, compiler, base)
@@ -469,7 +469,7 @@ fn test_packages(c: Checks) {
     c.expect(bad_code != 0, "fetch of a missing repo fails")
     c.expect(!file_exists("${bad}/avant.lock"), "failed fetch writes no lockfile")
     if bad_txt = file_read(bad_log) {
-      c.expect(str_has(bad_txt, "avant fetch:"), "failed fetch diagnostic")
+      c.expect(bad_txt.contains("avant fetch:"), "failed fetch diagnostic")
     } else {
       c.expect(false, "read bad fetch log")
     }
@@ -479,7 +479,7 @@ fn test_packages(c: Checks) {
     mal_code = pkg_fetch(compiler, malformed, false, mal_log)
     c.expect(mal_code != 0, "malformed manifest fails")
     if mal_txt = file_read(mal_log) {
-      c.expect(str_has(mal_txt, "unterminated string"), "malformed manifest diagnostic")
+      c.expect(mal_txt.contains("unterminated string"), "malformed manifest diagnostic")
     } else {
       c.expect(false, "read malformed log")
     }

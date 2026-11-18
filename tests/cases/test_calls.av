@@ -160,12 +160,12 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
       c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
       c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
       c.eq_str(log_text("${dir}/calls-${f3.tag}.run.out"), f3.pos, "${f3.tag}: stdout")
-      c.expect(str_has(log_text("${dir}/calls-${f3.tag}.run.err"), f3.want), "${f3.tag}: stderr says ${f3.want}")
+      c.expect(log_text("${dir}/calls-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: stderr says ${f3.want}")
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/calls-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "calls-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("calls-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -220,7 +220,7 @@ fn check_format_calls(c: Checks, compiler: String, dir: String) {
     bargs.push(bad)
     bargs.push(src)
     c.eq_int(process_run_out(compiler, bargs, "${dir}/calls-format-bad.log") ?? -1, 1, "format --calls ${bad}: exits 1")
-    c.expect(str_has(log_text("${dir}/calls-format-bad.log"), bad), "format --calls ${bad}: the message names the flag")
+    c.expect(log_text("${dir}/calls-format-bad.log").contains(bad), "format --calls ${bad}: the message names the flag")
     c.eq_str(log_text(src), before, "format --calls ${bad}: the file is left as it was")
   }
 }

@@ -385,9 +385,9 @@ fn test_fn(c: Checks) {
       scode = process_run_out("/usr/bin/env", st, slog) ?? -1
       c.eq_int(scode, 0, "fn nursery stats run")
       if stats = file_read(slog) {
-        c.expect(str_has(stats, "young="), "gc stats printed")
-        c.expect(!str_has(stats, "young=0 full"), "copying nursery ran")
-        c.expect(str_has(stats, "kept"), "string intact in stats run")
+        c.expect(stats.contains("young="), "gc stats printed")
+        c.expect(!stats.contains("young=0 full"), "copying nursery ran")
+        c.expect(stats.contains("kept"), "string intact in stats run")
       } else {
         c.expect(false, "read gc stats")
       }
@@ -404,7 +404,7 @@ fn test_fn(c: Checks) {
     d1 = dump_av(compiler, each_src, each_log)
     c.eq_int(d1, 0, "dump each")
     if each_ir = file_read(each_log) {
-      c.expect(!str_has(each_ir, "#lam"), "each does not allocate a lambda")
+      c.expect(!each_ir.contains("#lam"), "each does not allocate a lambda")
     } else {
       c.expect(false, "read each dump")
     }
@@ -415,8 +415,8 @@ fn test_fn(c: Checks) {
     d2 = dump_av(compiler, lam_src, lam_log)
     c.eq_int(d2, 0, "dump closure")
     if lam_ir = file_read(lam_log) {
-      c.expect(str_has(lam_ir, "#lam1("), "closure has a thunk")
-      c.expect(str_has(lam_ir, "= call indirect "), "closure calls indirectly")
+      c.expect(lam_ir.contains("#lam1("), "closure has a thunk")
+      c.expect(lam_ir.contains("= call indirect "), "closure calls indirectly")
     } else {
       c.expect(false, "read closure dump")
     }

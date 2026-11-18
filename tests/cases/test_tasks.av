@@ -206,10 +206,10 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
     out = file_read(log) ?? ""
     err = file_read(elog) ?? ""
     c.eq_int(status, statuses[i], "mutex recover ${kind}: status ${statuses[i]}")
-    c.expect(str_has(out, wants[i]), "mutex recover ${kind}: stdout has ${wants[i]}")
-    c.expect(str_has(err, wants_err[i]), "mutex recover ${kind}: stderr has ${wants_err[i]}")
+    c.expect(out.contains(wants[i]), "mutex recover ${kind}: stdout has ${wants[i]}")
+    c.expect(err.contains(wants_err[i]), "mutex recover ${kind}: stderr has ${wants_err[i]}")
     if statuses[i] == 1 {
-      c.expect(!str_has(out, "after"), "mutex recover ${kind}: the program ends there")
+      c.expect(!out.contains("after"), "mutex recover ${kind}: the program ends there")
     }
   }
 }
@@ -254,7 +254,7 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
       } else {
         c.eq_int(status, statuses[i], "task exit ${kind}: status ${statuses[i]}")
       }
-      c.expect(str_has(out, "before\n") && !str_has(out, "before\nbefore") && !str_has(out, "after"), "task exit ${kind}: the output once, and nothing after the exit: ${out}")
+      c.expect(out.contains("before\n") && !out.contains("before\nbefore") && !out.contains("after"), "task exit ${kind}: the output once, and nothing after the exit: ${out}")
       i += 1
     }
   }
@@ -356,10 +356,10 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       c.eq_int(status, statuses[i], "task trap ${kind}: status ${statuses[i]}")
     }
-    c.expect(str_has(out, wants[i]), "task trap ${kind}: stdout has ${wants[i]}")
-    c.expect(str_has(err, wants_err[i]), "task trap ${kind}: stderr has ${wants_err[i]}")
+    c.expect(out.contains(wants[i]), "task trap ${kind}: stdout has ${wants[i]}")
+    c.expect(err.contains(wants_err[i]), "task trap ${kind}: stderr has ${wants_err[i]}")
     if statuses[i] == 1 {
-      c.expect(!str_has(out, "after"), "task trap ${kind}: the program ends there")
+      c.expect(!out.contains("after"), "task trap ${kind}: the program ends there")
     }
   }
   task_flood_cases(c, bin, stamp)
@@ -389,7 +389,7 @@ fn task_flood_cases(c: Checks, bin: String, stamp: Int) {
         whole = (ws[2].to_i() ?? -1) >= 0
       } else if ws.size == 4 && ws[0] == "task" && ws[2] == "line" {
         whole = (ws[1].to_i() ?? -1) >= 0 && (ws[3].to_i() ?? -1) >= 0
-      } else if str_has(line, "avant runtime") {
+      } else if line.contains("avant runtime") {
         for t in 0..4 {
           if line == "avant runtime: index ${10 + t} out of bounds (size 3) in at (task_trap.av:29:1)" {
             whole = true

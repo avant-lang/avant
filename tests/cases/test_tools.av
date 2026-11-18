@@ -13,7 +13,7 @@ fn tools_line(log: String, name: String): String {
     if line == "ok: ${name}" {
       return "ok"
     }
-    if str_has(line, "FAIL: ${name}: ") || str_has(line, "skip: ${name}: ") {
+    if line.contains("FAIL: ${name}: ") || line.contains("skip: ${name}: ") {
       return line
     }
   }
@@ -24,7 +24,7 @@ fn tools_line(log: String, name: String): String {
 fn tools_checks(c: Checks, what: String, code: Int, log: String, names: Array(String)) {
   text = file_read(log) ?? ""
   c.eq_int(code, 0, "${what}: the script ran to its end")
-  c.expect(str_has(text, "\ndone\n") || (text.size >= 5 && str_slice(text, 0, 5) == "done\n"), "${what}: the script printed every check")
+  c.expect(text.contains("\ndone\n") || (text.size >= 5 && str_slice(text, 0, 5) == "done\n"), "${what}: the script printed every check")
   for n in names {
     got = tools_line(text, n)
     msg = "${what}: ${n}"

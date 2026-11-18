@@ -244,8 +244,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/lit-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "lit-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("lit-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -299,17 +299,17 @@ fn check_const_modules(c: Checks, compiler: String, dir: String) {
   run_waves(r1)
   c.eq_str(log_text("${d}/kuse_both_qualified.run.out"), "120\n", "modules both-qualified: stdout")
   c.expect(jobs[2].code != 0, "modules private: refused")
-  c.expect(str_has(log_text("${d}/kuse_private.log"), "unknown name secret"), "modules private: says unknown name secret")
-  c.expect(str_has(log_text("${d}/kuse_private.log"), "kuse_private.av:3:8\n"), "modules private: at 3:8")
+  c.expect(log_text("${d}/kuse_private.log").contains("unknown name secret"), "modules private: says unknown name secret")
+  c.expect(log_text("${d}/kuse_private.log").contains("kuse_private.av:3:8\n"), "modules private: at 3:8")
   c.expect(jobs[3].code != 0, "modules ambiguous: refused")
-  c.expect(str_has(log_text("${d}/kuse_ambiguous.log"), "width is a constant of both kmod and kmod2: write kmod.width or kmod2.width"), "modules ambiguous: says width is a constant of both kmod and kmod2: write kmod.width or kmod2.width")
-  c.expect(str_has(log_text("${d}/kuse_ambiguous.log"), "kuse_ambiguous.av:4:8\n"), "modules ambiguous: at 4:8")
+  c.expect(log_text("${d}/kuse_ambiguous.log").contains("width is a constant of both kmod and kmod2: write kmod.width or kmod2.width"), "modules ambiguous: says width is a constant of both kmod and kmod2: write kmod.width or kmod2.width")
+  c.expect(log_text("${d}/kuse_ambiguous.log").contains("kuse_ambiguous.av:4:8\n"), "modules ambiguous: at 4:8")
   c.expect(jobs[4].code != 0, "modules own-and-imported: refused")
-  c.expect(str_has(log_text("${d}/kuse_own_and_imported.log"), "width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width"), "modules own-and-imported: says width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width")
-  c.expect(str_has(log_text("${d}/kuse_own_and_imported.log"), "kuse_own_and_imported.av:4:8\n"), "modules own-and-imported: at 4:8")
+  c.expect(log_text("${d}/kuse_own_and_imported.log").contains("width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width"), "modules own-and-imported: says width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width")
+  c.expect(log_text("${d}/kuse_own_and_imported.log").contains("kuse_own_and_imported.av:4:8\n"), "modules own-and-imported: at 4:8")
   c.expect(jobs[5].code != 0, "modules assign-qualified: refused")
-  c.expect(str_has(log_text("${d}/kuse_assign_qualified.log"), "kmod.width is a constant and cannot be assigned"), "modules assign-qualified: says kmod.width is a constant and cannot be assigned")
-  c.expect(str_has(log_text("${d}/kuse_assign_qualified.log"), "kuse_assign_qualified.av:3:7\n"), "modules assign-qualified: at 3:7")
+  c.expect(log_text("${d}/kuse_assign_qualified.log").contains("kmod.width is a constant and cannot be assigned"), "modules assign-qualified: says kmod.width is a constant and cannot be assigned")
+  c.expect(log_text("${d}/kuse_assign_qualified.log").contains("kuse_assign_qualified.av:3:7\n"), "modules assign-qualified: at 3:7")
 }
 
 // A constant is its value written as a literal: a program that uses
@@ -323,7 +323,7 @@ fn check_const_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write("${kb}/k.av", "//\n//\n//\nfn main {\n  x: Int32 = 7\n  puts(x + -3)\n  puts(7 * 2)\n  if true {\n    puts(0)\n  }\n}\n")
   c.eq_int(emit_ll(compiler, "${ka}/k.av", "${ka}/k.ll", "${ka}/k.log"), 0, "const ll: emits")
   c.eq_int(emit_ll(compiler, "${kb}/k.av", "${kb}/k.ll", "${kb}/k.log"), 0, "literal ll: emits")
-  c.eq_str(str_replace_all(log_text("${ka}/k.ll"), ka, kb), log_text("${kb}/k.ll"), "const ll: the literal's")
+  c.eq_str(log_text("${ka}/k.ll").replace(ka, kb), log_text("${kb}/k.ll"), "const ll: the literal's")
 }
 
 fn test_main(c: Checks) {

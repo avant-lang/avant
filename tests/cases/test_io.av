@@ -237,16 +237,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
       c.eq_str(log_text("${dir}/io-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       if !f3.merged {
         err = log_text("${dir}/io-${f3.tag}.run.err")
-        if f3.status == 1 && f3.err.size > 0 && !str_has(f3.err, "\n") {
-          c.expect(str_has(err, f3.err) && str_has(err, "io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
+        if f3.status == 1 && f3.err.size > 0 && !f3.err.contains("\n") {
+          c.expect(err.contains(f3.err) && err.contains("io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
         } else {
           c.eq_str(err, f3.err, "${f3.tag}: stderr")
         }
       }
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }

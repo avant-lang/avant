@@ -249,13 +249,13 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
       file = "main.av"
     }
     c.expect(jobs[i].code != 0 && !file_exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
-    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
-    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    c.expect(log.contains(f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(log.contains("${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
     if f2.single {
-      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+      c.expect(!log.contains("aborting due to"), "${f2.tag}: one error")
     }
     if f2.absent.size > 0 {
-      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+      c.expect(!log.contains(f2.absent), "${f2.tag}: does not say ${f2.absent}")
     }
   }
 }
@@ -306,7 +306,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
     if i == src.size || src[i] == 10 {
       raw = str_slice(src, start, i)
       line = raw.strip()
-      if str_has(line, "pub fn builtin_member_names(") {
+      if line.contains("pub fn builtin_member_names(") {
         in_fn = true
       } else if in_fn && raw == "}" {
         in_fn = false
@@ -357,7 +357,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
   for j in 0..jobs.size {
     log = log_text("${dir}/nm-builtin-${tags[j]}.log")
     for n in names[j].split(" ") {
-      c.expect(!str_has(log, "no method ${n} on") && !str_has(log, "no field ${n}"), "builtin name ${n} is real")
+      c.expect(!log.contains("no method ${n} on") && !log.contains("no field ${n}"), "builtin name ${n} is real")
     }
   }
 }

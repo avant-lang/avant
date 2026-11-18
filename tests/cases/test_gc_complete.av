@@ -52,9 +52,9 @@ fn test_proof_oracle(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/proof_oracle.p${m}.out"), want, "proof_oracle.av, ${what}, without the verifier: the same stdout")
     err = log_text("${dir}/proof_oracle.v${m}.err")
     c.expect(runs[pi + 1].code != 0, "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the program is stopped")
-    c.expect(str_has(err, needle), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the oracle's report names the word")
-    c.expect(str_has(err, "avant gc verify: proof:   holder ") && str_has(err, "avant gc verify: proof:   referent "), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the report names the holder and the referent")
-    c.expect(str_has(err, last), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the stop's own line")
+    c.expect(err.contains(needle), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the oracle's report names the word")
+    c.expect(err.contains("avant gc verify: proof:   holder ") && err.contains("avant gc verify: proof:   referent "), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the report names the holder and the referent")
+    c.expect(err.contains(last), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the stop's own line")
   }
 }
 
@@ -80,8 +80,8 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
   }
   runs.push(run_job_env(dir, "complete", "complete.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS COMPLETE_SHOW=1 AVANT_GC_STATS=1"))
   run_waves(runs)
-  c.expect(str_has(want, "field: freed 1, ") && str_has(want, "task: freed 1, "), "complete.av: its run golden has every way's line")
-  c.expect(!str_has(want, "freed 0"), "complete.av: its run golden frees every victim")
+  c.expect(want.contains("field: freed 1, ") && want.contains("task: freed 1, "), "complete.av: its run golden has every way's line")
+  c.expect(!want.contains("freed 0"), "complete.av: its run golden frees every victim")
   for e in 0..envs.size {
     what = "plain"
     if envs[e].size > 0 {
@@ -96,22 +96,22 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
   for w in ways {
     line = ""
     for l in show.split("\n") {
-      if str_has(l, "${w}: ") {
+      if l.contains("${w}: ") {
         line = l
       }
     }
-    c.expect(str_has(line, "freed 1") && str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: the collection before the removal is a young one, the one after it a full one that frees the victim (${line})")
+    c.expect(line.contains("freed 1") && line.contains("[before: a young collection; after: a full collection]"), "complete.av, ${w}: the collection before the removal is a young one, the one after it a full one that frees the victim (${line})")
   }
   for w in ["sort", "rehash"] {
     line = ""
     for l in show.split("\n") {
-      if str_has(l, "${w}: ") {
+      if l.contains("${w}: ") {
         line = l
       }
     }
-    c.expect(str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: references moved in an old buffer make the next collection a full one (${line})")
+    c.expect(line.contains("[before: a young collection; after: a full collection]"), "complete.av, ${w}: references moved in an old buffer make the next collection a full one (${line})")
   }
-  c.expect(str_has(show, "task: freed 1, the task read true [before: a full collection; after: a full collection]"), "complete.av, task: a program with threads is collected by full collections")
+  c.expect(show.contains("task: freed 1, the task read true [before: a full collection; after: a full collection]"), "complete.av, task: a program with threads is collected by full collections")
   err = log_text("${dir}/complete.show.err")
   c.expect(stat_value(err, "proof_held") >= 13, "complete.av: the proof held for a collection of every way before its removal (proof_held ${stat_value(err, "proof_held")})")
   c.expect(stat_value(err, "proof_fell_ref_lost") >= 9 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
@@ -135,10 +135,10 @@ fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
   }
   run_waves(runs)
   for w in ["if binding", "block local", "no binding", "call argument"] {
-    c.expect(str_has(want, "${w}: freed after the function returned 1\n"), "scope_binding.av, ${w}: the string is freed once its function has returned")
+    c.expect(want.contains("${w}: freed after the function returned 1\n"), "scope_binding.av, ${w}: the string is freed once its function has returned")
   }
   for w in ["if binding", "block local", "no binding"] {
-    c.expect(str_has(want, "${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended keeps nothing alive")
+    c.expect(want.contains("${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended keeps nothing alive")
   }
   for e in 0..envs.size {
     what = "plain"
@@ -188,8 +188,8 @@ fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/keep_young.g${e}.err"), "", "keep_young.av ${what}: no stderr (the oracle is silent)")
   }
   show = log_text("${dir}/keep_young.show.out")
-  c.expect(str_has(show, "stable: 1 of 40 forced collections were full ones"), "keep_young.av: the loop's forced collections are one trace and young collections after it")
-  c.expect(str_has(show, "idle: 0 young and 0 full collections for two forced ones"), "keep_young.av: a forced collection with nothing young and the proof holding runs nothing")
+  c.expect(show.contains("stable: 1 of 40 forced collections were full ones"), "keep_young.av: the loop's forced collections are one trace and young collections after it")
+  c.expect(show.contains("idle: 0 young and 0 full collections for two forced ones"), "keep_young.av: a forced collection with nothing young and the proof holding runs nothing")
   err = log_text("${dir}/keep_young.show.err")
   c.expect(stat_value(err, "full_kept_young") >= 2, "keep_young.av: traces left the young generation young (full_kept_young ${stat_value(err, "full_kept_young")})")
   c.expect(stat_value(err, "full_kept_young_fell") >= 1, "keep_young.av: the trace that met a young object naming an old one went back to an ordinary trace (full_kept_young_fell ${stat_value(err, "full_kept_young_fell")})")

@@ -21,7 +21,7 @@ fn test_compiler(c: Checks) {
   if pt = file_read("/proc/self/status") {
     proc_text = pt
   }
-  c.expect(str_has(proc_text, "Name:"), "file_read reads a /proc file that reports size 0")
+  c.expect(proc_text.contains("Name:"), "file_read reads a /proc file that reports size 0")
   online = ""
   if ot = file_read("/sys/devices/system/cpu/online") {
     online = ot.strip()
@@ -85,8 +85,8 @@ fn test_compiler(c: Checks) {
     dump_code = dump_av(compiler, hello_src, hello_dump)
     c.eq_int(dump_code, 0, "dump hello fixture")
     if ir = file_read(hello_dump) {
-      c.expect(str_has(ir, "\nfn main("), "dump has fn main")
-      c.expect(str_has(ir, " = \"Hello Avant\"\n"), "dump has string")
+      c.expect(ir.contains("\nfn main("), "dump has fn main")
+      c.expect(ir.contains(" = \"Hello Avant\"\n"), "dump has string")
     } else {
       c.expect(false, "dump hello fixture")
     }
@@ -117,7 +117,7 @@ fn test_compiler(c: Checks) {
     c.expect(bad_code != 0, "compile bad exits non-zero")
     c.expect(!file_exists(bad_bin), "bad bin absent")
     if err = file_read(bad_log) {
-      c.expect(str_has(err, "unknown name"), "checker unknown name")
+      c.expect(err.contains("unknown name"), "checker unknown name")
     } else {
       c.expect(false, "checker unknown name")
     }

@@ -13,7 +13,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body:
   rcode = run_av_bin(bin, rlog)
   c.expect(rcode != 0, "${tag} exits non-zero")
   if err = file_read(rlog) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -30,7 +30,7 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   c.expect(code != 0, "${tag} is a compile error")
   c.expect(!file_exists(bin), "${tag} writes no binary")
   if err = file_read(clog) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -82,7 +82,7 @@ fn frozen_cases(c: Checks, compiler: String, stamp: Int) {
     status = process_run_out(bin, args, log) ?? -1
     c.eq_int(status, 1, "frozen ${kind}: status 1")
     want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array"
-    c.expect(str_has(file_read(log) ?? "", want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
+    c.expect((file_read(log) ?? "").contains(want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
   }
 }
 
@@ -119,7 +119,7 @@ fn frozen_hash_cases(c: Checks, compiler: String, stamp: Int) {
     args.push(kind)
     status = process_run_out(bin, args, log) ?? -1
     c.eq_int(status, statuses[i], "frozen hash ${kind}: status")
-    c.expect(str_has(file_read(log) ?? "", wants[i]), "frozen hash ${kind}: the output")
+    c.expect((file_read(log) ?? "").contains(wants[i]), "frozen hash ${kind}: the output")
   }
 }
 
@@ -294,7 +294,7 @@ fn test_safety(c: Checks) {
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
     c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
     if err = file_read(bad_log) {
-      c.expect(str_has(err, "unknown function"), "unknown-fn diagnostic")
+      c.expect(err.contains("unknown function"), "unknown-fn diagnostic")
     } else {
       c.expect(false, "unknown-fn diagnostic")
     }
@@ -314,7 +314,7 @@ fn test_safety(c: Checks) {
     code_dr = run_av_bin(dbg_bin, out_d)
     c.expect(code_dr == 0, "--debug binary runs")
     if text = file_read(out_d) {
-      c.expect(str_has(text, "hi"), "--debug binary output")
+      c.expect(text.contains("hi"), "--debug binary output")
     } else {
       c.expect(false, "--debug binary output")
     }

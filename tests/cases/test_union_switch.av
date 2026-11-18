@@ -96,8 +96,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/us-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "us-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("us-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -109,9 +109,9 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(sw, "fn f(x: Int | String | Float64): Int {\n  switch x {\n    case n: Int { n }\n    case s: String { s.size }\n    case Float64 { 0 }\n  }\n}\nfn main {\n  puts(f(\"ab\"))\n}\n")
   c.eq_int(emit_ll(compiler, sw, "${dir}/us-ll-switch.ll", "${dir}/us-ll-switch.log"), 0, "ll-switch: emits")
   ll = log_text("${dir}/us-ll-switch.ll")
-  c.expect(str_has(ll, "switch i32 "), "ll-switch: one switch on the tag")
-  c.expect(!str_has(ll, "avant_trap_enum"), "ll-switch: no trap")
-  c.expect(!str_has(ll, "unreachable"), "ll-switch: no unreachable")
+  c.expect(ll.contains("switch i32 "), "ll-switch: one switch on the tag")
+  c.expect(!ll.contains("avant_trap_enum"), "ll-switch: no trap")
+  c.expect(!ll.contains("unreachable"), "ll-switch: no unreachable")
 }
 
 fn test_main(c: Checks) {

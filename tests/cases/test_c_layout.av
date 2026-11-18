@@ -15,7 +15,7 @@ fn release_refused(c: Checks, compiler: String, stamp: Int, tag: String, body: S
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0 && !file_exists(bin), "release ${tag}: does not compile")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), "release ${tag}: ${needle}")
+    c.expect(err.contains(needle), "release ${tag}: ${needle}")
   } else {
     c.expect(false, "release ${tag}: the log")
   }
@@ -54,7 +54,7 @@ fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String,
     rlog = "${scratch()}/c_layout-${stamp}-null-${tag}.run"
     c.eq_int(run_av_bin(bin, rlog), status, "null ${tag}: exit status")
     got = file_read(rlog) ?? ""
-    c.expect(str_has(got, want), "null ${tag}: ${want} (${got})")
+    c.expect(got.contains(want), "null ${tag}: ${want} (${got})")
   } else {
     c.expect(false, "null ${tag}: runs")
   }
@@ -103,7 +103,7 @@ fn test_cb_scalars(c: Checks, compiler: String) {
     log = "${scratch()}/c_layout-${stamp}-cbs.run"
     c.eq_int(run_av_bin(bin, log), 1, "callback scalars: the last callback's result out of range ends the program")
     got = file_read(log) ?? ""
-    c.expect(str_has(got, "255 -128 65535 -32768 1.5\n32894\n255\n0.3333333432674408\n-128\navant runtime: 256 out of range for the C type UInt8 (0..255)"), "callback scalars: each converts exactly, the result checked (${got})")
+    c.expect(got.contains("255 -128 65535 -32768 1.5\n32894\n255\n0.3333333432674408\n-128\navant runtime: 256 out of range for the C type UInt8 (0..255)"), "callback scalars: each converts exactly, the result checked (${got})")
   } else {
     c.expect(false, "callback scalars: runs")
   }
@@ -122,7 +122,7 @@ fn test_frozen_to_c(c: Checks, compiler: String) {
     log = "${scratch()}/c_layout-${stamp}-frozen.run"
     c.eq_int(run_av_bin(bin, log), 1, "frozen to C: the write traps")
     got = file_read(log) ?? ""
-    c.expect(str_has(got, "before\navant runtime: an element store on an array a running task reads"), "frozen to C: names the store (${got})")
+    c.expect(got.contains("before\navant runtime: an element store on an array a running task reads"), "frozen to C: names the store (${got})")
   } else {
     c.expect(false, "frozen to C: runs")
   }

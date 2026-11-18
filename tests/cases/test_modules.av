@@ -24,7 +24,7 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
   c.expect(code != 0, "${tag} exits non-zero")
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -102,7 +102,7 @@ fn test_modules(c: Checks) {
     c.expect(hide_code != 0, "private helper exits non-zero")
     c.expect(!file_exists(hide_bin), "private helper bin absent")
     if err = file_read(hide_log) {
-      c.expect(str_has(err, "unknown function hidden"), "private helper hidden")
+      c.expect(err.contains("unknown function hidden"), "private helper hidden")
     } else {
       c.expect(false, "private helper hidden")
     }
@@ -116,7 +116,7 @@ fn test_modules(c: Checks) {
     c.expect(cycle_code != 0, "cycle exits non-zero")
     c.expect(!file_exists(cycle_bin), "cycle bin absent")
     if err = file_read(cycle_log) {
-      c.expect(str_has(err, "import cycle"), "import cycle")
+      c.expect(err.contains("import cycle"), "import cycle")
     } else {
       c.expect(false, "import cycle")
     }
@@ -143,7 +143,7 @@ fn test_modules(c: Checks) {
     c.expect(bare_code != 0, "bare Box exits non-zero")
     c.expect(!file_exists(bare_bin), "bare Box bin absent")
     if err = file_read(bare_log) {
-      c.expect(str_has(err, "Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
+      c.expect(err.contains("Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
     } else {
       c.expect(false, "bare Box ambiguous")
     }
@@ -260,9 +260,9 @@ fn test_modules(c: Checks) {
     c.expect(sh_code != 0, "shadow exits non-zero")
     c.expect(!file_exists(sh_bin), "shadow bin absent")
     if err = file_read(sh_log) {
-      c.expect(str_has(err, "import vec is ambiguous"), "shadow names both")
-      c.expect(str_has(err, "nest/vec.av"), "shadow beside path")
-      c.expect(str_has(err, "/vec.av"), "shadow manifest path")
+      c.expect(err.contains("import vec is ambiguous"), "shadow names both")
+      c.expect(err.contains("nest/vec.av"), "shadow beside path")
+      c.expect(err.contains("/vec.av"), "shadow manifest path")
     } else {
       c.expect(false, "shadow names both")
     }
@@ -279,7 +279,7 @@ fn test_modules(c: Checks) {
     c.expect(cyc_code != 0, "cross-dir cycle exits non-zero")
     c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
     if err = file_read(cyc_log) {
-      c.expect(str_has(err, "import cycle"), "cross-dir cycle")
+      c.expect(err.contains("import cycle"), "cross-dir cycle")
     } else {
       c.expect(false, "cross-dir cycle")
     }
@@ -296,7 +296,7 @@ fn test_modules(c: Checks) {
     c.expect(tw_code != 0, "two spellings exits non-zero")
     c.expect(!file_exists(tw_bin), "two spellings bin absent")
     if err = file_read(tw_log) {
-      c.expect(str_has(err, "open the same file"), "two spellings")
+      c.expect(err.contains("open the same file"), "two spellings")
     } else {
       c.expect(false, "two spellings")
     }
@@ -335,9 +335,9 @@ fn test_modules(c: Checks) {
     c.expect(both_code != 0, "root and manifest exits non-zero")
     c.expect(!file_exists(both_bin), "root and manifest bin absent")
     if err = file_read(both_log) {
-      c.expect(str_has(err, "import vec is ambiguous"), "root and manifest")
-      c.expect(str_has(err, "src/vec.av"), "root path")
-      c.expect(str_has(err, "bothroot/vec.av"), "manifest path")
+      c.expect(err.contains("import vec is ambiguous"), "root and manifest")
+      c.expect(err.contains("src/vec.av"), "root path")
+      c.expect(err.contains("bothroot/vec.av"), "manifest path")
     } else {
       c.expect(false, "root and manifest")
     }
@@ -354,7 +354,7 @@ fn test_modules(c: Checks) {
     c.expect(spell_code != 0, "root two spellings exits non-zero")
     c.expect(!file_exists(spell_bin), "root two spellings bin absent")
     if err = file_read(spell_log) {
-      c.expect(str_has(err, "open the same file"), "root two spellings")
+      c.expect(err.contains("open the same file"), "root two spellings")
     } else {
       c.expect(false, "root two spellings")
     }
@@ -372,7 +372,7 @@ fn test_modules(c: Checks) {
     c.expect(seal_code != 0, "dep does not see consumer exits non-zero")
     c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
     if err = file_read(seal_log) {
-      c.expect(str_has(err, "cannot find hidden.av"), "dep does not see consumer")
+      c.expect(err.contains("cannot find hidden.av"), "dep does not see consumer")
     } else {
       c.expect(false, "dep does not see consumer")
     }
@@ -404,8 +404,8 @@ fn test_modules(c: Checks) {
     c.expect(member_code != 0, "keyword member exits non-zero")
     c.expect(!file_exists(member_bin), "keyword member bin absent")
     if err = file_read(member_log) {
-      c.expect(str_has(err, "no field for"), "keyword member is a name")
-      c.expect(!str_has(err, "expected a name"), "keyword member is not a parse error")
+      c.expect(err.contains("no field for"), "keyword member is a name")
+      c.expect(!err.contains("expected a name"), "keyword member is not a parse error")
     } else {
       c.expect(false, "keyword member is a name")
     }
@@ -418,7 +418,7 @@ fn test_modules(c: Checks) {
     c.expect(lead_code != 0, "leading keyword import exits non-zero")
     c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
     if err = file_read(lead_log) {
-      c.expect(str_has(err, "expected a name, found `spawn`"), "leading keyword import")
+      c.expect(err.contains("expected a name, found `spawn`"), "leading keyword import")
     } else {
       c.expect(false, "leading keyword import")
     }
@@ -431,7 +431,7 @@ fn test_modules(c: Checks) {
     c.expect(decl_code != 0, "keyword function name exits non-zero")
     c.expect(!file_exists(decl_bin), "keyword function name bin absent")
     if err = file_read(decl_log) {
-      c.expect(str_has(err, "expected function name"), "keyword function name")
+      c.expect(err.contains("expected function name"), "keyword function name")
     } else {
       c.expect(false, "keyword function name")
     }
@@ -444,7 +444,7 @@ fn test_modules(c: Checks) {
     c.expect(label_code != 0, "keyword field label exits non-zero")
     c.expect(!file_exists(label_bin), "keyword field label bin absent")
     if err = file_read(label_log) {
-      c.expect(str_has(err, "expected an expression, found `{`"), "keyword field label")
+      c.expect(err.contains("expected an expression, found `{`"), "keyword field label")
     } else {
       c.expect(false, "keyword field label")
     }
@@ -521,7 +521,7 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   c.expect(boot_code != 0, "a checkout's compiler/main.av is not exempt: exits non-zero")
   c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
   if err = file_read(boot_log) {
-    c.expect(str_has(err, "field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
+    c.expect(err.contains("field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")
   }

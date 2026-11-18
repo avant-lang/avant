@@ -164,8 +164,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/eq-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "eq-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("eq-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -177,16 +177,16 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
   c.eq_int(emit_ll(compiler, plain, "${dir}/eq-ll-plain.ll", "${dir}/eq-ll-plain.log"), 0, "ll-plain: emits")
   ll = log_text("${dir}/eq-ll-plain.ll")
-  c.expect(!str_has(ll, "__avant_eq"), "ll-plain: no written ==")
-  c.expect(str_has(ll, "@avant_puts_i64("), "ll-plain: an integer's puts is the runtime's")
-  c.expect(!str_has(ll, "@printf("), "ll-plain: no printf")
+  c.expect(!ll.contains("__avant_eq"), "ll-plain: no written ==")
+  c.expect(ll.contains("@avant_puts_i64("), "ll-plain: an integer's puts is the runtime's")
+  c.expect(!ll.contains("@printf("), "ll-plain: no printf")
   twice = "${dir}/eq-ll-twice.av"
   _ = file_write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
   c.eq_int(emit_ll(compiler, twice, "${dir}/eq-ll-twice.ll", "${dir}/eq-ll-twice.log"), 0, "ll-twice: emits")
   ll2 = log_text("${dir}/eq-ll-twice.ll")
   defs = 0
   for line in ll2.split("\n") {
-    if str_has(line, "define ") && str_has(line, "P.==") {
+    if line.contains("define ") && line.contains("P.==") {
       defs += 1
     }
   }
@@ -195,24 +195,24 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.has(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, scal, "${dir}/eq-ll-search.ll", "${dir}/eq-ll-search.log"), 0, "ll-search: emits")
   ll3 = log_text("${dir}/eq-ll-search.ll")
-  c.expect(str_has(ll3, "@avant_array_contains_i64(") && str_has(ll3, "@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
-  c.expect(!str_has(ll3, "__avant_contains") && !str_has(ll3, "__avant_index_of"), "ll-search: no loop written for scalars")
+  c.expect(ll3.contains("@avant_array_contains_i64(") && ll3.contains("@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
+  c.expect(!ll3.contains("__avant_contains") && !ll3.contains("__avant_index_of"), "ll-search: no loop written for scalars")
   // clone: nothing written for a program that clones nothing; a class's
   // derived clone written once however often it is cloned; an array of
   // numbers copied by the runtime's buffer copy, with no loop written.
-  c.expect(!str_has(ll, "clone"), "ll-plain: no clone written")
+  c.expect(!ll.contains("clone"), "ll-plain: no clone written")
   cl = "${dir}/eq-ll-clone.av"
   _ = file_write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
   c.eq_int(emit_ll(compiler, cl, "${dir}/eq-ll-clone.ll", "${dir}/eq-ll-clone.log"), 0, "ll-clone: emits")
   ll4 = log_text("${dir}/eq-ll-clone.ll")
   cdefs = 0
   for line in ll4.split("\n") {
-    if str_has(line, "define ") && str_has(line, "Box.clone") {
+    if line.contains("define ") && line.contains("Box.clone") {
       cdefs += 1
     }
   }
   c.eq_int(cdefs, 1, "ll-clone: one derived clone for Box")
-  c.expect(str_has(ll4, "@avant_array_copy("), "ll-clone: an Array(Int) field is copied by the runtime")
+  c.expect(ll4.contains("@avant_array_copy("), "ll-clone: an Array(Int) field is copied by the runtime")
 }
 
 fn test_main(c: Checks) {

@@ -9,7 +9,7 @@ fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String
   c.expect(code != 0, "${tag} exits non-zero")
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -38,7 +38,7 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body
   c.expect(now_ms() - started < 10000, "${tag} finishes in time")
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
-    c.expect(str_has(err, needle), tag)
+    c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
   }
@@ -50,7 +50,7 @@ fn test_errors(c: Checks) {
     stamp = now_ms()
     expect_err_bounded(c, compiler, stamp, "many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
     if many = file_read("${scratch()}/errors-${stamp}-many-errors.log") {
-      c.expect(str_has(many, "and 2 more errors (limit 20)"), "the checker counts the errors past the limit")
+      c.expect(many.contains("and 2 more errors (limit 20)"), "the checker counts the errors past the limit")
     } else {
       c.expect(false, "many-errors log")
     }
@@ -60,7 +60,7 @@ fn test_errors(c: Checks) {
     // only the resolver's kept errors and the count said nothing).
     expect_err_bounded(c, compiler, stamp, "resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
     if resolver = file_read("${scratch()}/errors-${stamp}-resolver-errors.log") {
-      c.expect(str_has(resolver, "and 5 more errors (limit 20)"), "the checker counts the resolver's errors past the limit")
+      c.expect(resolver.contains("and 5 more errors (limit 20)"), "the checker counts the resolver's errors past the limit")
     } else {
       c.expect(false, "resolver-errors log")
     }
@@ -81,7 +81,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = buf_new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
     for tag in ["hash-member-block", "hash-field", "buf-field"] {
       log_text = file_read("${scratch()}/errors-${stamp}-${tag}.log") ?? ""
-      c.expect(!str_has(log_text, "back end") && !str_has(log_text, "internal error"), "${tag}: refused by the checker, not the lowering")
+      c.expect(!log_text.contains("back end") && !log_text.contains("internal error"), "${tag}: refused by the checker, not the lowering")
     }
     each_src = "${scratch()}/errors-${stamp}-hash-each.av"
     _ = file_write(each_src, "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 1\n  h.each { |k, v|\n    puts(k)\n    puts(v)\n  }\n}\n")
@@ -453,7 +453,7 @@ fn test_errors(c: Checks) {
     c.expect(priv_code != 0, "iface-private exits non-zero")
     c.expect(!file_exists(priv_bin), "iface-private bin absent")
     if err = file_read(priv_log) {
-      c.expect(str_has(err, "does not implement"), "iface-private")
+      c.expect(err.contains("does not implement"), "iface-private")
     } else {
       c.expect(false, "iface-private")
     }
@@ -465,7 +465,7 @@ fn test_errors(c: Checks) {
     c.expect(hid_code != 0, "iface-vis exits non-zero")
     c.expect(!file_exists(hid_bin), "iface-vis bin absent")
     if err = file_read(hid_log) {
-      c.expect(str_has(err, "unknown type Show"), "iface-vis")
+      c.expect(err.contains("unknown type Show"), "iface-vis")
     } else {
       c.expect(false, "iface-vis")
     }
@@ -477,7 +477,7 @@ fn test_errors(c: Checks) {
     c.expect(quiet_code != 0, "iface-opt-vis exits non-zero")
     c.expect(!file_exists(quiet_bin), "iface-opt-vis bin absent")
     if err = file_read(quiet_log) {
-      c.expect(str_has(err, "does not implement"), "iface-opt-vis")
+      c.expect(err.contains("does not implement"), "iface-opt-vis")
     } else {
       c.expect(false, "iface-opt-vis")
     }

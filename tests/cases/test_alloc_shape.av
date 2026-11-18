@@ -53,7 +53,7 @@ fn ll_fn(ll: String, sym: String): String {
   inside = false
   for line in lines {
     // a line that starts with `d`: a `define`, never a call
-    if !inside && line.size > 7 && line[0] == 100 && str_has(line, key) {
+    if !inside && line.size > 7 && line[0] == 100 && line.contains(key) {
       inside = true
     }
     if inside {
@@ -82,11 +82,11 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
 
   // Local-exec thread-locals.
   for g in ["avant_gc_bump", "avant_gc_limit", "avant_gc_top"] {
-    c.expect(str_has(text, "@${g} = external thread_local(localexec) global "), "thread-locals: @${g} is declared local-exec")
+    c.expect(text.contains("@${g} = external thread_local(localexec) global "), "thread-locals: @${g} is declared local-exec")
   }
   c.eq_int(count_of(text, " thread_local global "), 0, "thread-locals: no thread-local is declared without a model")
   fnode = ll_fn(text, "av.alloc_shape/Node.new")
-  c.expect(str_has(fnode, "load ptr, ptr @avant_gc_bump") && str_has(fnode, "load ptr, ptr @avant_gc_limit"), "thread-locals: Node.new allocates inline (it reads the bump cursor and the limit)")
+  c.expect(fnode.contains("load ptr, ptr @avant_gc_bump") && fnode.contains("load ptr, ptr @avant_gc_limit"), "thread-locals: Node.new allocates inline (it reads the bump cursor and the limit)")
 
   // The inline path is
   // the limit compare, the cursor's store, the header and the zeroing. No
@@ -94,17 +94,17 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   // path may not run), no counter, no copy of the cursor in the block's
   // record, no start bit (an unshared module's: the runtime sets it late).
   for g in ["g_avant_shared", "avant_gc_fast_ok", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_limit_mt", "avant_g_stats", "avant_since_gc", "avant_nursery_held", "avant_inline_allocs"] {
-    c.expect(!str_has(text, "@${g}"), "inline path: an unshared module's .ll does not name @${g}")
+    c.expect(!text.contains("@${g}"), "inline path: an unshared module's .ll does not name @${g}")
   }
   c.eq_int(count_of(fnode, " = icmp "), 1, "inline path: Node.new's inline path has one compare, the cursor's new end against the limit")
-  c.expect(str_has(fnode, " = icmp ule i64 "), "inline path: the limit compare is unsigned at-or-below")
-  c.expect(str_has(fnode, "call ptr @__avant_alloc_slow(") && !str_has(fnode, "@avant_alloc("), "slow call: Node.new's slow call is the module's __avant_alloc_slow")
-  c.expect(str_has(text, "%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)") && str_has(text, "%again = icmp eq ptr %s, null") && str_has(text, "%bump = load ptr, ptr @avant_gc_bump, align 8"), "slow call: __avant_alloc_slow calls the runtime's avant_alloc_slow and, on its null answer, reads the cursor again for the inline allocation")
-  c.expect(str_has(text, "define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline "), "slow call: __avant_alloc_slow is one function of the module, never inlined")
+  c.expect(fnode.contains(" = icmp ule i64 "), "inline path: the limit compare is unsigned at-or-below")
+  c.expect(fnode.contains("call ptr @__avant_alloc_slow(") && !fnode.contains("@avant_alloc("), "slow call: Node.new's slow call is the module's __avant_alloc_slow")
+  c.expect(text.contains("%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)") && text.contains("%again = icmp eq ptr %s, null") && text.contains("%bump = load ptr, ptr @avant_gc_bump, align 8"), "slow call: __avant_alloc_slow calls the runtime's avant_alloc_slow and, on its null answer, reads the cursor again for the inline allocation")
+  c.expect(text.contains("define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline "), "slow call: __avant_alloc_slow is one function of the module, never inlined")
   c.eq_int(count_of(fnode, " = and i1 "), 0, "inline path: Node.new's inline path joins no two conditions")
   c.eq_int(count_of(fnode, "load ptr, ptr @"), 2, "inline path: Node.new's inline path loads two globals, the cursor and the limit")
   c.eq_int(count_of(fnode, ", ptr @avant_gc_bump, align 8"), 2, "inline path: Node.new's inline path names the cursor twice, its load and its store")
-  c.expect(!str_has(fnode, ", i64 32\n"), "inline path: Node.new's inline path keeps no copy of the cursor in the block's record (no address at offset 32)")
+  c.expect(!fnode.contains(", i64 32\n"), "inline path: Node.new's inline path keeps no copy of the cursor in the block's record (no address at offset 32)")
   c.eq_int(count_of(fnode, " = load i64, "), 0, "inline path: Node.new's inline path reads no counter and no start word")
   c.eq_int(count_of(fnode, " = lshr i64 ") + count_of(fnode, " = shl i64 "), 0, "start bits: Node.new's inline path computes no start bit")
   // A shared module's path reads its own limit and sets the start bit
@@ -114,31 +114,31 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(emit_ll(compiler, ts, tll, "${dir}/threads_fresh.ll.log"), 0, "threads/fresh.av: __emit-ll")
   ttext = log_text(tll)
   for g in ["avant_gc_bump", "avant_gc_limit_mt", "avant_gc_base", "avant_gc_starts"] {
-    c.expect(str_has(ttext, "@${g} = external thread_local(localexec) global "), "inline path: a shared module declares @${g} local-exec")
+    c.expect(ttext.contains("@${g} = external thread_local(localexec) global "), "inline path: a shared module declares @${g} local-exec")
   }
   for g in ["g_avant_shared", "avant_gc_fast_ok", "avant_gc_block", "avant_g_stats", "avant_since_gc", "avant_nursery_held", "avant_inline_allocs"] {
-    c.expect(!str_has(ttext, "@${g}"), "inline path: a shared module's .ll does not name @${g}")
+    c.expect(!ttext.contains("@${g}"), "inline path: a shared module's .ll does not name @${g}")
   }
-  c.expect(!str_has(ttext, "@avant_gc_limit ") && !str_has(ttext, "@avant_gc_limit,"), "inline path: a shared module reads avant_gc_limit_mt, never avant_gc_limit")
-  c.expect(str_has(ttext, "load ptr, ptr @avant_gc_starts") && str_has(ttext, " = shl i64 1, "), "start bits: a shared module's inline path sets the start bit")
+  c.expect(!ttext.contains("@avant_gc_limit ") && !ttext.contains("@avant_gc_limit,"), "inline path: a shared module reads avant_gc_limit_mt, never avant_gc_limit")
+  c.expect(ttext.contains("load ptr, ptr @avant_gc_starts") && ttext.contains(" = shl i64 1, "), "start bits: a shared module's inline path sets the start bit")
 
   // No frame record without a slot, but in a thread's first frame.
   for f in ["fresh_node", "sum_nodes", "Node.new"] {
     body = ll_fn(text, "av.alloc_shape/${f}")
     c.expect(body.size > 0, "frame records: ${f} is defined")
-    c.expect(!str_has(body, "%gcf") && !str_has(body, "@__avant_frame_push") && !str_has(body, "@avant_gc_frame_enter"), "frame records: ${f} (no root slot) links no frame record")
+    c.expect(!body.contains("%gcf") && !body.contains("@__avant_frame_push") && !body.contains("@avant_gc_frame_enter"), "frame records: ${f} (no root slot) links no frame record")
   }
   mbody = ll_fn(text, "main")
-  c.expect(str_has(mbody, "%gcf = alloca") && str_has(mbody, "call void @__avant_frame_push(ptr %gcf)"), "frame records: main keeps its frame record (a thread's first Avant frame)")
+  c.expect(mbody.contains("%gcf = alloca") && mbody.contains("call void @__avant_frame_push(ptr %gcf)"), "frame records: main keeps its frame record (a thread's first Avant frame)")
   ff = "${root}/tests/fixtures/ffi/first_frame.av"
   fll = "${dir}/first_frame.ll"
   c.eq_int(emit_ll(compiler, ff, fll, "${dir}/first_frame.ll.log"), 0, "first_frame.av: __emit-ll")
   ftext = log_text(fll)
   thunk = ll_fn(ftext, "av.first_frame/check#cb")
-  c.expect(str_has(thunk, "%gcf = alloca { ptr, i64 }") && str_has(thunk, "call void @__avant_frame_push(ptr %gcf)"), "frame records: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
+  c.expect(thunk.contains("%gcf = alloca { ptr, i64 }") && thunk.contains("call void @__avant_frame_push(ptr %gcf)"), "frame records: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
   for f in ["check", "fill"] {
     body = ll_fn(ftext, "av.first_frame/${f}")
-    c.expect(body.size > 0 && !str_has(body, "%gcf"), "frame records: first_frame.av's ${f} (no root slot) links no frame record")
+    c.expect(body.size > 0 && !body.contains("%gcf"), "frame records: first_frame.av's ${f} (no root slot) links no frame record")
   }
 
   // The record holds its root words in place: { prev, desc } and the
@@ -151,17 +151,17 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(emit_ll(compiler, fl, flll, "${dir}/frame_layout.ll.log"), 0, "frame_layout.av: __emit-ll")
   ltext = log_text(flll)
   hm = ll_fn(ltext, "av.frame_layout/hold_m")
-  c.expect(str_has(hm, "%gcf = alloca { ptr, i64, [2 x i64] }, align 8"), "frame records: hold_m's record is its header and its one slot of type M (two words) in place")
-  c.expect(str_has(hm, "getelementptr inbounds i8, ptr %gcf, i64 16"), "frame records: hold_m's slot local is its address in the record")
-  c.expect(str_has(hm, "store i64 5, ptr "), "frame records: hold_m's desc is the inline map 5 (word 1, M's string, is a root word)")
-  c.expect(str_has(hm, "load ptr, ptr @avant_gc_top") && str_has(hm, "store volatile ptr %gcf, ptr @avant_gc_top"), "frame records: hold_m links its record inline")
-  c.expect(!str_has(hm, "@__avant_frame_push") && !str_has(hm, "@__avant_frame_pop") && !str_has(hm, "@avant_gc_frame_enter") && !str_has(hm, "@avant_gc_frame_leave"), "frame records: hold_m (not a thread's first frame) calls no frame helper or runtime entry")
+  c.expect(hm.contains("%gcf = alloca { ptr, i64, [2 x i64] }, align 8"), "frame records: hold_m's record is its header and its one slot of type M (two words) in place")
+  c.expect(hm.contains("getelementptr inbounds i8, ptr %gcf, i64 16"), "frame records: hold_m's slot local is its address in the record")
+  c.expect(hm.contains("store i64 5, ptr "), "frame records: hold_m's desc is the inline map 5 (word 1, M's string, is a root word)")
+  c.expect(hm.contains("load ptr, ptr @avant_gc_top") && hm.contains("store volatile ptr %gcf, ptr @avant_gc_top"), "frame records: hold_m links its record inline")
+  c.expect(!hm.contains("@__avant_frame_push") && !hm.contains("@__avant_frame_pop") && !hm.contains("@avant_gc_frame_enter") && !hm.contains("@avant_gc_frame_leave"), "frame records: hold_m (not a thread's first frame) calls no frame helper or runtime entry")
   hw = ll_fn(ltext, "av.frame_layout/hold_w")
-  c.expect(str_has(hw, "%gcf = alloca { ptr, i64, [66 x i64] }, align 8"), "frame records: hold_w's record holds its W (64 words) and its M in place")
-  c.expect(str_has(hw, "store ptr getelementptr (i8, ptr @__avant_frame_map."), "frame records: hold_w's desc names a constant map (66 words, over the inline map's 62)")
-  c.expect(str_has(ltext, "{ i64 33, [33 x i32] [i32 1, i32 3, "), "frame records: hold_w's map lists its 33 root words")
+  c.expect(hw.contains("%gcf = alloca { ptr, i64, [66 x i64] }, align 8"), "frame records: hold_w's record holds its W (64 words) and its M in place")
+  c.expect(hw.contains("store ptr getelementptr (i8, ptr @__avant_frame_map."), "frame records: hold_w's desc names a constant map (66 words, over the inline map's 62)")
+  c.expect(ltext.contains("{ i64 33, [33 x i32] [i32 1, i32 3, "), "frame records: hold_w's map lists its 33 root words")
   lm = ll_fn(ltext, "main")
-  c.expect(str_has(lm, "call void @__avant_frame_push(ptr %gcf)") && str_has(lm, "call void @__avant_frame_pop(ptr %gcf)"), "frame records: main (a thread's first frame) links through the helpers")
+  c.expect(lm.contains("call void @__avant_frame_push(ptr %gcf)") && lm.contains("call void @__avant_frame_pop(ptr %gcf)"), "frame records: main (a thread's first frame) links through the helpers")
 
   // The constructor at its call site, no barrier on the fresh object.
   tinit = ll_fn(text, "av.alloc_shape/Tree.initialize")
@@ -170,12 +170,12 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   ninit = ll_fn(text, "av.alloc_shape/Named.initialize")
   c.eq_int(count_of(ninit, "call void @avant_barrier(ptr"), 1, "fresh stores: Named.initialize keeps one barrier test, the store after its collecting call")
   pbody = ll_fn(text, "av.alloc_shape/pair")
-  c.expect(str_has(pbody, "load ptr, ptr @avant_gc_bump") && str_has(pbody, "call void @\"av.alloc_shape/Tree.initialize\"(") && !str_has(pbody, "@\"av.alloc_shape/Tree.new\""), "fresh stores: pair allocates inline and calls Tree.initialize, not Tree.new")
+  c.expect(pbody.contains("load ptr, ptr @avant_gc_bump") && pbody.contains("call void @\"av.alloc_shape/Tree.initialize\"(") && !pbody.contains("@\"av.alloc_shape/Tree.new\""), "fresh stores: pair allocates inline and calls Tree.initialize, not Tree.new")
   c.eq_int(count_of(pbody, "call void @avant_barrier(ptr"), 1, "fresh stores: pair barriers the allocation's slow-path result once (the birth barrier)")
 
   // One masked compare.
   lbody = ll_fn(text, "av.alloc_shape/link")
-  c.expect(str_has(lbody, " = and i16 ") && str_has(lbody, ", -32720") && str_has(lbody, " = icmp ugt i16 ") && str_has(lbody, ", -32768"), "barrier test: link's barrier test is flags & 0x8030 compared above 0x8000")
+  c.expect(lbody.contains(" = and i16 ") && lbody.contains(", -32720") && lbody.contains(" = icmp ugt i16 ") && lbody.contains(", -32768"), "barrier test: link's barrier test is flags & 0x8030 compared above 0x8000")
   c.eq_int(count_of(lbody, " = and i16 "), 1, "barrier test: link's barrier test has one mask, not two")
   c.eq_int(count_of(lbody, " = and i1 "), 0, "barrier test: link's barrier test joins no two conditions")
 

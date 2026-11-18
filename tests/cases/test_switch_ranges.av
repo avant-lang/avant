@@ -127,8 +127,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/sr-${f3.tag}.bin"), "${f3.tag}: refused")
-      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
-      c.expect(str_has(log, "sr-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("sr-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
   }
 }
@@ -139,21 +139,21 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(w, "fn f(x: UInt32): Int {\n  switch x {\n    case 4294967295 { 1 }\n    case 7 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(7))\n}\n")
   c.eq_int(emit_ll(compiler, w, "${dir}/sr-ll-width.ll", "${dir}/sr-ll-width.log"), 0, "ll-width: emits")
   ll = log_text("${dir}/sr-ll-width.ll")
-  c.expect(str_has(ll, "switch i32 "), "ll-width: one switch at the value's width")
-  c.expect(str_has(ll, "i32 -1, label"), "ll-width: 4294967295 is the i32 -1")
+  c.expect(ll.contains("switch i32 "), "ll-width: one switch at the value's width")
+  c.expect(ll.contains("i32 -1, label"), "ll-width: 4294967295 is the i32 -1")
   bw = "${dir}/sr-ll-bool.av"
   _ = file_write(bw, "fn f(b: Bool): Int {\n  switch b {\n    case true { 3 }\n    case false { 4 }\n  }\n}\nfn main {\n  puts(f(argv().size > 0))\n}\n")
   c.eq_int(emit_ll(compiler, bw, "${dir}/sr-ll-bool.ll", "${dir}/sr-ll-bool.log"), 0, "ll-bool: emits")
   bll = log_text("${dir}/sr-ll-bool.ll")
-  c.expect(!str_has(bll, "switch "), "ll-bool: no switch")
-  c.expect(str_has(bll, "br i1 "), "ll-bool: one branch on the value")
+  c.expect(!bll.contains("switch "), "ll-bool: no switch")
+  c.expect(bll.contains("br i1 "), "ll-bool: one branch on the value")
   rw = "${dir}/sr-ll-range.av"
   _ = file_write(rw, "fn f(c: Int): Int {\n  switch c {\n    case 'a'..='c' { 1 }\n    case 100..=100000 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(argv().size))\n}\n")
   c.eq_int(emit_ll(compiler, rw, "${dir}/sr-ll-range.ll", "${dir}/sr-ll-range.log"), 0, "ll-range: emits")
   rll = log_text("${dir}/sr-ll-range.ll")
-  c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 97") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 99"), "ll-range: a narrow range is two compares")
-  c.expect(str_has(rll, ", 100") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
-  c.expect(!str_has(rll, "i64 97, label") && !str_has(rll, "i64 100, label"), "ll-range: a range gives the switch no cases")
+  c.expect(rll.contains("icmp sge i64 ") && rll.contains(", 97") && rll.contains("icmp sle i64 ") && rll.contains(", 99"), "ll-range: a narrow range is two compares")
+  c.expect(rll.contains(", 100") && rll.contains(", 100000"), "ll-range: a wide range is two compares")
+  c.expect(!rll.contains("i64 97, label") && !rll.contains("i64 100, label"), "ll-range: a range gives the switch no cases")
   // Every block a dispatch adds is numbered before the arms it
   // enters, so no edge into an arm is taken for a back edge: a program
   // that spawns polls in its loops only (mir/gc.av), and these have none.
@@ -161,8 +161,8 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, pw, "${dir}/sr-ll-nopoll.ll", "${dir}/sr-ll-nopoll.log"), 0, "ll-nopoll: emits")
   pll = log_text("${dir}/sr-ll-nopoll.ll")
-  c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
-  c.expect(!str_has(pll, "avant_gc_poll"), "ll-nopoll: no poll in a program without a loop")
+  c.expect(pll.contains("@memcmp("), "ll-nopoll: the String switch compares")
+  c.expect(!pll.contains("avant_gc_poll"), "ll-nopoll: no poll in a program without a loop")
   // The poll rule (mir/gc.av): a poll heads a real cycle only. `abs`
   // lowers to a block numbered before the one that enters it, which the
   // numbering rule took for a back edge: two polls in a program with no
@@ -170,18 +170,18 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   aw = "${dir}/sr-ll-abs.av"
   _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs())\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, aw, "${dir}/sr-ll-abs.ll", "${dir}/sr-ll-abs.log"), 0, "ll-abs: emits")
-  c.expect(!str_has(log_text("${dir}/sr-ll-abs.ll"), "avant_gc_poll"), "ll-abs: no poll in a program without a loop")
+  c.expect(!log_text("${dir}/sr-ll-abs.ll").contains("avant_gc_poll"), "ll-abs: no poll in a program without a loop")
   lw2 = "${dir}/sr-ll-loop.av"
   _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, lw2, "${dir}/sr-ll-loop.ll", "${dir}/sr-ll-loop.log"), 0, "ll-loop: emits")
-  c.expect(str_has(log_text("${dir}/sr-ll-loop.ll"), "avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
+  c.expect(log_text("${dir}/sr-ll-loop.ll").contains("avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
   nw = "${dir}/sr-ll-narrow.av"
   _ = file_write(nw, "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nfn f(s: Sign, w: Wide, m: Mid): Int {\n  x = switch s {\n    case neg { 1 }\n    case zero { 2 }\n    case pos { 3 }\n  }\n  y = switch w {\n    case a { 1 }\n    case b { 2 }\n    case c { 3 }\n  }\n  z = switch m {\n    case lo { 1 }\n    case hi { 2 }\n  }\n  x + y + z\n}\nfn main {\n  puts(f(Sign.from_i(argv().size) ?? Sign.neg, Wide.c, Mid.hi))\n}\n")
   c.eq_int(emit_ll(compiler, nw, "${dir}/sr-ll-narrow.ll", "${dir}/sr-ll-narrow.log"), 0, "ll-narrow: emits")
   nll = log_text("${dir}/sr-ll-narrow.ll")
-  c.expect(str_has(nll, "switch i8 "), "ll-narrow: -1..1 is one signed byte")
-  c.expect(str_has(nll, "switch i16 "), "ll-narrow: 0..65535 and -300..300 are two bytes")
-  c.expect(str_has(nll, "i16 -1, label"), "ll-narrow: 65535 is the i16 -1")
+  c.expect(nll.contains("switch i8 "), "ll-narrow: -1..1 is one signed byte")
+  c.expect(nll.contains("switch i16 "), "ll-narrow: 0..65535 and -300..300 are two bytes")
+  c.expect(nll.contains("i16 -1, label"), "ll-narrow: 65535 is the i16 -1")
 }
 
 fn test_main(c: Checks) {

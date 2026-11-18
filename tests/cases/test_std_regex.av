@@ -67,17 +67,17 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
   cstdout = file_read(cout) ?? ""
   if err = file_read(clog) {
     if compile_has.size > 0 {
-      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has} on stderr")
+      c.expect(err.contains(compile_has), "${tag} compile says ${compile_has} on stderr")
     }
     if compile_lacks.size > 0 {
-      c.expect(!str_has(err, compile_lacks) && !str_has(cstdout, compile_lacks), "${tag} compile lacks ${compile_lacks}")
+      c.expect(!err.contains(compile_lacks) && !cstdout.contains(compile_lacks), "${tag} compile lacks ${compile_lacks}")
     }
   } else {
     if compile_has.size > 0 {
       c.expect(false, "${tag} compile log")
     }
   }
-  c.expect(!str_has(cstdout, "re2c:"), "${tag} compile prints no re2c note on stdout")
+  c.expect(!cstdout.contains("re2c:"), "${tag} compile prints no re2c note on stdout")
   chmod_x(bin)
   run_code = run_av_bin(bin, rlog)
   c.eq_int(run_code, 0, "run ${tag}")
@@ -90,7 +90,7 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
   c.eq_int(acode, 0, "avant run ${tag}")
   c.eq_str(file_read(aout) ?? "", out, "${tag}: avant run's stdout is the program's output only")
   if compile_has.size > 0 {
-    c.expect(str_has(file_read(aerr) ?? "", compile_has), "${tag}: avant run says ${compile_has} on stderr")
+    c.expect((file_read(aerr) ?? "").contains(compile_has), "${tag}: avant run says ${compile_has} on stderr")
   }
 }
 

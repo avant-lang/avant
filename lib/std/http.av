@@ -706,13 +706,6 @@ struct UrlParts {
   target: String
 }
 
-fn starts_with(s: String, prefix: String): Bool {
-  if s.size < prefix.size {
-    return false
-  }
-  str_slice(s, 0, prefix.size) == prefix
-}
-
 fn parse_port(text: String): Int {
   n = 0
   i = 0
@@ -857,22 +850,22 @@ fn remove_dot_segments(path: String): String {
 
 // Resolves a redirect Location against the URL that produced it.
 fn resolve_url(base: String, loc: String): String? {
-  if starts_with(loc, "http://") {
+  if loc.starts_with("http://") {
     return loc
   }
-  if starts_with(loc, "https://") {
+  if loc.starts_with("https://") {
     return nil
   }
-  if starts_with(loc, "//") {
+  if loc.starts_with("//") {
     return "http:${loc}"
   }
   parts = http_parse_url(base)
   if p = parts {
     origin = "http://${p.authority}"
-    if starts_with(loc, "/") {
+    if loc.starts_with("/") {
       return "${origin}${loc}"
     }
-    if starts_with(loc, "?") {
+    if loc.starts_with("?") {
       return "${origin}${p.target}${loc}"
     }
     if loc.size == 0 {
@@ -952,10 +945,10 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
   if refused = request_refusal(method, url, headers) {
     return refused
   }
-  if starts_with(url, "https://") {
+  if url.starts_with("https://") {
     return HttpError.new("https is not supported yet: std.http speaks plain http:// only")
   }
-  if !starts_with(url, "http://") {
+  if !url.starts_with("http://") {
     return HttpError.new("only http:// URLs are supported")
   }
   parsed = http_parse_url(url)
@@ -1162,10 +1155,10 @@ pub class Ws {
   }
 
   pub fn self.connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
-    if starts_with(url, "wss://") {
+    if url.starts_with("wss://") {
       return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
     }
-    if !starts_with(url, "ws://") {
+    if !url.starts_with("ws://") {
       return HttpError.new("only ws:// URLs are supported")
     }
     // The handshake's request line and Host are the URL's.

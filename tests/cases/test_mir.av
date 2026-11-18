@@ -192,7 +192,7 @@ fn test_mir(c: Checks) {
     c.eq_int(npass, pl.size, "one pass line per function of the pass cases")
     i = 0
     while i < pl.size {
-      c.expect(str_has(text, "${pl[i]}\n"), "the GC passes: ${pl[i]}")
+      c.expect(text.contains("${pl[i]}\n"), "the GC passes: ${pl[i]}")
       i += 1
     }
     // The same run under the GC verifier with a 1 MB nursery: the MIR's
@@ -211,20 +211,20 @@ fn test_mir(c: Checks) {
     }
     c.eq_str(text2, text, "the same output, verifier silent, under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
     r = section(text, "== render")
-    c.expect(str_has(r, "error[V13]: av.t/f: bb0[0]: reference store through (*_1).0 without its barrier"), "a verifier error names its rule, function, block, and statement")
-    c.expect(str_has(r, "--> t.av:3:5"), "a verifier error carries the MIR's source location")
+    c.expect(r.contains("error[V13]: av.t/f: bb0[0]: reference store through (*_1).0 without its barrier"), "a verifier error names its rule, function, block, and statement")
+    c.expect(r.contains("--> t.av:3:5"), "a verifier error carries the MIR's source location")
     // Every error of the cases past one word, and of the functions changed
     // after the passes, as text.
-    c.expect(str_has(text, "  V9: av.t/f: bb3[0]: _71 is read before it is written on some path\n"), "V9 past the first word")
-    c.expect(str_has(text, "case v11_wide final V11\n  V11: av.t/f: bb0[5]: _3 (ref str) is live across the collecting call to av.t/use and is not a slot\n  V11: av.t/f: bb0[4]: _3 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[4]: _70 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[3]: _3 (ref str) is live across the collecting call to av.t/mk and is not a slot\n"), "V11 in both words, in local order")
-    c.expect(str_has(text, "  V12: av.t/f: bb0[3]: _69 (addr ref str) is live across the collecting call to av.t/churn and is not a slot\n"), "V12 past the first word")
-    c.expect(str_has(text, "case v11_loop_wide final V11\n  V11: av.t/f: bb1[1]: _65 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb1[0]: _65 (ref str) is live across the collecting call to av.t/use and is not a slot\n"), "V11 around a back edge past the first word")
-    c.expect(str_has(text, "case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes, each block's transfer unchanged")
-    c.expect(str_has(text, "case stale_after_passes final V11\n  V11: av.t/f: bb1[0]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
-    c.expect(str_has(text, "case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a slot dropped after the passes")
-    c.expect(str_has(text, "case v3_missing_local lowered V3\n  V3: av.t/f: bb0[0]: _9 is not a local\ncase "), "V3: a local that does not exist")
-    c.expect(str_has(text, "case v14_wide lowered V14\n  V14: av.t/f: bb0[1]: fresh store through _70, which is not open (no allocation marked fresh or barrier on it since its last definition or collecting call)\ncase "), "V14 past the first word: the holder not open")
-    c.expect(str_has(text, "case v14_wide_final final V14\n  V14: av.t/f: bb0[3]: fresh store through _70, which is not open (no allocation marked fresh or barrier on it since its last definition or collecting call)\n=="), "V14 past the first word at final: the holder not open")
+    c.expect(text.contains("  V9: av.t/f: bb3[0]: _71 is read before it is written on some path\n"), "V9 past the first word")
+    c.expect(text.contains("case v11_wide final V11\n  V11: av.t/f: bb0[5]: _3 (ref str) is live across the collecting call to av.t/use and is not a slot\n  V11: av.t/f: bb0[4]: _3 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[4]: _70 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[3]: _3 (ref str) is live across the collecting call to av.t/mk and is not a slot\n"), "V11 in both words, in local order")
+    c.expect(text.contains("  V12: av.t/f: bb0[3]: _69 (addr ref str) is live across the collecting call to av.t/churn and is not a slot\n"), "V12 past the first word")
+    c.expect(text.contains("case v11_loop_wide final V11\n  V11: av.t/f: bb1[1]: _65 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb1[0]: _65 (ref str) is live across the collecting call to av.t/use and is not a slot\n"), "V11 around a back edge past the first word")
+    c.expect(text.contains("case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes, each block's transfer unchanged")
+    c.expect(text.contains("case stale_after_passes final V11\n  V11: av.t/f: bb1[0]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
+    c.expect(text.contains("case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a slot dropped after the passes")
+    c.expect(text.contains("case v3_missing_local lowered V3\n  V3: av.t/f: bb0[0]: _9 is not a local\ncase "), "V3: a local that does not exist")
+    c.expect(text.contains("case v14_wide lowered V14\n  V14: av.t/f: bb0[1]: fresh store through _70, which is not open (no allocation marked fresh or barrier on it since its last definition or collecting call)\ncase "), "V14 past the first word: the holder not open")
+    c.expect(text.contains("case v14_wide_final final V14\n  V14: av.t/f: bb0[3]: fresh store through _70, which is not open (no allocation marked fresh or barrier on it since its last definition or collecting call)\n=="), "V14 past the first word at final: the holder not open")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

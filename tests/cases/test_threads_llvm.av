@@ -55,7 +55,7 @@ fn without_frame_links(ll: String): String {
   lines = ll.split("\n")
   out = buf_new()
   for l in lines {
-    if !(str_has(l, "store volatile ptr ") && str_has(l, ", ptr @avant_gc_top, align 8")) {
+    if !(l.contains("store volatile ptr ") && l.contains(", ptr @avant_gc_top, align 8")) {
       out.push_str(l)
       out.push_str("\n")
     }
@@ -141,8 +141,8 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   if t = file_read("${dir}/vol1.ll") {
     vol_single = without_frame_links(t)
   }
-  c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
-  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access but the frame links")
+  c.expect(!vol_shared.contains("load volatile ptr") && !vol_shared.contains("store volatile") && vol_shared.contains("load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
+  c.expect(!vol_single.contains(" volatile "), "heap/loops.av (single-threaded): no volatile access but the frame links")
 
   // The second wave: every program, then the new ones under each GC environment,
   // then the coverage builds (each writes its own lcov).
@@ -215,11 +215,11 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(runs[cbase].code, 0, "coverage/points.av under llvm: exit 0")
   // The slot map and the counts the old back end wrote, frozen when it retired
   // (paths under the checkout written ROOT/ in the golden).
-  gmap = str_replace_all(log_text("${root}/tests/goldens/runs/fixtures/coverage/points.map"), "ROOT/", "${root}/")
-  c.expect(str_has(gmap, "avant-cov 1\n"), "coverage/points.av: the golden slot map is a slot map")
-  c.eq_str(str_replace_all(lib_relative(log_text("${dir}/cov-new.map"), compiler), "\tlib/", "\t${root}/lib/"), gmap, "coverage/points.av: the golden slot map")
+  gmap = log_text("${root}/tests/goldens/runs/fixtures/coverage/points.map").replace("ROOT/", "${root}/")
+  c.expect(gmap.contains("avant-cov 1\n"), "coverage/points.av: the golden slot map is a slot map")
+  c.eq_str(lib_relative(log_text("${dir}/cov-new.map"), compiler).replace("\tlib/", "\t${root}/lib/"), gmap, "coverage/points.av: the golden slot map")
   glcov = log_text("${root}/tests/goldens/runs/fixtures/coverage/points.lcov")
-  c.expect(str_has(glcov, "FNDA:"), "coverage/points.av: the golden counts have FNDA")
+  c.expect(glcov.contains("FNDA:"), "coverage/points.av: the golden counts have FNDA")
   c.eq_str(log_text("${dir}/cov-new.lcov"), glcov, "coverage/points.av: the golden counts (lcov)")
 }
 
@@ -231,7 +231,7 @@ fn lib_relative(text: String, compiler: String): String {
   if t = file_read("${compiler}.versions.txt") {
     for line in t.split("\n") {
       if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
-        return str_replace_all(text, "${str_slice(line, 5, line.size)}/", "lib/")
+        return text.replace("${str_slice(line, 5, line.size)}/", "lib/")
       }
     }
   }

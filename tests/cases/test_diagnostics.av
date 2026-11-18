@@ -11,7 +11,7 @@ fn diag_expect_multi(c: Checks, compiler: String, stamp: Int, tag: String, body:
   if err = file_read(log) {
     i = 0
     while i < needles.size {
-      c.expect(str_has(err, needles[i]), "${tag} reports ${needles[i]}")
+      c.expect(err.contains(needles[i]), "${tag} reports ${needles[i]}")
       i += 1
     }
   } else {
@@ -68,9 +68,9 @@ fn test_diagnostics(c: Checks) {
     c.expect(mcode != 0, "multi-import exits non-zero")
     c.expect(!file_exists(mbin), "multi-import bin absent")
     if err = file_read(mlog) {
-      c.expect(str_has(err, "nosuch_a"), "multi-import reports first file")
-      c.expect(str_has(err, "nosuch_b"), "multi-import reports second file")
-      c.expect(str_has(err, "^"), "multi-import renders carets")
+      c.expect(err.contains("nosuch_a"), "multi-import reports first file")
+      c.expect(err.contains("nosuch_b"), "multi-import reports second file")
+      c.expect(err.contains("^"), "multi-import renders carets")
     } else {
       c.expect(false, "multi-import log readable")
     }

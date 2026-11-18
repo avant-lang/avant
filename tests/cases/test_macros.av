@@ -61,7 +61,7 @@ fn test_macros(c: Checks) {
     c.expect(splice_code != 0, "splice outside quote exits non-zero")
     c.expect(!file_exists(splice_bin), "splice outside quote bin absent")
     if err = file_read(splice_log) {
-      c.expect(str_has(err, "splice #() only belongs in quote"), "splice outside quote")
+      c.expect(err.contains("splice #() only belongs in quote"), "splice outside quote")
     } else {
       c.expect(false, "splice outside quote")
     }
@@ -73,7 +73,7 @@ fn test_macros(c: Checks) {
     c.expect(bad_code != 0, "bad comptime exits non-zero")
     c.expect(!file_exists(bad_bin), "bad comptime bin absent")
     if err = file_read(bad_log) {
-      c.expect(str_has(err, "a comptime block is a field walk: comptime { for f in Type.fields { quote { ... } } }"), "comptime field walk")
+      c.expect(err.contains("a comptime block is a field walk: comptime { for f in Type.fields { quote { ... } } }"), "comptime field walk")
     } else {
       c.expect(false, "comptime field walk")
     }
@@ -85,7 +85,7 @@ fn test_macros(c: Checks) {
     c.expect(nest_code != 0, "nested quote exits non-zero")
     c.expect(!file_exists(nest_bin), "nested quote bin absent")
     if err = file_read(nest_log) {
-      c.expect(str_has(err, "quote cannot nest"), "nested quote")
+      c.expect(err.contains("quote cannot nest"), "nested quote")
     } else {
       c.expect(false, "nested quote")
     }

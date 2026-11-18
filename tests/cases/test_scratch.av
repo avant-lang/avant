@@ -104,7 +104,7 @@ fn test_scratch(c: Checks) {
   c.suite("tests/cases/test_scratch.av")
   root = scratch()
   c.eq_str(scratch(), root, "one directory per process")
-  c.expect(str_has(path_base(root), "avant-"), "named avant-XXXXXX")
+  c.expect(path_base(root).contains("avant-"), "named avant-XXXXXX")
   c.eq_int(path_base(root).size, 12, "mkdtemp suffix")
   c.expect(file_exists(root), "directory exists")
   c.expect(file_exists("${root}/.avant-scratch"), "nesting marker")
@@ -117,7 +117,7 @@ fn test_scratch(c: Checks) {
   d2 = scratch_dir()
   c.expect(d1 != d2, "fresh directories differ")
   c.expect(file_exists(d1) && file_exists(d2), "fresh directories exist")
-  c.expect(str_has(d1, "${root}/"), "fresh directory inside scratch")
+  c.expect(d1.contains("${root}/"), "fresh directory inside scratch")
 
   if compiler = env_get("AVANT_COMPILER") {
     work = scratch_dir()
@@ -133,7 +133,7 @@ fn test_scratch(c: Checks) {
     ok_code = run_env(none, bin, ok_log)
     ok_dir = first_line(ok_log)
     c.eq_int(ok_code, 0, "child exits 0")
-    c.expect(str_has(ok_dir, "${root}/avant-"), "child nests inside parent")
+    c.expect(ok_dir.contains("${root}/avant-"), "child nests inside parent")
     c.expect(!file_exists(ok_dir), "removed at normal exit")
 
     fail_env: Array(String) = []
@@ -176,7 +176,7 @@ fn test_scratch(c: Checks) {
     keep_dir = first_line(keep_log)
     c.expect(file_exists("${keep_dir}/payload.txt"), "AVANT_KEEP_TMP keeps the directory")
     keep_text = read_all(keep_log)
-    c.expect(!str_has(keep_text, "kept temporary directory"), "nested keep is silent")
+    c.expect(!keep_text.contains("kept temporary directory"), "nested keep is silent")
 
     top = scratch_dir()
     top_env: Array(String) = []
@@ -186,9 +186,9 @@ fn test_scratch(c: Checks) {
     top_code = run_env(top_env, bin, top_log)
     c.eq_int(top_code, 0, "top-level kept child exits 0")
     top_dir = first_line(top_log)
-    c.expect(str_has(top_dir, "${top}/avant-"), "TMPDIR is the base")
+    c.expect(top_dir.contains("${top}/avant-"), "TMPDIR is the base")
     c.expect(file_exists(top_dir), "top-level keep keeps")
-    c.expect(str_has(read_all(top_log), "avant: kept temporary directory ${top_dir}"), "top-level keep prints the path")
+    c.expect(read_all(top_log).contains("avant: kept temporary directory ${top_dir}"), "top-level keep prints the path")
 
     std_src = "${work}/std_temp.av"
     std_body = "import std.testing\nfn main: Int {\n  t = Test.new()\n  a = t.temp_dir()\n  b = t.temp_dir()\n  puts(a)\n  t.check(a != b, \"fresh per call\")\n  t.check(file_exists(a) && file_exists(b), \"created\")\n  t.check((file_write(\"\${a}/x.txt\", \"x\") ?? -1) == 1, \"writable\")\n  t.finish()\n}\n"
@@ -201,9 +201,9 @@ fn test_scratch(c: Checks) {
     std_run = run_env(none, std_bin, std_log)
     std_text = read_all(std_log)
     c.eq_int(std_run, 0, "t.temp_dir checks pass")
-    c.expect(str_has(std_text, "0 failed, 3 passed"), "t.temp_dir program reports its checks")
+    c.expect(std_text.contains("0 failed, 3 passed"), "t.temp_dir program reports its checks")
     std_dir = first_line(std_log)
-    c.expect(str_has(std_dir, "${root}/avant-"), "t.temp_dir nests in the scratch directory")
+    c.expect(std_dir.contains("${root}/avant-"), "t.temp_dir nests in the scratch directory")
     c.expect(std_dir.size > 0 && !file_exists(std_dir), "t.temp_dir removed at exit")
 
     // An interrupted avant test stops its jobs and leaves nothing.
@@ -347,12 +347,12 @@ fn test_scratch(c: Checks) {
       _ = file_write(fsh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${fbase}' FULL=${fulls[fq]} '${full_bin}' > /dev/full 2> '${flog}'\necho $? > '${frc}'\n")
       _ = process_run("/usr/bin/timeout", bounded_sh(fsh, "60"))
       c.eq_int(nth_line(read_all(frc), 0).to_i() ?? -1, 1, "a failed write to stdout (${fulls[fq]}) exits 1")
-      c.expect(str_has(read_all(flog), "avant runtime: cannot write to standard output: No space left on device"), "a failed write to stdout (${fulls[fq]}) names the stream and the reason")
+      c.expect(read_all(flog).contains("avant runtime: cannot write to standard output: No space left on device"), "a failed write to stdout (${fulls[fq]}) names the stream and the reason")
       fleft = dir_list(fbase) ?? empty_strs()
       c.eq_int(fleft.size, 0, "a failed write to stdout (${fulls[fq]}) leaves nothing in TMPDIR")
       fq += 1
     }
-    c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
+    c.expect(unset_dir.contains("/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")
   }
 }

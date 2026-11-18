@@ -239,12 +239,12 @@ fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
     if kind == "main" {
       c.eq_int(status, 1, ".parallel traps on the main thread: status 1")
       c.eq_str(out, "", ".parallel traps on the main thread: nothing after it")
-      c.expect(str_has(err, "avant runtime: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the body's trap is told: ${err}")
-      c.expect(str_has(err, "avant runtime: .parallel: 1 of 6 bodies trapped; the first: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the .parallel's trap: ${err}")
+      c.expect(err.contains("avant runtime: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the body's trap is told: ${err}")
+      c.expect(err.contains("avant runtime: .parallel: 1 of 6 bodies trapped; the first: index 9 out of bounds (size 3) in at (parallel_traps.av:"), ".parallel traps on the main thread: the .parallel's trap: ${err}")
     } else {
       c.eq_int(status, 0, ".parallel traps in a task: the program goes on")
-      c.expect(str_has(out, "task: .parallel: 3 of 6 bodies trapped; the first: index "), ".parallel traps in a task: the join gives it: ${out}")
-      c.expect(str_has(out, "after\n"), ".parallel traps in a task: after")
+      c.expect(out.contains("task: .parallel: 3 of 6 bodies trapped; the first: index "), ".parallel traps in a task: the join gives it: ${out}")
+      c.expect(out.contains("after\n"), ".parallel traps in a task: after")
       c.eq_int(count_lines(err), 4, ".parallel traps in a task: three bodies' traps and the task's: ${err}")
     }
   }

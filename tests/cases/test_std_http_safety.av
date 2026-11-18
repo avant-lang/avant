@@ -113,7 +113,7 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
 // machine and the collector's check modes; alone it is a few ms).
 fn timed(what: String, started: Int, limit: Int, message: String): String {
   took = now_ms() - started
-  if str_has(message, "timed out") && took >= limit && took < limit + 1500 {
+  if message.contains("timed out") && took >= limit && took < limit + 1500 {
     return "${what}=timed out in time"
   }
   "${what}=${message} after ${took} ms, limit ${limit}"
@@ -508,7 +508,7 @@ fn response_literal_cases(c: Checks) {
         c.eq_int(code, 0, "a response built by Response.text and header compiles")
       } else {
         c.expect(code != 0, "Response.head outside std.http (${names[i]}): a compile error")
-        c.expect(str_has(text, "field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
+        c.expect(text.contains("field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
       }
     }
   } else {
@@ -1089,13 +1089,13 @@ fn handler_trap_cases(c: Checks, root: String) {
         c.eq_int(lines.size, whats.size + 2, "one line per trap, then served (${text})")
         for i in 0..whats.size {
           line = lines.get(i) ?? ""
-          c.expect(str_has(line, "avant runtime: ${whats[i]}"), "trap ${i} printed in order: ${line}")
+          c.expect(line.contains("avant runtime: ${whats[i]}"), "trap ${i} printed in order: ${line}")
         }
         c.eq_str(lines.get(whats.size) ?? "", "served", "serve returned")
       } else {
         c.eq_int(status, 1, "a trap in a C callback inside a handler ends the program, status 1")
         c.eq_str(wire, "callback_trap=0 closed", "a trap in a C callback: the request unanswered")
-        c.expect(str_has(text, "avant runtime: division by zero"), "a trap in a C callback: its line (${text})")
+        c.expect(text.contains("avant runtime: division by zero"), "a trap in a C callback: its line (${text})")
       }
     }
   } else {

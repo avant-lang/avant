@@ -103,7 +103,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     p = progs[i]
     c.eq_int(jobs[i].code, 0, "${p}: compiles under llvm")
-    c.expect(str_has(log_text(jobs[i].log), "compiled to "), "${p}: llvm prints the compiled-to line")
+    c.expect(log_text(jobs[i].log).contains("compiled to "), "${p}: llvm prints the compiled-to line")
     i += 1
   }
   base = progs.size
@@ -121,15 +121,15 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   base += gp.size
   bg = jobs[base]
   c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
-  c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not bogus"), "AVANT_BACKEND=bogus: refused, naming the variable")
+  c.expect(log_text(bg.log).contains("AVANT_BACKEND must be unset, empty, or llvm (the only back end), not bogus"), "AVANT_BACKEND=bogus: refused, naming the variable")
   c.eq_int(jobs[base + 1].code, 0, "AVANT_BACKEND=llvm dump: exit 0")
   c.eq_int(jobs[base + 2].code, 0, "default dump: exit 0")
   c.eq_str(log_text(jobs[base + 1].log), log_text(jobs[base + 2].log), "the llvm back end is the default back end")
-  c.expect(str_has(log_text(jobs[base + 2].log), "fn main"), "the default dump is MIR")
+  c.expect(log_text(jobs[base + 2].log).contains("fn main"), "the default dump is MIR")
   c.eq_int(jobs[base + 3].code, 0, "AVANT_BACKEND= (empty) dump: exit 0")
   c.eq_str(log_text(jobs[base + 3].log), log_text(jobs[base + 2].log), "AVANT_BACKEND= (empty) is the default back end")
   c.eq_int(jobs[base + 4].code, 1, "AVANT_BACKEND=myc: exit 1 (the old back end retired)")
-  c.expect(str_has(log_text(jobs[base + 4].log), "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not myc"), "AVANT_BACKEND=myc: refused, naming the variable")
+  c.expect(log_text(jobs[base + 4].log).contains("AVANT_BACKEND must be unset, empty, or llvm (the only back end), not myc"), "AVANT_BACKEND=myc: refused, naming the variable")
   c.eq_int(jobs[base + 5].code, 0, "default (llvm): compile into a missing directory exits 0")
   c.expect(file_exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
 
