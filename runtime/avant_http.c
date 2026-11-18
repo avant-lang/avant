@@ -710,7 +710,20 @@ struct AvantHttpServer {
    * link in the list of live servers, both under g_srv_mu. */
   int64_t closer_id;
   struct AvantHttpServer *next_live;
+  /* The routes' methods and paths, in registration order, copied at
+   * serve (avant_http_route_add): a request's route is found here, on its
+   * borrowed bytes, before anything is allocated for it. */
+  struct HttpRouteKey *routes;
+  int nroutes;
+  int routes_cap;
 };
+
+typedef struct HttpRouteKey {
+  char *method;
+  size_t method_len;
+  char *path;
+  size_t path_len;
+} HttpRouteKey;
 
 /* The live servers, so a closer (a bare number that crosses to any
  * task) finds its server, or nothing once serve has torn it down. */
@@ -1292,6 +1305,8 @@ typedef struct AvantHttpReq {
   int64_t seq;
   struct HttpReply *reply; /* req.reply took one */
   int later;               /* the handler returned Response.later() */
+  const char *base;        /* the request's first byte (its method) */
+  int batch_first;         /* the first request of its batch */
 } AvantHttpReq;
 
 /* A request answered later: the reply a task sends (HttpReply.send) is
@@ -1333,12 +1348,90 @@ char *avant_http_req_method(void *reqp) {
 
 char *avant_http_req_target(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
-  /* First getter of every dispatch: the heap-goal boundary. This
-   * frame holds no Avant heap pointers yet, so the collection it may
-   * run strands nothing; without it the request path, which
-   * allocates only under defer, never collects. */
-  avant_gc_heap_goal_collect();
   return make_string(req->target, req->target_len);
+}
+
+/* The target's path: its bytes before the first '?'. */
+static size_t req_path_len(const AvantHttpReq *req) {
+  const char *q = (const char *)memchr(req->target, '?', req->target_len);
+  return q ? (size_t)(q - req->target) : req->target_len;
+}
+
+char *avant_http_req_path(void *reqp) {
+  AvantHttpReq *req = (AvantHttpReq *)reqp;
+  return make_string(req->target, req_path_len(req));
+}
+
+/* The query, without its '?' (status 1, "", when the target has none). */
+char *avant_http_req_query(void *reqp) {
+  AvantHttpReq *req = (AvantHttpReq *)reqp;
+  size_t pl = req_path_len(req);
+  set_status(0);
+  if (pl == req->target_len) {
+    set_status(1);
+    return avant_str_empty();
+  }
+  return make_string(req->target + pl + 1, req->target_len - pl - 1);
+}
+
+/* Server.serve gives the route table (method, path) in its order. */
+void avant_http_route_add(void *srvp, const char *method, const char *path) {
+  AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  HttpRouteKey *k;
+  if (!srv) {
+    return;
+  }
+  if (srv->nroutes == srv->routes_cap) {
+    int cap = srv->routes_cap ? srv->routes_cap * 2 : 16;
+    HttpRouteKey *next = (HttpRouteKey *)realloc(srv->routes, (size_t)cap * sizeof(HttpRouteKey));
+    if (!next) {
+      avant_trap_text("out of memory registering a route");
+    }
+    srv->routes = next;
+    srv->routes_cap = cap;
+  }
+  k = &srv->routes[srv->nroutes];
+  k->method_len = avant_str_n(method);
+  k->path_len = avant_str_n(path);
+  k->method = (char *)malloc(k->method_len + 1);
+  k->path = (char *)malloc(k->path_len + 1);
+  if (!k->method || !k->path) {
+    avant_trap_text("out of memory registering a route");
+  }
+  memcpy(k->method, method, k->method_len + 1);
+  memcpy(k->path, path, k->path_len + 1);
+  srv->nroutes++;
+}
+
+/* The first call of every dispatch: the request's route, on its borrowed
+ * method and path, as std.http's route walk read them (the first route
+ * registered with that method and that path), and what else the
+ * dispatch must know, in one word: (route + 1) << 2, 2 for a WebSocket
+ * handshake, 1 when the target has a query (route + 1 is 0 for none).
+ * The first request of a batch is the heap-goal boundary: this frame
+ * holds no Avant heap pointer yet, so the collection it may run strands
+ * nothing; without it the request path, which never waits, would
+ * not collect for the heap's goal. */
+avant_int avant_http_req_route(void *reqp) {
+  AvantHttpReq *req = (AvantHttpReq *)reqp;
+  AvantHttpServer *srv = req->srv;
+  size_t pl;
+  avant_int found = 0;
+  int i;
+  if (req->batch_first) {
+    avant_gc_heap_goal_collect();
+  }
+  pl = req_path_len(req);
+  for (i = 0; i < srv->nroutes; i++) {
+    const HttpRouteKey *k = &srv->routes[i];
+    if (k->path_len == pl && k->method_len == req->method_len &&
+        memcmp(k->path, req->target, pl) == 0 &&
+        memcmp(k->method, req->method, req->method_len) == 0) {
+      found = (avant_int)(i + 1);
+      break;
+    }
+  }
+  return (found << 2) | (req->is_ws ? 2 : 0) | (pl != req->target_len ? 1 : 0);
 }
 
 char *avant_http_req_body(void *reqp) {
@@ -1351,14 +1444,14 @@ char *avant_http_req_body(void *reqp) {
 
 char *avant_http_req_headers(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
-  /* The raw block is the connection buffer from its start through the
-   * header terminator; offsets recorded by the parser stay valid. */
+  /* The raw block is the request's bytes from its first through its last
+   * header line; offsets recorded by the parser stay valid. */
   size_t raw_len = 0;
   if (req->num_headers > 0) {
     struct phr_header *last = &req->headers[req->num_headers - 1];
-    raw_len = (size_t)((last->value + last->value_len) - req->conn->buf);
+    raw_len = (size_t)((last->value + last->value_len) - req->base);
   }
-  return build_packed_headers(req->headers, req->num_headers, req->conn->buf,
+  return build_packed_headers(req->headers, req->num_headers, req->base,
                               raw_len, ((ConnNode *)req->conn)->peer);
 }
 
@@ -2769,8 +2862,93 @@ static int http_host_valid(const char *p, size_t n) {
 
 static void conn_process(Conn *conn, struct us_socket_t *s);
 
-static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
+/* The headers conn_process_requests looks at, each found in one pass over
+ * the parsed lines by its name's length, then a case-insensitive compare
+ * (the fastest servers' way: h2o's token table, Valk's and fasthttp's
+ * length-first compares); index -1 when absent, the first line of a name
+ * otherwise, as the searches it replaced found. */
+typedef struct HeadScan {
+  int te;
+  int expect;
+  int connection;
+  int upgrade;
+  int ws_key;
+  int ws_version;
+} HeadScan;
+
+/* Appends n bytes to the connection's input buffer (grown from 8 KiB);
+ * 0 when memory ran out. */
+static int conn_buf_append(Conn *conn, const char *p, size_t n) {
+  if (conn->len + n > conn->cap) {
+    size_t want = conn->cap ? conn->cap : 8192;
+    char *next;
+    while (want < conn->len + n) {
+      want *= 2;
+    }
+    next = (char *)realloc(conn->buf, want);
+    if (!next) {
+      return 0;
+    }
+    conn->buf = next;
+    conn->cap = want;
+  }
+  memcpy(conn->buf + conn->len, p, n);
+  conn->len += n;
+  return 1;
+}
+
+/* Consumes the first `off` bytes of the connection's buffer: the requests
+ * a batch answered, moved out once per batch instead of after each
+ * request (that move was quadratic in a pipelined batch). An empty
+ * buffer past HTTP_BUF_KEEP is given back. */
+static void conn_consume(Conn *conn, size_t off) {
+  if (off == 0) {
+    return;
+  }
+  if (off < conn->len) {
+    memmove(conn->buf, conn->buf + off, conn->len - off);
+  }
+  conn->len -= off;
+  if (conn->len == 0 && __builtin_expect(conn->cap > HTTP_BUF_KEEP, 0)) {
+    free(conn->buf);
+    conn->buf = NULL;
+    conn->cap = 0;
+  }
+}
+
+/* What a batch leaves for later: with the bytes in the connection's
+ * buffer, the first off of them go (conn_consume); with the bytes parsed
+ * where the read put them (ext, the loop's receive buffer, valid only
+ * during this callback), what is past off is copied into the
+ * connection's buffer, the only copy a read then costs: the tail of an
+ * unfinished request, or what waits behind an answer. 0 when that copy
+ * found no memory (the connection is then closed). */
+static int conn_keep_rest(Conn *conn, struct us_socket_t *s, const char *at, size_t len,
+                          size_t off, int ext) {
+  if (!ext) {
+    conn_consume(conn, off);
+    return 1;
+  }
+  if (off < len && !conn_buf_append(conn, at + off, len - off)) {
+    us_socket_close(0, s, 0, NULL);
+    return 0;
+  }
+  return 1;
+}
+
+/* The requests in the buffer, parsed in place from a cursor (off): each
+ * is parsed where it lies, its record filled field by field (nothing
+ * cleared, the parser writing its header lines straight into it), and
+ * the buffer is moved once, when the batch ends. The loop thread enters
+ * the collector's running state once for the batch, at its first
+ * dispatch, and leaves it at the end (enter_avant, leave_avant): between
+ * two dispatches this C code holds no heap object. */
+static void conn_process_requests(Conn *conn, struct us_socket_t *s, const char *in,
+                                  size_t in_len, int ext) {
   AvantHttpServer *srv = conn->srv;
+  size_t off = 0;
+  int in_avant = 0;
+  int first = 1;
 
   if (conn->answered) {
     return;
@@ -2780,30 +2958,31 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
      * answer from a task: the next request waits in the buffer until
      * srv_on_writable has sent it, or reply_deliver has written it. */
     if (conn_out_pending(conn) || conn->reply) {
-      return;
+      break;
     }
-    const char *method = NULL;
-    const char *target = NULL;
-    size_t method_len = 0;
-    size_t target_len = 0;
+    const char *at = in + off;
+    size_t len = in_len - off;
     int minor_version = 0;
-    struct phr_header headers[HTTP_MAX_HEADERS];
-    size_t num_headers = HTTP_MAX_HEADERS;
     int pret;
-    const char *value = NULL;
-    size_t value_len = 0;
     long content_length = 0;
     int has_cl = 0;
     int keep_alive;
     int trapped;
     size_t total;
+    size_t hi;
+    int hosts = 0;
+    HeadScan hs = {-1, -1, -1, -1, -1, -1};
     AvantHttpReq req;
 
-    pret = phr_parse_request(conn->buf, conn->len, &method, &method_len,
-                             &target, &target_len, &minor_version, headers,
-                             &num_headers, 0);
+    if (len == 0) {
+      break;
+    }
+    req.num_headers = HTTP_MAX_HEADERS;
+    pret = phr_parse_request(at, len, &req.method, &req.method_len, &req.target,
+                             &req.target_len, &minor_version, req.headers,
+                             &req.num_headers, 0);
     if (pret == -2) {
-      if (conn->len > HTTP_MAX_HEADER_BLOCK) {
+      if (len > HTTP_MAX_HEADER_BLOCK) {
         send_error(conn, s, 400);
       } else if (!conn->head_at) {
         /* A head in parts: it has the head timeout from now (the
@@ -2812,83 +2991,120 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
         conn->head_at = http_now_ms();
         conn_watch(conn, s);
       }
-      return;
+      break;
     }
     if (pret < 0) {
       send_error(conn, s, 400);
-      return;
+      break;
     }
-    if (find_header(headers, num_headers, "Transfer-Encoding", &value,
-                    &value_len)) {
-      send_error(conn, s, 411);
-      return;
-    }
-    /* Every Content-Length line is read, not the first only: lines that
-     * disagree, or one continued on a folded
-     * line, give two readings of where the body ends, and a proxy in
-     * front may take the other one (request smuggling). RFC 9112 6.3:
-     * 400 and close. Every repeat is refused too, identical or not
-     * (the owner's choice; nginx does the same):
-     * two lines "5" and one line "5, 5" are the same list (RFC 9110 5.3),
-     * and a list in one line is not a number here, so both spellings
-     * are 400, where two identical lines used to be one value.
-     * The same pass counts the Host lines:
-     * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
-     * without one and to any request with two (identical or not), and a
-     * Host continued on a folded line is an invalid value, as is one
-     * that is not uri-host [ ":" port ]; a request
-     * that names two hosts is read one way here and maybe the other way
-     * by a proxy or a virtual-host router in front. */
-    {
-      size_t hi;
-      int hosts = 0;
-      for (hi = 0; hi < num_headers; hi++) {
-        long one = 0;
-        if (!headers[hi].name) {
-          continue;
-        }
-        if (ascii_ieq(headers[hi].name, headers[hi].name_len, "Host", 4)) {
-          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name) ||
-              !http_host_valid(headers[hi].value, headers[hi].value_len)) {
-            send_error(conn, s, 400);
-            return;
+    /* One pass over the header lines. Every Content-Length line is
+     * read, not the first only: lines that disagree, or one continued on
+     * a folded line, give two readings of where the body ends, and a
+     * proxy in front may take the other one (request smuggling). RFC
+     * 9112 6.3: 400 and close. Every repeat is refused too, identical or
+     * not (the owner's choice; nginx does the same): two lines "5" and
+     * one line "5, 5" are the same list (RFC 9110 5.3), and a list in one
+     * line is not a number here, so both spellings are 400. The same
+     * pass counts the Host lines: RFC 9112 3.2 has a server answer 400 to
+     * an HTTP/1.1 request without one and to any request with two
+     * (identical or not), and a Host continued on a folded line is an
+     * invalid value, as is one that is not uri-host [ ":" port ]; a
+     * request that names two hosts is read one way here and maybe the
+     * other way by a proxy or a virtual-host router in front. */
+    for (hi = 0; hi < req.num_headers; hi++) {
+      const char *nm = req.headers[hi].name;
+      size_t nl = req.headers[hi].name_len;
+      if (!nm) {
+        continue;
+      }
+      switch (nl) {
+        case 4:
+          if (ascii_ieq(nm, nl, "Host", 4)) {
+            if (++hosts > 1 || (hi + 1 < req.num_headers && !req.headers[hi + 1].name) ||
+                !http_host_valid(req.headers[hi].value, req.headers[hi].value_len)) {
+              send_error(conn, s, 400);
+              goto done;
+            }
           }
-          continue;
-        }
-        if (!ascii_ieq(headers[hi].name, headers[hi].name_len,
-                       "Content-Length", 14)) {
-          continue;
-        }
-        if ((hi + 1 < num_headers && !headers[hi + 1].name) ||
-            !parse_content_length(headers[hi].value, headers[hi].value_len,
-                                  &one) ||
-            has_cl) {
-          send_error(conn, s, 400);
-          return;
-        }
-        content_length = one;
-        has_cl = 1;
+          break;
+        case 6:
+          if (hs.expect < 0 && ascii_ieq(nm, nl, "Expect", 6)) {
+            hs.expect = (int)hi;
+          }
+          break;
+        case 7:
+          if (hs.upgrade < 0 && ascii_ieq(nm, nl, "Upgrade", 7)) {
+            hs.upgrade = (int)hi;
+          }
+          break;
+        case 10:
+          if (hs.connection < 0 && ascii_ieq(nm, nl, "Connection", 10)) {
+            hs.connection = (int)hi;
+          }
+          break;
+        case 14:
+          if (ascii_ieq(nm, nl, "Content-Length", 14)) {
+            long one = 0;
+            if ((hi + 1 < req.num_headers && !req.headers[hi + 1].name) ||
+                !parse_content_length(req.headers[hi].value, req.headers[hi].value_len, &one) ||
+                has_cl) {
+              send_error(conn, s, 400);
+              goto done;
+            }
+            content_length = one;
+            has_cl = 1;
+          }
+          break;
+        case 17:
+          if (hs.te < 0 && ascii_ieq(nm, nl, "Transfer-Encoding", 17)) {
+            hs.te = (int)hi;
+          } else if (hs.ws_key < 0 && ascii_ieq(nm, nl, "Sec-WebSocket-Key", 17)) {
+            hs.ws_key = (int)hi;
+          }
+          break;
+        case 21:
+          if (hs.ws_version < 0 && ascii_ieq(nm, nl, "Sec-WebSocket-Version", 21)) {
+            hs.ws_version = (int)hi;
+          }
+          break;
+        default:
+          break;
       }
-      if (hosts == 0 && minor_version >= 1) {
-        send_error(conn, s, 400);
-        return;
-      }
+    }
+    if (hs.te >= 0) {
+      send_error(conn, s, 411);
+      break;
+    }
+    if (hosts == 0 && minor_version >= 1) {
+      send_error(conn, s, 400);
+      break;
     }
     if (__builtin_expect(__atomic_load_n(&srv->over_mem, __ATOMIC_RELAXED), 0)) {
       /* The process is past its memory ceiling: new requests are shed
        * until the sweep reads it under again. */
       send_error(conn, s, 503);
-      return;
+      break;
     }
     if (has_cl && content_length > srv->max_body) {
       send_error(conn, s, 413);
-      return;
+      break;
     }
     total = (size_t)pret + (size_t)(has_cl ? content_length : 0);
-    if (conn->len < total) {
+    if (len < total) {
       /* The head is complete; the body waits for bytes, which must
-       * come at the minimum rate once its grace has passed. */
+       * come at the minimum rate once its grace has passed. The requests
+       * before it leave the buffer first, so the rate is measured on
+       * this one's bytes. */
+      int wants_continue = hs.expect >= 0 &&
+                           ascii_ieq(req.headers[hs.expect].value, req.headers[hs.expect].value_len,
+                                     "100-continue", 12);
       conn->head_at = 0;
+      if (!conn_keep_rest(conn, s, in, in_len, off, ext)) {
+        return;
+      }
+      off = 0;
+      ext = 0;
+      in_len = 0;
       if (!conn->body_at) {
         /* The body takes its length from the server's budget while it
          * waits (a body that arrives with its head takes none). */
@@ -2897,105 +3113,98 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
                 srv->body_budget) {
           __atomic_sub_fetch(&srv->body_held, content_length, __ATOMIC_RELAXED);
           send_error(conn, s, 503);
-          return;
+          break;
         }
         conn->budget = srv->body_budget ? content_length : 0;
         conn->body_at = http_now_ms();
         conn->body_from = conn->len;
         conn_watch(conn, s);
       }
-      if (find_header(headers, num_headers, "Expect", &value, &value_len) &&
-          ascii_ieq(value, value_len, "100-continue", 12) &&
-          !conn->sent_continue) {
+      if (wants_continue && !conn->sent_continue) {
         const char *cont = "HTTP/1.1 100 Continue\r\n\r\n";
         conn_send(conn, s, cont, strlen(cont), NULL, 0);
         conn->sent_continue = 1;
       }
-      return;
+      break;
     }
     if (conn->head_at | conn->body_at) {
       conn_wait_end(conn, s);
     }
     keep_alive = minor_version == 1;
-    if (find_header(headers, num_headers, "Connection", &value, &value_len)) {
-      if (ascii_ieq_contains(value, value_len, "close")) {
+    if (hs.connection >= 0) {
+      const char *v = req.headers[hs.connection].value;
+      size_t vl = req.headers[hs.connection].value_len;
+      if (ascii_ieq_contains(v, vl, "close")) {
         keep_alive = 0;
-      } else if (ascii_ieq_contains(value, value_len, "keep-alive")) {
+      } else if (ascii_ieq_contains(v, vl, "keep-alive")) {
         keep_alive = 1;
       }
     }
+    req.is_ws = 0;
     /* WebSocket upgrade: a request carrying an Upgrade header
      * must be a well-formed RFC 6455 handshake or it is answered 400
      * here; a well-formed one is flagged for the Avant dispatch, which
      * decides from its route table whether to upgrade. */
-    {
-      const char *up_value = NULL;
-      size_t up_len = 0;
-      if (find_header(headers, num_headers, "Upgrade", &up_value, &up_len) &&
-          ascii_ieq_contains(up_value, up_len, "websocket")) {
-        const char *hv = NULL;
-        size_t hv_len = 0;
-        int ok = 1;
-        if (method_len != 3 || memcmp(method, "GET", 3) != 0) { ok = 0; }
-        if (minor_version != 1) { ok = 0; }
-        if (!find_header(headers, num_headers, "Connection", &hv, &hv_len) ||
-            !ascii_ieq_contains(hv, hv_len, "upgrade")) {
-          ok = 0;
+    if (hs.upgrade >= 0 &&
+        ascii_ieq_contains(req.headers[hs.upgrade].value, req.headers[hs.upgrade].value_len, "websocket")) {
+      int ok = 1;
+      if (req.method_len != 3 || memcmp(req.method, "GET", 3) != 0) { ok = 0; }
+      if (minor_version != 1) { ok = 0; }
+      if (hs.connection < 0 ||
+          !ascii_ieq_contains(req.headers[hs.connection].value, req.headers[hs.connection].value_len, "upgrade")) {
+        ok = 0;
+      }
+      if (hs.ws_version < 0 ||
+          !ascii_ieq(req.headers[hs.ws_version].value, req.headers[hs.ws_version].value_len, "13", 2)) {
+        ok = 0;
+      }
+      if (hs.ws_key < 0 ||
+          !ws_key_valid(req.headers[hs.ws_key].value, req.headers[hs.ws_key].value_len)) {
+        ok = 0;
+      }
+      if (!ok) {
+        send_error(conn, s, 400);
+        break;
+      }
+      {
+        /* The key for the upgrade primitive. */
+        size_t kl = req.headers[hs.ws_key].value_len;
+        if (kl > sizeof(req.ws_key) - 1) {
+          kl = sizeof(req.ws_key) - 1;
         }
-        if (!find_header(headers, num_headers, "Sec-WebSocket-Version",
-                         &hv, &hv_len) ||
-            !ascii_ieq(hv, hv_len, "13", 2)) {
-          ok = 0;
-        }
-        if (!find_header(headers, num_headers, "Sec-WebSocket-Key", &hv,
-                         &hv_len) ||
-            !ws_key_valid(hv, hv_len)) {
-          ok = 0;
-        }
-        if (!ok) {
-          send_error(conn, s, 400);
-          return;
-        }
-        /* Stash the key for the upgrade primitive (req is memset next). */
-        {
-          size_t klen = hv_len < sizeof(req.ws_key) - 1 ? hv_len
-                                                        : sizeof(req.ws_key) - 1;
-          memset(&req, 0, sizeof(req));
-          memcpy(req.ws_key, hv, klen);
-          req.ws_key[klen] = 0;
-          req.is_ws = 1;
-          goto req_filled;
-        }
+        memcpy(req.ws_key, req.headers[hs.ws_key].value, kl);
+        req.ws_key[kl] = 0;
+        req.is_ws = 1;
       }
     }
-    memset(&req, 0, sizeof(req));
-  req_filled:
     req.srv = srv;
     req.conn = conn;
     req.sock = s;
-    req.method = method;
-    req.method_len = method_len;
-    req.target = target;
-    req.target_len = target_len;
-    memcpy(req.headers, headers, sizeof(struct phr_header) * num_headers);
-    req.num_headers = num_headers;
-    req.body = conn->buf + pret;
+    req.base = at;
+    req.body = at + pret;
     req.body_len = (size_t)(has_cl ? content_length : 0);
     req.keep_alive = keep_alive;
     req.minor_version = minor_version;
+    req.upgraded = 0;
+    req.responded = 0;
+    req.ws_conn = NULL;
+    req.reply = NULL;
+    req.later = 0;
+    req.batch_first = first;
+    first = 0;
     if (req.is_ws) {
       /* The upgrade writes its 101 itself: the answers gathered go
        * first, and one still queued keeps the handshake in the buffer
        * until it has gone (conn_flush comes back here). */
       conn_uncork(conn, s);
       if (us_socket_is_closed(0, s) || conn_out_pending(conn)) {
-        return;
+        break;
       }
     } else {
       /* Gather this answer when a request waits behind it, or a batch
        * has begun: the batch is written once, when the buffer's requests
        * are answered (conn_process). */
-      conn->corking = conn->len > total || conn->cork_len > 0;
+      conn->corking = len > total || conn->cork_len > 0;
     }
     /* The dispatch runs in a recovery point: a trap in the handler (or
      * in std.http's code for this request) returns here, the handler's
@@ -3005,9 +3214,11 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
      * closes the new WebSocket with 1011. */
     req.seq = ++t_dispatch_seq;
     t_dispatch = &req;
-    enter_avant();
+    if (!in_avant) {
+      enter_avant();
+      in_avant = 1;
+    }
     trapped = avant_task_recover_call(srv->dispatch, srv->state, &req);
-    leave_avant();
     t_dispatch = NULL;
     if (__builtin_expect(req.reply != NULL, 0)) {
       if (req.later && !trapped && !us_socket_is_closed(0, s)) {
@@ -3021,17 +3232,22 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
         pthread_mutex_unlock(&g_reply_mu);
         conn->reply = req.reply;
         us_socket_timeout(0, s, 0);
-        if (total < conn->len) {
-          memmove(conn->buf, conn->buf + total, conn->len - total);
-        }
-        conn->len -= total;
+        off += total;
         conn->sent_continue = 0;
         conn->corking = 0;
         if (ready) {
+          if (!conn_keep_rest(conn, s, in, in_len, off, ext)) {
+            return;
+          }
           conn_uncork(conn, s);
+          if (in_avant) {
+            leave_avant();
+            in_avant = 0;
+          }
           reply_deliver(conn, s);
+          return;
         }
-        return;
+        break;
       }
       /* The handler answered itself, or trapped: the reply is void. */
       reply_drop(req.reply);
@@ -3040,10 +3256,18 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
     if (us_socket_is_closed(0, s)) {
       /* The answer could not be queued (conn_send closed the socket);
        * srv_on_close has freed the buffers. */
+      if (in_avant) {
+        leave_avant();
+      }
       return;
     }
     if (trapped && req.upgraded) {
-      conn->len = 0;
+      if (!ext) {
+        conn->len = 0;
+      }
+      if (in_avant) {
+        leave_avant();
+      }
       ws_fail(conn->ws, 1011);
       return;
     }
@@ -3057,11 +3281,13 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
        * bytes past the handshake are frames already in the buffer. */
-      if (conn->len > (size_t)pret) {
-        memmove(conn->buf, conn->buf + pret, conn->len - (size_t)pret);
-      }
-      conn->len -= (size_t)pret;
       conn->sent_continue = 0;
+      if (in_avant) {
+        leave_avant();
+      }
+      if (!conn_keep_rest(conn, s, in, in_len, off + (size_t)pret, ext)) {
+        return;
+      }
       if (conn->len > 0) {
         ws_process(conn, s);
         ws_watch_in(conn, s);
@@ -3069,31 +3295,29 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
       return;
     }
     if (!keep_alive) {
+      if (in_avant) {
+        leave_avant();
+      }
       conn_finish(conn, s);
       return;
     }
-    /* The dispatch copied what it kept; consume this request and look
-     * for a pipelined one already in the buffer. */
-    if (conn->len > total) {
-      memmove(conn->buf, conn->buf + total, conn->len - total);
-    }
-    conn->len -= total;
+    /* The dispatch copied what it kept: the cursor moves past this
+     * request to the next one already in the buffer. */
+    off += total;
     conn->sent_continue = 0;
-    if (conn->len == 0) {
-      if (__builtin_expect(conn->cap > HTTP_BUF_KEEP, 0)) {
-        free(conn->buf);
-        conn->buf = NULL;
-        conn->cap = 0;
-      }
-      return;
-    }
+  }
+done:
+  if (in_avant) {
+    leave_avant();
+  }
+  if (!us_socket_is_closed(0, s)) {
+    (void)conn_keep_rest(conn, s, in, in_len, off, ext);
   }
 }
-
 /* The requests in a connection's buffer, answered in order; the
  * answers gathered under pipelining are written once, at the end. */
 static void conn_process(Conn *conn, struct us_socket_t *s) {
-  conn_process_requests(conn, s);
+  conn_process_requests(conn, s, conn->buf, conn->len, 0);
   conn->corking = 0;
   if (__builtin_expect(conn->cork_len != 0, 0) && !us_socket_is_closed(0, s)) {
     conn_uncork(conn, s);
@@ -3508,22 +3732,21 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
     conn->ws->ping_sent = 0;
     idle_arm(s, conn->srv->ws_idle_secs, conn->srv->ws_idle_mins);
   }
-  if (conn->len + (size_t)length > conn->cap) {
-    size_t want = conn->cap ? conn->cap : 8192;
-    char *next;
-    while (want < conn->len + (size_t)length) {
-      want *= 2;
+  if (!conn->ws && conn->len == 0 && !conn->reply && !conn_out_pending(conn)) {
+    /* Nothing waits in the connection's buffer: the requests are parsed
+     * where the read put them, and only an unfinished tail is copied
+     * (conn_keep_rest). */
+    conn_process_requests(conn, s, data, (size_t)length, 1);
+    conn->corking = 0;
+    if (__builtin_expect(conn->cork_len != 0, 0) && !us_socket_is_closed(0, s)) {
+      conn_uncork(conn, s);
     }
-    next = (char *)realloc(conn->buf, want);
-    if (!next) {
-      send_error(conn, s, 500);
-      return s;
-    }
-    conn->buf = next;
-    conn->cap = want;
+    return s;
   }
-  memcpy(conn->buf + conn->len, data, (size_t)length);
-  conn->len += (size_t)length;
+  if (!conn_buf_append(conn, data, (size_t)length)) {
+    send_error(conn, s, 500);
+    return s;
+  }
   if (__builtin_expect(conn->reply != NULL, 0) &&
       conn->len > (size_t)HTTP_MAX_HEADER_BLOCK + (size_t)conn->srv->max_body) {
     /* Requests pile up behind one answered later: the connection is
@@ -3930,6 +4153,11 @@ static void srv_teardown(AvantHttpServer *srv) {
   }
   timers_close(srv);
   free(srv->timers);
+  for (i = 0; i < srv->nroutes; i++) {
+    free(srv->routes[i].method);
+    free(srv->routes[i].path);
+  }
+  free(srv->routes);
   for (i = 0; i < srv->nloops; i++) {
     loop_teardown(&srv->loops[i]);
   }

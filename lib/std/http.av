@@ -6,7 +6,10 @@ lib httpc {
   fun avant_http_header_name_at(data: Bytes, index: Int): String
   fun avant_http_header_value_at(data: Bytes, index: Int): String
   fun avant_http_req_method(req: Ptr(Void)): String
-  fun avant_http_req_target(req: Ptr(Void)): String
+  fun avant_http_req_path(req: Ptr(Void)): String
+  fun avant_http_req_query(req: Ptr(Void)): String
+  fun avant_http_req_route(req: Ptr(Void)): Int
+  fun avant_http_route_add(srv: Ptr(Void), method: String, path: String)
   fun avant_http_req_body(req: Ptr(Void)): Bytes
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
   fun avant_http_headers_peer(data: Bytes): String
@@ -690,12 +693,9 @@ class HttpState {
     }
   }
 
-  fn dispatch(req: Request): Response {
-    for r in self.routes {
-      if r.method == req.method && r.path == req.path {
-        return (r.handler)(req)
-      }
-    }
+  // A request no route names (the C loop matched none): the fallback's,
+  // or 404.
+  fn unrouted(req: Request): Response {
     if self.fallbacks.size > 0 {
       return (self.fallbacks[0].handler)(req)
     }
@@ -703,9 +703,8 @@ class HttpState {
   }
 }
 
-// The request the C loop parsed, as a handler gets it. Without a query
-// the path is the target; the split is the only copy, so a plain request
-// allocates no second string here.
+// The request the C loop parsed, as a handler gets it, its method made
+// from the request's bytes (a routed request's are its route's).
 fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
   method = httpc.avant_http_req_method(raw)
   raw_headers = httpc.avant_http_req_headers(raw)
@@ -724,20 +723,16 @@ fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
 // is a plain function, not a closure: the server state arrives as its
 // first argument, in the shape the C callback rule allows.
 fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
-  target = httpc.avant_http_req_target(raw)
-  // The split is written here, not called (split_target): this path runs
-  // once per request, and each call is a collector frame entry.
-  path = target
+  // The route, found in C on the request's own bytes (its method and
+  // path, before anything is allocated), and whether the target has a
+  // query and the request is a WebSocket handshake, in one word. A
+  // routed request's method and path are its route's own strings, so
+  // nothing is allocated for them.
+  found = httpc.avant_http_req_route(raw)
+  i = (found >> 2) - 1
   query: String? = nil
-  q = 0
-  while q < target.size {
-    if target[q] == 63 {
-      path = target[..q]
-      query = target[q + 1..]
-      q = target.size
-    } else {
-      q += 1
-    }
+  if found & 1 != 0 {
+    query = httpc.avant_http_req_query(raw)
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
@@ -746,31 +741,35 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // connections; the route tables are only read while serving).
   // The open handlers get the handshake request (its headers, a cookie
   // or an Authorization, and its peer), made only when the path has one.
-  if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
-    if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
-      wid = httpc.avant_http_req_ws_id(raw)
-      whandle = httpc.avant_http_req_ws_conn(raw)
-      conn = WsConn { id: wid, handle: whandle }
-      if state.has_ws_open_route(path) {
-        state.ws_open_dispatch(path, conn, received_request(raw, path, query))
+  if found & 2 != 0 {
+    path = httpc.avant_http_req_path(raw)
+    if state.has_ws_route(path) {
+      if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
+        wid = httpc.avant_http_req_ws_id(raw)
+        whandle = httpc.avant_http_req_ws_conn(raw)
+        conn = WsConn { id: wid, handle: whandle }
+        if state.has_ws_open_route(path) {
+          state.ws_open_dispatch(path, conn, received_request(raw, path, query))
+        }
       }
+      return
     }
-    return
   }
-  // The request is made here too, not by received_request (the open
-  // handlers' path): the same fields, one call less a request.
-  method = httpc.avant_http_req_method(raw)
-  raw_headers = httpc.avant_http_req_headers(raw)
-  req_body = httpc.avant_http_req_body(raw)
-  req = Request {
-    method: method,
-    path: path,
-    raw_query: query,
-    hs: Headers { data: raw_headers },
-    data: req_body,
-    seq: httpc.avant_http_req_seq(raw)
+  resp = if i >= 0 {
+    r = state.routes[i]
+    req = Request {
+      method: r.method,
+      path: r.path,
+      raw_query: query,
+      hs: Headers { data: httpc.avant_http_req_headers(raw) },
+      data: httpc.avant_http_req_body(raw),
+      seq: httpc.avant_http_req_seq(raw)
+    }
+    (r.handler)(req)
+  } else {
+    // No route: the method and path are made, for the fallback or 404.
+    state.unrouted(received_request(raw, httpc.avant_http_req_path(raw), query))
   }
-  resp = state.dispatch(req)
   if resp.deferred {
     // Answered later, through the reply a task holds.
     httpc.avant_http_req_later(raw)
@@ -793,7 +792,7 @@ fn timer_dispatch(state: HttpState, raw: Ptr(Void)) {
 // The C loop calls this named function once per WebSocket message and
 // once per connection close. Open is dispatched from http_dispatch at
 // upgrade time instead. The first getter is the collector's heap-goal
-// boundary for the message path, in the avant_http_req_target position.
+// boundary for the message path, as avant_http_req_route is a batch's.
 fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
   kind = httpc.avant_ws_event_kind(raw)
   wid = httpc.avant_ws_event_conn_id(raw)
@@ -1086,6 +1085,10 @@ pub struct Server {
       return
     }
     self.state.serving = true
+    // The C loop matches each request's route on its own bytes.
+    for r in self.state.routes {
+      httpc.avant_http_route_add(self.handle, r.method, r.path)
+    }
     served = 0
     pin(self.state) {
       served = httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch, timer_dispatch)
