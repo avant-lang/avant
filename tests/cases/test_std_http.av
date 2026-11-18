@@ -4,7 +4,11 @@ import std.http
 import std.ws
 import std.fs
 
-fn body_text(resp: http.Response): String {
+type Header = http.Header
+type Request = http.Request
+type Response = http.Response
+
+fn body_text(resp: Response): String {
   String.from_utf8(resp.body) ?? ""
 }
 
@@ -31,7 +35,7 @@ fn client_round(port: Int, out: sync.Channel(String)): Int {
   } else {
     out.send("echo-bytes=ERR")
   }
-  none: Array(http.Header) = []
+  none: Array(Header) = []
   if resp = http.request("POST", "${base}/echo", "text ok", none) {
     out.send("request-text=${body_text(resp)}")
   } else {
@@ -47,10 +51,10 @@ fn client_round(port: Int, out: sync.Channel(String)): Int {
   } else {
     out.send("mismatch=ERR")
   }
-  hs: Array(http.Header) = []
-  hs.push(http.Header { name: "X-Dup", value: "one" })
-  hs.push(http.Header { name: "X-Dup", value: "two" })
-  hs.push(http.Header { name: "X-One", value: "yes" })
+  hs: Array(Header) = []
+  hs.push(Header { name: "X-Dup", value: "one" })
+  hs.push(Header { name: "X-Dup", value: "two" })
+  hs.push(Header { name: "X-One", value: "yes" })
   if resp = http.request("GET", "${base}/hdr", "".bytes, hs) {
     out.send("hdr=${body_text(resp)}")
   } else {
@@ -190,9 +194,9 @@ fn ws_round(port: Int, out: sync.Channel(String), script: String, stamp: Int): I
   0
 }
 
-fn route_items(req: http.Request): http.Response {
+fn route_items(req: Request): Response {
   who = req.header("authorization") ?? "nobody"
-  http.Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${String.from_utf8(req.body()) ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
+  Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${String.from_utf8(req.body()) ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
 }
 
 // A request built in memory, handed to a handler as a framework's
@@ -200,17 +204,17 @@ fn route_items(req: http.Request): http.Response {
 // built: neither had a form (Headers had one private field, and a built
 // response kept its header lines private).
 fn in_memory_cases(c: Checks) {
-  hs: Array(http.Header) = []
-  hs.push(http.Header { name: "Authorization", value: "Bearer t" })
-  hs.push(http.Header { name: "X-Dup", value: "a" })
-  hs.push(http.Header { name: "x-dup", value: "b" })
-  req = http.Request.build("POST", "/items?x=1&y", hs, "hi".bytes)
+  hs: Array(Header) = []
+  hs.push(Header { name: "Authorization", value: "Bearer t" })
+  hs.push(Header { name: "X-Dup", value: "a" })
+  hs.push(Header { name: "x-dup", value: "b" })
+  req = Request.build("POST", "/items?x=1&y", hs, "hi".bytes)
   c.eq_str("${req.method} ${req.path} ${req.query() ?? "-"}", "POST /items x=1&y", "a built request's method, path and query")
   c.eq_int(req.headers().count(), 3, "a built request's headers")
   c.eq_int(req.headers().get_all("X-DUP").size, 2, "a built request's repeated header")
   c.eq_str(req.header("x-dup") ?? "", "a", "a built request's first value")
   c.eq_str(req.peer(), "", "a built request has no peer")
-  plain = http.Request.build("GET", "/")
+  plain = Request.build("GET", "/")
   c.eq_str("${plain.query() ?? "none"} ${plain.headers().count()} ${plain.body().size}", "none 0 0", "a built request with defaults")
   resp = route_items(req)
   c.eq_str(String.from_utf8(resp.body) ?? "", "POST /items x=1&y Bearer t hi", "a handler called with a built request")
@@ -218,7 +222,7 @@ fn in_memory_cases(c: Checks) {
   c.eq_int(rh.count(), 2, "a built response's headers: its Content-Type and X-Seen")
   c.eq_str("${rh.name_at(0) ?? ""}: ${rh.value_at(0) ?? ""}", "Content-Type: application/json", "a built response's Content-Type comes first, as sent")
   c.eq_str(rh.get("x-seen") ?? "", "1", "a built response's header")
-  c.eq_int(http.Response.text("x").header("Content-Type", "").headers().count(), 0, "a response without a Content-Type")
+  c.eq_int(Response.text("x").header("Content-Type", "").headers().count(), 0, "a response without a Content-Type")
 }
 
 // The query string was raw: no parameters and no percent-decoding. A
@@ -226,7 +230,7 @@ fn in_memory_cases(c: Checks) {
 // (application/x-www-form-urlencoded); Params.parse reads a form body;
 // http.decode_component decodes a path segment.
 fn param_cases(c: Checks) {
-  req = http.Request.build("GET", "/s?q=caf%C3%A9&tag=a&tag=b&x+y=1+2&empty&&bad=%zz%4&bin=%FF%41&Q=upper&eq=a=b")
+  req = Request.build("GET", "/s?q=caf%C3%A9&tag=a&tag=b&x+y=1+2&empty&&bad=%zz%4&bin=%FF%41&Q=upper&eq=a=b")
   c.eq_str(req.param("q") ?? "-", "café", "a percent-encoded parameter")
   c.eq_int(req.params().get_all("tag").size, 2, "a repeated parameter")
   c.eq_str(req.param("tag") ?? "-", "a", "a repeated parameter's first value")
@@ -239,7 +243,7 @@ fn param_cases(c: Checks) {
   p = req.params()
   c.eq_int(p.count(), 9, "empty pieces are skipped")
   c.eq_str("${p.name_at(3) ?? "-"}=${p.value_at(3) ?? "-"}", "x y=1 2", "parameters keep their order")
-  c.eq_int(http.Request.build("GET", "/s").params().count(), 0, "no query, no parameters")
+  c.eq_int(Request.build("GET", "/s").params().count(), 0, "no query, no parameters")
   form = http.Params.parse("name=Ada+Lovelace&lang=%E2%9C%93")
   c.eq_str("${form.get("name") ?? "-"}|${form.get("lang") ?? "-"}", "Ada Lovelace|✓", "a form body")
   c.eq_str(http.decode_component("caf%C3%A9+x%2Fy%"), "café+x/y%", "a path segment: %XX decoded, + kept")
@@ -281,36 +285,36 @@ fn test_std_http(c: Checks) {
   if opened = http.listen(0) {
     server = opened
     server.get("/hello", (req) {
-      http.Response.text("hello http")
+      Response.text("hello http")
     })
     server.get("/q", (req) {
-      http.Response.text("${req.path}|${req.query() ?? ""}")
+      Response.text("${req.path}|${req.query() ?? ""}")
     })
     server.post("/echo", (req) {
-      http.Response.bytes(req.body())
+      Response.bytes(req.body())
     })
     server.get("/hdr", (req) {
       dups = req.headers().get_all("X-Dup")
       first = req.header("x-dup") ?? ""
-      http.Response.text("${first}/${dups.size}/${req.headers().has("X-One")}")
+      Response.text("${first}/${dups.size}/${req.headers().has("X-One")}")
     })
     server.get("/old", (req) {
-      http.Response.text("", 302).header("Location", "/new")
+      Response.text("", 302).header("Location", "/new")
     })
     server.get("/new", (req) {
-      http.Response.text("landed")
+      Response.text("landed")
     })
     server.get("/meta", (req) {
-      http.Response.text("created", 201).header("X-Made", "yes")
+      Response.text("created", 201).header("X-Made", "yes")
     })
     server.get("/peer", (req) {
-      http.Response.text(req.peer())
+      Response.text(req.peer())
     })
     server.get("/json", (req) {
-      http.Response.text("{}").header("X-A", "1").header("content-type", "text/html").header("Content-Type", "application/json")
+      Response.text("{}").header("X-A", "1").header("content-type", "text/html").header("Content-Type", "application/json")
     })
     server.get("/untyped", (req) {
-      http.Response.bytes("".bytes, 204).header("Content-Type", "")
+      Response.bytes("".bytes, 204).header("Content-Type", "")
     })
     port = server.port()
     c.expect(port > 0, "ephemeral port bound")
@@ -324,7 +328,7 @@ fn test_std_http(c: Checks) {
 
     server.get("/__stop", (req) {
       server.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     out = sync.Channel(String).new(32)
     handle = spawn {
@@ -365,7 +369,7 @@ fn test_std_http(c: Checks) {
     server6 = opened6
     server6.get("/peer", (req) {
       server6.close()
-      http.Response.text(req.peer())
+      Response.text(req.peer())
     })
     port6 = server6.port()
     asked = spawn {
@@ -389,14 +393,14 @@ fn test_std_http(c: Checks) {
   if opened_fb = http.listen(0, "127.0.0.1", 1048576, 1) {
     fb = opened_fb
     fb.get("/a", (req) {
-      http.Response.text("route a")
+      Response.text("route a")
     })
     fb.fallback((req) {
-      http.Response.text("fallback ${req.method} ${req.path} ${req.query() ?? "-"}", 404)
+      Response.text("fallback ${req.method} ${req.path} ${req.query() ?? "-"}", 404)
     })
     fb.get("/__stop", (req) {
       fb.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     fb_port = fb.port()
     fb_task = spawn {
@@ -431,14 +435,14 @@ fn test_std_http(c: Checks) {
   if opened = http.listen(0, "127.0.0.1", 8) {
     server = opened
     server.post("/echo", (req) {
-      http.Response.bytes(req.body())
+      Response.bytes(req.body())
     })
     server.get("/ping", (req) {
-      http.Response.text("pong")
+      Response.text("pong")
     })
     server.get("/__stop", (req) {
       server.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     out = sync.Channel(String).new(8)
     port = server.port()
@@ -509,7 +513,7 @@ fn test_std_http(c: Checks) {
     })
     server.get("/__stop", (req) {
       server.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     out = sync.Channel(String).new(4)
     cout = sync.Channel(String).new(2)
@@ -633,11 +637,11 @@ fn test_std_http(c: Checks) {
   if opened = http.listen(0, "127.0.0.1", 1048576, 4) {
     server = opened
     server.get("/ping", (req) {
-      http.Response.text("pong")
+      Response.text("pong")
     })
     server.get("/__stop", (req) {
       server.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     port = server.port()
     out = sync.Channel(String).new(8)

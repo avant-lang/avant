@@ -3,6 +3,10 @@ import std.regex
 import std.fs
 import std.process
 
+type Match = regex.Match
+type Regex = regex.Regex
+type RegexError = regex.RegexError
+
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
 }
@@ -115,29 +119,29 @@ fn one_arg(a: String): Array(String) {
   xs
 }
 
-fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): regex.Regex {
-  if re = regex.Regex.compile(pat, caseless) {
+fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
+  if re = Regex.compile(pat, caseless) {
     return re
   }
   c.expect(false, "compile ${label}")
   must_compile(c, "a+", false, "fallback")
 }
 
-fn count_of(r: Int | regex.RegexError): String {
+fn count_of(r: Int | RegexError): String {
   switch r {
     case n: Int { "count ${n}" }
-    case e: regex.RegexError { "error ${e.kind}: ${e.message}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
   }
 }
 
-fn text_of(r: String | regex.RegexError): String {
+fn text_of(r: String | RegexError): String {
   switch r {
     case t: String { "text ${t}" }
-    case e: regex.RegexError { "error ${e.kind}: ${e.message}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
   }
 }
 
-fn parts_of(r: Array(String) | regex.RegexError): String {
+fn parts_of(r: Array(String) | RegexError): String {
   switch r {
     case ps: Array(String) {
       out = "parts"
@@ -150,7 +154,7 @@ fn parts_of(r: Array(String) | regex.RegexError): String {
       }
       out
     }
-    case e: regex.RegexError { "error ${e.kind}: ${e.message}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
   }
 }
 
@@ -177,7 +181,7 @@ fn walk_of(it: regex.TryMatchIter): String {
 fn regex_try_forms(c: Checks) {
   pat = "(a+)+"
   pat = pat + "b"
-  re = regex.Regex.compile(pat, match_limit: 1000) ?? return c.expect(false, "compile the try_ pattern")
+  re = Regex.compile(pat, match_limit: 1000) ?? return c.expect(false, "compile the try_ pattern")
   ok = "ab-ab-x"
   bad = "ab-ab-" + repeated("a", 20, "c b")
   limit = "error match_limit: regex.Regex.try_"
@@ -216,9 +220,9 @@ fn regex_try_forms(c: Checks) {
 // least recently used held one, which lives on outside the table. It used
 // to be compiled uncached, and so compiled again at every compile.
 fn regex_cache_held(c: Checks) {
-  held: Array(regex.Regex) = []
+  held: Array(Regex) = []
   for i in 0..128 {
-    if r = regex.Regex.compile("held${i}y+") {
+    if r = Regex.compile("held${i}y+") {
       held.push(r)
     }
   }
@@ -239,12 +243,12 @@ fn regex_cache_held(c: Checks) {
   }
 }
 
-fn kind_of(r: regex.Match? | regex.RegexError): String {
+fn kind_of(r: Match? | RegexError): String {
   switch r {
-    case m: regex.Match {
+    case m: Match {
       return "match ${m.start}..${m.end}"
     }
-    case e: regex.RegexError {
+    case e: RegexError {
       return "error ${e.kind.to_i()}"
     }
     else {
@@ -253,9 +257,9 @@ fn kind_of(r: regex.Match? | regex.RegexError): String {
   }
 }
 
-fn message_of(r: regex.Match? | regex.RegexError): String {
+fn message_of(r: Match? | RegexError): String {
   switch r {
-    case e: regex.RegexError {
+    case e: RegexError {
       return e.message
     }
     else {
@@ -284,7 +288,7 @@ fn regex_limits(c: Checks) {
   // limit, past a limit of 1000 set on another compile of the pattern.
   short = repeated("a", 12, "b")
   c.eq_str(kind_of(bt.try_find(short)), "nil", "within the default match limit: no match")
-  if tight = regex.Regex.compile(bt_pat, match_limit: 1000) {
+  if tight = Regex.compile(bt_pat, match_limit: 1000) {
     c.eq_str(kind_of(tight.try_find(short)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "a match_limit of the Regex's own is reached")
     c.eq_str(kind_of(tight.try_find("baa")), "match 1..3", "and a short match is still found under it")
     tight.close()
@@ -297,14 +301,14 @@ fn regex_limits(c: Checks) {
   deep_pat = "((a)|(b))*"
   deep_pat = deep_pat + "c"
   deep_text = repeated("ab", 20000, "c")
-  if small = regex.Regex.compile(deep_pat, heap_limit: 262144) {
+  if small = Regex.compile(deep_pat, heap_limit: 262144) {
     c.eq_str(kind_of(small.try_find(deep_text)), "error ${regex.RegexErrorKind.heap_limit.to_i()}", "a deep match past heap_limit (256 KiB) is a RegexError of kind heap_limit")
     c.eq_str(kind_of(small.try_find(repeated("ab", 200, "c"))), "match 0..401", "a shallow one is found under it")
     small.close()
   } else {
     c.expect(false, "compile with heap_limit")
   }
-  if shallow = regex.Regex.compile(deep_pat, depth_limit: 1000) {
+  if shallow = Regex.compile(deep_pat, depth_limit: 1000) {
     // The depth limit binds the interpreter: the JIT's stack is made
     // small here (the suite's internal variable) so the match reaches it.
     set_env("AVANT_RE_JIT_STACK_KB", "32")
@@ -320,18 +324,18 @@ fn regex_limits(c: Checks) {
   dflt.close()
 
   // Limits past PCRE2's 32-bit fields are its largest.
-  if huge = regex.Regex.compile("x+", match_limit: 1 << 40, depth_limit: 1 << 40, heap_limit: 1 << 60) {
+  if huge = Regex.compile("x+", match_limit: 1 << 40, depth_limit: 1 << 40, heap_limit: 1 << 60) {
     c.eq_str(kind_of(huge.try_find("axx")), "match 1..3", "limits past 32 bits are the largest")
     huge.close()
   } else {
     c.expect(false, "compile with huge limits")
   }
 
-  switch regex.Regex.compile("(open") {
-    case e: regex.RegexError {
+  switch Regex.compile("(open") {
+    case e: RegexError {
       c.expect(e.kind == regex.RegexErrorKind.pattern, "a pattern that does not compile is of kind pattern")
     }
-    case regex.Regex {
+    case Regex {
       c.expect(false, "a pattern that does not compile is of kind pattern")
     }
   }
@@ -424,7 +428,7 @@ fn test_std_regex(c: Checks) {
   }
   bref.close()
 
-  if bad = regex.Regex.compile("(unclosed") {
+  if bad = Regex.compile("(unclosed") {
     c.expect(false, "bad pattern is RegexError")
     bad.close()
   } else {
@@ -571,7 +575,7 @@ fn test_std_regex(c: Checks) {
   many.close()
 
   scoped_len = 0
-  if re = regex.Regex.compile("q+") {
+  if re = Regex.compile("q+") {
     re.scoped (r) {
       if m = r.find("aqq") {
         scoped_len = m.end

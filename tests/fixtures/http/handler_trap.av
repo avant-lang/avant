@@ -73,49 +73,49 @@ fn main: Int {
       _ = server.memory_ceiling(1)
     }
     server.get("/ok", (req) {
-      http.Response.text("ok")
+      Response.text("ok")
     })
     server.get("/bounds", (req) {
-      http.Response.text("${at(xs, 7)}")
+      Response.text("${at(xs, 7)}")
     })
     server.get("/divide", (req) {
-      http.Response.text("${divide(7, xs.size - 3)}")
+      Response.text("${divide(7, xs.size - 3)}")
     })
     server.get("/status", (req) {
-      http.Response.text("x", 99)
+      Response.text("x", 99)
     })
     server.get("/header", (req) {
-      http.Response.text("x").header("X-A", "1\r\nX-B: 2")
+      Response.text("x").header("X-A", "1\r\nX-B: 2")
     })
     server.get("/grow", (req) {
       grow(xs)
-      http.Response.text("unreached")
+      Response.text("unreached")
     })
     server.get("/grow-hash", (req) {
       note(seen)
-      http.Response.text("unreached ${seen.size}")
+      Response.text("unreached ${seen.size}")
     })
     server.get("/route", (req) {
-      server.get("/late", (r) { http.Response.text("late") })
-      http.Response.text("added")
+      server.get("/late", (r) { Response.text("late") })
+      Response.text("added")
     })
     server.get("/mutex", (req) {
       m.with (acc) {
         acc.n = 5
         acc.n = at(xs, 9)
       }
-      http.Response.text("unreached")
+      Response.text("unreached")
     })
     server.get("/mutex-again", (req) {
       m.with (acc) { acc.n += 1 }
-      http.Response.text("unreached")
+      Response.text("unreached")
     })
     server.get("/mutex-state", (req) {
       res = m.try_with (acc) { acc.n }
       if v = res {
-        return http.Response.text("value ${v}")
+        return Response.text("value ${v}")
       } else e {
-        return http.Response.text("poisoned ${m.poisoned()}: ${e.message()}")
+        return Response.text("poisoned ${m.poisoned()}: ${e.message()}")
       }
     })
     server.get("/pin", (req) {
@@ -128,7 +128,7 @@ fn main: Int {
           n = at(xs, 8)
         }
       }
-      http.Response.text("${n}")
+      Response.text("${n}")
     })
     server.get("/pins", (req) {
       // The pins the trap above left (none), after the loop thread
@@ -138,13 +138,13 @@ fn main: Int {
         t += "${j}${req.path}".size
       }
       before = mark.with (acc) { acc.n }
-      http.Response.text("pins left ${gc_rt.avant_pin_count() - before}, ${t}")
+      Response.text("pins left ${gc_rt.avant_pin_count() - before}, ${t}")
     })
     server.get("/callback", (req) {
       buf = libc.calloc(4, 4)
       buf.v = 3
       libc.qsort(buf, 2, 4, cmp_trap)
-      http.Response.text("unreached")
+      Response.text("unreached")
     })
     server.websocket("/ws", (conn, msg) {
       if (msg.text() ?? "") == "trap" {
@@ -154,7 +154,7 @@ fn main: Int {
     })
     server.get("/__stop", (req) {
       server.close()
-      http.Response.text("bye")
+      Response.text("bye")
     })
     if a.size > 1 {
       if wrote = fs.write(a[1], "${server.port()}\n") {
@@ -174,3 +174,5 @@ fn main: Int {
 // Imported last, so no line the goldens name moves.
 import std.fs
 import std.process
+
+type Response = http.Response

@@ -1,6 +1,10 @@
 import harness
 import std.json
 
+type Json = json.Json
+type JsonBuilder = json.JsonBuilder
+type JsonValue = json.JsonValue
+
 fn churn(rounds: Int) {
   keep: Array(String) = []
   for r in 0..rounds {
@@ -21,7 +25,7 @@ fn churn(rounds: Int) {
 // walk (iter) used to give an iterator that ended at once on a string,
 // a number, an object or null: a sum of 0, as for an empty list.
 fn sum_numbers(body: String): String {
-  doc = json.Json.parse(body) ?? return "not JSON"
+  doc = Json.parse(body) ?? return "not JSON"
   it = doc.arr("numbers") ?? return "not a list"
   sum = 0
   n = 0
@@ -44,7 +48,7 @@ fn json_walks(c: Checks) {
   c.eq_str(sum_numbers("{\"count\": [1]}"), "not a list", "arr(key) of a missing member is nil")
   c.eq_str(sum_numbers("[1, 2]"), "not a list", "arr(key) on an array (no members) is nil")
   for text in ["\"many\"", "7", "2.5", "{\"a\": [1]}", "null", "false"] {
-    if v = json.Json.parse(text) {
+    if v = Json.parse(text) {
       if it = v.arr() {
         c.expect(false, "arr of ${text} is nil")
       } else {
@@ -54,7 +58,7 @@ fn json_walks(c: Checks) {
       c.expect(false, "parse ${text}")
     }
   }
-  if v = json.Json.parse("[[1, 2], \"x\", [3]]") {
+  if v = Json.parse("[[1, 2], \"x\", [3]]") {
     it = v.arr() ?? return c.expect(false, "arr of an array")
     inner = 0
     lists = 0
@@ -81,7 +85,7 @@ fn json_walks(c: Checks) {
 // reads their names: a decoder of an object walks its members by index.
 // They used to be nil on an object, as if it had no members.
 fn json_positions(c: Checks) {
-  doc = json.Json.parse("{\"a\": 1, \"b\": \"x\", \"c\": [true], \"a\": 2}") ?? return c.expect(false, "positions: parse")
+  doc = Json.parse("{\"a\": 1, \"b\": \"x\", \"c\": [true], \"a\": 2}") ?? return c.expect(false, "positions: parse")
   got = ""
   i = 0
   while i < doc.len() {
@@ -110,7 +114,7 @@ fn json_positions(c: Checks) {
     c.expect(false, "first on an object is its first member's value")
   }
   for text in ["{}", "[]", "7", "\"s\"", "null"] {
-    if v = json.Json.parse(text) {
+    if v = Json.parse(text) {
       if e = v.at(0) {
         c.expect(false, "at(0) of ${text} is nil")
       } else {
@@ -131,7 +135,7 @@ fn json_positions(c: Checks) {
 // byte is not cut at it (by strlen the lookup found "a"). f64 is nil for
 // anything but a number, a missing member included.
 fn json_lookups(c: Checks) {
-  doc = json.Json.parse("{\"a\\u0000b\": 1, \"a\": 2, \"s\": \"7\", \"i\": 3, \"n\": null}") ?? return c.expect(false, "lookups: parse")
+  doc = Json.parse("{\"a\\u0000b\": 1, \"a\": 2, \"s\": \"7\", \"i\": 3, \"n\": null}") ?? return c.expect(false, "lookups: parse")
   c.eq_int(doc.int("a\0b") ?? -1, 1, "a name with a zero byte is found whole")
   c.eq_int(doc.int("a") ?? -1, 2, "and the shorter name is another member")
   c.expect((doc.f64("i") ?? -1.0) == 3.0, "f64 of an integer member")
@@ -146,7 +150,7 @@ fn test_std_json(c: Checks) {
   json_lookups(c)
   json_walks(c)
   json_positions(c)
-  if doc = json.Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
+  if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
     if n = doc.int("n") {
       c.eq_int(n, 7, "int by key")
     } else {
@@ -232,17 +236,17 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(false, "parse object")
   }
-  if bad = json.Json.parse("{not json") {
+  if bad = Json.parse("{not json") {
     c.expect(false, "invalid JSON is an error")
   } else {
     c.expect(true, "invalid JSON is an error")
   }
-  if empty = json.Json.parse("") {
+  if empty = Json.parse("") {
     c.expect(false, "empty input is an error")
   } else {
     c.expect(true, "empty input is an error")
   }
-  built = json.Json.object()
+  built = Json.object()
   built.set("n", 7)
   built.set("name", "a\"b\\c\nd")
   built.key("tags").arr().add("x").add("y").end()
@@ -251,7 +255,7 @@ fn test_std_json(c: Checks) {
   built.set("pi", 3.5)
   built.set_null("nothing")
   built.end()
-  if doc2 = json.Json.parse(built.to_s()) {
+  if doc2 = Json.parse(built.to_s()) {
     if name2 = doc2.str("name") {
       c.eq_str(name2, "a\"b\\c\nd", "builder escapes strings")
     } else {
@@ -270,7 +274,7 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(false, "parse built")
   }
-  if arr = json.Json.parse("[10, 20, 30]") {
+  if arr = Json.parse("[10, 20, 30]") {
     if head = arr.first() {
       if hv = head.int() {
         c.eq_int(hv, 10, "first element")
@@ -302,7 +306,7 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(false, "parse array")
   }
-  if objs = json.Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
+  if objs = Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
     // A numeric member of every element, by the walk: the general form.
     it = objs.arr() ?? return c.expect(false, "objects: arr")
     xs: Array(Float64) = []
@@ -324,7 +328,7 @@ fn test_std_json(c: Checks) {
   }
   dst = Buf.new()
   dst.push_str("prefix:")
-  into = json.JsonBuilder.into(dst)
+  into = JsonBuilder.into(dst)
   into.obj().set("a", 1).end()
   c.eq_str(dst.to_s(), "prefix:{\"a\":1}", "builder writes into caller Buf")
 }
@@ -341,7 +345,7 @@ fn kind_word(k: json.JsonKind): String {
 }
 
 fn test_json_kinds(c: Checks) {
-  if doc = json.Json.parse("{\"a\": null, \"b\": true, \"c\": 1, \"d\": 1.5, \"e\": \"s\", \"f\": [1], \"g\": {}, \"h\": 18446744073709551615}") {
+  if doc = Json.parse("{\"a\": null, \"b\": true, \"c\": 1, \"d\": 1.5, \"e\": \"s\", \"f\": [1], \"g\": {}, \"h\": 18446744073709551615}") {
     names = ""
     words = ""
     values = ""
@@ -358,7 +362,7 @@ fn test_json_kinds(c: Checks) {
     c.expect(doc.kind() == json.JsonKind.obj, "the document is an obj")
     c.eq_int(json.JsonKind.obj.to_i(), 7, "the runtime's codes")
     c.eq_int(json.JsonKind.members().size, 7, "seven kinds")
-    c.expect(json.JsonValue.new().kind == json.JsonKind.null, "a new JsonValue is null")
+    c.expect(JsonValue.new().kind == json.JsonKind.null, "a new JsonValue is null")
   } else {
     c.expect(false, "parse kinds")
   }
@@ -369,28 +373,28 @@ fn test_json_kinds(c: Checks) {
 // again, an object's members in their order, a repeated name once.
 fn test_json_value_written(c: Checks) {
   text = "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709551615}"
-  doc = json.Json.parse(text) ?? return c.expect(false, "value written: parse")
+  doc = Json.parse(text) ?? return c.expect(false, "value written: parse")
   v = doc.to_value()
-  b = json.JsonBuilder.new()
+  b = JsonBuilder.new()
   b.value(v)
   c.eq_str(b.to_s(), "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709552000.0}", "to_value written back (an integer beyond Int as its float)")
-  dup = json.Json.parse("{\"a\":1,\"a\":2}") ?? return c.expect(false, "value written: parse dup")
-  d = json.JsonBuilder.new()
+  dup = Json.parse("{\"a\":1,\"a\":2}") ?? return c.expect(false, "value written: parse dup")
+  d = JsonBuilder.new()
   d.value(dup.to_value())
   c.eq_str(d.to_s(), "{\"a\":1}", "a repeated name written once, with its first value")
-  out = json.Json.object()
-  item = json.JsonValue.new()
+  out = Json.object()
+  item = JsonValue.new()
   item.kind = json.JsonKind.str
   item.str_val = "x"
   out.set("one", item)
   out.key("list").arr().add(item).add(v.get("o") ?? item).end()
   out.end()
   c.eq_str(out.to_s(), "{\"one\":\"x\",\"list\":[\"x\",{\"k\":\"v\"}]}", "set and add take a JsonValue")
-  hand = json.JsonValue.new()
+  hand = JsonValue.new()
   hand.kind = json.JsonKind.obj
   hand.members["z"] = item
-  hand.members["a"] = json.JsonValue.new()
-  h = json.JsonBuilder.new()
+  hand.members["a"] = JsonValue.new()
+  h = JsonBuilder.new()
   h.value(hand)
   c.eq_str(h.to_s(), "{\"z\":\"x\",\"a\":null}", "a hand-built object written in the order of its members")
 }
@@ -398,7 +402,7 @@ fn test_json_value_written(c: Checks) {
 // JsonValue's object members: a Hash by name, in the document's order;
 // a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
-  if doc = json.Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2]}, \"b\": 2, \"z\": \"s\"}") {
+  if doc = Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2]}, \"b\": 2, \"z\": \"s\"}") {
     v = doc.to_value()
     names = v.members.keys()
     c.eq_int(names.size, 3, "members: one name each")
@@ -431,7 +435,7 @@ fn test_json_members(c: Checks) {
     i += 1
   }
   text.push_str("}")
-  if big = json.Json.parse(text.to_s()) {
+  if big = Json.parse(text.to_s()) {
     v = big.to_value()
     sum = 0
     i = 0
