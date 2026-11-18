@@ -316,11 +316,7 @@ pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
 
 pub fn (lw: MirLower) clone_place(p: MPlace): MPlace {
   q = MPlace.new(p.local)
-  i = 0
-  while i < p.proj.size {
-    q.proj.push(p.proj[i])
-    i += 1
-  }
+  q.proj.concat(p.proj)
   q
 }
 
@@ -789,11 +785,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   }
   all: Array(MOperand) = []
   all.push(r)
-  i = 0
-  while i < ops.size {
-    all.push(ops[i])
-    i += 1
-  }
+  all.concat(ops)
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
 }
@@ -826,11 +818,7 @@ pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: Strin
   b.call(-1, "avant_array_hold", hargs)
   all: Array(MOperand) = []
   all.push(r)
-  i = 0
-  while i < ops.size {
-    all.push(ops[i])
-    i += 1
-  }
+  all.concat(ops)
   lw.at(e.loc)
   v = lw.call_to(ret, sym, all)
   k = -1
@@ -1060,9 +1048,7 @@ pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
     b.barrier(o)
     iargs: Array(MOperand) = []
     iargs.push(b.copy_local(o))
-    for a in args {
-      iargs.push(a)
-    }
+    iargs.concat(args)
     dummy = b.call(-1, init_sym, iargs)
     return b.copy_local(o)
   }

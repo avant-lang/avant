@@ -657,12 +657,8 @@ pub fn fill_std_link(program: Program, box: IrBox) {
 // the cache). False, with the reason said, when a package's C does not
 // compile.
 pub fn attach_std_link(box: IrBox, job: LinkJob): Bool {
-  for std_object in box.std_objects {
-    job.objects.push(std_object)
-  }
-  for std_flag in box.std_flags {
-    job.flags.push(std_flag)
-  }
+  job.objects.concat(box.std_objects)
+  job.flags.concat(box.std_flags)
   for unit in box.pkg_c {
     if !build_pkg_c(unit, job) {
       return false
@@ -746,18 +742,10 @@ pub fn plan_pkg_c(loader: Loader, box: IrBox): Bool {
     }
     if root.has_c() {
       unit = PkgCUnit.new(root.name, loader.manifest_dir)
-      for x in root.c_sources {
-        unit.sources.push(x)
-      }
-      for x in root.c_include {
-        unit.include.push(x)
-      }
-      for x in root.c_flags {
-        unit.flags.push(x)
-      }
-      for x in root.c_libs {
-        unit.libs.push(x)
-      }
+      unit.sources.concat(root.c_sources)
+      unit.include.concat(root.c_include)
+      unit.flags.concat(root.c_flags)
+      unit.libs.concat(root.c_libs)
       box.pkg_c.push(unit)
     }
     for p in ds.pkgs {
@@ -780,23 +768,13 @@ pub fn plan_pkg_c(loader: Loader, box: IrBox): Bool {
       }
       unit = PkgCUnit.new(p.name, p.dir)
       if mode == "source" {
-        for x in man.c_sources {
-          unit.sources.push(x)
-        }
-        for x in man.c_include {
-          unit.include.push(x)
-        }
-        for x in man.c_flags {
-          unit.flags.push(x)
-        }
+        unit.sources.concat(man.c_sources)
+        unit.include.concat(man.c_include)
+        unit.flags.concat(man.c_flags)
       } else {
-        for x in man.c_system {
-          unit.libs.push(x)
-        }
+        unit.libs.concat(man.c_system)
       }
-      for x in man.c_libs {
-        unit.libs.push(x)
-      }
+      unit.libs.concat(man.c_libs)
       box.pkg_c.push(unit)
     }
   }
@@ -850,9 +828,7 @@ pub fn cc_identity: String {
 pub fn pkg_c_headers(unit: PkgCUnit): String {
   b = buf_new()
   dirs: Array(String) = []
-  for inc in unit.include {
-    dirs.push(inc)
-  }
+  dirs.concat(unit.include)
   for src in unit.sources {
     d = path_dirname(src)
     seen = false
@@ -945,9 +921,7 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
         args.push("-I")
         args.push(join_dir(unit.dir, inc))
       }
-      for f in unit.flags {
-        args.push(f)
-      }
+      args.concat(unit.flags)
       args.push("-o")
       args.push(obj)
       args.push(join_dir(unit.dir, src))
@@ -1048,11 +1022,7 @@ pub fn run_cc(args: Array(String)): Int {
   }
   wrapped: Array(String) = []
   wrapped.push("cc")
-  i = 0
-  while i < args.size {
-    wrapped.push(args[i])
-    i += 1
-  }
+  wrapped.concat(args)
   tool_run("/usr/bin/env", wrapped)
 }
 
@@ -1334,37 +1304,21 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
   first = args[0]
   if str_starts(first, "-") {
     split.paths.push(drop_av_suffix(source))
-    i = 0
-    while i < args.size {
-      split.rest.push(args[i])
-      i += 1
-    }
+    split.rest.concat(args)
     return split
   }
   if str_ends(first, ".c") {
     split.paths.push(drop_av_suffix(source))
-    i = 0
-    while i < args.size {
-      split.rest.push(args[i])
-      i += 1
-    }
+    split.rest.concat(args)
     return split
   }
   if str_ends(first, ".o") {
     split.paths.push(drop_av_suffix(source))
-    i = 0
-    while i < args.size {
-      split.rest.push(args[i])
-      i += 1
-    }
+    split.rest.concat(args)
     return split
   }
   split.paths.push(first)
-  i = 1
-  while i < args.size {
-    split.rest.push(args[i])
-    i += 1
-  }
+  split.rest.concat(args[1..])
   split
 }
 

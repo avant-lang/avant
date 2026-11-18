@@ -362,11 +362,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     list = pkg_string_list(val)
     if list.ok {
-      i = 0
-      while i < list.items.size {
-        m.test_exclusive.push(list.items[i])
-        i += 1
-      }
+      m.test_exclusive.concat(list.items)
     } else {
       pkg_note_test(m, "${path}:${line_no}: exclusive needs a string or a list of strings")
     }
@@ -379,11 +375,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     list = pkg_string_list(val)
     if list.ok {
-      i = 0
-      while i < list.items.size {
-        m.test_first.push(list.items[i])
-        i += 1
-      }
+      m.test_first.concat(list.items)
     } else {
       pkg_note_test(m, "${path}:${line_no}: first needs a string or a list of strings")
     }
@@ -1113,9 +1105,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
   needed: Array(String) = []
   mans: Array(PkgManifest) = []
   queue: Array(PkgDep) = []
-  for d in root.deps {
-    queue.push(d)
-  }
+  queue.concat(root.deps)
   qi = 0
   while qi < queue.size {
     d = queue[qi]
@@ -1133,9 +1123,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
         set.fail(sub_path, sub.err)
         return set
       }
-      for sd in sub.deps {
-        queue.push(sd)
-      }
+      queue.concat(sub.deps)
     }
     mans.push(sub)
   }

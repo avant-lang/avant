@@ -311,11 +311,7 @@ pub class Lexer {
   // order (an inner interpolated string's, read inside an outer
   // interpolation, belong there and not after the outer string).
   pub fn take_queued(tokens: Array(Token), from: Int) {
-    i = from
-    while i < self.queue.size {
-      tokens.push(self.queue[i])
-      i += 1
-    }
+    tokens.concat(self.queue[from..])
     while self.queue.size > from {
       _ = self.queue.pop()
     }
@@ -862,20 +858,12 @@ pub class Lexer {
         return tokens
       }
       if self.str_kind == 0 {
-        i = 0
-        while i < expr.size {
-          tokens.push(expr[i])
-          i += 1
-        }
+        tokens.concat(expr)
         tokens.push(Token.new(tk_interp_close(), self.here(), self.str_frag))
         return tokens
       }
       if self.str_kind == 1 {
-        i = 0
-        while i < expr.size {
-          tokens.push(expr[i])
-          i += 1
-        }
+        tokens.concat(expr)
         tokens.push(Token.new(tk_interp_mid(), self.here(), self.str_frag))
       }
     }
@@ -1407,11 +1395,7 @@ pub class Lexer {
         return tokens
       }
       raw = str_slice(self.source.text, body_start, self.pos)
-      i = 0
-      while i < expr.size {
-        tokens.push(expr[i])
-        i += 1
-      }
+      tokens.concat(expr)
       if self.str_kind == 0 {
         tokens.push(Token.new(tk_interp_close(), self.here(), raw))
         return tokens

@@ -292,11 +292,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
       st.callee = "avant_gc_poll"
       st.collects = true
       xs: Array(MStmt) = [st]
-      i = 0
-      while i < blk.stmts.size {
-        xs.push(blk.stmts[i])
-        i += 1
-      }
+      xs.concat(blk.stmts)
       blk.stmts = xs
     }
   }
@@ -347,11 +343,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   roots.locals = slots
   pro.push(roots)
   entry = f.blocks[0]
-  i = 0
-  while i < entry.stmts.size {
-    pro.push(entry.stmts[i])
-    i += 1
-  }
+  pro.concat(entry.stmts)
   entry.stmts = pro
   for blk in f.blocks {
     if t = blk.term, t.kind == mtk_return() {

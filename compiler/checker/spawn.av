@@ -120,9 +120,7 @@ pub fn (checker_self: Checker) check_handle_classes(fns: Array(Function)) {
       all.push(f)
     }
   }
-  for f2 in checker_self.pending {
-    all.push(f2)
-  }
+  all.concat(checker_self.pending)
   for fnn in all {
     // An initialize sets its own object's fields: "MODULE.Class".
     in_init = ""
@@ -664,9 +662,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
   if k == ex_lambda() {
     if b = expr.block {
       mark = checker_self.spawn_skip.size
-      for param in b.params {
-        checker_self.spawn_skip.push(param)
-      }
+      checker_self.spawn_skip.concat(b.params)
       checker_self.walk_spawn_stmts(b.body, node, seen)
       while checker_self.spawn_skip.size > mark {
         dropped = checker_self.spawn_skip.pop()
@@ -1081,11 +1077,7 @@ pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: 
     checker_self.register_spawn_pending(stmt)
     checker_self.shrinks_after_stmt(stmt, mark)
     if checker_self.facts.lam_written.size > lw_mark {
-      fresh: Array(String) = []
-      for i in lw_mark..checker_self.facts.lam_written.size {
-        fresh.push(checker_self.facts.lam_written[i])
-      }
-      checker_self.sweep_proofs(stmt, fresh)
+      checker_self.sweep_proofs(stmt, checker_self.facts.lam_written[lw_mark..])
     }
     if !follows {
       // A switch arm's, a value block's or a value branch's statement:
@@ -1319,9 +1311,7 @@ pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
   seen = Hash(String, Int).new()
   if b = lam.block {
     mark = checker_self.spawn_skip.size
-    for param in b.params {
-      checker_self.spawn_skip.push(param)
-    }
+    checker_self.spawn_skip.concat(b.params)
     checker_self.walk_spawn_stmts(b.body, node, seen)
     while checker_self.spawn_skip.size > mark {
       dropped = checker_self.spawn_skip.pop()

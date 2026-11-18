@@ -735,18 +735,12 @@ pub fn stmt_quote(loc: Location, body: Array(Stmt)): Stmt {
 
 pub fn program_all_functions(program: Program): Array(Function) {
   out: Array(Function) = []
-  for function in program.functions {
-    out.push(function)
-  }
+  out.concat(program.functions)
   for sdef in program.structs {
-    for method in sdef.methods {
-      out.push(method)
-    }
+    out.concat(sdef.methods)
   }
   for cdef in program.classes {
-    for method in cdef.methods {
-      out.push(method)
-    }
+    out.concat(cdef.methods)
   }
   out
 }
@@ -996,11 +990,7 @@ pub fn clone_switch_case(c: SwitchCase): SwitchCase {
 
 pub fn clone_block(b: Block): Block {
   out = Block.new(b.loc)
-  i = 0
-  while i < b.params.size {
-    out.params.push(b.params[i])
-    i += 1
-  }
+  out.params.concat(b.params)
   i = 0
   while i < b.param_types.size {
     out.param_types.push(clone_type_name(b.param_types[i]))
@@ -1082,9 +1072,7 @@ pub fn clone_expr(e: Expr): Expr {
   out.spawn_thunk = e.spawn_thunk
   if order = e.arg_order {
     kept: Array(Int) = []
-    for x in order {
-      kept.push(x)
-    }
+    kept.concat(order)
     out.arg_order = kept
   }
   if sp = e.splice {
@@ -1121,11 +1109,7 @@ pub fn clone_expr(e: Expr): Expr {
     out.elems.push(clone_expr(e.elems[i]))
     i += 1
   }
-  i = 0
-  while i < e.field_names.size {
-    out.field_names.push(e.field_names[i])
-    i += 1
-  }
+  out.field_names.concat(e.field_names)
   i = 0
   while i < e.field_exprs.size {
     out.field_exprs.push(clone_expr(e.field_exprs[i]))
@@ -1149,21 +1133,9 @@ pub fn clone_expr(e: Expr): Expr {
   if b = e.block {
     out.block = clone_block(b)
   }
-  i = 0
-  while i < e.cap_names.size {
-    out.cap_names.push(e.cap_names[i])
-    i += 1
-  }
-  i = 0
-  while i < e.cap_tys.size {
-    out.cap_tys.push(e.cap_tys[i])
-    i += 1
-  }
-  i = 0
-  while i < e.box_names.size {
-    out.box_names.push(e.box_names[i])
-    i += 1
-  }
+  out.cap_names.concat(e.cap_names)
+  out.cap_tys.concat(e.cap_tys)
+  out.box_names.concat(e.box_names)
   if t = e.elem_type {
     out.elem_type = clone_type_name(t)
   }
@@ -1251,19 +1223,11 @@ pub fn clone_function(fnn: Function): Function {
     out.body.push(clone_stmt(fnn.body[i]))
     i += 1
   }
-  i = 0
-  while i < fnn.type_params.size {
-    out.type_params.push(fnn.type_params[i])
-    i += 1
-  }
+  out.type_params.concat(fnn.type_params)
   for b in fnn.bounds {
     out.bounds.push(TypeBound.new(b.param, clone_type_name(b.iface)))
   }
-  i = 0
-  while i < fnn.inst_args.size {
-    out.inst_args.push(fnn.inst_args[i])
-    i += 1
-  }
+  out.inst_args.concat(fnn.inst_args)
   out.generic = fnn.generic
   out.ol_index = fnn.ol_index
   out.vis = fnn.vis
@@ -1273,11 +1237,7 @@ pub fn clone_function(fnn: Function): Function {
   out.as_value = fnn.as_value
   out.lazy = fnn.lazy
   out.shown_name = fnn.shown_name
-  i = 0
-  while i < fnn.box_names.size {
-    out.box_names.push(fnn.box_names[i])
-    i += 1
-  }
+  out.box_names.concat(fnn.box_names)
   if sp = fnn.name_splice {
     out.name_splice = clone_expr(sp)
   }

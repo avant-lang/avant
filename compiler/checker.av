@@ -563,9 +563,7 @@ pub class Checker {
     }
     if self.ready_adopt && !self.in_adopt {
       saved: Array(String) = []
-      for tparam_name in self.resolver.tparam_names {
-        saved.push(tparam_name)
-      }
+      saved.concat(self.resolver.tparam_names)
       self.resolver.clear_tparams()
       self.adopt_new_types()
       self.resolver.set_tparams(saved)
@@ -3404,9 +3402,7 @@ pub class Checker {
     if e.kind == ex_name() && e.type_args.size > 0 {
       tn2 = TypeName.new(e.loc, e.ident)
       tn2.mod_name = e.mod_name
-      for ta in e.type_args {
-        tn2.args.push(ta)
-      }
+      tn2.args.concat(e.type_args)
       return tn2
     }
     if e.kind == ex_call() && e.args.size == 1 {
@@ -3897,9 +3893,7 @@ pub class Checker {
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
-      for type_arg in expr.type_args {
-        tn.args.push(type_arg)
-      }
+      tn.args.concat(expr.type_args)
       ty = resolve_in_module(tn)
       self.pull_resolve()
       if self.has_err() {
@@ -4606,9 +4600,7 @@ pub class Checker {
     if r = e.right {
       out.push(r)
     }
-    for x in e.elems {
-      out.push(x)
-    }
+    out.concat(e.elems)
     out
   }
 
@@ -5138,9 +5130,7 @@ pub class Checker {
       // would be, so no other error follows from the refusal.
       stash_names = expr.field_names
       stash = expr.field_exprs
-      for v in stash {
-        expr.args.push(v)
-      }
+      expr.args.concat(stash)
       expr.field_names = []
       expr.field_exprs = []
       got0 = check_call_parts(expr, has_want, want)
@@ -5529,9 +5519,7 @@ pub class Checker {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
-          for type_arg in recv.type_args {
-            tn.args.push(type_arg)
-          }
+          tn.args.concat(recv.type_args)
           ty = resolve_in_module(tn)
           self.pull_resolve()
           if !self.has_err() {
@@ -5641,11 +5629,7 @@ pub class Checker {
       if has_init {
         arg_tys: Array(Ty) = []
         if has_pre {
-          i = 0
-          while i < pre.size {
-            arg_tys.push(pre[i])
-            i += 1
-          }
+          arg_tys.concat(pre)
         } else {
           ai = 0
           while ai < expr.args.size {
@@ -5877,11 +5861,7 @@ pub class Checker {
       call.receiver = path
     }
     if recv.args.size == recv.type_args.size {
-      i = 0
-      while i < recv.args.size {
-        call.args.push(recv.args[i])
-        i += 1
-      }
+      call.args.concat(recv.args)
       return call
     }
     for type_arg in recv.type_args {
@@ -7008,9 +6988,7 @@ pub class Checker {
         // A `?` in the block: the join gives the value or the failure.
         parts: Array(Ty) = []
         parts.push(result)
-        for f in fails {
-          parts.push(f)
-        }
+        parts.concat(fails)
         result = ty_union_build(parts)
       }
       if !self.has_err() && ty_holds_ptr(result) && !ptrs_cross_here(result) {

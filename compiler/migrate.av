@@ -236,9 +236,7 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
         // `recv.each { |x| body }` as `for x in recv { body }`, and a
         // hash's `recv.each { |k, v| body }` as `for k, v in recv { body }`.
         pre[si].push(Token.new(tk_for(), ft[si].loc, "for"))
-        for t in params {
-          pre[si].push(t)
-        }
+        pre[si].concat(params)
         pre[si].push(Token.new(tk_in(), ft[si].loc, "in"))
         drop[dot] = true
         drop[pv] = true
@@ -258,9 +256,7 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
     // The lambda's head in place of the pipes: `(params) {`.
     lam: Array(Token) = []
     lam.push(Token.new(tk_l_paren(), ft[ob].loc, "("))
-    for t in params {
-      lam.push(t)
-    }
+    lam.concat(params)
     lam.push(Token.new(tk_r_paren(), ft[ob].loc, ")"))
     lam.push(ft[ob])
     drop[ob] = true
@@ -303,9 +299,7 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
         tally.add("call (${what}), the full form")
       }
     }
-    for t in lam {
-      pre[ob].push(t)
-    }
+    pre[ob].concat(lam)
     changed += 1
   }
   if changed == 0 {
@@ -314,15 +308,11 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
   out: Array(Token) = []
   i = 0
   while i < n {
-    for t in pre[i] {
-      out.push(t)
-    }
+    out.concat(pre[i])
     if !drop[i] {
       out.push(ft[i])
     }
-    for t in post[i] {
-      out.push(t)
-    }
+    out.concat(post[i])
     i += 1
   }
   got = reprint(out)

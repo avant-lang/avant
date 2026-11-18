@@ -122,9 +122,7 @@ pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(
   }
   rest: Array(Ty) = []
   if actual.is_union() {
-    for am in actual.members {
-      rest.push(am)
-    }
+    rest.concat(actual.members)
   } else {
     rest.push(actual)
   }
@@ -629,9 +627,7 @@ pub fn (checker_self: Checker) place_named_args(expr: Expr, fnn: Function): Arra
   for i in 0..npos {
     order.push(i)
   }
-  for w in written {
-    order.push(w)
-  }
+  order.concat(written)
   for i in npos..fnn.params.size {
     if given[i].size == 0 {
       order.push(i)
@@ -716,11 +712,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   inst.type_params = tp
   inst.emit_name = emit
   ia: Array(Ty) = []
-  i = 0
-  while i < subst.size {
-    ia.push(subst[i])
-    i += 1
-  }
+  ia.concat(subst)
   inst.inst_args = ia
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
@@ -784,11 +776,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   inst.type_params = tp
   inst.emit_name = emit
   ia: Array(Ty) = []
-  i = 0
-  while i < subst.size {
-    ia.push(subst[i])
-    i += 1
-  }
+  ia.concat(subst)
   inst.inst_args = ia
   inst.owner = sig.owner
   checker_self.alloc_ol(inst)

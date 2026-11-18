@@ -44,19 +44,17 @@ import type
 
 pub fn argv_user: Array(String) {
   args = argv()
-  rest: Array(String) = []
-  for i in 1..args.size {
-    rest.push(args[i])
+  if args.size == 0 {
+    return []
   }
-  rest
+  args[1..]
 }
 
 pub fn argv_drop_first(args: Array(String)): Array(String) {
-  rest: Array(String) = []
-  for i in 1..args.size {
-    rest.push(args[i])
+  if args.size == 0 {
+    return []
   }
-  rest
+  args[1..]
 }
 
 pub fn show_usage {
@@ -245,11 +243,7 @@ pub fn driver_format(args: Array(String)) {
       found: Array(String) = []
       format_walk(p, found)
       format_sort(found)
-      j = 0
-      while j < found.size {
-        paths.push(found[j])
-        j += 1
-      }
+      paths.concat(found)
     } else {
       format_usage_error("format needs a .av file or a directory, not ${p}")
     }
@@ -526,16 +520,8 @@ fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
   lj.inline_fast = llvm_inline_fast()
   lj.cpu = llvm_cpu_parse(job.cpu)
-  i = 0
-  while i < job.objects.size {
-    lj.objects.push(job.objects[i])
-    i += 1
-  }
-  i = 0
-  while i < job.flags.size {
-    lj.flags.push(job.flags[i])
-    i += 1
-  }
+  lj.objects.concat(job.objects)
+  lj.flags.concat(job.flags)
   lj
 }
 

@@ -176,9 +176,7 @@ pub fn (checker_self: Checker) subst_ty(ty: Ty, keys: Array(String), vals: Array
 
 pub fn (checker_self: Checker) fn_sig_ty(sig: FuncSig): Ty {
   ps: Array(Ty) = []
-  for param in sig.params {
-    ps.push(param)
-  }
+  ps.concat(sig.params)
   ty_fn(ps, sig.ret)
 }
 
@@ -701,9 +699,7 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
   }
   expr.resolved = mangle_ty(callee)
   pts: Array(Ty) = []
-  for mem in callee.members {
-    pts.push(mem)
-  }
+  pts.concat(callee.members)
   expr.cap_tys = pts
   ret = checker_self.t_void()
   if r = callee.inner {
@@ -945,9 +941,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     outer_facts = checker_self.facts
     checker_self.facts = FlowFacts.new()
     checker_self.facts.reach_memo = outer_facts.reach_memo
-    for lw in outer_facts.lam_written {
-      checker_self.facts.lam_written.push(lw)
-    }
+    checker_self.facts.lam_written.concat(outer_facts.lam_written)
     if ret.is_var() {
       saved_ty = checker_self.inferred_ret
       saved_seen = checker_self.inferred_seen
@@ -1004,9 +998,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
       result_ret = checker_self.t_void()
     }
     ps: Array(Ty) = []
-    for mem in want.members {
-      ps.push(mem)
-    }
+    ps.concat(want.members)
     out = ty_fn(ps, result_ret)
     expr.ty = out
     return out
@@ -1039,9 +1031,7 @@ pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
     // a type parameter.
     last = tn.members[tn.members.size - 1]
     if last.args.size == 0 && !last.nilable && !last.fn_type && last.members.size == 0 && fnn.type_params.has(last.name) {
-      for b0 in tn.bounds {
-        last.bounds.push(b0)
-      }
+      last.bounds.concat(tn.bounds)
       tn.bounds = []
     }
   }
@@ -1148,12 +1138,8 @@ pub fn (checker_self: Checker) check_interface_sigs {
         n += 1
       }
       both: Array(String) = []
-      for type_param in idef.type_params {
-        both.push(type_param)
-      }
-      for var in vars {
-        both.push(var)
-      }
+      both.concat(idef.type_params)
+      both.concat(vars)
       checker_self.resolver.set_tparams(both)
       p = 0
       while p < method.params.size {
@@ -1531,11 +1517,7 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
     i += 1
   }
   both: Array(String) = []
-  i = 0
-  while i < vars.size {
-    both.push(vars[i])
-    i += 1
-  }
+  both.concat(vars)
   checker_self.resolver.set_tparams(both)
   saved_scope = checker_self.resolver.scope_mod
   checker_self.resolver.scope_mod = idef.mod_name
