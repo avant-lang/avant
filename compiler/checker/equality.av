@@ -70,7 +70,7 @@ pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: St
     }
     return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty_seen_key(ty)) {
+  if seen.has(ty_seen_key(ty)) {
     return ""
   }
   seen.push(ty_seen_key(ty))
@@ -138,7 +138,7 @@ pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
 // compares it by its type's methods (the runtime's _uk entries): ty, or a
 // struct among its fields at any depth, defines its own ==.
 pub fn (checker_self: Checker) key_by_methods(ty: Ty, seen: Array(String)): Bool {
-  if !ty.is_struct() || seen.contains(ty_seen_key(ty)) {
+  if !ty.is_struct() || seen.has(ty_seen_key(ty)) {
     return false
   }
   if checker_self.own_op(ty, "==") {
@@ -197,7 +197,7 @@ pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): St
   if checker_self.own_op(ty, "==") {
     return "${ty.show()} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty_seen_key(ty)) {
+  if seen.has(ty_seen_key(ty)) {
     return ""
   }
   seen.push(ty_seen_key(ty))
@@ -499,7 +499,7 @@ pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
     return ""
   }
   if ty.is_struct() {
-    if checker_self.user_op(ty, "==") || seen.contains(ty_seen_key(ty)) {
+    if checker_self.user_op(ty, "==") || seen.has(ty_seen_key(ty)) {
       return ""
     }
     seen.push(ty_seen_key(ty))

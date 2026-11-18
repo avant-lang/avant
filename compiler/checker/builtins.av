@@ -576,9 +576,8 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     return checker_self.expect_no_args(expr, checker_self.t_void(), "reverse takes no arguments")
   }
-  // `has` is the membership test of every collection; `contains` is its
-  // old name on arrays, kept while the compiler's own sources use it.
-  if expr.callee == "has" || expr.callee == "contains" {
+  // `has` is the membership test of every collection.
+  if expr.callee == "has" {
     member = expr.callee
     if b = expr.block {
       checker_self.fail(expr.loc, "${member} does not take a block")
@@ -834,7 +833,11 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     none: Ty? = nil
     return checker_self.dispatch_method(expr, array, none)
   }
-  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", checker_self.builtin_hint(array, expr.callee))
+  hint = checker_self.builtin_hint(array, expr.callee)
+  if expr.callee == "contains" || expr.callee == "includes" || expr.callee == "has_key" {
+    hint = " (write `xs.has(v)`)"
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", hint)
   checker_self.t_int()
 }
 
