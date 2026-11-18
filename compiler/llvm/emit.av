@@ -560,7 +560,13 @@ fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
 // count (llvm.ctpop, llvm.ctlz, llvm.cttz, defined at zero: the width)
 // or a bitcast between a Float64 and a UInt64. "" for another name.
 fn ll_bits_op(e: LlEmit, name: String, args: Array(MOperand)): String {
-  if !name.starts_with("avant_bits_") || args.size != 1 {
+  if !name.starts_with("avant_bits_") {
+    return ""
+  }
+  if name.ends_with("_u64") && name != "avant_bits_f64_to_u64" {
+    return ll_bits_u64(e, name, args)
+  }
+  if args.size != 1 {
     return ""
   }
   x = e.value(args[0])
@@ -596,6 +602,92 @@ fn ll_bits_op(e: LlEmit, name: String, args: Array(MOperand)): String {
     e.line("${t3} = call ${w} @llvm.${op}.${w}(${w} ${x}, i1 false)")
   }
   t3
+}
+
+// std.bits's operations on UInt64 (lib/std/bits.av), each a few LLVM
+// instructions the back end turns into one or two machine ones: the high
+// half of a widening multiply, the carry or borrow out of an add or a
+// subtract with one in, a 128-by-64 division's quotient or remainder, a
+// rotation (a funnel shift, its amount modulo 64), a bit or byte
+// reversal. "" for another name or arity.
+fn ll_bits_u64(e: LlEmit, name: String, args: Array(MOperand)): String {
+  xs: Array(String) = []
+  for a in args {
+    xs.push(e.value(a))
+  }
+  if name == "avant_bits_mulhi_u64" && xs.size == 2 {
+    a = e.tmp()
+    e.line("${a} = zext i64 ${xs[0]} to i128")
+    b = e.tmp()
+    e.line("${b} = zext i64 ${xs[1]} to i128")
+    p = e.tmp()
+    e.line("${p} = mul i128 ${a}, ${b}")
+    h = e.tmp()
+    e.line("${h} = lshr i128 ${p}, 64")
+    r = e.tmp()
+    e.line("${r} = trunc i128 ${h} to i64")
+    return r
+  }
+  if (name == "avant_bits_carry_u64" || name == "avant_bits_borrow_u64") && xs.size == 3 {
+    op = "uadd"
+    if name == "avant_bits_borrow_u64" {
+      op = "usub"
+    }
+    e.need_intrinsic("declare { i64, i1 } @llvm.${op}.with.overflow.i64(i64, i64)")
+    s1 = e.tmp()
+    e.line("${s1} = call { i64, i1 } @llvm.${op}.with.overflow.i64(i64 ${xs[0]}, i64 ${xs[1]})")
+    v1 = e.tmp()
+    e.line("${v1} = extractvalue { i64, i1 } ${s1}, 0")
+    o1 = e.tmp()
+    e.line("${o1} = extractvalue { i64, i1 } ${s1}, 1")
+    s2 = e.tmp()
+    e.line("${s2} = call { i64, i1 } @llvm.${op}.with.overflow.i64(i64 ${v1}, i64 ${xs[2]})")
+    o2 = e.tmp()
+    e.line("${o2} = extractvalue { i64, i1 } ${s2}, 1")
+    o = e.tmp()
+    e.line("${o} = or i1 ${o1}, ${o2}")
+    r2 = e.tmp()
+    e.line("${r2} = zext i1 ${o} to i64")
+    return r2
+  }
+  if (name == "avant_bits_divq_u64" || name == "avant_bits_divr_u64") && xs.size == 3 {
+    hi = e.tmp()
+    e.line("${hi} = zext i64 ${xs[0]} to i128")
+    hs = e.tmp()
+    e.line("${hs} = shl i128 ${hi}, 64")
+    lo = e.tmp()
+    e.line("${lo} = zext i64 ${xs[1]} to i128")
+    n = e.tmp()
+    e.line("${n} = or i128 ${hs}, ${lo}")
+    d = e.tmp()
+    e.line("${d} = zext i64 ${xs[2]} to i128")
+    op2 = "udiv"
+    if name == "avant_bits_divr_u64" {
+      op2 = "urem"
+    }
+    q = e.tmp()
+    e.line("${q} = ${op2} i128 ${n}, ${d}")
+    r3 = e.tmp()
+    e.line("${r3} = trunc i128 ${q} to i64")
+    return r3
+  }
+  if name == "avant_bits_rotl_u64" && xs.size == 2 {
+    e.need_intrinsic("declare i64 @llvm.fshl.i64(i64, i64, i64)")
+    r4 = e.tmp()
+    e.line("${r4} = call i64 @llvm.fshl.i64(i64 ${xs[0]}, i64 ${xs[0]}, i64 ${xs[1]})")
+    return r4
+  }
+  if (name == "avant_bits_bitrev_u64" || name == "avant_bits_bswap_u64") && xs.size == 1 {
+    f = "bitreverse"
+    if name == "avant_bits_bswap_u64" {
+      f = "bswap"
+    }
+    e.need_intrinsic("declare i64 @llvm.${f}.i64(i64)")
+    r5 = e.tmp()
+    e.line("${r5} = call i64 @llvm.${f}.i64(i64 ${xs[0]})")
+    return r5
+  }
+  ""
 }
 
 fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: String): String {

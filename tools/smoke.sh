@@ -380,7 +380,7 @@ else
 fi
 expect example-hello "Hello Avant" "$avant" run "$inst/examples/hello.av"
 missing=""
-for f in LICENSE third_party/NOTICE.md third_party/base64/LICENSE third_party/pcre2/LICENCE.md third_party/pcre2/deps/sljit/LICENSE third_party/uSockets/LICENSE third_party/zlib/LICENSE third_party/yyjson/LICENSE third_party/picohttpparser/LICENSE; do
+for f in LICENSE third_party/NOTICE.md third_party/base64/LICENSE third_party/pcre2/LICENCE.md third_party/pcre2/deps/sljit/LICENSE third_party/uSockets/LICENSE third_party/zlib/LICENSE third_party/yyjson/LICENSE third_party/picohttpparser/LICENSE third_party/crc32-chromium/LICENSE third_party/sha-intrinsics/README.md; do
   [ -s "$inst/$f" ] || missing="$missing $f"
 done
 if [ -z "$missing" ]; then

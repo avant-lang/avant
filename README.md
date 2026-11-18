@@ -234,13 +234,15 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [input](#input)
   - [files and directories](#files-and-directories)
   - [processes and environment](#processes-and-environment)
-  - [time, hashing and math](#time-hashing-and-math)
+  - [time and math](#time-and-math)
 - [Standard library](#standard-library):
   - [std.json](#stdjson)
   - [std.regex](#stdregex)
   - [std.http](#stdhttp)
   - [std.zlib](#stdzlib)
   - [std.base64](#stdbase64)
+  - [std.digest](#stddigest)
+  - [std.bits](#stdbits)
   - [std.time](#stdtime)
   - [std.random](#stdrandom)
 - [Testing](#testing):
@@ -4010,9 +4012,9 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 
 | Area | Names |
 | --- | --- |
-| Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
+| Output and input | `puts`, `print`, `eputs`, `eprint`, `exit`, `read_line` |
 | Time | `now_ms`, `now_us` |
-| Hashing and formatting | `sha256`, `fmt_float` |
+| Formatting | `fmt_float` |
 | Strings | `str_to_f_slice`, `chr`, `repeat_byte` ([String operations](#string-operations)) |
 
 Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`. In the tables below, a dash means there is nothing to say: no parameter, no result, or no failure.
@@ -4199,21 +4201,17 @@ fn main {
 
 **A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. To keep a child's output in a file, write `process.output`'s `stdout` with `fs.write`, or let a shell redirect it (`process.run("sh", ["-c", "make > build.log 2>&1"])`).
 
-### Time, hashing and math
+### Time and math
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
 | `now_ms()`, `now_us()` | — | `Int` milliseconds, microseconds | — | a monotonic clock, without wrapping: intervals, not the time of day |
-| `sha256(s)` | `s: String` | `String`: 64 hexadecimal characters | — | the SHA-256 of a string |
 | `fmt_float(x, digits)` | | | | in [Floats](#floats); the square root and the exponential are `x.sqrt()` and `x.exp()` |
-| `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` | | each an `Int32` | | also taken, for the benchmark programs |
-| `wide_op`, `wide_hi` and `hash_last_key` | | | | also taken, for the benchmark programs |
 
 ```avant
 fn main {
   t0 = now_us()
   puts(now_us() >= t0)       // => true
-  puts(sha256("abc"))        // => ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
   puts(144.0.sqrt())         // => 12.0
 }
 ```
@@ -4232,6 +4230,8 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.ws`](#websocket-client) | the WebSocket client, `ws.connect(url)` | `std.http` |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
+| [`std.digest`](#stddigest) | `digest.crc32(b)`, `digest.sha256(b)`, `digest.sha256_hex(b)` | Chromium's carry-less-multiply CRC-32 and the SHA-Intrinsics SHA-256, chosen by the CPU, with portable C beside them |
+| [`std.bits`](#stdbits) | `bits.mul`, `bits.add`, `bits.sub`, `bits.div` on 128 bits in two words, `bits.rotate_left`, `bits.reverse`, `bits.reverse_bytes`, `bits.len` | the CPU's instructions, through LLVM's |
 | [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `time.Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
 | [`std.random`](#stdrandom) | `random.Random.new(seed)`, the generator `shuffle` takes; `random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
 | [`std.fs`](#files-and-directories) | `fs.read`, `fs.write`, `fs.open`, `fs.walk` and the rest of the file system | the C library |
@@ -4594,6 +4594,60 @@ fn main {
 | `from_base64` | — | `Bytes \| Base64Error` | a `Base64Error` on malformed input | |
 | `to_base64_into(buf)`, `from_base64_into(buf)` | `buf: Buf` | `Base64Error?` | as above | the `Buf` twins |
 | `to_base64_url`, `from_base64_url`, and their `_into(buf)` twins | as above | as above | as above, and a `+` or `/` | the URL-safe alphabet without padding (`-` and `_` for `+` and `/`, no `=`), as JWT and URL tokens write it; the decoder takes the text with or without its padding |
+
+### std.digest
+
+```avant
+import std.digest
+
+fn main {
+  puts(digest.crc32("123456789".bytes))              // => 3421780262
+  puts(digest.sha256_hex("abc".bytes))               // => ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+  puts(digest.sha256("abc".bytes).size)              // => 32
+  part = digest.crc32("1234".bytes)
+  puts(digest.crc32_update(part, "56789".bytes))     // => 3421780262
+}
+```
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `digest.crc32(data)` | `data: Bytes` | `UInt32` | — | zlib's, gzip's and PNG's CRC-32 (the reflected polynomial `0xEDB88320`) |
+| `digest.crc32_update(crc, data)` | `crc: UInt32`, `data: Bytes` | `UInt32` | — | the CRC of the bytes `crc` covered followed by `data`: a stream's CRC a piece at a time |
+| `digest.sha256(data)` | `data: Bytes` | `Bytes`, 32 of them | — | FIPS 180-4's SHA-256 |
+| `digest.sha256_hex(data)` | `data: Bytes` | `String`, 64 lower-case hex digits | — | |
+
+A `String`'s bytes are `s.bytes`, no copy. Each call takes the fastest code the CPU runs, chosen once: CRC-32 folds 64 bytes at a time with carry-less multiplies (PCLMULQDQ; about 0.25 cycles a byte), with eight-table slicing for the rest and on a CPU without it (about 2 cycles a byte); SHA-256 uses the SHA instructions (about 2 cycles a byte) or C (about 14). The vendored code and its licences are in `runtime/third_party/NOTICE.md`.
+
+### std.bits
+
+The 64-bit operations a CPU does in an instruction or two that no expression on `UInt64` writes: a multiply's high half, an add and a subtract that carry into the next word, a 128-by-64 division, rotations and reversals, as Go's `math/bits`. Each compiles to its instruction, no call. The bit counts are every integer's methods (`x.count_ones()`, `x.leading_zeros()`, `x.trailing_zeros()`).
+
+```avant
+import std.bits
+
+fn main {
+  p = bits.mul(18446744073709551615u64, 3u64)
+  puts("${p.hi} ${p.lo}")                     // => 2 18446744073709551613
+  s = bits.add(18446744073709551615u64, 1u64, 0u64)
+  puts("${s.sum} ${s.carry}")                 // => 0 1
+  d = bits.sub(0u64, 1u64, 0u64)
+  puts(d.borrow)                              // => 1
+  q = bits.div(p.hi, p.lo, 3u64)
+  puts(q.quo)                                 // => 18446744073709551615
+  puts(bits.rotate_left(1u64, -1))            // => 9223372036854775808
+  puts(bits.len(255u64))                      // => 8
+}
+```
+
+| Call | Result | Note |
+| --- | --- | --- |
+| `bits.mul(x, y)` | `bits.Product`: `hi`, `lo` | the full 128-bit product |
+| `bits.add(x, y, carry)` | `bits.Sum`: `sum`, `carry` | `x + y + carry`; `carry` is 0 or 1 (another traps); chain the carry over words |
+| `bits.sub(x, y, borrow)` | `bits.Diff`: `diff`, `borrow` | `x - y - borrow`; `borrow` is 0 or 1 |
+| `bits.div(hi, lo, y)` | `bits.Quotient`: `quo`, `rem` | the 128-bit `(hi, lo)` over `y`; traps when `y` is 0 or `y <= hi` (the quotient would not fit) |
+| `bits.rotate_left(x, k)` | `UInt64` | by `k` modulo 64, `k` an `Int`; a negative `k` rotates right |
+| `bits.reverse(x)`, `bits.reverse_bytes(x)` | `UInt64` | the bits, the bytes, in reverse order |
+| `bits.len(x)` | `Int` | the bits needed to write `x`: `64 - x.leading_zeros()` |
 
 ### std.time
 

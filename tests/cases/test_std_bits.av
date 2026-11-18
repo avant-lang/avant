@@ -1,0 +1,57 @@
+import harness
+import std.bits
+
+// std.bits: each operation against its definition on values whose
+// answer is known (the edges: zero, one, the largest UInt64, carries
+// and borrows across a word), and its traps.
+
+fn test_std_bits(c: Checks) {
+  c.suite("tests/cases/test_std_bits.av")
+  max = 18446744073709551615u64
+  p = bits.mul(max, max)
+  c.expect(p.hi == 18446744073709551614u64 && p.lo == 1u64, "mul: max * max is (max - 1, 1)")
+  p2 = bits.mul(4294967296u64, 4294967296u64)
+  c.expect(p2.hi == 1u64 && p2.lo == 0u64, "mul: 2^32 * 2^32 is 2^64")
+  p3 = bits.mul(12345u64, 678u64)
+  c.expect(p3.hi == 0u64 && p3.lo == 8369910u64, "mul: a small product has no high half")
+  s = bits.add(max, 1u64, 0u64)
+  c.expect(s.sum == 0u64 && s.carry == 1u64, "add: max + 1 carries")
+  s2 = bits.add(max, max, 1u64)
+  c.expect(s2.sum == max && s2.carry == 1u64, "add: max + max + 1")
+  s3 = bits.add(2u64, 3u64, 1u64)
+  c.expect(s3.sum == 6u64 && s3.carry == 0u64, "add: no carry")
+  d = bits.sub(0u64, 1u64, 0u64)
+  c.expect(d.diff == max && d.borrow == 1u64, "sub: 0 - 1 borrows")
+  d2 = bits.sub(5u64, 5u64, 1u64)
+  c.expect(d2.diff == max && d2.borrow == 1u64, "sub: 5 - 5 - 1 borrows")
+  d3 = bits.sub(9u64, 4u64, 1u64)
+  c.expect(d3.diff == 4u64 && d3.borrow == 0u64, "sub: no borrow")
+  q = bits.div(1u64, 0u64, 3u64)
+  c.expect(q.quo == 6148914691236517205u64 && q.rem == 1u64, "div: 2^64 / 3")
+  q2 = bits.div(p.hi, p.lo, max)
+  c.expect(q2.quo == max && q2.rem == 0u64, "div undoes mul")
+  c.expect(bits.rotate_left(1u64, 1) == 2u64, "rotate_left by 1")
+  c.expect(bits.rotate_left(9223372036854775808u64, 1) == 1u64, "rotate_left wraps the top bit")
+  c.expect(bits.rotate_left(1u64, -1) == 9223372036854775808u64, "rotate_left by -1 rotates right")
+  c.expect(bits.rotate_left(3u64, 64) == 3u64, "rotate_left by 64 is no rotation")
+  c.expect(bits.reverse(1u64) == 9223372036854775808u64, "reverse")
+  c.expect(bits.reverse_bytes(255u64) == 18374686479671623680u64, "reverse_bytes")
+  c.expect(bits.reverse_bytes(81985529216486895u64) == 17279655951921914625u64, "reverse_bytes of 0x0123456789abcdef")
+  c.eq_int(bits.len(0u64), 0, "len of 0")
+  c.eq_int(bits.len(1u64), 1, "len of 1")
+  c.eq_int(bits.len(max), 64, "len of max")
+  // A wide add over two words: (2^64 - 1) + 1 is (1, 0).
+  lo = bits.add(max, 1u64, 0u64)
+  hi = bits.add(0u64, 0u64, lo.carry)
+  c.expect(hi.sum == 1u64 && lo.sum == 0u64, "a 128-bit add over two words")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_bits(c)
+  c.finish()
+}

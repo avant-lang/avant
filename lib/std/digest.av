@@ -1,0 +1,32 @@
+// std.digest: CRC-32 and SHA-256 of bytes, on the fastest code the
+// machine runs (runtime/avant_digest.c): a carry-less-multiply fold for
+// CRC-32 and the CPU's SHA instructions for SHA-256 where it has them,
+// table-driven and portable C otherwise. A String's bytes are s.bytes
+// (no copy).
+lib digestc {
+  fun avant_digest_crc32(crc: UInt32, data: Bytes): UInt32
+  fun avant_digest_sha256(data: Bytes): Bytes
+  fun avant_digest_sha256_hex(data: Bytes): String
+}
+
+// The CRC-32 of data (zlib's, gzip's and PNG's: the reflected
+// polynomial 0xEDB88320); crc32("123456789".bytes) is 0xCBF43926.
+pub fn crc32(data: Bytes): UInt32 {
+  digestc.avant_digest_crc32(0, data)
+}
+
+// The CRC-32 of the bytes before data (crc, their crc32) and data
+// together: a stream's CRC, a piece at a time.
+pub fn crc32_update(crc: UInt32, data: Bytes): UInt32 {
+  digestc.avant_digest_crc32(crc, data)
+}
+
+// The SHA-256 digest of data, 32 bytes.
+pub fn sha256(data: Bytes): Bytes {
+  digestc.avant_digest_sha256(data)
+}
+
+// The SHA-256 digest of data as 64 lower-case hexadecimal digits.
+pub fn sha256_hex(data: Bytes): String {
+  digestc.avant_digest_sha256_hex(data)
+}

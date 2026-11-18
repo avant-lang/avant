@@ -1,6 +1,7 @@
 import harness
 import std.fs
 import std.process
+import std.digest
 
 fn fail_log(c: Checks, log: String, msg: String) {
   c.expect(false, msg)
@@ -133,7 +134,7 @@ fn test_fixed_point(c: Checks) {
       c.eq_int(c_main, 0, "next dump compiler ${what}")
       if ir_b = fs.read(main_b) {
         if ir_c = fs.read(main_c) {
-          c.eq_str(sha256(ir_b), sha256(ir_c), "compiler ${what} digest matches next")
+          c.eq_str(digest.sha256_hex(ir_b.bytes), digest.sha256_hex(ir_c.bytes), "compiler ${what} digest matches next")
         } else {
           fail_log(c, main_c, "read next compiler ${what}")
         }
