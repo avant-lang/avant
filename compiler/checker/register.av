@@ -351,7 +351,9 @@ pub fn (checker_self: Checker) check: Program {
   }
   i = 0
   while i < checker_self.pending.size {
+    mark = checker_self.errors.items.size
     checker_self.check_function(checker_self.pending[i])
+    checker_self.move_instance_errors(checker_self.pending[i], mark)
     i += 1
   }
   // Generic class instances made while checking the bodies get their
@@ -1481,4 +1483,33 @@ pub fn op_arity_text(name: String, n: Int): String {
     }
   }
   ""
+}
+
+// The errors an instance's body gave (those after mark) are the call's
+// that made the instance, the outermost one when an instance made
+// another: a program sees its own line, and the message names the
+// instance and the place in the generic code.
+pub fn (checker_self: Checker) move_instance_errors(f: Function, mark: Int) {
+  if checker_self.errors.items.size <= mark {
+    return
+  }
+  if call = f.inst_call {
+    loc = call
+    note = "in ${f.inst_shown}"
+    g = f.inst_from
+    while true {
+      if h = g, hc = h.inst_call {
+        loc = hc
+        note = "${note}, called from ${h.inst_shown}"
+        g = h.inst_from
+      } else {
+        break
+      }
+    }
+    k = mark
+    while k < checker_self.errors.items.size {
+      checker_self.errors.items[k].move_to(loc, note)
+      k += 1
+    }
+  }
 }

@@ -154,6 +154,10 @@ fn cases: Array(TCase) {
   xs.push(with_mods(only("indep-private-literal-once", "import priv\n\nfn main {\n  h = Hide { k: 3 }\n  puts(h.k)\n}\n", "Hide has private fields (n); a literal outside module priv cannot build it", "4:7"), ["priv", "pub struct Hide {\n  n: Int = 1\n  m: Int = 2\n  pub k: Int\n}\n"]))
   // A failed type still silences what reads it, beside a private field.
   xs.push(with_mods(absent_too(both("indep-private-then-cascade", "import priv\n\nfn main {\n  h = priv.make()\n  puts(h.n + nosuch())\n}\n", "field n of Hide is private to module priv; mark it pub", "5:9", "unknown function nosuch"), "binary operator"), ["priv", "pub struct Hide {\n  n: Int\n}\n\npub fn make: Hide {\n  Hide { n: 1 }\n}\n"]))
+  // An error in a generic function's instance is reported at the call that made it, the instance and the place in the generic code beside the message; an instance made inside another is reported at the outermost call.
+  xs.push(only("instance-error-at-call", "fn show_all(xs: Array(T)): String {\n  out = \"\"\n  for x in xs {\n    out = out + \"\${x}\"\n  }\n  out\n}\n\nstruct Q {\n  x: Int\n}\n\nfn main {\n  puts(show_all([1, 2]))\n  puts(show_all([Q { x: 1 }]))\n}\n", "cannot interpolate Q (in show_all with T = Q, at ", "15:8"))
+  xs.push(only("instance-error-nested", "fn inner(x: T): String {\n  \"\${x}\"\n}\n\nfn outer(x: T): String {\n  inner(x)\n}\n\nstruct Q {\n  x: Int\n}\n\nfn main {\n  puts(outer(Q { x: 1 }))\n}\n", "cannot interpolate Q (in inner with T = Q, called from outer with T = Q, at ", "14:8"))
+  xs.push(first("instance-error-std", "import std.testing\n\nstruct P {\n  x: Int\n}\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check_eq(P { x: 1 }, P { x: 1 }, \"p\")\n  t.finish()\n}\n", "cannot interpolate P (in Test.check_eq with T = P, at ", "9:4"))
   xs
 }
 

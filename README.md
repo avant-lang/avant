@@ -2808,6 +2808,8 @@ fn main {
 
 Any other unknown type name is an error where written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``.
 
+A generic function's body is checked for each set of types it is called with. An error there is reported at the call that brought those types, with the instance and the place in the generic code beside it: `show_all([Q { x: 1 }])`, whose body interpolates each element, says `cannot interpolate Q (in show_all with T = Q, at lib.av:4:20)` at the call. When one generic function calls another, the error is at the outermost call in non-generic code (`in inner with T = Q, called from outer with T = Q`). A library's generic method reads the same way (`t.check_eq(p, q, "x")` on a struct without a text).
+
 A union member may be a type parameter, which takes the argument's other members: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int` (and `T?` an `Int?`). Two in one union (`r: T | E`) are split by a bound (`r: T | E: Error`: [Bounds](#bounds)), another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`); otherwise the call says it cannot infer them.
 
 ### Generic types

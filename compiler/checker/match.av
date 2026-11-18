@@ -684,6 +684,35 @@ pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
   checker_self.program.functions.push(fnn)
 }
 
+// Where an instance was made, for its errors (checker/register.av
+// check_pending): the call, the function it is in, and the instance as a
+// message names it, `check_eq with T = P` (a verb's template by its
+// verb, `sort_by with T = Int, K = String`).
+pub fn (checker_self: Checker) note_instance_call(inst: Function, generic: Function, subst: Array(Ty), loc: Location) {
+  inst.inst_call = loc
+  inst.inst_from = checker_self.current_fn
+  name = generic.name
+  if generic.owner.size > 0 {
+    name = "${generic.owner}.${name}"
+  }
+  if name.starts_with("__avant_") {
+    name = str_slice(name, 8, name.size)
+  }
+  buf = buf_new()
+  buf.push_str(name)
+  for i in 0..generic.type_params.size {
+    if i < subst.size {
+      if i == 0 {
+        buf.push_str(" with ")
+      } else {
+        buf.push_str(", ")
+      }
+      buf.push_str("${generic.type_params[i]} = ${subst[i].show()}")
+    }
+  }
+  inst.inst_shown = buf.to_s()
+}
+
 pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
   for t in subst {
     if t.is_hasher() {
@@ -714,6 +743,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   ia: Array(Ty) = []
   ia.concat(subst)
   inst.inst_args = ia
+  checker_self.note_instance_call(inst, sig.node, subst, loc)
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
   // The instance's types name what its generic's module sees (a generic
@@ -779,6 +809,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   ia.concat(subst)
   inst.inst_args = ia
   inst.owner = sig.owner
+  checker_self.note_instance_call(inst, sig.node, subst, loc)
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
   // The instance's types name what its generic's module sees (a generic

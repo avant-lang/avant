@@ -103,6 +103,18 @@ pub class CompileError {
     "${self.loc.show()}: ${self.message}"
   }
 
+  // An error in a generic instance's body, moved to the call that made
+  // the instance: the note says which instance and, for code a program
+  // can open, where in it.
+  pub fn move_to(loc: Location, note: String) {
+    if self.loc.path.size > 0 && self.loc.path != "<avant>" {
+      self.message = "${self.message} (${note}, at ${self.loc.show()})"
+    } else {
+      self.message = "${self.message} (${note})"
+    }
+    self.loc = loc
+  }
+
   pub fn render: String {
     buf = buf_new()
     buf.push_str("error[${self.code}]: ${self.message}\n")
