@@ -1225,7 +1225,8 @@ An operation gives the mathematically correct value, or traps when none exists.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`). `MIN % -1` is `0`; only `MIN / -1` overflows.
 - `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
 - `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error. `x.try_shl(n)` and `x.try_shr(n)` return `nil` for such an amount instead (`T?`).
-- Integers have `abs` (not unsigned types) and `to_f`.
+- Integers have `abs` (not unsigned types) and `to_f`. `n.to_s(16)` writes `n` in base 16 (2 to 36, lower case, a `-` for a negative; another base traps), the counterpart of `s.to_i(16)`.
+- `a.min(b)`, `a.max(b)` and `x.clamp(lo, hi)` work on every number type, both operands of one type (`clamp` traps unless `lo <= hi`); an array's `xs.min()` and `xs.max()` take no argument.
 - `x.count_ones()`, `x.leading_zeros()` and `x.trailing_zeros()` count bits of the value's own width (64 for `Int` and `UInt64`, 32 for `Int32` and `UInt32`; a negative value counts its two's-complement bits), as an `Int`; of zero, the leading and trailing zeros are the width. Each is one instruction where the CPU level has it (`popcnt` from `--cpu=v2`, the default; `lzcnt` and `tzcnt` from `--cpu=v3`), a short sequence otherwise.
 
 A check is a compare and a never-taken branch, dropped where the compiler proves it: a literal index into a literal, a loop variable under its bound, a loop whose index range is validated once on entry. What a trap prints: [Traps](#traps).
@@ -1345,8 +1346,8 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
-| `bytes_to_str(xs)` | a string from an `Array(Int)` of bytes |
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
+| `s.is_utf8()` | whether the string's bytes are valid UTF-8 |
 | `String.from_code_point(n)` | the UTF-8 of one code point; traps outside `0..0x10FFFF` and on a surrogate |
 
 The pattern `p` of `contains`, `index_of`, `last_index_of`, `starts_with`, `ends_with` and `count` is a `String`, `Bytes`, `Buf` or one byte, an `Int` as `s[i]` gives (`'/'`, or its number; outside `0..255` it traps); the same methods search `Bytes` and `Buf`. A search reads the bytes in place, a slice's included, and allocates nothing; `index_of` with a start walks every match without slicing:
@@ -1437,6 +1438,8 @@ fn main {
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
+| `b.to_s()` | the same bytes as a `String`, unchecked and without a copy, as `buf.to_s()`; `String.from_utf8(b)` checks them |
+| `b.to_hex()`, `b.from_hex()` | two lower-case hexadecimal digits a byte as a `String`; and back, `Bytes?`, reading either case, `nil` for an odd count or any other character (`"6869".bytes.from_hex()`) |
 
 | `Buf` operation | Result |
 | --- | --- |
@@ -1451,7 +1454,7 @@ fn main {
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
 
-A byte stored by `push_byte`, `buf[i] = n`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); `n & 255` keeps the low byte on purpose. Many library calls have an `_into(buf)` twin writing into your buffer instead of allocating ([Standard library](#standard-library)).
+A byte stored by `push_byte`, `buf[i] = n`, `chr` or `repeat_byte` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); `n & 255` keeps the low byte on purpose. Many library calls have an `_into(buf)` twin writing into your buffer instead of allocating ([Standard library](#standard-library)).
 
 ## Arrays
 
@@ -3990,7 +3993,7 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
-| Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
+| Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `buf_new` ([String operations](#string-operations)) |
 
 Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`. In the tables below, a dash means there is nothing to say: no parameter, no result, or no failure.
 

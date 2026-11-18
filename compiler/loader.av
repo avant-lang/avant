@@ -304,6 +304,7 @@ pub class Loader {
   std_names: Hash(String, String)
   wants_prelude: Bool = false
   wants_task: Bool = false
+  wants_fmt: Bool = false
   wants_prelude_more: Bool = false
   wants_prelude_old: Bool = false
   lib_read: Bool = false
@@ -642,6 +643,9 @@ pub class Loader {
       if self.wants_task {
         add_task_prelude(merged)
       }
+      if self.wants_fmt {
+        add_fmt_prelude(merged)
+      }
       return merged
     }
     nil
@@ -676,6 +680,9 @@ pub class Loader {
       }
       if !self.wants_prelude && prelude_wanted(tokens) {
         self.wants_prelude = true
+      }
+      if !self.wants_fmt && fmt_prelude_wanted(tokens) {
+        self.wants_fmt = true
       }
       if !self.wants_task && task_prelude_wanted(tokens) {
         self.wants_task = true
@@ -852,6 +859,48 @@ pub fn add_task_prelude(merged: Program) {
     info.imports.push("task")
   }
   merged.mods.push(ModInfo.new("task", task_prelude_path()))
+}
+
+// Whether merged declares a method of f's receiver type and name.
+pub fn own_method(merged: Program, f: Function): Bool {
+  if r = f.receiver {
+    for g in merged.functions {
+      if g.name == f.name {
+        if r2 = g.receiver {
+          if r2.type.name == r.type.name {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+// The formatting part: as the prelude, named `prelude_fmt`.
+pub fn add_fmt_prelude(merged: Program) {
+  src = Source.new(fmt_prelude_path(), fmt_prelude_source())
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  parser = Parser.new(src, tokens)
+  p = parser.parse()
+  tag_module(p, "prelude_fmt", fmt_prelude_path())
+  // A method the program declares itself on a number or a string (its
+  // own clamp on Int) is the one it calls: the part's of that receiver
+  // and name is left out.
+  kept: Array(Function) = []
+  for f in p.functions {
+    if own_method(merged, f) {
+      continue
+    }
+    kept.push(f)
+  }
+  p.functions = kept
+  merge_decls(merged, p)
+  for info in merged.mods {
+    info.imports.push("prelude_fmt")
+  }
+  merged.mods.push(ModInfo.new("prelude_fmt", fmt_prelude_path()))
 }
 
 pub fn load_program(path: String): Loader {

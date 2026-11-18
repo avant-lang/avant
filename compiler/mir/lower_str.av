@@ -377,6 +377,9 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return b.c_i32(0)
   }
   known = name == "size" || name == "bytes"
+  if rt.is_bytes() {
+    known = known || name == "to_s"
+  }
   if rt.is_string() {
     known = known || name == "strip" || name == "strip_left" || name == "strip_right" || name == "to_ascii_lower" || name == "to_ascii_upper"
   }
@@ -392,7 +395,8 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if name == "size" {
     return lw.int_call1("avant_str_size", s)
   }
-  if name == "bytes" {
+  if name == "bytes" || name == "to_s" {
+    // A String's bytes, or Bytes as a String: one representation.
     return s
   }
   if name == "to_ascii_lower" || name == "to_ascii_upper" {

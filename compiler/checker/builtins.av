@@ -116,6 +116,10 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
   if expr.callee == "to_buf" {
     return checker_self.expect_no_args(expr, checker_self.t_buf(), "to_buf takes no arguments")
   }
+  if expr.callee == "to_s" {
+    // The same bytes as a String, unchecked, as Buf's to_s: no copy.
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "to_s takes no arguments")
+  }
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
@@ -1364,7 +1368,8 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     return checker_self.t_string()
   }
   if expr.callee == "bytes_to_str" {
-    return checker_self.check_i32_bytes_to_str(expr)
+    checker_self.fail(expr.loc, "bytes_to_str is gone: push the bytes into a Buf (buf.push_byte(n)) and take buf.to_s(), or a Bytes' b.to_s()")
+    return checker_self.t_string()
   }
   if expr.callee == "fmt_float" {
     if expr.args.size == 2 {
