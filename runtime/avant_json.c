@@ -206,20 +206,50 @@ void *avant_json_get(void *nodep, const char *key) {
   return yyjson_obj_get(v, key);
 }
 
-void *avant_json_at(void *nodep, avant_int i) {
-  yyjson_val *v = (yyjson_val *)nodep;
-  if (!v || i < 0 || !yyjson_is_arr(v)) {
-    return NULL;
+/* The value of an object's member i, in the document's order (the key
+ * avant_json_key_at gives for i), or NULL past the last member. */
+static yyjson_val *obj_value_at(yyjson_val *v, avant_int i) {
+  yyjson_obj_iter iter = yyjson_obj_iter_with(v);
+  yyjson_val *key;
+  avant_int at = 0;
+  while ((key = yyjson_obj_iter_next(&iter)) != NULL) {
+    if (at == i) {
+      return yyjson_obj_iter_get_val(key);
+    }
+    at++;
   }
-  return yyjson_arr_get(v, (size_t)i);
+  return NULL;
 }
 
-void *avant_json_first(void *nodep) {
+/* Element i of an array, or the value of member i of an object. */
+void *avant_json_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
-  if (!v || !yyjson_is_arr(v)) {
+  if (!v || i < 0) {
     return NULL;
   }
-  return yyjson_arr_get_first(v);
+  if (yyjson_is_arr(v)) {
+    return yyjson_arr_get(v, (size_t)i);
+  }
+  if (yyjson_is_obj(v)) {
+    return obj_value_at(v, i);
+  }
+  return NULL;
+}
+
+/* The first element of an array, or the first member's value of an
+ * object. */
+void *avant_json_first(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v) {
+    return NULL;
+  }
+  if (yyjson_is_arr(v)) {
+    return yyjson_arr_get_first(v);
+  }
+  if (yyjson_is_obj(v)) {
+    return obj_value_at(v, 0);
+  }
+  return NULL;
 }
 
 /* One sibling step. Only meaningful while a next sibling exists; the

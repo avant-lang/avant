@@ -4103,7 +4103,7 @@ fn main {
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
 | `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none) | |
-| `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member, an element | `nil` when there is none | |
+| `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
 | `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { for e in it { ... } }` |

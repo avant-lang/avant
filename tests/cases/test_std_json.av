@@ -77,9 +77,60 @@ fn json_walks(c: Checks) {
   }
 }
 
+// at(i) and first read an object's members by position, as key_at(i)
+// reads their names: a decoder of an object walks its members by index.
+// They used to be nil on an object, as if it had no members.
+fn json_positions(c: Checks) {
+  doc = Json.parse("{\"a\": 1, \"b\": \"x\", \"c\": [true], \"a\": 2}") ?? return c.expect(false, "positions: parse")
+  got = ""
+  i = 0
+  while i < doc.len() {
+    k = doc.key_at(i) ?? "?"
+    if v = doc.at(i) {
+      got = got + " ${k}=${v.text()}"
+    } else {
+      got = got + " ${k}=nil"
+    }
+    i += 1
+  }
+  c.eq_str(got, " a=1 b=\"x\" c=[true] a=2", "at(i) on an object is member i's value, a repeated name too")
+  if past = doc.at(4) {
+    c.expect(false, "at past an object's last member is nil")
+  } else {
+    c.expect(true, "at past an object's last member is nil")
+  }
+  if neg = doc.at(-1) {
+    c.expect(false, "at(-1) on an object is nil")
+  } else {
+    c.expect(true, "at(-1) on an object is nil")
+  }
+  if head = doc.first() {
+    c.eq_int(head.int() ?? 0, 1, "first on an object is its first member's value")
+  } else {
+    c.expect(false, "first on an object is its first member's value")
+  }
+  for text in ["{}", "[]", "7", "\"s\"", "null"] {
+    if v = Json.parse(text) {
+      if e = v.at(0) {
+        c.expect(false, "at(0) of ${text} is nil")
+      } else {
+        c.expect(true, "at(0) of ${text} is nil")
+      }
+      if f = v.first() {
+        c.expect(false, "first of ${text} is nil")
+      } else {
+        c.expect(true, "first of ${text} is nil")
+      }
+    } else {
+      c.expect(false, "positions: parse ${text}")
+    }
+  }
+}
+
 fn test_std_json(c: Checks) {
   c.suite("tests/cases/test_std_json.av")
   json_walks(c)
+  json_positions(c)
   if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
     if n = doc.int("n") {
       c.eq_int(n, 7, "int by key")
