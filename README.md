@@ -2322,26 +2322,46 @@ fn main {
 
 ### Causes
 
-A field `cause` of an `Error` type, or an optional one, is printed by interpolation after the message, outermost first.
+A field `cause` holds the error that caused this one: an `Error` type, a union of them, or an optional one. Interpolation prints it after the message, outermost first; a `switch` tells a union's members apart.
 
 ```avant
 import std.json
 
 class ConfigError: Error {
   message: String
-  cause: JsonError?
+  cause: IoError | JsonError
 
-  fn initialize(message: String, cause: JsonError?) {
+  fn initialize(message: String, cause: IoError | JsonError) {
     self.message = message
     self.cause = cause
   }
 }
 
+fn load(path: String): Json | ConfigError {
+  text = file_read(path) else e {
+    return ConfigError.new("cannot load ${path}", e)
+  }
+  json = Json.parse(text) else e {
+    return ConfigError.new("bad config in ${path}", e)
+  }
+  json
+}
+
 fn main {
-  e = ConfigError.new("bad config", JsonError.new("unexpected end"))
-  puts("${e}")       // => bad config: unexpected end
+  _ = file_write("app.json", "{\"port\": ")
+  _ = load("app.json") else e {
+    puts("${e}")       // => bad config in app.json: invalid JSON at byte 9: unexpected end of data
+    switch e.cause {
+      case IoError { puts("could not read it") }
+      case j: JsonError { puts("at offset ${j.offset ?? -1}") }   // => at offset 9
+    }
+    return
+  }
 }
 ```
+
+- An optional cause (`cause: JsonError?`, `cause: IoError | JsonError | Nil`) prints nothing when it is `nil`; if-assign opens it (`if c = e.cause`), giving the error or the union of errors.
+- Any other type is refused: `ConfigError is marked Error, so its field cause must be an Error type, a union of them (cause: IoError | JsonError) or an optional one (cause: E?), got String`.
 
 ### An enum as an error
 

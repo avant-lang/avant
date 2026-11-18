@@ -1223,8 +1223,8 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
 // readable, a String field or a method without parameters named
 // `message` (what `e.message` and the interpolation `"${e}"` read); and
 // a field named `cause` (the error that caused it, kept for messages and
-// logs) holds one Error type or an optional one, which `"${e}"` prints
-// after the message (parser.av error_text_method). `Error` takes no type
+// logs) holds one Error type, a union of them, or an optional one, which
+// `"${e}"` prints after the message (parser.av error_text_method). `Error` takes no type
 // arguments and is not a bound or a value type.
 pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: String, mod_name: String) {
   if tn.args.size > 0 {
@@ -1245,12 +1245,8 @@ pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: Strin
       found = true
     }
     if f.name == "cause" {
-      ct = f.ty
-      if ct.is_union() && ct.members.size == 2 && ct.includes_nil() {
-        ct = ty_without_nil(ct)
-      }
-      if !ct.error_mark {
-        checker_self.fail(tn.loc, "${ty.show()} is marked Error, so its field cause must be an Error type or an optional one (cause: E?), got ${f.ty.show()}")
+      if !cause_type_ok(f.ty) {
+        checker_self.fail(tn.loc, "${ty.show()} is marked Error, so its field cause must be an Error type, a union of them (cause: IoError | JsonError) or an optional one (cause: E?), got ${f.ty.show()}")
         return
       }
     }
@@ -1266,6 +1262,27 @@ pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: Strin
     checker_self.fail(tn.loc, "${ty.show()} is marked Error but has no message; give it a field message: String or a method fn message: String")
     return
   }
+}
+
+// Whether ty may be an error's cause: a type marked Error, or a union
+// whose members are all marked Error but for one Nil (`cause: A | B`,
+// `cause: (A | B)?`), which a switch tells apart.
+pub fn cause_type_ok(ty: Ty): Bool {
+  if ty.error_mark {
+    return true
+  }
+  if !ty.is_union() {
+    return false
+  }
+  errors = 0
+  for m in ty.members {
+    if m.error_mark {
+      errors += 1
+    } else if !m.is_nil() {
+      return false
+    }
+  }
+  errors > 0
 }
 
 pub fn (checker_self: Checker) error_methods(type_name: String, mod_name: String): Array(Function) {
