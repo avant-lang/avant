@@ -427,16 +427,14 @@ pub enum WsSendError: Error {
   }
 }
 
-// The runtime's answer to a send or a close: 1 sent, 2 refused for a
-// full queue, 0 closed.
-fn ws_sent(code: Int): Void | WsSendError {
-  if code == 1 {
-    return
-  }
+// Why a send or close the runtime refused did not go: its answer 2 is
+// a full queue, 0 a closed connection (1, sent, never comes here: a send
+// that goes costs one compare).
+fn ws_failed(code: Int): WsSendError {
   if code == 2 {
     return WsSendError.full
   }
-  return WsSendError.closed
+  WsSendError.closed
 }
 
 // The crossable half of a WsConn: a bare connection id, the one field
@@ -444,7 +442,7 @@ fn ws_sent(code: Int): Void | WsSendError {
 // pointer a WsConn also holds). Hand work to a task as a sender:
 //
 //   sender = conn.sender
-//   spawn { sender.send_text(answer) }
+//   spawn { _ = sender.send_text(answer) }
 //
 // Sends through a sender find the connection by id in the runtime and
 // behave exactly as sends through the WsConn.
@@ -452,23 +450,38 @@ pub struct WsSender {
   id: Int
 
   pub fn send_text(text: String): Void | WsSendError {
-    ws_sent(httpc.avant_ws_send_text_by_id(self.id, text))?
+    sent = httpc.avant_ws_send_text_by_id(self.id, text)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   pub fn send_bytes(data: Bytes): Void | WsSendError {
-    ws_sent(httpc.avant_ws_send_bytes_by_id(self.id, data))?
+    sent = httpc.avant_ws_send_bytes_by_id(self.id, data)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      ws_sent(httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body))?
+      sent = httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body)
+      if sent != 1 {
+        return ws_failed(sent)
+      }
       return
     }
-    ws_sent(httpc.avant_ws_send_bytes_by_id(self.id, msg.body))?
+    sent = httpc.avant_ws_send_bytes_by_id(self.id, msg.body)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
-    ws_sent(httpc.avant_ws_close_by_id(self.id, code, reason))?
+    sent = httpc.avant_ws_close_by_id(self.id, code, reason)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 }
 
@@ -496,25 +509,40 @@ pub struct WsConn {
   }
 
   pub fn send_text(text: String): Void | WsSendError {
-    ws_sent(httpc.avant_ws_send_text_direct(self.handle, self.id, text))?
+    sent = httpc.avant_ws_send_text_direct(self.handle, self.id, text)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   pub fn send_bytes(data: Bytes): Void | WsSendError {
-    ws_sent(httpc.avant_ws_send_bytes_direct(self.handle, self.id, data))?
+    sent = httpc.avant_ws_send_bytes_direct(self.handle, self.id, data)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   // Sends a received message onward with its kind preserved, without
   // materializing a string for a text message.
   pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      ws_sent(httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body))?
+      sent = httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body)
+      if sent != 1 {
+        return ws_failed(sent)
+      }
       return
     }
-    ws_sent(httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body))?
+    sent = httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
-    ws_sent(httpc.avant_ws_close_direct(self.handle, self.id, code, reason))?
+    sent = httpc.avant_ws_close_direct(self.handle, self.id, code, reason)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 }
 
