@@ -521,6 +521,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
           return
         }
         lw.at(st.loc)
+        lw.recv_store_check(p, st.loc)
         lw.store_place(p, ty, val)
         return
       }
@@ -542,11 +543,43 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
       }
       r = lw.compound_arith(st, ty, cur, rhs, v)
       lw.at(st.loc)
+      lw.recv_store_check(p2, st.loc)
       lw.store_place(p2, ty, r)
     }
     return
   }
   lw.refuse(t.loc, "an untyped assignment")
+}
+
+// A store through a struct method's receiver (`self.x = v`, `x += 1`,
+// `self.q.y = v`), in a program that both spawns and has a call that
+// freezes the Array holding its receiver (held_method_call): the method
+// may have started a task that reads that Array, and the receiver is one
+// of its elements, so the store asks the runtime first
+// (`avant_array_recv_store`), which traps when the receiver lies in an
+// Array this thread's call froze and a task froze too. Any other program
+// has no such call, and its code is the same as without the check.
+pub fn (lw: MirLower) recv_store_check(p: MPlace, loc: Location) {
+  if !lw.lw_self_struct || p.local != lw.lw_self || !lw.lw_m.shared || !lw.lw_m.elem_holds {
+    return
+  }
+  b = lw.lw_b
+  b.call(-1, "avant_array_recv_store", lw.two(b.copy_local(lw.lw_self), b.str_const(mir_site_short(loc))))
+}
+
+// FILE:LINE:COL with the file's own name, not its path: the message is
+// the same from any directory.
+pub fn mir_site_short(loc: Location): String {
+  base = loc.path
+  i = loc.path.size - 1
+  while i >= 0 {
+    if loc.path[i] == 47 {
+      base = str_slice(loc.path, i + 1, loc.path.size)
+      break
+    }
+    i -= 1
+  }
+  "${base}:${loc.line()}:${loc.column()}"
 }
 
 // A store into a C layout's C scalar field: the value in its Avant view,

@@ -1,0 +1,34 @@
+// The store of receiver_store.av in a task: the trap ends the task (its
+// join gives the failure) and releases the lock it held, poisoned; the
+// task the call started goes on once it gets the lock.
+import std.sync
+
+struct Pos {
+  x: Int
+  y: Int
+
+  fn tally(xs: Array(Pos), m: Mutex(Int)) {
+    h = spawn {
+      _ = m.try_with((v): Int { v })
+      xs.size
+    }
+    self.x = 5
+    n = h.join() ?? -1
+    self.x = n + 700
+  }
+}
+
+fn main {
+  m = Mutex(Int).new(0)
+  t = spawn {
+    xs: Array(Pos) = [Pos { x: 1, y: 2 }]
+    m.with((v) { xs[0].tally(xs, m) })
+    xs[0].x
+  }
+  if v = t.join() {
+    puts(v)
+  } else {
+    puts("the task trapped")
+  }
+  puts(m.poisoned())
+}

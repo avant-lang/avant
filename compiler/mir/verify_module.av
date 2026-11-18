@@ -1,6 +1,7 @@
 // The verifier's module-level rules: V10 on layouts and externals (no
-// field or external parameter is a derived address; only `slot` rows
-// return one) and V20 (unique, mangled symbols; only main has C linkage;
+// field or external parameter is a derived address, but a `peek` row's,
+// which only compares it before it returns; only `slot` rows return one)
+// and V20 (unique, mangled symbols; only main has C linkage;
 // the type-map registry and the layouts' type ids).
 
 import source
@@ -25,7 +26,7 @@ pub fn mir_verify_module(v: MVerifier) {
   for e in v.m.externs {
     s = ts.sigs[e.sig]
     for param in s.params {
-      if ts.is_addr(param) {
+      if ts.is_addr(param) && !(e.peek_row && e.cls == mcc_never()) {
         v.merr(10, "extern ${e.name} takes a derived address")
       }
     }

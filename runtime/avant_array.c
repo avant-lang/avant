@@ -235,6 +235,47 @@ void avant_array_frozen(void *arr, int32_t op) {
   arr_frozen_trap(arr, op);
 }
 
+/* A store through a struct method's receiver p, in a program with held
+ * method calls that spawns (compiler/mir/lower_agg.av recv_store_check).
+ * When p lies in an array this thread's call holds, and the freeze has
+ * more counts than this thread's holds of that array, a task reads it
+ * (one the call started: a task that read it before the call made the
+ * call's element place trap), and the store would change an element
+ * under it: it traps at the store's site, naming the held call. */
+void avant_array_recv_store(void *p, const char *site) {
+  int i;
+  int j;
+  if (g_arr_hold_n == 0) {
+    return;
+  }
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    AvantArray *a = (AvantArray *)*g_arr_holds[i].slot;
+    char *lo;
+    int32_t c;
+    int32_t mine = 0;
+    if (!a || !a->buf) {
+      continue;
+    }
+    lo = (char *)a->buf;
+    if ((char *)p < lo || (char *)p >= lo + (uint64_t)a->size * g_arr_holds[i].elem_size) {
+      continue;
+    }
+    c = arr_cap_word(a);
+    if (c >= 0) {
+      return;
+    }
+    for (j = g_arr_hold_n - 1; j >= 0; j--) {
+      if (*g_arr_holds[j].slot == (void *)a) {
+        mine++;
+      }
+    }
+    if (mine == (c & 0x7fffffff)) {
+      return;
+    }
+    avant_trap_frozen_call(AVANT_FROZEN_RECV, g_arr_holds[i].name, site);
+  }
+}
+
 static void arr_frozen_trap(void *arr, int32_t op) {
   int i;
   for (i = g_arr_hold_n - 1; i >= 0; i--) {

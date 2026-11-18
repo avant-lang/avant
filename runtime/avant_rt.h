@@ -492,6 +492,10 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
 void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site);
 void avant_array_unhold(void **slot);
 void avant_array_frozen(void *arr, int32_t op);
+/* A store through a struct method's receiver p (site: the store's), in a
+ * program with such calls that spawns: traps when p is an element of an
+ * array this thread's call holds and a task reads too. */
+void avant_array_recv_store(void *p, const char *site);
 /* What a frozen array refuses: the operation avant_trap_frozen names. */
 #define AVANT_FROZEN_PUSH 0
 #define AVANT_FROZEN_POP 1
@@ -506,6 +510,9 @@ void avant_array_frozen(void *arr, int32_t op);
 #define AVANT_FROZEN_DELETE_AT 10
 #define AVANT_FROZEN_CONCAT 11
 #define AVANT_FROZEN_SHUFFLE 12
+/* A store through a held method call's receiver while a task the call
+ * started reads the array (avant_array_recv_store). */
+#define AVANT_FROZEN_RECV 13
 /* The freeze of a captured value that holds a hash: a Hash, or an Array
  * or Hash of them at any level (a value of arrays only takes
  * avant_array_freeze). depth counts the levels from the outermost, each

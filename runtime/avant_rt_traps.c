@@ -181,6 +181,11 @@ void avant_trap_frozen(int32_t op) {
 void avant_trap_frozen_call(int32_t op, const char *name, const char *site) {
   g_trap_loc = site;
   trap_head();
+  if (op == AVANT_FROZEN_RECV) {
+    /* The store is the receiver's, the site the store's. */
+    trap_out("a store to the receiver of %s, an element of an array a running task reads: a task started during the call reads the array until it ends; join it before the method changes its receiver", name ? name : "a method");
+    trap_tail();
+  }
   trap_out("%s on an array while %s, called on one of its elements, runs: the method changes its receiver, so the array's size and order cannot change until it returns; copy the element, call the method on the copy and store it back", frozen_op(op), name ? name : "a method");
   trap_tail();
 }

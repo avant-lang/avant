@@ -35,6 +35,10 @@ pub class MRtRow {
   pub cls: Int = 0
   pub alloc: Bool = false
   pub slot: Bool = false
+  // Takes a derived address only to compare it with the runtime's own
+  // addresses before it returns: never stored, never read through, and
+  // the call never collects (verify_module.av V10).
+  pub peek: Bool = false
   pub noreturn: Bool = false
   varargs: Bool = false
   pub attrs: String = ""
@@ -56,7 +60,7 @@ pub class MRtTable {
     mir_rt_attrs(self)
   }
 
-  // flags: "", or space-separated alloc slot noreturn varargs.
+  // flags: "", or space-separated alloc slot peek noreturn varargs.
   pub fn row(name: String, params: String, ret: String, cls: Int, flags: String) {
     r = MRtRow.new(name, params, ret, cls)
     words = flags.split(" ")
@@ -65,6 +69,8 @@ pub class MRtTable {
         r.alloc = true
       } else if w == "slot" {
         r.slot = true
+      } else if w == "peek" {
+        r.peek = true
       } else if w == "noreturn" {
         r.noreturn = true
       } else if w == "varargs" {
@@ -180,6 +186,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_hold", "ptr, u64, ref str, ref str", "void", n, "")
   t.row("avant_array_unhold", "ptr", "void", n, "")
   t.row("avant_array_frozen", "ref, i32", "void", n, "")
+  // A store through a struct method's receiver in a program with such
+  // calls that spawns (lower_agg.av recv_store_check): the receiver's
+  // address and the store's site.
+  t.row("avant_array_recv_store", "addr, ref str", "void", n, "peek")
   t.row("avant_str_size", "ref str", "i64", n, "")
   // The address of a string's bytes (a view's are its base's), used at
   // once; the emitter inlines it.
