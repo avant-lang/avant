@@ -4391,7 +4391,33 @@ fn main {
 }
 ```
 
-**A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. To keep a child's output in a file, write `process.output`'s `stdout` with `fs.write`, or let a shell redirect it (`process.run("sh", ["-c", "make > build.log 2>&1"])`).
+**A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. To keep a child's output in a file, write `process.output`'s `stdout` with `fs.write`, or let a shell redirect it (`process.run("sh", ["-c", "make > build.log 2>&1"])`). `process.signal_of(e.signal)` names the signal (`Signal.kill`).
+
+**Signals.** `process.Signal` names a signal by its Linux name without `SIG` (`Signal.term`, `Signal.int`, `Signal.hup`, `Signal.pipe`, `Signal.usr1`, …; `s.number()` is its number, `process.signal_of(n)` the `Signal?` of a number). `process.notify(signals)` delivers the signals it names to the program instead of their default action (ending it), from that call on: its `recv()` waits for the next, in a task, so a server stopped by a container's SIGTERM closes and drains:
+
+<!-- check: compile -->
+```avant
+import std.http
+import std.process
+
+fn main {
+  if server = http.listen(8080) {
+    server.get("/", (req) {
+      http.Response.text("up")
+    })
+    sigs = process.notify([process.Signal.term, process.Signal.int])
+    closer = server.closer()
+    _ = spawn {
+      _ = sigs.recv()
+      closer.close()                 // the connections finish, then serve returns
+    }
+    server.serve()
+    puts("drained")
+  }
+}
+```
+
+A `Signals` value crosses to any task. SIGKILL and SIGSTOP cannot be caught and the crash signals (`segv`, `bus`, `fpe`, `ill`, `abrt`, `trap`) are the runtime's: naming one traps. A task of `std.process` waits for the signals without counting as running in the pool; each `notify` has its own (at most 16 calls).
 
 ### Time and math
 
@@ -4728,6 +4754,7 @@ fn main {
           case answer: http.Response { _ = reply.send(http.Response.text("report: ${answer.body_text() ?? ""}")) }
           case e: http.HttpError { _ = reply.send(http.Response.text("upstream: ${e}", 502)) }
         }
+        0
       }
       http.Response.later()
     })
@@ -4754,7 +4781,6 @@ One blocking request at a time. Redirects are followed (at most five), chunked r
 import std.http
 
 fn main {
-        0
   if resp = http.get("http://127.0.0.1:8080/") {
     puts(resp.status)
     puts(resp.headers().get("Content-Type") ?? "")

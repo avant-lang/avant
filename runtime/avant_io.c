@@ -1435,6 +1435,102 @@ static void tmp_catch(int sig) {
   sigaction(sig, &sa, NULL);
 }
 
+/* std.process.notify: the signals a program asked to see (SIGTERM and
+ * SIGINT, so a server can close and drain, and the others it names). The
+ * handler writes the signal's number to a pipe, the one thing a handler
+ * may do with an Avant program's state (it cannot send on a Channel);
+ * std.process's reader task waits on the pipe natively
+ * (avant_sys_signal_wait), one pipe and one task for each notify call,
+ * and sends each on that call's channel. Such
+ * a signal no longer ends the program: its default action is replaced,
+ * the scratch directory's handler (tmp_catch) included, and the program
+ * decides (the directory is still removed at exit). The crash signals
+ * are not given here (avant_sys_signal_notify refuses them). */
+#define SIG_SLOTS 16
+typedef struct SigSlot {
+  int fd[2];
+  volatile uint32_t mask; /* bit n: signal n */
+} SigSlot;
+static SigSlot g_sig_slots[SIG_SLOTS];
+static volatile int g_sig_nslots;
+static pthread_mutex_t g_sig_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Each notify call's pipe that asked for sig gets its number. */
+static void sig_on_notify(int sig) {
+  int saved = errno;
+  unsigned char b = (unsigned char)sig;
+  int i;
+  int n = g_sig_nslots;
+  for (i = 0; i < n; i++) {
+    if (g_sig_slots[i].mask & (1u << sig)) {
+      ssize_t w = write(g_sig_slots[i].fd[1], &b, 1);
+      (void)w; /* a full pipe drops it: 65536 signals are waiting */
+    }
+  }
+  errno = saved;
+}
+
+/* A notify call's slot for the signals of mask (bit n: signal n): its
+ * pipe, then each signal's handler. -1 for a signal that is not a
+ * catchable one or is a crash signal the runtime keeps, -2 when the
+ * slots (16) or pipes are used up. */
+avant_int avant_sys_signal_notify(avant_int mask) {
+  static const int refused[] = {SIGKILL, SIGSTOP, SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP};
+  struct sigaction sa;
+  int slot;
+  int sig;
+  size_t k;
+  if (mask <= 1 || (uint64_t)mask >= (1ull << 32)) {
+    return -1;
+  }
+  for (k = 0; k < sizeof refused / sizeof refused[0]; k++) {
+    if (mask & (1ll << refused[k])) {
+      return -1;
+    }
+  }
+  pthread_mutex_lock(&g_sig_mu);
+  slot = g_sig_nslots;
+  if (slot >= SIG_SLOTS || pipe(g_sig_slots[slot].fd) != 0) {
+    pthread_mutex_unlock(&g_sig_mu);
+    return -2;
+  }
+  fcntl(g_sig_slots[slot].fd[0], F_SETFD, FD_CLOEXEC);
+  fcntl(g_sig_slots[slot].fd[1], F_SETFD, FD_CLOEXEC);
+  fcntl(g_sig_slots[slot].fd[1], F_SETFL, O_NONBLOCK);
+  g_sig_slots[slot].mask = (uint32_t)mask;
+  __atomic_store_n(&g_sig_nslots, slot + 1, __ATOMIC_RELEASE);
+  pthread_mutex_unlock(&g_sig_mu);
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = sig_on_notify;
+  sa.sa_flags = SA_RESTART;
+  sigfillset(&sa.sa_mask);
+  for (sig = 1; sig < 32; sig++) {
+    if (mask & (1ll << sig)) {
+      sigaction(sig, &sa, NULL);
+    }
+  }
+  return slot;
+}
+
+/* The next signal of the slot's, its number; waits natively (the
+ * collector runs without this thread, and the task stops counting as
+ * running in the pool). */
+avant_int avant_sys_signal_wait(avant_int slot) {
+  unsigned char b = 0;
+  ssize_t r;
+  if (slot < 0 || slot >= g_sig_nslots) {
+    return 0;
+  }
+  avant_task_wait_begin();
+  avant_gc_native_begin();
+  do {
+    r = read(g_sig_slots[slot].fd[0], &b, 1);
+  } while (r < 0 && errno == EINTR);
+  avant_gc_native_end();
+  avant_task_wait_end();
+  return r == 1 ? (avant_int)b : 0;
+}
+
 static int tmp_env_on(const char *name) {
   const char *v = getenv(name);
   return v && v[0] && !(v[0] == '0' && v[1] == 0);

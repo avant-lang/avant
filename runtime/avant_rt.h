@@ -719,6 +719,10 @@ __attribute__((visibility("hidden"))) void avant_tmp_on_crash(void);
 __attribute__((visibility("hidden"))) void (*avant_tmp_crash_handler(void))(int);
 __attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
 __attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
+/* A task's native wait outside a gate (std.process's signal reader):
+ * it stops counting as running in the pool meanwhile (avant_task.c). */
+__attribute__((visibility("hidden"))) void avant_task_wait_begin(void);
+__attribute__((visibility("hidden"))) void avant_task_wait_end(void);
 /* A recovery point around one call of an Avant function from C
  * (std.http's handlers): 0 when fn returned, 1 when it trapped. */
 int avant_task_recover_call(int32_t (*fn)(void *, void *), void *a, void *b);

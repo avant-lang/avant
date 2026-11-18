@@ -453,6 +453,18 @@ static void pool_resume(void) {
   pthread_mutex_unlock(&pool_mu);
 }
 
+/* A task about to wait natively outside a gate (std.process's signal
+ * reader blocked on its pipe): it stops counting as running, as in a
+ * channel's recv, so a queued task may start; the end waits for a run
+ * as a gate's wait does. No lock may be held across the pair. */
+void avant_task_wait_begin(void) {
+  pool_block();
+}
+
+void avant_task_wait_end(void) {
+  pool_resume();
+}
+
 /* The program's one chosen thread count: --avant-threads=N, which the
  * generated startup records, or std.sync's set_pool_size, else the CPUs
  * the process may use. The pool and the HTTP server's loop count both
