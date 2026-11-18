@@ -56,6 +56,22 @@ fn test_macros(c: Checks) {
       c.expect(false, "field walk accessors")
     }
 
+    // A walk over a generic type: f.type names the type's parameters, so
+    // the functions it writes are generic and each instance reads its own
+    // field types (Box(String), Box(Float64), Pair(Int, String)).
+    write_av(dir, "generic_walk", "struct Box(T) {\n  value: T\n  count: Int\n}\nclass Pair(A, B) {\n  left: A\n  right: B\n  fn initialize(self.left, self.right) {\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn #(f.name)(b: Box(T)): #(f.type) {\n        b.#(f.name)\n      }\n    }\n  }\n}\ncomptime {\n  for f in Pair.fields {\n    quote {\n      fn #(f.name)(p: Pair(A, B)): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  a = Box { value: \"text\", count: 2 }\n  b = Box { value: 1.5, count: 3 }\n  puts(value(a) + \"!\")\n  puts(count(a) + count(b))\n  puts(value(b) * 2.0)\n  p = Pair.new(7, \"seven\")\n  puts(left(p) + 1)\n  puts(right(p).size)\n}\n")
+    gen_bin = "${dir}/generic_walk.bin"
+    gen_log = "${dir}/generic_walk.log"
+    gen_out = "${dir}/generic_walk.out"
+    c.eq_int(compile_av(compiler, "${dir}/generic_walk.av", gen_bin, gen_log), 0, "field walk over a generic type compiles")
+    chmod_x(gen_bin)
+    run_av_bin(gen_bin, gen_out)
+    if got = fs.read(gen_out) {
+      c.eq_str(got, "text!\n5\n3.0\n8\n5\n", "field walk over a generic type: each instance's field types")
+    } else {
+      c.expect(false, "field walk over a generic type: each instance's field types")
+    }
+
     write_av(dir, "splice_out", "fn #(name): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n")
     splice_bin = "${dir}/splice.bin"
     splice_log = "${dir}/splice.log"

@@ -156,7 +156,11 @@ pub class Expander {
   }
 
   // A walk over `T.fields` written in another module than T's sees only
-  // T's `pub` fields: the code it writes could name no other.
+  // T's `pub` fields: the code it writes could name no other. A generic
+  // type's fields are walked as declared, `f.type` naming the type's
+  // parameters: the code the walk writes in the type's body (or in a
+  // generic function over the same parameters) is generic in turn, so
+  // each instance sees its own field types.
   pub fn find_fields(type_name: String, loc: Location, from_mod: String): Array(Field) {
     all = find_all_fields(type_name, loc)
     if self.fields_mod.size == 0 || from_mod.size == 0 || self.fields_mod == from_mod {
@@ -177,10 +181,6 @@ pub class Expander {
     self.fields_mod = ""
     for sdef in self.program.structs {
       if sdef.name == type_name {
-        if sdef.type_params.size > 0 {
-          fail(loc, "comptime cannot walk generic type ${type_name}")
-          return found
-        }
         found = sdef.fields
         self.fields_mod = sdef.mod_name
         hits += 1
@@ -188,10 +188,6 @@ pub class Expander {
     }
     for cls in self.program.classes {
       if cls.name == type_name {
-        if cls.type_params.size > 0 {
-          fail(loc, "comptime cannot walk generic type ${type_name}")
-          return found
-        }
         found = cls.fields
         self.fields_mod = cls.mod_name
         hits += 1

@@ -513,6 +513,12 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, dir, "pfwalk", "4\n", "comptime walk from another module sees the pub fields")
   write_av(dir, "pfwalk2", "import acct\ncomptime {\n  for f in Secret.fields {\n    quote {\n      fn #(f.name)(s: Secret): #(f.type) {\n        s.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(kept(secret(4)))\n}\n")
   mod_fails(c, compiler, dir, "pfwalk2", "unknown function kept", "comptime walk from another module skips private fields")
+  // Over a generic type the walk from another module sees the pub fields
+  // too, each instance with its own field types.
+  write_av(dir, "pfgwalk", "import gbox\ncomptime {\n  for f in Holder.fields {\n    quote {\n      fn #(f.name)(h: Holder(T)): #(f.type) {\n        h.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(tag(Holder.new(\"x\")) + tag(Holder.new(2.5)))\n}\n")
+  mod_runs(c, compiler, dir, "pfgwalk", "2\n", "comptime walk over a generic type from another module sees the pub fields")
+  write_av(dir, "pfgwalk2", "import gbox\ncomptime {\n  for f in Holder.fields {\n    quote {\n      fn #(f.name)(h: Holder(T)): #(f.type) {\n        h.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(item(Holder.new(\"x\")))\n}\n")
+  mod_fails(c, compiler, dir, "pfgwalk2", "unknown function item", "comptime walk over a generic type from another module skips private fields")
   write_av(dir, "pfquote", "struct P {\n  pub quote {\n  }\n}\nfn main {\n  puts(1)\n}\n")
   mod_fails(c, compiler, dir, "pfquote", "pub in a type body prefixes fn or a field", "pub before a quote")
 

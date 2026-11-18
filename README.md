@@ -4161,7 +4161,34 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 ### The field walk
 
-`comptime { for f in Type.fields { quote { ... } } }` runs its quote once per field, with `f.name` and `f.type` to splice. `Type` must be a concrete, non-generic name (`for f in Box.fields` on a generic type is an error). In another module than the type's, the walk sees only `pub` fields.
+`comptime { for f in Type.fields { quote { ... } } }` runs its quote once per field, with `f.name` and `f.type` to splice. In another module than the type's, the walk sees only `pub` fields.
+
+Over a generic type, `f.type` is the field's type as declared, naming the type's parameters: the functions the walk writes are generic, and each instance reads its own field types.
+
+```avant
+struct Box(T) {
+  value: T
+  count: Int
+}
+
+comptime {
+  for f in Box.fields {
+    quote {
+      fn #(f.name)(b: Box(T)): #(f.type) {
+        b.#(f.name)
+      }
+    }
+  }
+}
+
+fn main {
+  a = Box { value: "text", count: 2 }
+  b = Box { value: 1.5, count: 3 }
+  puts(value(a))                // => text
+  puts(value(b) * 2.0)          // => 3.0
+  puts(count(a) + count(b))     // => 5
+}
+```
 
 ## Builtins
 
