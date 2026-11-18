@@ -88,6 +88,13 @@
 #      with the base's floor beside it when WAVE_FLOOR_BASE names a base
 #      la/table.md, else the la/table.md beside BASE_STATS when there is one
 #      (its column headed by WAVE_FLOOR_BASE_LABEL, else by its path)
+#   6b. with WAVE_LA=1 and WAVE_BASE, when the floor's base table is of the
+#      base cache entry's tree: the head's instruction counts of the base
+#      cache's stitched programs (tools/la-count.sh, shared), and the tasks
+#      whose time moved beyond 3% and 0.02 s at counts within 0.1% named
+#      "layout?" (tools/layout-flag.py): a `layout:` line, la/layout.tsv and
+#      a "Layout?" section in floor.md (tools/layout-retime.sh is the
+#      experiment that tells)
 #   7. tmp-after.txt (red on an entry this run left in /tmp, tmp-new.txt;
 #      an entry another program removed meanwhile is listed in
 #      tmp-gone.txt, not red), and SUMMARY.txt: one line per step
@@ -519,6 +526,46 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
       frc=$?
       if [ $frc -eq 0 ]; then step "floor: $(grep -E '^[0-9]+ tasks' "$out/floor.md" | head -1) (floor.md)"; else step "floor: red (tools/floor.py rc=$frc; floor.err)"; fi
     else step "floor: red (no LR table)"; fi
+    # Layout?: a task whose time moved against the base's LR re-measure
+    # while its instruction count (the head's C' and the base cache's, on
+    # the same stitched programs) did not is named, here and in floor.md:
+    # worth one layout experiment (tools/layout-retime.sh) before the time
+    # is believed. Only when the base's table and the base cache are of one
+    # tree, so the times and the counts are of one base.
+    curname=layout
+    blr=${fbase:+$(dirname "$fbase")/lr-avant.tsv}
+    btree=""; [ -n "$fbase" ] && btree=$(sed -n '2p' "$(dirname "$(dirname "$fbase")")/head.txt" 2>/dev/null)
+    if [ $lrc -ne 0 ]; then :
+    elif [ -z "$entry" ]; then step "layout: skipped (WAVE_BASE unset: no base instruction counts)"
+    elif [ -z "$blr" ] || [ ! -f "$blr" ]; then step "layout: skipped (no base LR re-measure: lr-avant.tsv beside the floor's base table)"
+    elif [ "$btree" != "$(basename "$entry")" ]; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"): times and counts of two bases)"
+    else
+      # shellcheck disable=SC2016
+      lk shared "langarena counts" sh -c 'lap=$(BASE_CACHE=$(dirname "$1") sh tools/base-cache.sh --la "$(basename "$1")" 2> "$2/ins-head.log" < /dev/null) || exit 3
+        echo "$lap" > "$2/la-part.txt"
+        sh tools/la-count.sh . "$lap" "$2/ins-head.tsv" < /dev/null >> "$2/ins-head.log" 2>&1; exit 0' la-counts "$entry" "$la"
+      if [ -s "$la/ins-head.tsv" ] && [ -s "$la/la-part.txt" ]; then
+        ll=$(python3 -I tools/layout-flag.py "$la/lr-avant.tsv" "$blr" "$la/ins-head.tsv" "$(cat "$la/la-part.txt")/ins.tsv" "$la/layout.tsv" 2> "$la/layout.err")
+        if [ -n "$ll" ]; then
+          step "$ll (la/layout.tsv)"
+          if [ -f "$out/floor.md" ]; then
+            {
+              echo
+              echo "## Layout?"
+              echo
+              echo "Tasks whose time moved against the base's (\`$blr\`) while their instruction count did not (the head's C' and the base cache's, \`la/ins-head.tsv\` and the part's \`ins.tsv\`): where the code sits is the first suspect, one layout experiment each (\`tools/layout-retime.sh\`) before the time is believed."
+              echo
+              if [ "$(wc -l < "$la/layout.tsv")" -gt 1 ]; then
+                echo "| Task | Base s | Head s | Time | Instructions | On the floor |"
+                echo "| --- | ---: | ---: | ---: | ---: | --- |"
+                awk -F'\t' 'FILENAME == ARGV[1] { if ($0 ~ /^\| [A-Z]/) { split($0, c, " \\| "); sub(/^\| /, "", c[1]); fl[c[1]] = 1 }; next }
+                  FNR > 1 { printf "| %s | %.3f | %.3f | %s%% | %s%% | %s |\n", $1, $3, $4, $5, $6, ($1 in fl) ? "yes" : "no" }' "$out/floor.md" "$la/layout.tsv"
+              else echo "None: $ll."; fi
+            } >> "$out/floor.md"
+          fi
+        else step "layout: red (tools/layout-flag.py failed: la/layout.err)"; fi
+      else step "layout: red (no head instruction counts: la/ins-head.log)"; fi
+    fi
   fi
 else step "langarena: skipped (WAVE_LA unset)"; fi
 

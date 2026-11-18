@@ -49,7 +49,12 @@
 #   group-one-call, group-lines: with WAVE_GROUP=1 the shared steps are one
 #     runner call (`final: shared steps`), the harness build and the timing
 #     as before; every step's line is in SUMMARY.txt, and a `shared steps:`
-#     line with the call's wall and wait.
+#     line with the call's wall and wait;
+#   layout-marked, layout-two-bases: with a LangArena step that passes
+#     (stubs) and a base LR table of the base cache entry's tree, a task
+#     whose time moved 10% at an equal count reads "layout?" in its
+#     `layout:` line and in floor.md's "Layout?" section; with a base table
+#     of another tree the step says it is skipped and why.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -271,4 +276,54 @@ for l in 'head: ' 'lock: through WAVE_RUNNER .*in one runner call (WAVE_GROUP=1)
   has "^$l" "$s" || { ok=1; echo "missing: $l" >> "$w/group.missing"; }
 done
 say group-lines $ok "$(cat "$w/group.missing" 2>/dev/null | tr '\n' ';') / $(tr '\n' ';' < "$s" 2>/dev/null)"
+
+# 12. Layout?: a LangArena step that passes (stub harness, LR table and
+# counts), a base table of the base cache entry's tree beside it: the task
+# whose time moved at an equal count is named in SUMMARY.txt and floor.md.
+f=$(fake lay)
+cp "$root/tools/layout-flag.py" "$root/tools/floor.py" "$f/tools/"
+lc=$w/lay/cache; le=$lc/feedfacefeedfacefeedfacefeedfacefeedface; mkdir -p "$le/la-x" "$le/gcstats"
+printf 'a_same\t1000000\tx\t0\tc\nb_other\t1000000\tx\t0\tc\n' > "$le/la-x/ins.tsv"
+cat > "$f/tools/base-cache.sh" <<EOF
+#!/bin/sh
+[ "\$1" = --la ] && { echo "$le/la-x"; exit 0; }
+echo "$le"
+EOF
+printf '#!/bin/sh
+mkdir -p "$3"; echo "sources: files 1 ll-same 1" > "$3/summary.txt"; : > "$3/result.txt"
+' > "$f/tools/neutral.sh"
+printf '#!/bin/sh
+printf "a_same\\t1000000\\tx\\t0\\tc\\nb_other\\t1300000\\tx\\t0\\tc\\n" > "$3"
+' > "$f/tools/la-count.sh"
+printf '#!/bin/sh
+mkdir -p "$(dirname "$0")/../langarena/tmp"; h=$(cd "$(dirname "$0")/.." && pwd)/langarena/tmp/stub-measure
+printf "#!/bin/sh\\nexit 0\\n" > "$h"; chmod +x "$h"; echo "$h"
+' > "$f/tools/la-harness.sh"
+cat > "$f/tools/lr-table.sh" <<'EOF'
+#!/bin/sh
+if [ "$1" = avant ]; then printf 'task	status	wall_s
+A::Same	ok	1.100
+B::Other	ok	1.300
+' > "$4"; exit 0; fi
+[ -n "${3:-}" ] && printf 'name\twall_s\trss_mb\tchecksum_ok\nA::Same\t1.1\t1\ttrue\n' > "$3/runtime.tsv"
+printf '## Combined (worse of the two multipliers)
+
+| # | Task | Avant s | Best s | Best (time) | Time x | Avant MB | Best MB | Best (mem) | Mem x | vs Crystal t/m | vs Go t/m |
+| ---: | --- |
+| 1 | A::Same | 1.1 | 1.0 | C | 1.10 | 1 | 1 | C | 1.00 | 1.10 / 1.00 | 1.10 / 1.00 |
+'
+EOF
+mkdir -p "$w/layb/final/la"; printf 'task\tstatus\twall_s\nA::Same\tok\t1.000\nB::Other\tok\t1.000\n' > "$w/layb/final/la/lr-avant.tsv"
+cp "$w/layb/final/la/lr-avant.tsv" "$w/layb/final/la/x"; printf 'deadbeef\nfeedfacefeedfacefeedfacefeedfacefeedface\n' > "$w/layb/final/head.txt"
+(cd "$w" && sh "$f/tools/lr-table.sh" table > "$w/layb/final/la/table.md")
+(cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t && git branch -q base) > /dev/null 2>&1
+final "$f" "$w/lay.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
+s=$w/lay.out/SUMMARY.txt
+has '^layout: 1 of 2 tasks layout? (time beyond 3% and 0.02 s, instructions within 0.1%): A::Same +10.0% (instructions +0.000%); one layout experiment each before it is believed (tools/layout-retime.sh) (la/layout.tsv)$' "$s" \
+  && grep -q '^## Layout?$' "$w/lay.out/floor.md" && grep -q '^| A::Same | 1.000 | 1.100 | +10.0% | +0.000% | yes |$' "$w/lay.out/floor.md"
+say layout-marked $? "$(line layout: "$s"); $(line langarena: "$s"); $(grep -A 6 '^## Layout' "$w/lay.out/floor.md" 2>/dev/null | tr '\n' ';')"
+printf 'deadbeef\nanothertree\n' > "$w/layb/final/head.txt"
+final "$f" "$w/lay2.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
+has '^layout: skipped (the floor.s base table is of tree anothertree, the base cache.s entry of feedface' "$w/lay2.out/SUMMARY.txt"
+say layout-two-bases $? "$(line layout: "$w/lay2.out/SUMMARY.txt")"
 echo done
