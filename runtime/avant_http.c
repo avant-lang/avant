@@ -3031,6 +3031,7 @@ avant_int avant_http_port(void *srvp) {
 static void *loop_thread_main(void *arg) {
   HttpLoop *hl = (HttpLoop *)arg;
   avant_gc_register_thread();
+  avant_stack_role(AVANT_STACK_LOOP);
   /* The C callback trampoline batches its roots into the current
    * frame without entering (it forwards to the entering dispatch
    * function), so a loop thread needs a base frame for the whole

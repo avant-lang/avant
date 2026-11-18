@@ -81,6 +81,17 @@ build_core() {
     # shellcheck disable=SC2086
     "$cc" -c $cflags -o "$out/$name.o" "$root/$name.c"
   done
+  # The stack overflow's unit (avant_stack.c) joins the last object every
+  # program links, so its code and its main-thread signal stack (.bss)
+  # come after everything else: placed first, or among the core units, it
+  # moved the runtime's code and data after it, which measured slows a
+  # LangArena task by a few percent (the link table names no new object,
+  # so the seed links it too).
+  # shellcheck disable=SC2086
+  "$cc" -c $cflags -o "$out/avant_stack.unit.o" "$root/avant_stack.c"
+  mv "$out/avant_cov.o" "$out/avant_cov.unit.o"
+  ld -r -o "$out/avant_cov.o" "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
+  rm -f "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
 }
 
 build_core "$root/build"

@@ -124,6 +124,9 @@ static void register_thread(int implicit) {
   }
   gc_alloc_thread_init();
   gc_thread_registered(foreign);
+  /* The thread's signal stack, on which a stack overflow is told
+   * (avant_stack.c). */
+  avant_stack_thread_init(gc_thread.reg.stack_lo, gc_thread.reg.stack_hi, foreign);
   /* Every registered thread, a foreign one too, allocates young in its
    * own young blocks (once a foreign thread, the
    * pool's workers and the HTTP loop threads allocated in the mature

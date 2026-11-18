@@ -1855,7 +1855,9 @@ static void quarantine_install(void) {
   struct sigaction sa;
   memset(&sa, 0, sizeof sa);
   sa.sa_sigaction = quarantine_on_fault;
-  sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+  /* On the thread's signal stack (avant_stack.c) when it has one, so a
+   * stack overflow reaches the handler under the verifier too. */
+  sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
   sigemptyset(&sa.sa_mask);
   if (sigaction(SIGSEGV, &sa, &quarantine_old) == 0) {
     quarantine_installed = 1;

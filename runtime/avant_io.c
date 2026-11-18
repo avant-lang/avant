@@ -1388,6 +1388,16 @@ __attribute__((constructor)) static void avant_io_start(void) {
   atexit(out_check_at_exit);
 }
 
+/* The private directory's cleanup on a crash, from a fault handler that
+ * ends the process itself (avant_stack.c): the same work as tmp_on_signal
+ * before its re-raise. */
+void avant_tmp_on_crash(void) {
+  if (g_tmp_ready && getpid() == g_tmp_owner) {
+    tmp_stop_children();
+  }
+  tmp_finish();
+}
+
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
   if (g_tmp_ready && getpid() == g_tmp_owner) {
@@ -1469,7 +1479,8 @@ static void tmp_create(void) {
   /* A crash removes the directory too: the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no
-   * stack left (a stack overflow) cannot run the handler. */
+   * stack left (a stack overflow) runs the stack's own handler instead,
+   * which cleans up too (avant_stack.c, on the thread's signal stack). */
   tmp_catch(SIGSEGV);
   tmp_catch(SIGBUS);
   tmp_catch(SIGFPE);

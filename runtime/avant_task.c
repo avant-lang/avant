@@ -315,8 +315,17 @@ void avant_task_trapped(const char *what, const char *site) {
   longjmp(r->jb, 1);
 }
 
+/* A thread's first callback gives it a signal stack if it has none yet
+ * (a C thread whose callback never reaches the collector), so a stack
+ * overflow in the callback is told (avant_stack.c). */
+static __thread int g_cb_stack;
+
 void avant_task_cb_enter(void) {
   g_cb_depth++;
+  if (__builtin_expect(!g_cb_stack, 0)) {
+    g_cb_stack = 1;
+    avant_stack_ensure();
+  }
 }
 
 void avant_task_cb_leave(void) {
@@ -814,6 +823,7 @@ static void *worker_main(void *p) {
   (void)p;
   on_worker = 1;
   avant_gc_register_thread();
+  avant_stack_role(AVANT_STACK_WORKER);
   /* A worker allocates young in its own young blocks;
    * until then it allocated in the non-moving mature space, because
    * the young cursor was one per process and, before the safepoint handshake,

@@ -1099,3 +1099,26 @@ int64_t pt_sizeof_arrays(int which) {
 /* pointers.av: one allocator for every layout (p.as(T), Ptr(T) as void *). */
 void pt_free(void *p) { free(p); }
 int pt_is_null(const void *p) { return p == NULL; }
+
+/* tests/fixtures/ffi/stack_overflow_thread.av: a C thread Avant did not
+ * start calls an Avant callback that recurses too deep; the main thread
+ * waits natively for it (the process ends inside the thread). */
+typedef int64_t (*so_cb_t)(int64_t);
+static so_cb_t so_cb;
+static int64_t so_got;
+static void *so_run(void *arg) {
+  (void)arg;
+  so_got = so_cb(100000000);
+  return NULL;
+}
+int64_t so_call_on_thread(so_cb_t f) {
+  pthread_t t;
+  so_cb = f;
+  if (pthread_create(&t, NULL, so_run, NULL) != 0) {
+    return -1;
+  }
+  avant_gc_native_begin();
+  pthread_join(t, NULL);
+  avant_gc_native_end();
+  return so_got;
+}

@@ -2353,6 +2353,14 @@ The second row has no position so that hot loops stay fast.
 
 **A trap ends the whole process**, except in a spawned task ([When a task traps](#when-a-task-traps)) and in an `std.http` handler, where it fails only its request ([HTTP server](#http-server)). The exceptions keep their own limits (a trap inside a C callback, and the runtime's own stops, still end the process), so run servers under a supervisor too (systemd's `Restart=`, a container restart policy). A pre-forked server mode is decided, not built.
 
+**A stack overflow stops the program** like a trap: calls nested deeper than their thread's stack holds (a recursion without an end, a derived `clone()` of a very long list) print one line after what the program printed, naming the innermost function of the program and the thread, and exit with status 1:
+
+```text
+avant runtime: stack overflow in depth on the main thread: the calls nest too deep for its 8 MiB stack
+```
+
+A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), for the main thread and the runtime's own threads alike. The program's output comes first unless the overflow happened inside the C library itself (which may be writing that output). In a task (`... in a task: the calls nest too deep for a pool worker's 8 MiB stack`) and in an HTTP handler it ends the whole program too, not only the task or the request: a stack cannot be given back safely at any instruction. Each thread the runtime knows gets a small signal stack of its own when it starts, so this costs nothing per call; a C thread gets one at its first callback that allocates (or at its first callback in a program that spawns or serves HTTP), and before that its overflow is still a bare crash. Any other crash (a C function writing through a bad pointer) is unchanged.
+
 **A failed write to standard output stops the program** like a trap (`avant runtime: cannot write to standard output: No space left on device` on a full disk or `/dev/full`, status 1), checked at every `puts`. A closed pipe (`prog | head`) kills it by `SIGPIPE` (status 141 in a shell), reset to the default before `main` even if the parent ignored or blocked it (a CI runner, a shell's `trap '' PIPE`).
 
 ### Nil, error or trap
@@ -3053,7 +3061,7 @@ What the task shared is left safe:
 
 A trap in a `.parallel` body ends that body (it is printed when it happens, and what the body held is given back as above); the other bodies run to their end, and then the `.parallel` traps in its caller, naming how many bodies trapped and the first one's trap: `avant runtime: .parallel: 2 of 8 bodies trapped; the first: index 9 out of bounds …`. In a task that ends the task, whose join gives it; on the main thread it ends the program.
 
-These traps still end the program: inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), and the runtime's own stops (the heap limit, the collector's checks).
+These traps still end the program: inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), the runtime's own stops (the heap limit, the collector's checks), and a [stack overflow](#traps).
 
 ### Parallel
 
