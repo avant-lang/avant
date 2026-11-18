@@ -465,9 +465,11 @@ la_ref() {
   [ -n "$ref" ] || { ref_why="no LR reference: set WAVE_LR_REFERENCE, or write this machine's reference directory into $cfg"; return 1; }
   [ -d "$ref" ] || { ref_why="the LR reference $ref is not a directory"; return 1; }
   [ -f "$ref/machine.txt" ] || { ref_why="the LR reference $ref has no machine.txt: which machine measured it cannot be checked"; return 1; }
-  here_cpu=$(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -n 1)
+  here_cpu=$(sed -n 's/^model name[[:space:]]*: *//p' "${WAVE_CPUINFO:-/proc/cpuinfo}" | head -n 1)
   here_n=$(getconf _NPROCESSORS_ONLN)
-  ref_cpu=$(sed -n 's/^cpu: *//p' "$ref/machine.txt" | sed 's/ *(.*$//' | head -n 1)
+  # machine.txt may add a note in parentheses after the CPU's name; the
+  # name's own parentheses (Intel(R) Xeon(R) ...) stay.
+  ref_cpu=$(sed -n 's/^cpu: *//p' "$ref/machine.txt" | sed 's/ ([^()]*)$//' | head -n 1)
   ref_n=$(sed -n 's/^threads: *//p' "$ref/machine.txt" | head -n 1)
   if [ "$ref_cpu" != "$here_cpu" ] || [ "$ref_n" != "$here_n" ]; then
     ref_why="the LR reference $ref was measured on another machine ($ref_cpu, $ref_n threads; this one: $here_cpu, $here_n threads)"

@@ -15,6 +15,8 @@
 #     not red; tmp-new-red: an entry the run left is red and named;
 #   ref-other-machine: a reference whose machine.txt names another CPU is
 #     refused; ref-no-machine: one without machine.txt is refused;
+#   ref-cpu-parens: a CPU whose name has its own parentheses
+#     (Intel(R) Xeon(R) ...) matches its reference (a fake cpuinfo);
 #   ref-default: with WAVE_LR_REFERENCE unset, the directory named in
 #     WAVE_LR_DEFAULT is used (and checked); ref-none: no reference at all
 #     is red and says how to give one;
@@ -136,6 +138,14 @@ say ref-other-machine $? "$(line langarena: "$s")"
 final "$f" "$w/ref-nomachine.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" WAVE_LR_REFERENCE="$w/ref-none"
 s=$w/ref-nomachine.out/SUMMARY.txt
 has "^langarena: red (the LR reference $w/ref-none has no machine.txt" "$s"; say ref-no-machine $? "$(line langarena: "$s")"
+printf 'model name\t: Intel(R) Xeon(R) Fake 1000P-C\n' > "$w/cpuinfo-parens"
+mkdir -p "$w/ref-parens"
+printf 'date: 2026-01-01\ncpu: Intel(R) Xeon(R) Fake 1000P-C (a container)\nthreads: %s\n' "$n" > "$w/ref-parens/machine.txt"
+printf '# label: X\ntask\tstatus\twall_s\trss_kb\tinprog_s\texit\n' > "$w/ref-parens/x.tsv"
+final "$f" "$w/ref-parens.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" WAVE_LR_REFERENCE="$w/ref-parens" WAVE_CPUINFO="$w/cpuinfo-parens"
+s=$w/ref-parens.out/SUMMARY.txt
+! has 'LR reference' "$s" && has '^langarena:' "$s"
+say ref-cpu-parens $? "$(line langarena: "$s")"
 echo "$w/ref-here" > "$w/default"
 final "$f" "$w/ref-default.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" WAVE_LR_DEFAULT="$w/default"
 s=$w/ref-default.out/SUMMARY.txt
