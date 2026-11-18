@@ -5152,11 +5152,11 @@ The geometric-mean column is the mean over the 50 tasks of each task's time over
 | `Matmul::T4` | **2.132** | 2.924 | 3.015 | 4.757 | 7.838 |
 | `Matmul::T8` | **1.187** | 1.587 | 1.644 | 4.544 | 4.070 |
 | `Matmul::T16` | 0.930 | **0.830** | 1.065 | 3.608 | 2.139 |
-| `Base64::Encode` | **0.441** | 0.497 | 1.041 | 3.490 | 5.941 |
-| `Base64::Decode` | **0.504** | 0.573 | 0.977 | 3.351 | 3.958 |
+| `Base64::Encode` † | **0.441** | 0.497 | 1.041 | 3.490 | 5.941 |
+| `Base64::Decode` † | **0.504** | 0.573 | 0.977 | 3.351 | 3.958 |
 | `Json::Generate` | **0.569** | 1.554 | 0.670 | 2.979 | 3.592 |
-| `Json::ParseDom` | **0.240** | 0.292 | 4.273 | 1.710 | 5.128 |
-| `Json::ParseMapping` | **0.641** | 0.746 | 1.157 | 4.371 | 8.027 |
+| `Json::ParseDom` † | **0.240** | 0.292 | 4.273 | 1.710 | 5.128 |
+| `Json::ParseMapping` † | **0.641** | 0.746 | 1.157 | 4.371 | 8.027 |
 | `CSV::Parse` | **1.907** | 6.257 | 2.789 | 9.475 | 8.802 |
 | `Etc::Sieve` | 2.483 | **1.893** | 1.916 | 4.490 | 3.792 |
 | `Etc::TextRaytracer` | **2.341** | 3.250 | 2.538 | 3.525 | 4.135 |
@@ -5164,8 +5164,8 @@ The geometric-mean column is the mean over the 50 tasks of each task's time over
 | `Etc::CacheSimulation` | **1.051** | 2.243 | 2.077 | 4.198 | 5.057 |
 | `Etc::GameOfLife` | 3.000 | 3.577 | 3.606 | 6.274 | **2.488** |
 | `Etc::Words` | 2.476 | 4.621 | 2.481 | **2.300** | 2.949 |
-| `Etc::LogParser` | 1.205 | 1.345 | **0.864** | 2.942 | 79.266 |
-| `Template::Regex` | **2.142** | 3.200 | 8.642 | 4.342 | 21.198 |
+| `Etc::LogParser` † | 1.205 | 1.345 | **0.864** | 2.942 | 79.266 |
+| `Template::Regex` † | **2.142** | 3.200 | 8.642 | 4.342 | 21.198 |
 | `Template::Parse` | **1.645** | 2.479 | 2.802 | 6.547 | 2.551 |
 | `Sort::Quick` | 2.750 | 2.651 | **2.640** | 3.635 | 2.915 |
 | `Sort::Merge` | 2.966 | **2.394** | 3.303 | 5.566 | 3.589 |
@@ -5174,7 +5174,7 @@ The geometric-mean column is the mean over the 50 tasks of each task's time over
 | `Graph::DFS` | **1.896** | 2.133 | 2.531 | 3.782 | 3.300 |
 | `Graph::AStar` | **1.135** | 5.225 | 5.525 | 4.678 | 10.289 |
 | `Hash::SHA256` | **0.492** | 2.246 | 2.144 | 2.263 | 2.559 |
-| `Hash::CRC32` | **0.247** | 1.943 | 1.950 | 1.940 | 9.272 |
+| `Hash::CRC32` † | **0.247** | 1.943 | 1.950 | 1.940 | 9.272 |
 | `Calculator::Ast` | **1.181** | 2.739 | 1.639 | 1.333 | 2.132 |
 | `Calculator::Interpreter` | **0.561** | 2.830 | 2.167 | 2.102 | 1.799 |
 | `Maze::Generator` | **0.962** | 1.226 | 2.027 | 5.454 | 3.396 |
@@ -5184,16 +5184,18 @@ The geometric-mean column is the mean over the 50 tasks of each task's time over
 | `CLBG::Mandelbrot` | **2.171** | 2.188 | 2.304 | 2.251 | 2.178 |
 | `CLBG::Nbody` | 3.550 | 3.516 | **3.280** | 3.566 | 4.008 |
 | `CLBG::Spectralnorm` | **2.647** | 2.724 | 2.729 | 2.874 | 2.712 |
-| `Compress::BWTEncode` | 1.690 | 1.717 | **0.979** | 3.335 | 4.607 |
-| `Compress::BWTDecode` | **3.460** | 3.691 | 4.109 | 4.159 | 6.540 |
+| `Compress::BWTEncode` † | 1.690 | 1.717 | **0.979** | 3.335 | 4.607 |
+| `Compress::BWTDecode` † | **3.460** | 3.691 | 4.109 | 4.159 | 6.540 |
 | `Compress::HuffEncode` | 1.847 | 1.943 | **1.605** | 2.468 | 2.520 |
 | `Compress::HuffDecode` | 1.354 | **1.037** | 1.576 | 2.481 | 3.471 |
 | `Compress::ArithEncode` | 2.938 | 2.679 | **2.633** | 3.306 | 2.871 |
 | `Compress::ArithDecode` | 2.642 | **2.330** | 3.327 | 2.574 | 2.554 |
 | `Compress::LZWEncode` | **0.439** | 3.278 | 1.616 | 2.475 | 3.937 |
-| `Compress::LZWDecode` | **0.552** | 1.489 | 1.601 | 1.787 | 5.814 |
+| `Compress::LZWDecode` † | **0.552** | 1.489 | 1.601 | 1.787 | 5.814 |
 | `Distance::Jaro` | 2.089 | **2.020** | 2.090 | 2.837 | 2.047 |
 | `Distance::NGram` | 1.850 | 4.216 | **1.210** | 1.779 | 1.856 |
+
+† 10 of the 50 rows rely on a library or on the runtime's C, as an Avant program written for the task would: `Hash::CRC32` on [std.digest](#stddigest) (Chromium's carry-less-multiply CRC-32, vendored C), `Base64::Encode` and `Decode` on [std.base64](#stdbase64) (aklomp/base64, vendored C), `Json::ParseDom` and `ParseMapping` on [std.json](#stdjson) (yyjson), `Template::Regex` and `Etc::LogParser` on [std.regex](#stdregex) (PCRE2 and re2c), `Compress::BWTEncode` and `BWTDecode` on the runtime's C Burrows-Wheeler transform and inverse, `Compress::LZWDecode` on the runtime's C buffer copies.
 
 ### Where Avant loses
 
@@ -5276,10 +5278,10 @@ These notes are about [LangArena](#langarena).
 - **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 1 here, a superset of v3); the C column is Clang, the faster of the two C compilers (GCC: 143.231 s, 23.0 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations; LangArena's published numbers count only the timed iterations.
 - **Compiled-in task sizes.** Avant compiles the task configuration in as constants, the others read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
-- **Rows that are not comparable programs.** `Matmul` (four tasks): Avant sums with eight independent accumulators, which vectorizes; the references use one. `Hash::CRC32`: Avant calls a C runtime builtin with slice-by-4 tables; every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. These seven rows are 14.3 of the 47.6 seconds between Avant's total and C's.
-- **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it; the Burrows-Wheeler transform in `Compress::BWTEncode` and `BWTDecode` is runtime C too.
+- **Rows that are not comparable programs.** `Matmul` (four tasks): Avant sums with eight independent accumulators, which vectorizes; the references use one. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. These six rows are 12.6 of the 47.6 seconds between Avant's total and C's. In the 0.46.0 measurement above, `Hash::SHA256` and `Hash::CRC32` called runtime builtins that did the whole task in C: since then `Hash::SHA256` is written in Avant as its references write it (its "SHA-256" is their eight-chain hash, not FIPS SHA-256, so no library computes it), and `Hash::CRC32` calls std.digest, as an Avant program would.
+- **Rows on a library** (the † rows: the library's speed, through Avant's bindings): every release also measures a pure-Avant twin of each one that has one, the references' algorithm written in Avant (`Hash::CRC32`'s bitwise loop, `Base64::Encode` and `Decode` as Go's encoding/base64), and its record gives the totals twice, as written and in Avant alone.
 - **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)), telling the collector when not to run and when everything is dead; no reference has an equivalent. Unhinted, `Binarytrees::Obj` takes 2.882 s (Crystal, the table's fastest, 2.925 s) at 1.72× C's memory, and `Calculator::Ast` 1.541 s, 1.16× Crystal's time ([What allocation costs today](#what-allocation-costs-today)).
-- **Library-leaning rows** (the library's speed, through Avant's bindings): `Json::ParseDom` and `ParseMapping` (yyjson in Avant and C, simdjson in C++, serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust). `Sort::Self` is each language's library sort, by the task's definition. In `CSV::Parse` Rust and C++ use CSV libraries; in `Json::Generate` C and C++ use JSON libraries, Avant its own buffer.
+- **What the references call**: `Json::ParseDom` and `ParseMapping` (yyjson in Avant and C, simdjson in C++, serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust). `Sort::Self` is each language's library sort, by the task's definition. In `CSV::Parse` Rust and C++ use CSV libraries; in `Json::Generate` C and C++ use JSON libraries, Avant its own buffer.
 - **Scope.** All 50 tasks; `Etc::TextRaytracer` times its whole render.
 - **Equivalent programs is the rule**: Avant's tasks follow the C and Rust references' algorithms and data widths; a row that does not is named above until rewritten.
 
