@@ -12,7 +12,8 @@
 #   retime-follows: tools/layout-retime.sh in a fake checkout whose stub
 #     C' makes the shifted binary (`--cc`) slower: the runs alternate and
 #     the verdict is that the time follows the layout;
-#   retime-overlap: with both binaries alike, "not separated";
+#   retime-overlap: with both binaries alike (each run 0.05 s or 0.25 s
+#     in turn, so their ranges overlap whatever the noise), "not separated";
 #   retime-args: the stub saw the harness's compile arguments and the
 #     shift's C file, and nothing is left in TMPDIR.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
@@ -42,13 +43,21 @@ cp "$root/tools/layout-retime.sh" "$f/tools/"; cp "$root/tools/layout/plt.c" "$f
 cat > "$f/bin/avant-c-llvm" <<'STUB'
 #!/bin/sh
 # compile SRC OUT ARGS...: a program that sleeps, longer with --cc when
-# STUB_SLOW_SHIFT=1; the arguments are logged.
+# STUB_SLOW_SHIFT=1; the arguments are logged. With STUB_SPREAD=1 each
+# binary's runs sleep 0.05 s and 0.25 s in turn (its own counter), so the
+# two ranges overlap by construction: a noisy machine cannot separate
+# two alike binaries by chance.
 [ "$1" = compile ] || exit 2
 src=$2 out=$3; shift 3
 echo "$*" >> "$STUB_ARGS"
 d=0.05
 case " $* " in *" --cc "*) [ "${STUB_SLOW_SHIFT:-0}" = 1 ] && d=0.4 ;; esac
-printf '#!/bin/sh\nsleep %s\necho checksum-1\n' "$d" > "$out"; chmod +x "$out"
+if [ "${STUB_SPREAD:-0}" = 1 ]; then
+  printf '#!/bin/sh\nn=$(cat "%s.n" 2>/dev/null || echo 0); echo $((n + 1)) > "%s.n"\nif [ $((n %% 2)) = 1 ]; then sleep 0.25; else sleep 0.05; fi\necho checksum-1\n' "$out" "$out" > "$out"
+else
+  printf '#!/bin/sh\nsleep %s\necho checksum-1\n' "$d" > "$out"
+fi
+chmod +x "$out"
 STUB
 chmod +x "$f/bin/avant-c-llvm"
 la=$w/part; mkdir -p "$la/avant/langarena/tmp" "$la/args"
@@ -58,7 +67,7 @@ mkdir -p "$w/tmp"
 [ $rc -eq 0 ] && [ "$(grep -c '^a_task plain wall=' "$w/retime1.out")" = 3 ] && [ "$(grep -c '^a_task shifted wall=' "$w/retime1.out")" = 3 ] \
   && grep -q '^verdict: the time follows the layout (median +[0-9.]*% with the code shifted)$' "$w/retime1.out"
 say retime-follows $? "rc=$rc $(tr '\n' ';' < "$w/retime1.out")"
-(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" STUB_SPREAD=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -q '^verdict: not separated' "$w/retime2.out"
 say retime-overlap $? "rc=$rc $(tr '\n' ';' < "$w/retime2.out")"
 grep -qx -- '--release --cpu=v3' "$w/args1.log" && grep -qx -- "--release --cpu=v3 --cc $f/tools/layout/plt.c" "$w/args1.log" && [ -z "$(ls "$w/tmp")" ]
