@@ -388,19 +388,21 @@ fn test_json_value_written(c: Checks) {
   c.eq_str(out.to_s(), "{\"one\":\"x\",\"list\":[\"x\",{\"k\":\"v\"}]}", "set and add take a JsonValue")
   hand = JsonValue.new()
   hand.kind = JsonKind.obj
-  hand.keys.push("gone")
+  hand.members["z"] = item
+  hand.members["a"] = JsonValue.new()
   h = JsonBuilder.new()
   h.value(hand)
-  c.eq_str(h.to_s(), "{\"gone\":null}", "a name in keys without a member is null")
+  c.eq_str(h.to_s(), "{\"z\":\"x\",\"a\":null}", "a hand-built object written in the order of its members")
 }
 
-// JsonValue's object members: a Hash by name, their names in the
-// document's order; a repeated name keeps its first value.
+// JsonValue's object members: a Hash by name, in the document's order;
+// a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
   if doc = Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2]}, \"b\": 2, \"z\": \"s\"}") {
     v = doc.to_value()
-    c.eq_int(v.keys.size, 3, "members: one name each")
-    c.eq_str("${v.keys[0]}${v.keys[1]}${v.keys[2]}", "baz", "members: the document's order")
+    names = v.members.keys()
+    c.eq_int(names.size, 3, "members: one name each")
+    c.eq_str("${names[0]}${names[1]}${names[2]}", "baz", "members: the document's order")
     c.eq_int(v.members.size, 3, "members: a Hash by name")
     if b = v.get("b") {
       c.eq_int(b.int_val, 1, "members: a repeated name keeps its first value")
@@ -440,7 +442,7 @@ fn test_json_members(c: Checks) {
       i += 1
     }
     c.eq_int(sum, 4498500, "members: 3000 names found by the Hash")
-    c.eq_str(v.keys[2999], "k2999", "members: the last name last")
+    c.eq_str(v.members.keys()[2999], "k2999", "members: the last name last")
   } else {
     c.expect(false, "members: parse the large object")
   }

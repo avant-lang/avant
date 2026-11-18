@@ -59,9 +59,9 @@ fn json_error(code: Int): JsonError {
 }
 
 // A JSON value copied out of its document (Json.to_value). An object's
-// members are in members, by name, and their names in keys in the
-// document's order; a name that repeats keeps its first value, as get on
-// the document does.
+// members are in members, a Hash by name, in the document's order (a
+// Hash keeps the order of insertion); a name that repeats keeps its
+// first value and its first place, as get on the document does.
 pub class JsonValue {
   pub kind: JsonKind = JsonKind.null
   pub int_val: Int = 0
@@ -69,7 +69,6 @@ pub class JsonValue {
   pub str_val: String = ""
   pub bool_val: Bool = false
   pub arr: Array(JsonValue) = []
-  pub keys: Array(String) = []
   pub members: Hash(String, JsonValue) = Hash(String, JsonValue).new()
 
   pub fn get(key: String): JsonValue? {
@@ -293,7 +292,6 @@ pub struct Json {
       i = 0
       while i < self.len() {
         if key = key_at(i), child = get(key), !v.members.has(key) {
-          v.keys.push(key)
           v.members[key] = child.to_value()
         }
         i += 1
@@ -487,9 +485,7 @@ pub class JsonBuilder {
   }
 
   // A JsonValue tree (Json.to_value's, or one built by hand) written
-  // back: an object's members in the order of its keys, each name's
-  // value from members (a name in keys without a member is written as
-  // null).
+  // back: an object's members in their order.
   pub fn value(v: JsonValue): JsonBuilder {
     switch v.kind {
       case null { self.null() }
@@ -506,13 +502,9 @@ pub class JsonBuilder {
       }
       case obj {
         self.obj()
-        for k in v.keys {
+        for k, m in v.members {
           key(k)
-          if m = v.members[k] {
-            value(m)
-          } else {
-            self.null()
-          }
+          value(m)
         }
         self.end()
       }

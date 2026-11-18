@@ -4239,7 +4239,7 @@ fn main {
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
 | `text` | — | `String`: the value written back as JSON text | — | |
-| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document, and a `JsonBuilder` writes it back (`b.value(v)`); an object's members are in `members`, a `Hash` by name (a repeated name keeps its first value), and their names in `keys`, in the document's order |
+| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document, and a `JsonBuilder` writes it back (`b.value(v)`); an object's members are in `members`, a `Hash` by name in the document's order (a repeated name keeps its first value) |
 
 **Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 
@@ -4253,7 +4253,7 @@ fn main {
 | `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in the order of its `keys`). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 
