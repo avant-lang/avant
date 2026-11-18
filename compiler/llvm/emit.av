@@ -468,6 +468,27 @@ fn ll_const_locals(e: LlEmit, f: MFunc) {
   }
 }
 
+// What a parameter's attributes tell LLVM: a Buf the source type says is
+// never nil, in a function with no frame record, is `nonnull align 8
+// dereferenceable(N)` (N its header's size). Such a
+// function reaches no collection with a reference live (one that did
+// would keep it in its frame), so the object stays at its address for
+// the whole call, and LLVM may load its fields where it likes: a loop
+// that stores by index into a Buf then loads the buffer once
+// before the loop instead of again after each check. Only a Buf: on an
+// Array the same facts let LLVM reshape Sort::Merge's merge for 8% more
+// time, as measured.
+fn ll_param_facts(e: LlEmit, f: MFunc, i: Int, ty: Int): String {
+  if e.frame_words >= 0 || i >= f.nonnull.size || !f.nonnull[i] || e.ts.kind(ty) != mk_ref() {
+    return ""
+  }
+  l = e.ts.get(ty).layout
+  if l < 0 || e.ts.layouts[l].kind != mlk_buf() || e.ts.layouts[l].size <= 0 {
+    return ""
+  }
+  " nonnull align 8 dereferenceable(${e.ts.layouts[l].size})"
+}
+
 fn ll_function(e: LlEmit, f: MFunc) {
   e.f = f
   e.v.func = f
@@ -491,6 +512,9 @@ fn ll_function(e: LlEmit, f: MFunc) {
   if c_abi {
     rtext = ll_c_type(e.ts, s.ret)
   }
+  // The frame record's layout first: a function without one reaches no
+  // collection while it runs (ll_param_facts).
+  ll_gc_frame_layout(e, f)
   e.out.push_str("define ${linkage}${rtext} ${ll_sym(f.symbol)}(")
   for i in 0..s.params.size {
     if i > 0 {
@@ -499,6 +523,8 @@ fn ll_function(e: LlEmit, f: MFunc) {
     ptext = e.llt(s.params[i])
     if c_abi {
       ptext = ll_c_param(e.ts, s.params[i])
+    } else {
+      ptext = ptext + ll_param_facts(e, f, i + 1, s.params[i])
     }
     e.out.push_str("${ptext} %a${i + 1}")
   }
@@ -519,7 +545,6 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   e.label = "alloca"
   // The frame record first: a slot local's address is in it.
-  ll_gc_frame_layout(e, f)
   if e.frame_words >= 0 {
     e.line("%gcf = alloca ${ll_gc_frame_type(e)}, align ${e.frame_align}")
   }

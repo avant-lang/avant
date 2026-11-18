@@ -648,6 +648,15 @@ pub class MirLower {
       }
       mf = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
       mf.in_lib = mir_lib_source(fnn.mod_name, fnn.loc.path)
+      if !self.lw_main {
+        mf.nonnull.push(false)
+        if recv >= 0 {
+          mf.nonnull.push(true)
+        }
+        for pt in fs.params {
+          mf.nonnull.push(!pt.is_nil() && !pt.includes_nil())
+        }
+      }
       // A class's initialize: its receiver is the object its constructor
       // just allocated (MFunc.fresh_self, fresh.av).
       if fnn.name == "initialize" && !fnn.type_method && recv >= 0 && !self.lw_m.types.is_addr(recv) {
