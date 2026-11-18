@@ -59,6 +59,20 @@ fn client_round(port: Int, out: Channel(String)): Int {
   } else {
     out.send("meta=ERR")
   }
+  // A Content-Type set by header replaces the one Response.text wrote
+  // (it was a second Content-Type line); an empty one sends none.
+  if resp = Http.get("${base}/json") {
+    types = resp.headers.get_all("Content-Type")
+    out.send("json=${types.size}:${types.get(0) ?? ""}")
+  } else {
+    out.send("json=ERR")
+  }
+  if resp = Http.get("${base}/untyped") {
+    n = resp.headers.get_all("Content-Type").size
+    out.send("untyped=${resp.status}:${n}")
+  } else {
+    out.send("untyped=ERR")
+  }
   if resp = Http.get("${base}/__stop") {
   }
   0
@@ -190,6 +204,12 @@ fn test_std_http(c: Checks) {
     server.get("/meta", (req) {
       Response.text("created", 201).header("X-Made", "yes")
     })
+    server.get("/json", (req) {
+      Response.text("{}").header("X-A", "1").header("content-type", "text/html").header("Content-Type", "application/json")
+    })
+    server.get("/untyped", (req) {
+      Response.bytes("".bytes, 204).header("Content-Type", "")
+    })
     port = server.port()
     c.expect(port > 0, "ephemeral port bound")
 
@@ -220,6 +240,8 @@ fn test_std_http(c: Checks) {
     want.push("redir=200:landed")
     want.push("redir-off=302:/new")
     want.push("meta=201:yes")
+    want.push("json=1:application/json")
+    want.push("untyped=204:0")
     i = 0
     while i < want.size {
       if line = out.recv() {

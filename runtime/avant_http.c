@@ -760,8 +760,11 @@ static void conn_finish(Conn *conn, struct us_socket_t *s) {
  * snprintf calls per request otherwise, which profiling put at about
  * a seventh of the loop thread's user time. */
 /* BODY is BODY_LEN bytes: the program's Bytes (its header's length) or
- * a C text of the runtime's own (a reason phrase, its strlen). */
+ * a C text of the runtime's own (a reason phrase, its strlen). CTYPE is
+ * the response's one Content-Type value (NULL or empty: none), written
+ * before HEAD's lines. */
 static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
+                           const char *ctype, size_t ctype_len,
                            const char *head, const char *body, size_t body_len,
                            const char *conn_header) {
   size_t head_len = head ? strlen(head) : 0;
@@ -773,7 +776,16 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
   prefix[n++] = ' ';
   n += put_str(prefix + n, reason, strlen(reason));
   n += put_str(prefix + n, "\r\n", 2);
-  if (head_len > 0) {
+  if (ctype_len > 0) {
+    if (n + ctype_len + head_len + 80 >= sizeof(prefix)) {
+      n = sizeof(prefix);
+    } else {
+      n += put_str(prefix + n, "Content-Type: ", 14);
+      n += put_str(prefix + n, ctype, ctype_len);
+      n += put_str(prefix + n, "\r\n", 2);
+    }
+  }
+  if (head_len > 0 && n < sizeof(prefix)) {
     if (n + head_len + 64 >= sizeof(prefix)) {
       /* Oversized head block: fall back to separate writes below. */
       n = sizeof(prefix);
@@ -801,6 +813,11 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
     char line[256];
     int m = snprintf(line, sizeof(line), "HTTP/1.1 %d %s\r\n", (int)status,
                      reason_phrase(status));
+    if (ctype_len > 0) {
+      conn_send(conn, s, line, (size_t)m, "Content-Type: ", 14);
+      conn_send(conn, s, ctype, ctype_len, "\r\n", 2);
+      m = 0;
+    }
     conn_send(conn, s, line, (size_t)m, head, head_len);
     if (conn_header) {
       m = snprintf(line, sizeof(line),
@@ -818,7 +835,7 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
 static void send_error(Conn *conn, struct us_socket_t *s, int32_t status) {
   const char *phrase = reason_phrase(status);
   conn_wait_end(conn, s);
-  write_response(conn, s, status, "Content-Type: text/plain\r\n", phrase,
+  write_response(conn, s, status, NULL, 0, "Content-Type: text/plain\r\n", phrase,
                  strlen(phrase), "close");
   conn_finish(conn, s);
 }
@@ -898,8 +915,8 @@ __attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
   avant_trap_text(msg);
 }
 
-void avant_http_req_respond(void *reqp, avant_int status, const char *head,
-                            const char *body) {
+void avant_http_req_respond(void *reqp, avant_int status, const char *ctype,
+                            const char *head, const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
   if (__builtin_expect(status < 200 || status > 599, 0)) {
@@ -916,8 +933,8 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
-  write_response(req->conn, req->sock, (int32_t)status, head, body,
-                 avant_str_n(body), conn_header);
+  write_response(req->conn, req->sock, (int32_t)status, ctype,
+                 avant_str_n(ctype), head, body, avant_str_n(body), conn_header);
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -2362,7 +2379,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       return;
     }
     if (trapped && !req.responded) {
-      write_response(conn, s, 500, "Content-Type: text/plain\r\n",
+      write_response(conn, s, 500, NULL, 0, "Content-Type: text/plain\r\n",
                      "Internal Server Error", strlen("Internal Server Error"),
                      !keep_alive ? "close"
                                  : minor_version == 0 ? "keep-alive" : NULL);

@@ -9,7 +9,7 @@ lib httpc {
   fun avant_http_req_target(req: Ptr(Void)): String
   fun avant_http_req_body(req: Ptr(Void)): Bytes
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
-  fun avant_http_req_respond(req: Ptr(Void), status: Int, head: String, body: Bytes)
+  fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
@@ -145,40 +145,43 @@ pub struct Request {
 // a response built in code); headers set with `header` are kept
 // separately until the response is written. Content-Length and
 // Connection are managed by the server and the client; setting them
-// with `header` has no effect. The header lines set are kept in `head`,
-// which is private: a response is built by `text` or `bytes` and
-// `header`, so every line went through `header`'s check, and a
-// `Response { ... }` literal outside this module does not
+// with `header` has no effect. A response has one Content-Type, `ctype`
+// (text/plain or application/octet-stream from `text` and `bytes`):
+// `header` replaces it, and an empty value sends none. The other header
+// lines set are kept in `head`. Both are private: a response is built by
+// `text` or `bytes` and `header`, so every line went through `header`'s
+// check, and a `Response { ... }` literal outside this module does not
 // compile. A handler's status outside 200-599 traps when the answer
 // is written: a 1xx is an interim answer, never a handler's.
 pub struct Response {
   pub status: Int
   pub headers: Headers
+  ctype: String
   head: String
   pub body: Bytes
 
   pub fn self.text(body: String, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), head: "Content-Type: text/plain; charset=utf-8\r\n", body: body.bytes }
+    Response { status: status, headers: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes }
   }
 
   pub fn self.bytes(body: Bytes, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), head: "Content-Type: application/octet-stream\r\n", body: body }
+    Response { status: status, headers: empty_headers(), ctype: "application/octet-stream", head: "", body: body }
   }
 
   // A name that is not a token, or a value with a control character
   // other than tab (CR and LF among them), traps: appended as it
   // came, such a value added header lines or a second answer to the
-  // response (response splitting).
+  // response (response splitting). A Content-Type replaces the one the
+  // response has (appended, it made a second Content-Type line).
   pub fn header(name: String, value: String): Response {
     httpc.avant_http_header_check(name, value)
     if is_managed_header(name) {
       return self
     }
-    Response { status: self.status, headers: self.headers, head: "${self.head}${name}: ${value}\r\n", body: self.body }
-  }
-
-  fn head_block: String {
-    self.head
+    if name.eq_ignore_ascii_case("content-type") {
+      return Response { status: self.status, headers: self.headers, ctype: value, head: self.head, body: self.body }
+    }
+    Response { status: self.status, headers: self.headers, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body }
   }
 }
 
@@ -466,7 +469,7 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // respond entry is no safepoint, so no thread collects while it writes
   // (until the handshake a defer region here and a second one in the
   // entry kept other loop threads' collections off).
-  httpc.avant_http_req_respond(raw, resp.status, resp.head_block(), resp.body)
+  httpc.avant_http_req_respond(raw, resp.status, resp.ctype, resp.head, resp.body)
 }
 
 // The C loop calls this named function once per WebSocket message and
@@ -1056,6 +1059,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     return Response {
       status: status,
       headers: Headers { data: resp_headers },
+      ctype: "",
       head: "",
       body: resp_body
     }
