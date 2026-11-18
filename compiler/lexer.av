@@ -294,8 +294,31 @@ pub class Lexer {
     t
   }
 
+  // A string opened inside more interpolations than interp_limit: one
+  // error at it, the rest of its line skipped, so each lexer level above
+  // it returns at once (the lexer recurses once a level; without a bound,
+  // some thousands of levels overflowed its stack).
+  pub fn interp_too_deep(loc: Location): Token {
+    self.skip_to_line_end()
+    fail_tok(loc, "this program nests string interpolations deeper than ${interp_limit()} levels: give an inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
+  }
+
   pub fn queue_push(t: Token) {
     self.queue.push(t)
+  }
+
+  // The queued tokens from index from on, moved to the end of tokens in
+  // order (an inner interpolated string's, read inside an outer
+  // interpolation, belong there and not after the outer string).
+  pub fn take_queued(tokens: Array(Token), from: Int) {
+    i = from
+    while i < self.queue.size {
+      tokens.push(self.queue[i])
+      i += 1
+    }
+    while self.queue.size > from {
+      _ = self.queue.pop()
+    }
   }
 
   pub fn read_ident: String {
@@ -797,7 +820,16 @@ pub class Lexer {
         self.skip_line_comment()
         continue
       }
+      qn = self.queue.size
       tok = self.read_token()
+      if self.queue.size > qn {
+        // A string that interpolates inside this interpolation: its
+        // opening token, then the rest of its tokens, which
+        // read_string_token queued, in order.
+        tokens.push(tok)
+        self.take_queued(tokens, qn)
+        continue
+      }
       if tok.kind == tk_l_brace() {
         depth += 1
         tokens.push(tok)
@@ -864,10 +896,8 @@ pub class Lexer {
       return Token.new(tk_string(), loc, intern_str(self.str_frag))
     }
     if self.str_kind == 1 {
-      if self.interp_depth > 0 {
-        self.skip_to_line_end()
-        fail_tok(loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
-        return Token.new(tk_eof(), loc, "")
+      if self.interp_depth >= interp_limit() {
+        return self.interp_too_deep(loc)
       }
       first_frag = self.str_frag
       self.interp_depth += 1
@@ -1292,10 +1322,8 @@ pub class Lexer {
       return Token.new(tk_string(), loc, raw)
     }
     if self.str_kind == 1 {
-      if self.interp_depth > 0 {
-        self.skip_to_line_end()
-        fail_tok(loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
-        return Token.new(tk_eof(), loc, "")
+      if self.interp_depth >= interp_limit() {
+        return self.interp_too_deep(loc)
       }
       raw_open = str_slice(self.source.text, open_pos, self.pos)
       self.interp_depth += 1
@@ -1337,9 +1365,15 @@ pub class Lexer {
         tokens.push(tok)
         continue
       }
+      qn = self.queue.size
       tok = self.read_token()
       if self.has_err() {
         return tokens
+      }
+      if self.queue.size > qn {
+        tokens.push(tok)
+        self.take_queued(tokens, qn)
+        continue
       }
       if tok.kind == tk_l_brace() {
         depth += 1
@@ -1433,4 +1467,11 @@ pub class Lexer {
     tokens.push(Token.new(tk_eof(), self.here(), ""))
     tokens
   }
+}
+
+// How deep a string may interpolate inside interpolations: the parser's
+// bound on nesting (parser.av nest_limit), which a deeper program meets
+// there anyway.
+pub fn interp_limit: Int {
+  1000
 }

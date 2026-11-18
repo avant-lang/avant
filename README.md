@@ -1282,7 +1282,7 @@ fn main {
 
 ### String literals
 
-- `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
+- `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`. The expression may hold a string that interpolates in turn: `"total: ${"${n} items"}"`.
 - Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits; may make a string that is not UTF-8) and `\u{N}` (a code point, one to six hex digits, stored as UTF-8: `"caf\u{e9}"`). Any other escape is a compile error (no `\e`: write `\x1b`).
 - A raw string `r"..."` has no escapes and no interpolation: `r"C:\tmp"`.
 - A literal is one line: no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.
