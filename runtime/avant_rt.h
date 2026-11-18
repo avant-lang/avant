@@ -702,10 +702,12 @@ int32_t avant_gate_poisoned(void *obj, uint64_t off);
 /* The recovery point's two entries for avant_rt_traps.c (hidden). */
 __attribute__((visibility("hidden"))) int avant_task_can_recover(void);
 
-/* A stack overflow's message (avant_stack.c): each registered thread's
- * stack bounds and signal stack, set at its registration (or at a C
- * thread's first callback), and what it runs, for the message; the private directory's cleanup on a crash
- * (avant_io.c), which the fault handler runs. */
+/* A stack overflow's message and a crash's (avant_stack.c): each
+ * registered thread's stack bounds and signal stack, set at its
+ * registration (or at a C thread's first callback), and what it runs, for
+ * the message; the private directory's cleanup on a crash (avant_io.c),
+ * which the fault handler runs, and its signal handler, which the fault
+ * handler tells from a C library's. */
 #define AVANT_STACK_RUNTIME 0
 #define AVANT_STACK_FOREIGN 1
 #define AVANT_STACK_WORKER 2
@@ -714,6 +716,7 @@ __attribute__((visibility("hidden"))) void avant_stack_thread_init(void *lo, voi
 __attribute__((visibility("hidden"))) void avant_stack_role(int role);
 __attribute__((visibility("hidden"))) void avant_stack_ensure(void);
 __attribute__((visibility("hidden"))) void avant_tmp_on_crash(void);
+__attribute__((visibility("hidden"))) void (*avant_tmp_crash_handler(void))(int);
 __attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
 __attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
 /* A recovery point around one call of an Avant function from C

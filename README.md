@@ -2739,7 +2739,15 @@ avant runtime: the port is not a number at main.av:2:26
 avant runtime: stack overflow in depth on the main thread: the calls nest too deep for its 8 MiB stack
 ```
 
-A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), for the main thread and the runtime's own threads alike. The program's output comes first; when the overflow happened inside the C library itself (which may be in the middle of writing that output), what earlier writes left in the buffer comes first, whole (on glibc). In a task (`... in a task: the calls nest too deep for a pool worker's 8 MiB stack`) and in an HTTP handler it ends the whole program too, not only the task or the request: a stack cannot be given back safely at any instruction. Each thread the runtime knows gets a small signal stack of its own when it starts, so this costs nothing per call; a C thread gets one at its first callback (a thread-local test at every callback). Any other crash (a C function writing through a bad pointer) is unchanged.
+A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), for the main thread and the runtime's own threads alike. The program's output comes first; when the overflow happened inside the C library itself (which may be in the middle of writing that output), what earlier writes left in the buffer comes first, whole (on glibc). In a task (`... in a task: the calls nest too deep for a pool worker's 8 MiB stack`) and in an HTTP handler it ends the whole program too, not only the task or the request: a stack cannot be given back safely at any instruction. Each thread the runtime knows gets a small signal stack of its own when it starts, so this costs nothing per call; a C thread gets one at its first callback (a thread-local test at every callback). When the program has its private temporary directory (`std.testing`'s `temp_dir`, the compiler's own), the directory is removed, after the child process a `process.run` waits on is stopped.
+
+**A fault in C code is named too**, after what the program printed: a C function (yours, a library's, the C library's) that reads or writes through a null or bad pointer prints one line naming the program's function that called into C and the thread, and the process then dies by the signal as before (status 139 for `SIGSEGV`, 135 for `SIGBUS` in a shell; a core dump where the system keeps one), its private temporary directory removed as above:
+
+```text
+avant runtime: segmentation fault in main on the main thread: address 0x0 is not mapped (a null pointer, most likely in C code)
+```
+
+A bus error (`SIGBUS`: a mapped file cut short) reads `avant runtime: bus error in ...`. A `SIGSEGV` sent with `kill` has no message, and a C library that installed its own handler first keeps it.
 
 **A failed write to standard output stops the program** like a trap (`avant runtime: cannot write to standard output: No space left on device` on a full disk or `/dev/full`, status 1), checked at every `puts`. A closed pipe (`prog | head`) kills it by `SIGPIPE` (status 141 in a shell), reset to the default before `main` even if the parent ignored or blocked it (a CI runner, a shell's `trap '' PIPE`).
 
@@ -5298,7 +5306,7 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`), removed when the command exits, also on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`), the process still dying by the signal; only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs `run` and `test` start get it as their `TMPDIR`.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`), removed when the command exits, also on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`), the process still dying by the signal; only `kill -9` leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs `run` and `test` start get it as their `TMPDIR`.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 

@@ -1411,6 +1411,12 @@ static void tmp_on_signal(int sig) {
   raise(sig);
 }
 
+/* The cleanup's handler, so the fault handler (avant_stack.c) can tell
+ * it from a C library's own when it was installed first. */
+void (*avant_tmp_crash_handler(void))(int) {
+  return tmp_on_signal;
+}
+
 /* An ignored signal stays ignored (nohup, a parent's choice; SIGPIPE is
  * reset to the default before, avant_io_start); a handler
  * someone else installed stays theirs. Only the default is replaced. */
@@ -1478,9 +1484,11 @@ static void tmp_create(void) {
   tmp_catch(SIGPIPE);
   /* A crash removes the directory too: the handler
    * cleans up and re-raises the signal with its default action, so the
-   * process still dies by it (a core dump included). A crash with no
-   * stack left (a stack overflow) runs the stack's own handler instead,
-   * which cleans up too (avant_stack.c, on the thread's signal stack). */
+   * process still dies by it (a core dump included). SIGSEGV and SIGBUS
+   * already have the fault handler of avant_stack.c (installed when the
+   * main thread registers, on the thread's signal stack), which names the
+   * fault or the stack overflow and cleans up the same way; these calls
+   * leave it in place. */
   tmp_catch(SIGSEGV);
   tmp_catch(SIGBUS);
   tmp_catch(SIGFPE);

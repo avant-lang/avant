@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 /* ---- scalars */
@@ -1121,4 +1122,31 @@ int64_t so_call_on_thread(so_cb_t f) {
   pthread_join(t, NULL);
   avant_gc_native_end();
   return so_got;
+}
+
+/* tests/cases/test_crash_cleanup.av: faults in C code. crash_write_null
+ * writes through a null pointer (k words past it); crash_bus reads a
+ * shared mapping of an empty file, which has no page behind it (a bus
+ * error). */
+int64_t crash_write_null(int64_t k) {
+  volatile int64_t *p = (volatile int64_t *)(uintptr_t)(k * 8);
+  *p = 1;
+  return 0;
+}
+int64_t crash_bus(void) {
+  char path[4096];
+  const char *base = getenv("TMPDIR");
+  volatile char *m;
+  int fd;
+  snprintf(path, sizeof path, "%s/crash-bus-XXXXXX", base && base[0] ? base : "/tmp");
+  fd = mkstemp(path);
+  if (fd < 0) {
+    return -1;
+  }
+  unlink(path);
+  m = (volatile char *)mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0);
+  if (m == (volatile char *)MAP_FAILED) {
+    return -1;
+  }
+  return m[0];
 }
