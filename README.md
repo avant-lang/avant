@@ -432,6 +432,7 @@ fn main {
 - A call's unused value is dropped, at the end of a `Void` function too (an error never silently: [Errors cannot be dropped](#errors-cannot-be-dropped)). A line that computes a value without a call (`x + 1`, a name, a literal, a field read) is an error; at the end of a function with no result type the error says to declare one (`fn two { 2 }` is refused: write `fn two: Int { 2 }`). `_ = x + 1` drops a value on purpose.
 - Parameters may have trailing defaults (`times: Int = 1`), named at the call after the positional arguments (`pad("ab", fill: "*")`); functions may be [overloaded](#overloads-and-defaults) and [generic](#generic-functions).
 - There are no variadics and no multiple results; return a struct.
+- A function cannot take a builtin function's name (`puts`, `print`, `exit`, `panic`, `now_ms`, `sqrt`, ...): every call of that name is the builtin's, so the declaration is refused, naming the builtin. A method of that name is its type's own.
 
 ### Built-in types
 

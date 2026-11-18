@@ -13,6 +13,8 @@ import checker.names
 import checker
 import checker.init
 import checker.hints
+import checker.receiver
+import checker.visibility
 
 pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
   if id = checker_self.fn_index.get(name) {
@@ -600,6 +602,27 @@ pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
   out
 }
 
+// The refusal of a function named name, declared in module mod_name,
+// whose calls a builtin takes: a builtin function (`puts`, `exit`,
+// `panic`, `now_ms`, ...) runs at every call `name(...)`, and a prelude
+// name that moved to a std module is refused at every call with its new
+// spelling, so the function would never be called; "" for any other
+// name. `join` is a method (of an Array, of a task's handle), not a free
+// builtin: a function of that name is called.
+pub fn builtin_fn_shadow_text(name: String, mod_name: String): String {
+  if mod_name == "prelude" {
+    return ""
+  }
+  moved = moved_io_name(name)
+  if moved.size > 0 {
+    return "fn ${name}: ${name} is the prelude's old name of ${moved}, and every call ${name}(...) is refused with that spelling, so this function would never be called; give it another name"
+  }
+  if name != "join" && prelude_call_name(name) {
+    return "fn ${name}: ${name} is a builtin function, and every call ${name}(...) is the builtin's, so this function would never be called; give it another name"
+  }
+  ""
+}
+
 // Whether fnn may be the program's entry: it is in the root module (or
 // the program has none).
 pub fn (checker_self: Checker) entry_module(fnn: Function): Bool {
@@ -624,6 +647,14 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
       return
     }
+  }
+  // A builtin's name: every call of it is the builtin's (checker.av
+  // check_call_parts tries the builtins first), so a function of that
+  // name would never be called.
+  shadow = builtin_fn_shadow_text(fnn.name, fnn.mod_name)
+  if shadow.size > 0 {
+    checker_self.fail(fnn.loc, shadow)
+    return
   }
   if id = checker_self.lib_names.get(fnn.name) {
     checker_self.fail(fnn.loc, "function ${fnn.name} collides with a lib")
