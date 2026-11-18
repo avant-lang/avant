@@ -39,6 +39,129 @@ fn pkg_fetch(compiler: String, dir: String, update: Bool, log: String): Int {
   process_run_out(compiler, args, log) ?? -1
 }
 
+// The compiler run with extra environment (NAME=VALUE words) through env.
+fn pkg_env_run(env: Array(String), compiler: String, args: Array(String), log: String): Int {
+  all: Array(String) = []
+  all.concat(env)
+  all.push(compiler)
+  all.concat(args)
+  process_run_out("/usr/bin/env", all, log) ?? -1
+}
+
+fn pkg_repo(c: Checks, dir: String, msg: String, log: String) {
+  c.eq_int(pkg_git(dir, "init", "-q", log), 0, "git init ${msg}")
+  c.eq_int(pkg_git(dir, "add", "-A", log), 0, "git add ${msg}")
+  c.eq_int(pkg_git_commit(dir, msg, log), 0, "git commit ${msg}")
+}
+
+fn pkg_commit(c: Checks, dir: String, msg: String, log: String) {
+  c.eq_int(pkg_git(dir, "add", "-A", log), 0, "git add ${msg}")
+  c.eq_int(pkg_git_commit(dir, msg, log), 0, "git commit ${msg}")
+}
+
+fn pkg_rev(dir: String, rev: String, log: String): String {
+  _ = process_run_out("/usr/bin/git", ["-C", dir, "rev-parse", rev], log)
+  (file_read(log) ?? "").strip()
+}
+
+fn pkg_run_out(compiler: String, src: String, log: String): String {
+  code = run_av_cmd(compiler, src, log)
+  "${code}: ${file_read(log) ?? ""}"
+}
+
+// What the project's deps/ holds, the lockfile and the manifests say is
+// checked on every compile; fetch keeps deps/ to what they name.
+fn test_package_state(c: Checks, compiler: String, base: String) {
+  glog = "${base}/state-git.log"
+  tlib = "${base}/textlib"
+  app = "${base}/stateapp"
+  away = "${base}/away"
+  mkdir_p("${tlib}/text")
+  mkdir_p(app)
+  mkdir_p(away)
+  _ = file_write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v1\"\n}\n")
+  _ = file_write("${tlib}/text/loud.av", "pub fn loud: String {\n  \"LOUD\"\n}\n")
+  _ = file_write("${tlib}/avant.toml", "[package]\nname = \"textlib\"\nversion = \"1.0.0\"\n")
+  pkg_repo(c, tlib, "textlib v1", glog)
+  c.eq_int(pkg_git(tlib, "tag", "v1", glog), 0, "git tag v1")
+  v1 = pkg_rev(tlib, "v1", "${base}/rev-v1.log")
+  _ = file_write("${tlib}/greeter.av", "pub fn greeting: String {\n  \"v2\"\n}\n")
+  pkg_commit(c, tlib, "textlib v2", glog)
+  c.eq_int(pkg_git(tlib, "tag", "v2", glog), 0, "git tag v2")
+  v2 = pkg_rev(tlib, "v2", "${base}/rev-v2.log")
+
+  // A relative git path is read from the manifest's directory, whatever
+  // directory fetch runs from.
+  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  _ = file_write("${app}/main.av", "import greeter\nimport text.loud\nfn main {\n  puts(greeting())\n  puts(loud())\n}\n")
+  flog = "${base}/state-fetch.log"
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "a relative git path fetches from another directory")
+  lock = file_read("${app}/avant.lock") ?? ""
+  c.expect(str_has(lock, "source = \"git+../textlib#${v1}\"\nrev = \"v1\"\n"), "the lockfile records the git as written and the rev it resolved")
+  c.eq_str((file_read("${app}/deps/textlib/.git/HEAD") ?? "").strip(), v1, "the checkout is detached at the locked commit")
+  rlog = "${base}/state-run.log"
+  c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "a nested module of a fetched dependency is imported by its path")
+
+  // A checkout moved by hand is not compiled.
+  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--detach", v2], glog) ?? -1, 0, "move the checkout by hand")
+  moved = pkg_run_out(compiler, "${app}/main.av", rlog)
+  c.expect(str_has(moved, "deps/textlib is at ${v2}, avant.lock pins ${v1} (run: avant fetch ${app})"), "a checkout at another commit than the lockfile's is refused")
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch puts the checkout back")
+  c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v1\nLOUD\n", "the locked commit again")
+
+  // A changed rev is not compiled until fetched, and a plain fetch takes it.
+  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v2\" }\n")
+  stale = pkg_run_out(compiler, "${app}/main.av", rlog)
+  c.expect(str_has(stale, "avant.toml asks for textlib at v2, avant.lock was fetched at v1 (run: avant fetch ${app})"), "a rev the lockfile was not fetched at is refused")
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the rev changed")
+  c.eq_str(pkg_run_out(compiler, "${app}/main.av", rlog), "0: v2\nLOUD\n", "a plain fetch moves a dependency to its new rev")
+
+  // fetch --update updates a checkout in place: what git keeps in it
+  // stays, nothing is cloned again.
+  _ = file_write("${app}/deps/textlib/.git/avant-marker", "kept\n")
+  c.eq_int(pkg_fetch(compiler, app, true, flog), 0, "fetch --update")
+  c.expect(file_exists("${app}/deps/textlib/.git/avant-marker"), "fetch --update does not clone the checkout again")
+
+  // A checkout with its own changes is neither moved nor removed.
+  _ = file_write("${app}/deps/textlib/greeter.av", "pub fn greeting: String {\n  \"edited\"\n}\n")
+  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  dlog = "${base}/state-dirty.log"
+  c.expect(pkg_fetch(compiler, app, false, dlog) != 0, "fetch refuses to move a checkout with changes")
+  c.expect(str_has(file_read(dlog) ?? "", "deps/textlib has changes git does not have"), "the refusal names the checkout")
+  c.eq_str(file_read("${app}/deps/textlib/greeter.av") ?? "", "pub fn greeting: String {\n  \"edited\"\n}\n", "the change is kept")
+  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/textlib", "checkout", "-q", "--", "greeter.av"], glog) ?? -1, 0, "discard the change")
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch back to v1")
+
+  // A directory of deps/ the lockfile does not name is not searched.
+  mkdir_p("${app}/deps/stray")
+  _ = file_write("${app}/deps/stray/strayed.av", "pub fn strayed: Int {\n  1\n}\n")
+  _ = file_write("${app}/stray.av", "import strayed\nfn main {\n  puts(strayed())\n}\n")
+  sout = pkg_run_out(compiler, "${app}/stray.av", rlog)
+  c.expect(str_has(sout, "deps/stray/strayed.av is in deps/, but avant.lock does not name stray, so it is not a dependency"), "a directory the lockfile does not name is not a dependency")
+  rm_rf("${app}/deps/stray")
+
+  // A dependency removed from the manifest is refused until fetch removes
+  // its checkout.
+  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n")
+  _ = file_write("${app}/plain.av", "fn main {\n  puts(7)\n}\n")
+  gone = pkg_run_out(compiler, "${app}/plain.av", rlog)
+  c.expect(str_has(gone, "avant.lock pins textlib, which avant.toml no longer needs (run: avant fetch ${app}: it removes deps/textlib)"), "a removed dependency is refused while the lockfile pins it")
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch after the removal")
+  c.expect(str_has(file_read(flog) ?? "", "removed ${app}/deps/textlib: no dependency names it any more"), "fetch says what it removed")
+  c.expect(!file_exists("${app}/deps/textlib"), "fetch removes the checkout of a removed dependency")
+  c.eq_str(pkg_run_out(compiler, "${app}/plain.av", rlog), "0: 7\n", "the project compiles without it")
+
+  // git is looked up on PATH.
+  gbin = "${base}/gitbin"
+  mkdir_p(gbin)
+  c.eq_int(process_run_out("/usr/bin/ln", ["-s", "/usr/bin/git", "${gbin}/git"], glog) ?? -1, 0, "a git elsewhere")
+  _ = file_write("${app}/avant.toml", "[package]\nname = \"stateapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ntextlib = { git = \"../textlib\", rev = \"v1\" }\n")
+  plog = "${base}/state-path.log"
+  c.eq_int(pkg_env_run(["PATH=${gbin}"], compiler, ["fetch", app], plog), 0, "fetch runs the git on PATH")
+  c.eq_int(pkg_env_run(["PATH=${base}/nowhere"], compiler, ["fetch", app], plog), 1, "fetch without git on PATH fails")
+  c.expect(str_has(file_read(plog) ?? "", "avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
+}
+
 fn test_packages(c: Checks) {
   c.suite("tests/cases/test_packages.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -239,6 +362,8 @@ fn test_packages(c: Checks) {
     c.expect(pkg_fetch(compiler, app4, false, two_log) != 0, "fetch of one name at two commits fails")
     c.expect(str_has(file_read(two_log) ?? "", "avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
     c.expect(str_has(file_read(two_log) ?? "", "; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
+
+    test_package_state(c, compiler, base)
 
     _ = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
     bad_log = "${base}/bad.log"

@@ -8,6 +8,7 @@ import ast
 import resolve
 import parser
 import prelude_src
+import manifest
 
 lib oslink {
   fun readlink(path: String, buf: String, n: Int): Int
@@ -298,7 +299,7 @@ pub class Loader {
   pub errors: DiagBag
   dep_dirs: Array(String)
   project_dir: String = ""
-  manifest_dir: String = ""
+  pub manifest_dir: String = ""
   mod_paths: Hash(String, String)
   std_names: Hash(String, String)
   wants_prelude: Bool = false
@@ -306,6 +307,7 @@ pub class Loader {
   wants_prelude_more: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
+  pub dep_set: DepSet? = nil
 
   fn initialize {
     h = Hash(String, Int).new()
@@ -333,24 +335,40 @@ pub class Loader {
     logical_name(path)
   }
 
+  // The fetched dependencies are the lockfile's, checked against the
+  // manifests and the checkouts (manifest.av, pkg_dep_set); a project
+  // without an avant.toml has none.
   pub fn setup_deps(root_path: String) {
     self.project_dir = path_dirname(root_path)
     self.manifest_dir = find_manifest(self.project_dir)
-    deps_at = self.project_dir
-    if self.manifest_dir.size > 0 {
-      deps_at = self.manifest_dir
+    if self.manifest_dir.size == 0 {
+      return
     }
-    deps_root = "${deps_at}/deps"
-    entries = dir_list(deps_root) ?? []
-    i = 0
-    while i < entries.size {
-      full = "${deps_root}/${entries[i]}"
-      if file_exists("${full}/.git") {
-        self.dep_dirs.push(full)
-      } else if file_exists("${full}/avant.toml") {
-        self.dep_dirs.push(full)
+    set = pkg_dep_set(self.manifest_dir)
+    self.dep_set = set
+    if set.err.size > 0 {
+      // A manifest's own error starts with its PATH:LINE: the snippet
+      // shows that line, and the message does not repeat it.
+      line = 1
+      message = set.err
+      lead = "${set.err_path}:"
+      if str_starts(message, lead) {
+        j = lead.size
+        n = 0
+        while j < message.size && message[j] >= 48 && message[j] <= 57 {
+          n = n * 10 + (message[j] - 48)
+          j += 1
+        }
+        if n > 0 && j + 1 < message.size && message[j] == 58 && message[j + 1] == 32 {
+          line = n
+          message = str_slice(message, j + 2, message.size)
+        }
       }
-      i += 1
+      fail(Location.new(set.err_path, line, 1, 0), message)
+      return
+    }
+    for p in set.pkgs {
+      self.dep_dirs.push(p.dir)
     }
   }
 
@@ -508,6 +526,15 @@ pub class Loader {
       if self.manifest_dir.size > 0 {
         anchor = self.manifest_dir
       }
+      if set = self.dep_set {
+        for stray in set.stray {
+          cand = join_dir("${self.manifest_dir}/deps/${stray}", rel)
+          if file_exists(cand) {
+            fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps: ${cand} is in deps/, but avant.lock does not name ${stray}, so it is not a dependency (add it to avant.toml and run: avant fetch ${anchor})")
+            return ""
+          }
+        }
+      }
       if file_exists("${anchor}/avant.toml") {
         fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${anchor})")
       } else {
@@ -590,6 +617,9 @@ pub class Loader {
       return nil
     }
     setup_deps(path)
+    if self.failed {
+      return nil
+    }
     load_file(path)
     if self.failed {
       return nil

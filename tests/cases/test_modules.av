@@ -58,6 +58,18 @@ fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   mod_fails(c, compiler, dir, "fdup", "function helper is already defined", "one module defines a name twice")
 }
 
+// A project with one dependency as avant fetch leaves it, written by hand:
+// the manifest names it, the lockfile pins a commit, and deps/NAME is a
+// checkout at that commit (its .git/HEAD alone).
+fn fake_fetched(dir: String, project: String, name: String) {
+  sha = "58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+  git = "https://example.invalid/${name}.git"
+  mkdir_p("${dir}/deps/${name}/.git")
+  _ = file_write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
+  _ = file_write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
+  _ = file_write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
+}
+
 fn test_modules(c: Checks) {
   c.suite("tests/cases/test_modules.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -219,7 +231,7 @@ fn test_modules(c: Checks) {
 
     dep_app = "${dir}/depapp"
     mkdir_p("${dep_app}/deps/greeter/http")
-    _ = file_write("${dep_app}/avant.toml", "[package]\nname = \"depapp\"\nversion = \"0.1.0\"\n")
+    fake_fetched(dep_app, "depapp", "greeter")
     _ = file_write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
     _ = file_write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
     _ = file_write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
@@ -349,7 +361,7 @@ fn test_modules(c: Checks) {
 
     seal = "${dir}/seal"
     mkdir_p("${seal}/deps/lib")
-    _ = file_write("${seal}/avant.toml", "[package]\nname = \"seal\"\nversion = \"0.1.0\"\n")
+    fake_fetched(seal, "seal", "lib")
     _ = file_write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
     _ = file_write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
     _ = file_write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")

@@ -2879,6 +2879,19 @@ name = "greeter"
 version = "1.0.0"
 -->
 
+<!-- check: hidden project=pkg file=avant.lock
+version = 1
+
+[[package]]
+name = "greeter"
+source = "git+https://github.com/example/greeter.git#58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+rev = "v1.0.0"
+-->
+
+<!-- check: hidden project=pkg file=deps/greeter/.git/HEAD
+58a9ab1a2db9803a031edf34adb9e16c74f9d126
+-->
+
 ```sh
 avant fetch          # clone the dependencies into deps/, write avant.lock
 avant run main.av    # no extra flags: imports find deps/ on their own
@@ -2906,7 +2919,7 @@ The manifest is for fetching only: a dependency is source compiled with your pro
 
 ### The manifest
 
-`avant.toml` sits beside your root file: `[package]` names the project; each `[dependencies]` entry has a `git` URL (anything `git clone` reads, a local path included) and a `rev` (a full commit SHA, a tag or a branch; a SHA or tag is reproducible). A dependency may also be its own section:
+`avant.toml` sits beside your root file: `[package]` names the project; each `[dependencies]` entry has a `git` URL (anything `git clone` reads; a local path is read from the manifest's own directory, so `../greeter` is the same repository wherever you run `avant fetch`) and a `rev` (a full commit SHA, a tag or a branch; a SHA or tag is reproducible). A dependency's name is the directory it gets under `deps/`: letters, digits, `_`, `-` and `.`, not starting with `.`. A dependency may also be its own section:
 
 ```toml
 [dependencies.greeter]
@@ -2918,7 +2931,7 @@ A dependency with no `git`, a duplicate, an unknown key, or a bare version strin
 
 ### Fetch and lock
 
-`avant fetch` (or `avant fetch path/to/project`) clones each dependency and its own dependencies into `deps/` at the pinned commits, writes `avant.lock`, and prints one line per dependency:
+`avant fetch` (or `avant fetch path/to/project`) clones each dependency and its own dependencies into `deps/`, checks each out at one commit (a detached `HEAD`), writes `avant.lock`, and prints one line per dependency:
 
 ```text
 fetched greeter 58a9ab1a2db9803a031edf34adb9e16c74f9d126
@@ -2942,16 +2955,20 @@ version = 1
 [[package]]
 name = "greeter"
 source = "git+https://github.com/example/greeter.git#58a9ab1a2db9803a031edf34adb9e16c74f9d126"
+rev = "v1.0.0"
 ```
 
 - **Commit** `avant.toml` and `avant.lock`, **not** `deps/`: a fresh clone builds with `avant fetch`, then `avant run main.av`.
-- A plain `avant fetch` takes the lockfile's commits, even if a branch or tag moved.
+- A plain `avant fetch` keeps the lockfile's commit while a dependency's `git` and `rev` are the ones it was fetched with, even if a branch or tag moved; a changed `rev` is resolved again. A commit already in the checkout is not fetched from the network.
+- A rev names the remote's branch first, then a tag, then anything else git resolves (`HEAD` is the remote's default branch).
+- `deps/` holds only what the lockfile names: fetch removes every other checkout there, saying so (`removed deps/old: no dependency names it any more`). A checkout with its own changes (modified, staged or untracked files) is never moved, replaced or removed: fetch stops, or keeps it and says so.
+- A checkout cloned from another source than the manifest's (a patched clone, below) is cloned again from the new one.
 - If any dependency cannot be cloned or checked out, fetch prints git's output, exits non-zero and writes no lockfile.
-- Fetching needs `git` (looked for in `/usr/bin`, `/usr/local/bin`, then `/bin`); compiling works offline.
+- Fetching needs `git`, looked up on `PATH`; compiling works offline.
 
 ### Importing a dependency
 
-A dependency's module is imported by its path from the checkout's root, with no package prefix: `greeter.av` is `import greeter`, `http/server.av` is `import http.server`.
+A dependency's module is imported by its path from the checkout's root, with no package prefix: `greeter.av` is `import greeter`, `text/loud.av` is `import text.loud`.
 
 A dependency's file imports from its own checkout and the other fetched dependencies, never your program; visibility is as for your files. A module not found in a project with a manifest says what to run:
 
@@ -2959,16 +2976,27 @@ A dependency's file imports from its own checkout and the other fetched dependen
 error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: avant fetch .)
 ```
 
+**`deps/` is checked, never trusted as found.** Every compile reads `avant.toml`, `avant.lock` and each checkout's `HEAD`, offline, and refuses a project they do not agree on, each time naming the fix (`run: avant fetch .`):
+
+| When | The compile says |
+| --- | --- |
+| a dependency is in `avant.toml` and not in `avant.lock`, or no `avant.lock` exists | `avant.toml needs greeter, which avant.lock does not pin` |
+| its `rev` or `git` changed since the fetch | `avant.toml asks for greeter at v2.0.0, avant.lock was fetched at v1.0.0` |
+| `avant.lock` pins a package no manifest needs any more | `avant.lock pins greeter, which avant.toml no longer needs` |
+| a checkout is missing, or is at another commit | `./deps/greeter is at 3f2c…, avant.lock pins 58a9…` |
+
+A directory of `deps/` that the lockfile does not name is not a dependency: its modules are not found (the message names it). Without an `avant.toml` a project has no dependencies.
+
 ### Updating and removing
 
 | To | Do |
 | --- | --- |
-| move one package to a chosen version | change its `rev` in `avant.toml` to the new tag or commit, then `avant fetch` |
-| move every branch and tag pin to its current commit | `avant fetch --update` (deletes the checkouts, clones again, rewrites the lockfile) |
-| remove a package | delete its entry from `avant.toml`, delete `deps/NAME`, then `avant fetch` |
-| patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` (a checkout fetched from another source is cloned again) |
+| move one package to a chosen version | change its `rev` in `avant.toml` to the new tag or commit, then `avant fetch` (until then the compile refuses the project) |
+| move every branch and tag pin to its current commit | `avant fetch --update` (resolves every rev again, updating each checkout in place, and rewrites the lockfile) |
+| remove a package | delete its entry from `avant.toml`, then `avant fetch` (it removes `deps/NAME`) |
+| patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` |
 
-Commit the new `avant.lock`. A removed entry's checkout left in `deps/` is still found by the compiler.
+Commit the new `avant.lock`.
 
 ### Publishing a package
 
