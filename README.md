@@ -1093,6 +1093,8 @@ fn main {
 | `UInt32` | 32-bit unsigned | 0 to 4,294,967,295 | dense storage; C's `unsigned int` |
 | `UInt64` | 64-bit unsigned | 0 to 18,446,744,073,709,551,615 | bit patterns, hashes, C's 64-bit unsigned values |
 
+Each type's bounds are `Int.max`, `Int.min`, `Int32.max`, `Int32.min`, `UInt32.max`, `UInt64.max` (and `UInt32.min`, `UInt64.min`, both 0), constants of that type: a test before an operation that would trap reads them (`if n > Int.max - k { ... }`).
+
 Use `Int32` only to store many: a 32-bit counter would trap at 2.1 billion. An index, a size and a `for` range are always `Int`: with an `Int32` index write `xs[i.to_i()]` (free). Five narrower names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) exist only at the C boundary ([C types](#c-types)).
 
 ### Literals
@@ -1140,7 +1142,7 @@ Different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `
 | `UInt64` | `to_u64` | `wrap_u64` |
 | `Float64` | `to_f` (rounds to the nearest float) | |
 
-`to_*` gives the same number or traps (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`); `wrap_*` gives the two's-complement bits, for hashing or binary formats. A `Bool`'s `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true`, 0 for `false` (`alive += cell.to_i()`).
+`to_*` gives the same number or traps (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`); `wrap_*` gives the two's-complement bits, for hashing or binary formats. A float's own 64 bits are `x.to_bits()`, a `UInt64`, and `Float64.from_bits(u)` reads them back, the same number exactly (a binary format's float64; one bitcast, no instruction). A `Bool`'s `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true`, 0 for `false` (`alive += cell.to_i()`).
 
 ```avant
 fn main {
@@ -1165,24 +1167,33 @@ An operation gives the mathematically correct value, or traps when none exists.
 - `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
 - `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error. `x.try_shl(n)` and `x.try_shr(n)` return `nil` for such an amount instead (`T?`).
 - Integers have `abs` (not unsigned types) and `to_f`.
+- `x.count_ones()`, `x.leading_zeros()` and `x.trailing_zeros()` count bits of the value's own width (64 for `Int` and `UInt64`, 32 for `Int32` and `UInt32`; a negative value counts its two's-complement bits), as an `Int`; of zero, the leading and trailing zeros are the width. Each is one instruction where the CPU level has it (`popcnt` from `--cpu=v2`, the default; `lzcnt` and `tzcnt` from `--cpu=v3`), a short sequence otherwise.
 
 A check is a compare and a never-taken branch, dropped where the compiler proves it: a literal index into a literal, a loop variable under its bound, a loop whose index range is validated once on entry. What a trap prints: [Traps](#traps).
 
 ### Floats
 
-`Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i`, and the prelude has `sqrt(x)` and `exp(x)`. Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`.
+Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`. `Float64` has the math of C's library as methods, each the library's call (or its instruction) with nothing around it:
 
-The rest of C's math library is a `lib` block away, with no flag ([C interop](#c-interop)):
+| Method | Result |
+| --- | --- |
+| `x.abs()`, `x.sqrt()`, `x.exp()` | absolute value, square root, e to the power `x` |
+| `x.floor()`, `x.ceil()`, `x.trunc()`, `x.round()` | rounded down, up, toward zero, to the nearest (a half away from zero: `2.5.round()` is `3.0`) |
+| `x.pow(y)` | `x` to the power `y` |
+| `x.ln()`, `x.log2()`, `x.log10()` | the logarithm in base e, 2, 10 (`0.0.ln()` is `-inf`, a negative's is `nan`) |
+| `x.sin()`, `x.cos()`, `x.tan()` | in radians |
+| `y.atan2(x)` | the angle of the point (x, y), in −π..π |
+| `x.to_i()`, `x.to_bits()` | an `Int` toward zero ([Conversions](#conversions)), the 64 bits as a `UInt64` |
+
+`Float64.pi` and `Float64.e` are the constants. The prelude also has `sqrt(x)` and `exp(x)`. The rest of C's math library (`cbrt`, `hypot`, `asin`) is a `lib` block away, with no flag ([C interop](#c-interop)).
 
 ```avant
-lib m {
-  fun pow(x: Float64, y: Float64): Float64
-  fun log(x: Float64): Float64
-}
-
 fn main {
-  puts(m.pow(2.0, 10.0))   // => 1024.0
-  puts(m.log(1.0))         // => 0.0
+  puts(2.0.pow(10.0))              // => 1024.0
+  puts(Float64.e.ln())             // => 1.0
+  puts((Float64.pi / 2.0).sin())   // => 1.0
+  puts(1.0.atan2(1.0) * 4.0)       // => 3.141592653589793
+  puts((0.0 - 2.5).round())        // => -3.0
 }
 ```
 

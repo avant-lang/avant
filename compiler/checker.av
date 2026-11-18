@@ -2529,21 +2529,13 @@ pub class Checker {
   }
 
   pub fn check_float_field(expr: Expr): Ty {
-    if expr.ident == "sqrt" {
+    if float_math_unary(expr.ident).size > 0 {
       expr.method_call = true
       return t_float()
     }
-    if expr.ident == "abs" {
+    if expr.ident == "to_bits" {
       expr.method_call = true
-      return t_float()
-    }
-    if expr.ident == "floor" {
-      expr.method_call = true
-      return t_float()
-    }
-    if expr.ident == "exp" {
-      expr.method_call = true
-      return t_float()
+      return t_uint64()
     }
     if expr.ident == "to_i" {
       expr.method_call = true
@@ -2567,6 +2559,10 @@ pub class Checker {
     if rt = int_conversion_ty(expr.ident) {
       expr.method_call = true
       return rt
+    }
+    if int_bit_count(expr.ident).size > 0 {
+      expr.method_call = true
+      return t_int()
     }
     now = removed_int_conversion(expr.ident)
     if now.size > 0 {
@@ -2656,8 +2652,9 @@ pub class Checker {
   // call becomes: `n.to_s` is the interpolation "${n}"), or marked it
   // one; a builtin read-only property (`size`, `bytes`) is not one.
   pub fn member_is_call(expr: Expr): Bool {
-    if expr.kind == ex_int() {
-      // A C array's `.size`, written in place as its constant.
+    if expr.kind == ex_int() || expr.kind == ex_float() || expr.kind == ex_unary() {
+      // A C array's `.size`, or a type's constant (`Int.min`,
+      // `Float64.pi`), written in place as its literal.
       return false
     }
     if expr.kind != ex_field() {
@@ -2695,6 +2692,71 @@ pub class Checker {
     fail(at, "a method call takes parentheses: write ${name}()")
   }
 
+  // `Int.max`, `Int32.min`, `UInt64.max`, `Float64.pi`, `Float64.e`: the
+  // bounds of the four integer types and the two float constants. The
+  // expression becomes its literal (a negative one is the negation of
+  // its magnitude, as `-9223372036854775808` is written); nil for any
+  // other name.
+  pub fn builtin_type_constant(obj: Expr, expr: Expr): Ty? {
+    if obj.kind != ex_name() || obj.type_args.size > 0 {
+      return nil
+    }
+    if v = lookup(obj.ident) {
+      return nil
+    }
+    n = obj.ident
+    f = expr.ident
+    if n == "Float64" && (f == "pi" || f == "e") {
+      expr.kind = ex_float()
+      expr.object = nil
+      if f == "pi" {
+        expr.float_val = 3.141592653589793
+        expr.value_str = "3.141592653589793"
+      } else {
+        expr.float_val = 2.718281828459045
+        expr.value_str = "2.718281828459045"
+      }
+      return t_float()
+    }
+    if f != "max" && f != "min" {
+      return nil
+    }
+    ty = t_int()
+    max = 9223372036854775807u64
+    min = 9223372036854775808u64
+    if n == "Int32" {
+      ty = Ty.new(tyk_int32())
+      max = 2147483647u64
+      min = 2147483648u64
+    } else if n == "UInt32" {
+      ty = Ty.new(tyk_uint32())
+      max = 4294967295u64
+      min = 0u64
+    } else if n == "UInt64" {
+      ty = t_uint64()
+      max = 18446744073709551615u64
+      min = 0u64
+    } else if n != "Int" {
+      return nil
+    }
+    expr.object = nil
+    if f == "max" || min == 0u64 {
+      expr.kind = ex_int()
+      expr.int_bits = max
+      if f == "min" {
+        expr.int_bits = 0u64
+      }
+      return ty
+    }
+    mag = Expr.new(ex_int(), expr.loc)
+    mag.int_bits = min
+    mag.ty = ty
+    expr.kind = ex_unary()
+    expr.op = tk_minus()
+    expr.inner = mag
+    ty
+  }
+
   pub fn check_field(expr: Expr): Ty {
     carray_here = self.carray_ok
     self.carray_ok = false
@@ -2730,6 +2792,9 @@ pub class Checker {
           expr.object = call
           obj = call
         }
+      }
+      if ct = builtin_type_constant(obj, expr) {
+        return ct
       }
       // `T.name` on a type without that type-level function.
       tn = receiver_type_name(obj)
@@ -5851,6 +5916,21 @@ pub class Checker {
       if found = lookup(recv.ident) {
       } else {
         return check_from_c(expr, recv.ident)
+      }
+    }
+    if recv.kind == ex_name() && recv.ident == "Float64" && expr.callee == "from_bits" {
+      if found = lookup(recv.ident) {
+      } else {
+        // `Float64.from_bits(u)`: the float whose 64 bits are u.
+        if expr.args.size != 1 {
+          fail(expr.loc, "Float64.from_bits takes one UInt64")
+          return t_float()
+        }
+        got = check_expr_as(expr.args[0], t_uint64())
+        if !got.is_uint64() {
+          fail(expr.args[0].loc, "Float64.from_bits expects UInt64, got ${got.show()}")
+        }
+        return t_float()
       }
     }
     if recv.kind == ex_name() {

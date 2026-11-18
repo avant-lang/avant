@@ -9,7 +9,9 @@ import backends
 //   - conversions between the integer types keep the value or trap;
 //     wrap_i and wrap_u64 reinterpret the bits;
 //   - abs, sum and Hash.inc give the exact value or trap; UInt64.abs is refused;
-//   - a byte stored outside 0..255 traps.
+//   - a byte stored outside 0..255 traps;
+//   - Float64's math methods and constants, the integer types' bounds
+//     and bit counts, and a Float64's 64 bits to and from UInt64.
 
 class FCase {
   pub tag: String = ""
@@ -243,6 +245,25 @@ fn byte_entry_cases: Array(FCase) {
   xs
 }
 
+fn math_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("math-methods", "fn main {\n  x = 2.0\n  puts(x.pow(10.0))\n  puts(x.pow(3))\n  puts(x.pow(0.5) == x.sqrt())\n  puts((Float64.pi / 2.0).sin())\n  puts(0.0.cos())\n  puts((Float64.pi / 4.0).tan())\n  puts(Float64.e.ln())\n  puts(1024.0.log2())\n  puts(1000.0.log10())\n  puts(1.0.atan2(1.0) * 4.0)\n  puts((0.0 - 1.0).atan2(0.0 - 1.0))\n  puts(2.5.round())\n  puts((0.0 - 2.5).round())\n  puts(2.1.ceil())\n  puts((0.0 - 2.7).trunc())\n  puts(2.7.trunc())\n  puts((0.0 - 1.0).ln())\n  puts(0.0.ln())\n  puts(Float64.pi)\n  puts(Float64.e)\n}\n", "1024.0\n8.0\ntrue\n1.0\n1.0\n0.9999999999999999\n1.0\n10.0\n3.0\n3.141592653589793\n-2.356194490192345\n3.0\n-3.0\n3.0\n-2.0\n2.0\nnan\n-inf\n3.141592653589793\n2.718281828459045\n"))
+  xs.push(refused("math-pow-int", "fn main {\n  n = 2\n  puts(2.0.pow(n))\n}\n", "Float64.pow expects Float64, got Int"))
+  xs.push(refused("math-pow-none", "fn main {\n  puts(2.0.pow())\n}\n", "Float64.pow takes one Float64"))
+  xs.push(refused("math-sin-arg", "fn main {\n  puts(2.0.sin(1.0))\n}\n", "Float64.sin takes no arguments"))
+  xs.push(refused("math-on-int", "fn main {\n  puts(2.sin())\n}\n", "no method sin on Int"))
+  xs.push(refused("math-pi-call", "fn main {\n  puts(Float64.tau)\n}\n", "Float64"))
+  xs.push(accepted("int-bounds", "fn main {\n  puts(Int.max)\n  puts(Int.min)\n  puts(Int32.max)\n  puts(Int32.min)\n  puts(UInt32.max)\n  puts(UInt32.min)\n  puts(UInt64.max)\n  puts(UInt64.min)\n  a: Int32 = Int32.max\n  puts(a)\n  puts(Int.max == 9223372036854775807)\n  puts(Int.min + 1 == 0 - Int.max)\n  b = Int32.min\n  puts(b.to_i() + 1)\n  u = UInt64.max\n  puts(u &+ 1u64)\n}\n", "9223372036854775807\n-9223372036854775808\n2147483647\n-2147483648\n4294967295\n0\n18446744073709551615\n0\n2147483647\ntrue\ntrue\n-2147483647\n0\n"))
+  xs.push(trapped("int-max-plus-one", "fn main {\n  puts(Int.max - 1)\n  n = Int.max\n  puts(n + 1)\n}\n", "9223372036854775806\n", "overflow"))
+  xs.push(accepted("int-bit-counts", "fn main {\n  puts(255.count_ones())\n  puts(1.leading_zeros())\n  puts(8.trailing_zeros())\n  puts(0.trailing_zeros())\n  puts(0.leading_zeros())\n  puts((0 - 1).count_ones())\n  puts(Int.min.trailing_zeros())\n  puts(Int.min.leading_zeros())\n  b: Int32 = 1\n  puts(b.leading_zeros())\n  puts(b.trailing_zeros())\n  c: Int32 = -1\n  puts(c.count_ones())\n  u: UInt32 = 4294967295\n  puts(u.count_ones())\n  z: UInt32 = 0\n  puts(z.leading_zeros())\n  puts(UInt64.max.leading_zeros())\n  puts(UInt64.max.count_ones())\n  w: UInt64 = 1u64 << 40\n  puts(w.trailing_zeros())\n  k = 6.count_ones() + 1\n  puts(k)\n}\n", "8\n63\n3\n64\n64\n64\n63\n0\n31\n0\n32\n32\n32\n0\n64\n40\n3\n"))
+  xs.push(refused("bit-count-float", "fn main {\n  puts(1.5.count_ones())\n}\n", "no method count_ones on Float64"))
+  xs.push(refused("bit-count-arg", "fn main {\n  puts(3.leading_zeros(1))\n}\n", "Int.leading_zeros takes no arguments"))
+  xs.push(accepted("float-bits", "fn main {\n  bits = 1.5.to_bits()\n  puts(bits)\n  puts(Float64.from_bits(bits))\n  puts(Float64.from_bits(0x7ff0000000000000u64))\n  puts((0.0 - 0.0).to_bits())\n  neg = 0.0 - 1.0\n  puts(neg.to_bits() >> 63)\n  puts(Float64.from_bits(0u64))\n  nan = 0.0 / 0.0\n  back = Float64.from_bits(nan.to_bits())\n  puts(back == back)\n  puts(Float64.from_bits(Float64.pi.to_bits()) == Float64.pi)\n}\n", "4609434218613702656\n1.5\ninf\n0\n1\n0.0\nfalse\ntrue\n"))
+  xs.push(refused("float-from-bits-int", "fn main {\n  n = 3\n  puts(Float64.from_bits(n))\n}\n", "Float64.from_bits expects UInt64, got Int"))
+  xs.push(refused("float-to-bits-int", "fn main {\n  puts(3.to_bits())\n}\n", "no method to_bits on Int"))
+  xs
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_numbers.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -273,6 +294,9 @@ fn test_main(c: Checks) {
     }
     for f_byte_entry_cases in byte_entry_cases() {
       all.push(f_byte_entry_cases)
+    }
+    for f_math in math_cases() {
+      all.push(f_math)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

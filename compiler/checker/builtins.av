@@ -36,17 +36,22 @@ pub fn (checker_self: Checker) check_float_method(expr: Expr): Ty {
     checker_self.fail(expr.loc, "Float64.${expr.callee} does not take a block")
     return checker_self.t_float()
   }
-  if expr.callee == "sqrt" {
+  if float_math_unary(expr.callee).size > 0 {
     return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
   }
-  if expr.callee == "abs" {
-    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  if float_math_binary(expr.callee).size > 0 {
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "Float64.${expr.callee} takes one Float64")
+      return checker_self.t_float()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_float())
+    if !got.is_float() {
+      checker_self.fail(expr.args[0].loc, "Float64.${expr.callee} expects Float64, got ${got.show()}")
+    }
+    return checker_self.t_float()
   }
-  if expr.callee == "floor" {
-    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
-  }
-  if expr.callee == "exp" {
-    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  if expr.callee == "to_bits" {
+    return checker_self.expect_no_args(expr, checker_self.t_uint64(), "Float64.to_bits takes no arguments")
   }
   if expr.callee == "to_i" {
     return checker_self.expect_no_args(expr, checker_self.t_int(), "Float64.to_i takes no arguments")
@@ -75,6 +80,9 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   }
   if rt = int_conversion_ty(expr.callee) {
     return checker_self.expect_no_args(expr, rt, "${object.show()}.${expr.callee} takes no arguments")
+  }
+  if int_bit_count(expr.callee).size > 0 {
+    return checker_self.expect_no_args(expr, checker_self.t_int(), "${object.show()}.${expr.callee} takes no arguments")
   }
   now = removed_int_conversion(expr.callee)
   if now.size > 0 {

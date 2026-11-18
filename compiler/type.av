@@ -1622,3 +1622,44 @@ pub fn ty_holds_ptr(t: Ty): Bool {
   }
   false
 }
+
+// Float64's math methods without an argument, as the C library function
+// each one calls (the emitter makes it the LLVM intrinsic: llvm/emit.av
+// ll_math_intrinsic), or "" for another name. `ln` is the natural
+// logarithm; `round` rounds half away from zero, as C's round.
+pub fn float_math_unary(name: String): String {
+  if name == "abs" {
+    return "fabs"
+  }
+  if name == "ln" {
+    return "log"
+  }
+  if name == "floor" || name == "ceil" || name == "round" || name == "trunc" || name == "sqrt" || name == "exp" || name == "sin" || name == "cos" || name == "tan" || name == "log2" || name == "log10" {
+    return name
+  }
+  ""
+}
+
+// Float64's math methods with one Float64 argument (`x.pow(y)`,
+// `y.atan2(x)`), as their C library function, or "".
+pub fn float_math_binary(name: String): String {
+  if name == "pow" || name == "atan2" {
+    return name
+  }
+  ""
+}
+
+// The integer bit counts (`x.count_ones()`, `x.leading_zeros()`,
+// `x.trailing_zeros()`): the LLVM operation each one is, or "".
+pub fn int_bit_count(name: String): String {
+  if name == "count_ones" {
+    return "ctpop"
+  }
+  if name == "leading_zeros" {
+    return "ctlz"
+  }
+  if name == "trailing_zeros" {
+    return "cttz"
+  }
+  ""
+}
