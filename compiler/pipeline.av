@@ -608,7 +608,13 @@ pub fn fill_std_link(program: Program, box: IrBox) {
       box.std_objects.push("${root}/runtime/build/avant_sys.o")
     }
   }
+  os = false
   for mod in program.mods {
+    if (mod.name == "std.random" || mod.name == "std.time") && !os {
+      // The system's entropy, wall clock and sleep (one object for both).
+      os = true
+      box.std_objects.push("${root}/runtime/build/avant_os.o")
+    }
     if mod.name == "std.zlib" {
       // zlib is vendored inside avant_zlib.o: no -lz.
       box.std_objects.push("${root}/runtime/build/avant_zlib.o")

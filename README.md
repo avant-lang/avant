@@ -3940,7 +3940,7 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
-| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes | — |
+| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `Random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
@@ -4287,7 +4287,7 @@ fn main {
 
 ### std.random
 
-A `Random` is a seeded generator (SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. It is not for secrets.
+A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `Random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
 
 ```avant
 import std.random
@@ -4300,16 +4300,22 @@ fn main {
   again = [1, 2, 3, 4, 5].shuffled(Random.new(42))
   puts(again == deck)                // => true
   puts(rng.int(6) < 6)               // => true
+  die = rng.int(1, 7)
+  puts(die >= 1 && die <= 6)         // => true
+  puts(Random.bytes(16).size)        // => 16
 }
 ```
 
 | Call | Result |
 | --- | --- |
 | `Random.new(seed)` | a generator; `seed` is any `Int` |
+| `Random.new()` | a generator seeded from the system's entropy (`getrandom`) |
 | `rng.int(n)` | an `Int` in `0..n`, each value equally likely; traps unless `n > 0` |
+| `rng.int(lo, hi)` | an `Int` in `lo..hi` (`hi` excluded), each value equally likely; traps unless `lo < hi` |
 | `rng.float()` | a `Float64` in `[0, 1)` |
 | `rng.u64()` | the next 64 random bits |
 | `xs.shuffle(rng)`, `xs.shuffled(rng)` | the array in a random order, in place or as a new array (Fisher–Yates) |
+| `Random.bytes(n)` | `n` bytes of the system's entropy, from no generator |
 
 ## Testing
 
