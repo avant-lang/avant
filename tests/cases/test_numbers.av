@@ -274,10 +274,13 @@ fn math_cases: Array(FCase) {
 fn fmt_cases: Array(FCase) {
   xs: Array(FCase) = []
   xs.push(accepted("fmt-base", "fn main {\n  n = 255\n  puts(n.to_s(16))\n  puts(n.to_s(2))\n  puts(n.to_s(36))\n  puts((0 - 255).to_s(16))\n  puts(0.to_s(7))\n  puts(Int.min.to_s(16))\n  puts(Int.max.to_s(36))\n  puts(UInt64.max.to_s(16))\n  w: Int32 = -8\n  puts(w.to_s(2))\n  v = UInt32.max\n  puts(v.to_s(16))\n  puts(n.to_s())\n  puts(\"ff\".to_i(16) ?? -1)\n}\n", "ff\n11111111\n73\n-ff\n0\n-8000000000000000\n1y2p0ij32e8e7\nffffffffffffffff\n-1000\nffffffff\n255\n255\n"))
-  xs.push(trapped("fmt-base-range", "fn main {\n  puts(10.to_s(37))\n}\n", "", "to_s(base) needs base in 2..36, got 37"))
-  xs.push(trapped("fmt-base-one", "fn main {\n  puts(10.to_s(1))\n}\n", "", "to_s(base) needs base in 2..36, got 1"))
+  xs.push(trapped("fmt-base-range", "fn main {\n  puts(10.to_s(37))\n}\n", "", "to_s(base) needs base in 2..36, got 37 at num-fmt-base-range.av:2:10"))
+  xs.push(trapped("fmt-base-one", "fn main {\n  puts(10.to_s(1))\n}\n", "", "to_s(base) needs base in 2..36, got 1 at num-fmt-base-one.av:2:10"))
+  // A library function that calls another passes its caller's site on.
+  xs.push(trapped("fmt-base-int32-site", "fn main {\n  w: Int32 = -8\n  puts(w.to_s(2))\n  puts(w.to_s(40))\n}\n", "-1000\n", "to_s(base) needs base in 2..36, got 40 at num-fmt-base-int32-site.av:4:9"))
   xs.push(accepted("fmt-min-max-clamp", "fn main {\n  puts(3.min(4))\n  puts(3.max(4))\n  puts(12.clamp(0, 10))\n  puts((0 - 3).clamp(0, 10))\n  puts(5.clamp(5, 5))\n  puts(2.5.min(1.5))\n  puts(2.5.max(1.5))\n  puts(0.5.clamp(0.0, 1.0))\n  a: Int32 = 7\n  puts(a.min(2))\n  b = UInt32.max\n  puts(b.min(UInt32.min))\n  c: UInt64 = 7u64\n  puts(c.clamp(8u64, 9u64))\n  xs = [4, 2, 9]\n  puts(xs.min() ?? 0)\n  puts(xs.max() ?? 0)\n}\n", "3\n4\n10\n0\n5\n1.5\n2.5\n0.5\n2\n0\n8\n2\n9\n"))
-  xs.push(trapped("fmt-clamp-order", "fn main {\n  puts(5.clamp(10, 0))\n}\n", "", "clamp(lo, hi) needs lo <= hi, got 10 and 0"))
+  xs.push(trapped("fmt-clamp-order", "fn main {\n  puts(5.clamp(10, 0))\n}\n", "", "clamp(lo, hi) needs lo <= hi, got 10 and 0 at num-fmt-clamp-order.av:2:9"))
+  xs.push(trapped("fmt-clamp-in-helper", "fn limit(x: Float64): Float64 {\n  x.clamp(1.0, 0.0)\n}\n\nfn main {\n  puts(limit(2.0))\n}\n", "", "clamp(lo, hi) needs lo <= hi, got 1.0 and 0.0 at num-fmt-clamp-in-helper.av:2:4"))
   xs.push(accepted("conv-bytes", "fn main {\n  b = \"hi!\".bytes\n  puts(b.to_s())\n  puts(b.to_hex())\n  if r = \"6869FF\".bytes.from_hex() {\n    puts(r.size)\n    puts(r.to_hex())\n  }\n  puts((\"abc\".bytes.from_hex() ?? \"x\".bytes).size)\n  puts((\"zz\".bytes.from_hex() ?? \"x\".bytes).size)\n  puts((\"\".bytes.from_hex() ?? \"x\".bytes).size)\n  puts(\"h\\u{e9}llo\".is_utf8())\n  bad = \"\\xff\".bytes.to_s()\n  puts(bad.size)\n  puts(bad.is_utf8())\n  puts(String.from_utf8(bad.bytes) ?? \"refused\")\n}\n", "hi!\n686921\n3\n6869ff\n1\n1\n0\ntrue\n1\nfalse\nrefused\n"))
   xs.push(refused("conv-bytes-to-str", "fn main {\n  puts(bytes_to_str([65]))\n}\n", "bytes_to_str is gone: push the bytes into a Buf"))
   xs.push(refused("fmt-min-mixed", "fn main {\n  puts(3.min(2.5))\n}\n", "min"))

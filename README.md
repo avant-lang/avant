@@ -2560,6 +2560,24 @@ The line, written after stdout is flushed, is `avant runtime: WHAT` and where:
 
 The second row has no position so that hot loops stay fast.
 
+**A broken precondition of a library function names the program's call**, not the line inside the library that checks it: `n.to_s(base)` with a base outside 2..36, `clamp` with `lo > hi`, `process.env_set` with a name holding `=`, `time.sleep_ms` with a negative time, `random.Random.int` with an empty range, `random.bytes` with a size out of range.
+
+<!-- check: trap -->
+```avant
+fn main {
+  puts(10.to_s(37))
+}
+```
+
+<!-- check: stderr -->
+```text
+avant runtime: to_s(base) needs base in 2..36, got 37 at main.av:2:10
+```
+
+- A function of the standard library or the prelude that raises `panic` or `expect` takes its caller's site as a hidden argument, and passes it on when it calls another such function, so the line named is the program's own (Rust's `#[track_caller]`, decided at compile time: no unwinding).
+- The cost is that argument at the calls of those few functions (a constant, folded away where the call is inlined); a program that calls none of them compiles to the same code as without it.
+- Called through a function value, such a function names its own line in the library.
+
 | What traps | The form that does not |
 | --- | --- |
 | `xs[i]`, `s[i]`, `buf[i]` outside the bounds | `.get(i)`, which returns `T?` |

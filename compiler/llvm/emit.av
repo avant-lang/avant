@@ -335,6 +335,14 @@ fn ll_function(e: LlEmit, f: MFunc) {
     }
     e.out.push_str("${ptext} %a${i + 1}")
   }
+  if f.caller_site {
+    // The hidden last parameter: the site of the call into the library
+    // (mir_caller_sites).
+    if s.params.size > 0 {
+      e.out.push_str(", ")
+    }
+    e.out.push_str("i32 %caller.site")
+  }
   e.out.push_str(") #0 {\nalloca:\n")
   e.label = "alloca"
   // The frame record first: a slot local's address is in it.
@@ -452,6 +460,12 @@ fn ll_call(e: LlEmit, st: MStmt) {
     s = e.ts.sigs[g.sig]
     ret = s.ret
     args = ll_args(e, st.args, s.params, false)
+    if g.caller_site {
+      if args.size > 0 {
+        args = "${args}, "
+      }
+      args = "${args}i32 ${ll_caller_site(e)}"
+    }
     result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
     if x.name == "avant_gc_poll" {
@@ -508,7 +522,15 @@ fn ll_call(e: LlEmit, st: MStmt) {
         if args.size > 0 {
           args = "${args}, "
         }
-        args = "${args}i32 ${e.site_ref()}"
+        site = ""
+        if x.name == "avant_trap_expect" {
+          // `panic` and `expect`: in a library function that names its
+          // caller's site, that site.
+          site = ll_caller_site(e)
+        } else {
+          site = e.site_ref()
+        }
+        args = "${args}i32 ${site}"
       }
       rt = ll_c_type(e.ts, ret)
       if s.varargs || sig != x.sig {
@@ -688,6 +710,16 @@ fn ll_bits_u64(e: LlEmit, name: String, args: Array(MOperand)): String {
     return r5
   }
   ""
+}
+
+// The site a call into a library function that names its caller's site
+// passes, or `panic`'s: the one this function was given when it is such
+// a function itself, else the statement's own.
+fn ll_caller_site(e: LlEmit): String {
+  if e.f.caller_site {
+    return "%caller.site"
+  }
+  e.site_ref()
 }
 
 fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: String): String {

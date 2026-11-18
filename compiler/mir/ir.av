@@ -300,6 +300,13 @@ pub class MFunc {
   // young, or barriered, with no collecting call since), because every
   // call of it passes an open first argument (V14).
   pub fresh_self: Bool = false
+  // Lowered from a function of the standard library or a prelude part
+  // (set where a named function or method is lowered).
+  pub in_lib: Bool = false
+  // A library function whose `panic` or `expect` (a precondition the
+  // caller broke) names its caller's site: it takes that site as a hidden
+  // last argument, the number of a trap text (mir_caller_sites).
+  pub caller_site: Bool = false
 
   fn initialize(symbol: String, sig: Int, loc: MLoc) {
     self.symbol = symbol
@@ -383,6 +390,9 @@ pub class MModule {
   pub extern_index: Hash(String, Int)
   pub funcs: Array(MFunc)
   pub func_index: Hash(String, Int)
+  // The functions a `const fn` operand names (a function value, a
+  // callback, a task's code): called through a pointer, with no site.
+  pub fn_values: Hash(String, Bool)
   pub error: String = ""
   pub rt: MRtTable
 
@@ -396,6 +406,7 @@ pub class MModule {
     self.extern_index = Hash(String, Int).new()
     self.funcs = []
     self.func_index = Hash(String, Int).new()
+    self.fn_values = Hash(String, Bool).new()
     self.error = ""
     self.rt = MRtTable.new()
     add_fixed_map(1022, "Array(*)", 1u64)
@@ -426,4 +437,85 @@ pub class MModule {
     }
     nil
   }
+}
+
+// The library functions whose precondition traps name their caller's
+// site: a function of the standard library or a prelude part that raises
+// `panic` or `expect` itself, or calls such a function, takes the site of
+// its call as a hidden last argument (the emitter's `i32 %caller.site`).
+// A call from the program passes its own site, a call from one of them
+// passes the site it was given, so the trap names the line of the
+// program that called into the library. A function called through a
+// pointer (a value, a callback, a task) keeps its own sites. Only a
+// library function the program's code reaches by calls takes the
+// argument: one it never calls is emitted as before, so a program that
+// imports a module and calls none of these compiles to the same code.
+pub fn mir_caller_sites(m: MModule) {
+  any = false
+  for f in m.funcs {
+    if f.in_lib && mir_calls(m, f, true) {
+      any = true
+      break
+    }
+  }
+  if !any {
+    return
+  }
+  // The library functions reached from the program's code.
+  reached = Hash(String, Bool).new()
+  work: Array(MFunc) = []
+  for f in m.funcs {
+    if !f.in_lib {
+      mir_reach(m, f, reached, work)
+    }
+  }
+  while work.size > 0 {
+    g = work.pop() ?? break
+    mir_reach(m, g, reached, work)
+  }
+  changed = true
+  while changed {
+    changed = false
+    for f in m.funcs {
+      if f.in_lib && !f.caller_site && !f.entry && !f.external && reached.has(f.symbol) && !m.fn_values.has(f.symbol) && mir_calls(m, f, false) {
+        f.caller_site = true
+        changed = true
+      }
+    }
+  }
+}
+
+// The library functions f calls directly, added to reached (and work)
+// the first time.
+fn mir_reach(m: MModule, f: MFunc, reached: Hash(String, Bool), work: Array(MFunc)) {
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if st.kind == msk_call() {
+        if g = m.func(st.callee), g.in_lib && !reached.has(g.symbol) {
+          reached[g.symbol] = true
+          work.push(g)
+        }
+      }
+    }
+  }
+}
+
+// Whether f raises `panic` or `expect` (the runtime's avant_trap_expect),
+// or, unless only_traps, calls a function that names its caller's site.
+fn mir_calls(m: MModule, f: MFunc, only_traps: Bool): Bool {
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if st.kind == msk_call() {
+        if st.callee == "avant_trap_expect" {
+          return true
+        }
+        if !only_traps {
+          if g = m.func(st.callee), g.caller_site {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
 }

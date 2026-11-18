@@ -626,6 +626,7 @@ pub class MirLower {
         sname = "${fnn.owner}.${fnn.name}"
       }
       mf = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
+      mf.in_lib = mir_lib_source(fnn.mod_name, fnn.loc.path)
       // A class's initialize: its receiver is the object its constructor
       // just allocated (MFunc.fresh_self, fresh.av).
       if fnn.name == "initialize" && !fnn.type_method && recv >= 0 && !self.lw_m.types.is_addr(recv) {
@@ -781,6 +782,12 @@ pub fn mir_no_names: Array(String) {
 // verifier rejects at stage lowered is a lowering bug: its errors are the
 // message, prefixed so they read as internal.
 // root_path is the root source file; avant_root the Avant root (std).
+// Whether a declaration comes from the standard library (a `std.` module)
+// or a prelude part (a `<...>` path, the compiler's own text).
+pub fn mir_lib_source(mod_name: String, path: String): Bool {
+  path.starts_with("<") || mod_name.starts_with("std.")
+}
+
 pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String): MirLowered {
   mir_lower_program(program, symbols, root_path, avant_root, "")
 }
@@ -822,5 +829,6 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   mir_upsert_pass(lw.lw_m)
   mir_loop_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
+  mir_caller_sites(lw.lw_m)
   MirLowered.new(lw.lw_m, "")
 }
