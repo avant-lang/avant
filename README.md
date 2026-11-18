@@ -4179,7 +4179,7 @@ fn main {
 }
 ```
 
-The time of day, RFC 3339 text and `sleep_ms` are [std.time](#stdtime)'s.
+The time of day, RFC 3339 text and `time.sleep_ms` are [std.time](#stdtime)'s.
 
 ## Standard library
 
@@ -4192,8 +4192,8 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
-| [`std.time`](#stdtime) | `Time.now()`, `t.iso()`, `Time.parse_iso(s)`, `sleep_ms(ms)` | the system clock |
-| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `Random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
+| [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
+| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes; `random.bytes(n)`, the system's entropy | the kernel's `getrandom` |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
@@ -4550,7 +4550,7 @@ fn main {
 
 ### std.time
 
-A `Time` is a point in time: `sec`, the seconds since 1970-01-01T00:00:00Z (UTC, negative before it), and `nsec`, the nanoseconds within that second. `Time.now()` reads the wall clock. Two times compare with `==`, `<` and the others and sort in order; `t.iso()` writes the RFC 3339 text in UTC and `Time.parse_iso(text)` reads it back, any offset taken into account. An interval is measured with the prelude's monotonic `now_ms()` and `now_us()`, since the wall clock can be set back.
+A `Time` is a point in time: `sec`, the seconds since 1970-01-01T00:00:00Z (UTC, negative before it), and `nsec`, the nanoseconds within that second. `time.now()` reads the wall clock (the module's functions are qualified by its last name, `time`, [Name clashes](#name-clashes)). Two times compare with `==`, `<` and the others and sort in order; `t.iso()` writes the RFC 3339 text in UTC and `Time.parse_iso(text)` reads it back, any offset taken into account. An interval is measured with the prelude's monotonic `now_ms()` and `now_us()`, since the wall clock can be set back.
 
 ```avant
 import std.time
@@ -4565,26 +4565,26 @@ fn main {
   bad = Time.parse_iso("2026-02-30T00:00:00Z") ?? t
   puts(bad == t)                                        // => true
   start = now_ms()
-  sleep_ms(20)
+  time.sleep_ms(20)
   puts(now_ms() - start >= 20)                          // => true
-  puts(Time.now().sec > 1700000000)                     // => true
+  puts(time.now().sec > 1700000000)                     // => true
 }
 ```
 
 | Call | Result |
 | --- | --- |
-| `Time.now()` | the wall clock, now (`clock_gettime`'s `CLOCK_REALTIME`) |
+| `time.now()` | the wall clock, now (`clock_gettime`'s `CLOCK_REALTIME`) |
 | `Time { sec: s, nsec: n }` | the time `s` seconds and `n` nanoseconds after the epoch (`n` in 0 to 999,999,999) |
 | `t.iso()` | `2026-11-18T09:30:00Z`: the date and time in UTC, with the fraction of a second when `nsec` is not 0 (up to nine digits, without the zeros that end them) |
 | `Time.parse_iso(text)` | `Time?`: RFC 3339's `YYYY-MM-DDTHH:MM:SS`, a fraction of a second (more than nine digits are cut), then `Z` or an offset `+HH:MM` or `-HH:MM` (`t` and `z` in lower case too); `nil` for any other text or a field out of its range (April 31, a second 60) |
 | `a < b`, `a == b`, `xs.sort()` | seconds first, then nanoseconds |
-| `sleep_ms(ms)` | waits `ms` milliseconds (other tasks run meanwhile); a negative `ms` traps |
+| `time.sleep_ms(ms)` | waits `ms` milliseconds (other tasks run meanwhile); a negative `ms` traps |
 
 Time zones and calendar arithmetic are not in `std.time` yet.
 
 ### std.random
 
-A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `Random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
+A `Random` is a seeded generator (xoshiro256**, seeded through SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed; `Random.new()` takes its seed from the system's entropy, a new sequence each run. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. A generator is not for secrets (its sequence follows from its state): `random.bytes(n)` reads the system's entropy itself, for keys, tokens and ids.
 
 ```avant
 import std.random
@@ -4599,7 +4599,7 @@ fn main {
   puts(rng.int(6) < 6)               // => true
   die = rng.int(1, 7)
   puts(die >= 1 && die <= 6)         // => true
-  puts(Random.bytes(16).size)        // => 16
+  puts(random.bytes(16).size)        // => 16
 }
 ```
 
@@ -4612,7 +4612,7 @@ fn main {
 | `rng.float()` | a `Float64` in `[0, 1)` |
 | `rng.u64()` | the next 64 random bits |
 | `xs.shuffle(rng)`, `xs.shuffled(rng)` | the array in a random order, in place or as a new array (Fisher–Yates) |
-| `Random.bytes(n)` | `n` bytes of the system's entropy, from no generator |
+| `random.bytes(n)` | `n` bytes of the system's entropy, from no generator |
 
 ## Testing
 

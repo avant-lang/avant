@@ -8,7 +8,7 @@
 // entropy, a different sequence each run. The generator is xoshiro256**
 // (a 256-bit state, the four words of a seed filled by SplitMix64), fast
 // and statistically strong; it is not for secrets: its sequence follows
-// from its state. `Random.bytes(n)` gives n bytes of the system's
+// from its state. `random.bytes(n)` gives n bytes of the system's
 // entropy (getrandom), for keys, tokens and ids.
 
 lib random_os {
@@ -86,16 +86,6 @@ pub class Random {
     (u64() >> 11).to_f() / 9007199254740992.0
   }
 
-  // n bytes of the system's entropy (getrandom): unpredictable, for
-  // keys, tokens and ids, from no generator. n must be 0 or more.
-  pub fn self.bytes(n: Int): Bytes {
-    if n < 0 || n > 2147483647 {
-      none: Bytes? = nil
-      return none.expect("Random.bytes(n) needs n in 0..2147483647, got ${n}")
-    }
-    random_os.avant_os_entropy_bytes(n)
-  }
-
   // A UInt64 below bound (positive), each equally likely: draws below
   // the threshold would make the low results likelier, so they are
   // drawn again.
@@ -107,6 +97,16 @@ pub class Random {
     }
     r % bound
   }
+}
+
+// n bytes of the system's entropy (getrandom): unpredictable, for keys,
+// tokens and ids, from no generator. n must be 0 or more.
+pub fn bytes(n: Int): Bytes {
+  if n < 0 || n > 2147483647 {
+    none: Bytes? = nil
+    return none.expect("random.bytes(n) needs n in 0..2147483647, got ${n}")
+  }
+  random_os.avant_os_entropy_bytes(n)
 }
 
 fn mix(x: UInt64): UInt64 {
