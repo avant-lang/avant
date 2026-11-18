@@ -4,7 +4,7 @@ Avant wraps these; it does not reimplement JSON or HTTP.
 
 | Tree | Role | License | Pin |
 | --- | --- | --- | --- |
-| `yyjson/` | JSON | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`), with the local patch listed under "yyjson: local patches" |
+| `yyjson/` | JSON; and every program's float text (`yyjson/f64_to_dec.h`: an excerpt of `yyjson.c` with its copyright notice, the 128-bit multiply helpers, the table of powers of ten and the Schubfach conversion `f64_bin_to_dec`, byte for byte, which `runtime/avant_str.c` includes) | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`), with the local patch listed under "yyjson: local patches"; the excerpt follows the same pin |
 | `uSockets/` | HTTP evented sockets (the C library only) | Apache-2.0 | `7a7c820` (`src/` only), with the local patches listed under "uSockets: local patches" |
 | `base64/` | Base64 codec (aklomp/base64) | BSD-style, copyright Nick Galbreath, Wojciech Muła, Matthieu Darbois, and Alfred Klomp (see `base64/LICENSE`) | `e4cc438b7a8f2780b15f88aed24a89927f6bd6c6` (`base64/PIN`) |
 | `pcre2/` | Regular expressions for `std.regex` computed patterns; literal patterns take re2c | BSD-3-Clause with the PCRE2 exception, copyright University of Cambridge and the PCRE2 authors (see `pcre2/LICENCE.md`, `pcre2/AUTHORS.md`); the bundled sljit JIT compiler is BSD-2-Clause, copyright Zoltan Herczeg (`pcre2/deps/sljit/LICENSE`) | 10.49 (`pcre2/PIN`: tarball sha256 and the release signature checked) |

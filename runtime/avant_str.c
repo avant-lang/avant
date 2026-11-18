@@ -4,6 +4,7 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "avant_fmt.h"
+#include "third_party/yyjson/f64_to_dec.h"
 
 #include <math.h>
 #include <stdatomic.h>
@@ -319,70 +320,28 @@ char *avant_str_from_u64(uint64_t n) {
   return dup_bytes(buf, (size_t)k);
 }
 
+/* v (below 10^8) as exactly eight digits at p. */
+static void put8_digits(char *p, uint32_t v) {
+  uint32_t a = v / 10000;
+  uint32_t b = v % 10000;
+  memcpy(p, avant_fmt_d2 + 2 * (a / 100), 2);
+  memcpy(p + 2, avant_fmt_d2 + 2 * (a % 100), 2);
+  memcpy(p + 4, avant_fmt_d2 + 2 * (b / 100), 2);
+  memcpy(p + 6, avant_fmt_d2 + 2 * (b % 100), 2);
+}
+
 /* The one text of a Float64: the shortest
  * decimal that reads back as the same number, laid out as ECMAScript's
  * Number::toString with a decimal point kept on whole values and no '+'
  * in the exponent (the layout yyjson's writer gives Json.text, so a float
  * reads the same in puts, interpolation and JSON): `0.1`, `2.0`, `-0.0`,
  * `100000000000000000000.0`, `1e21`, `1.5e-7`, `5e-324`; NaN is `nan`, the
- * infinities `inf` and `-inf`. The digits: %.15g when it reads back (by
- * DBL_DIG every decimal of 15 or fewer digits that reads back is that
- * one), else the 16-digit correctly rounded decimal or a neighbour one
- * unit away that reads back, else the 17-digit one, which always does.
+ * infinities `inf` and `-inf`. The digits are Schubfach's (yyjson's
+ * f64_bin_to_dec, third_party/yyjson/f64_to_dec.h): the shortest decimal
+ * inside the number's rounding interval, the closest one when several
+ * are as short, as a search of %.15g, %.16g and %.17g with a read back
+ * finds them, without printing or reading anything.
  * out holds at least 40 bytes; returns the length (out is NUL-terminated). */
-static int fmt_digits(double v, int p, char *dig, int *exp10) {
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%.*e", p - 1, v);
-  int k = 0;
-  const char *s = buf;
-  if (*s == '-') {
-    s++;
-  }
-  for (; *s && *s != 'e'; s++) {
-    if (*s >= '0' && *s <= '9') {
-      dig[k++] = *s;
-    }
-  }
-  dig[k] = 0;
-  *exp10 = (*s == 'e') ? atoi(s + 1) : 0;
-  return k;
-}
-
-static int reads_back(const char *dig, int n, int exp10, double av) {
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%.*se%d", n, dig, exp10 - n + 1);
-  return strtod(buf, NULL) == av;
-}
-
-/* dig += delta (+1 or -1) as an n-digit integer; 0 when the digit count
- * would change. */
-static int step_digits(char *dig, int n, int delta) {
-  int i = n - 1;
-  if (delta > 0) {
-    while (i >= 0 && dig[i] == '9') {
-      dig[i] = '0';
-      i--;
-    }
-    if (i < 0) {
-      return 0;
-    }
-    dig[i]++;
-  } else {
-    while (i >= 0 && dig[i] == '0') {
-      dig[i] = '9';
-      i--;
-    }
-    if (i < 0) {
-      return 0;
-    }
-    dig[i]--;
-    if (dig[0] == '0') {
-      return 0;
-    }
-  }
-  return 1;
-}
-
 int avant_fmt_float_text(char *out, double v) {
   char *o = out;
   if (v != v) {
@@ -401,44 +360,35 @@ int avant_fmt_float_text(char *out, double v) {
     memcpy(o, "0.0", 4);
     return (int)(o - out) + 3;
   }
-  char dig[24];
-  int e10 = 0;
-  int n = 0;
-  if (v < 2.2250738585072014e-308) {
-    /* A subnormal has fewer digits of precision than DBL_DIG: search. */
-    for (int p = 1; p <= 17; p++) {
-      n = fmt_digits(v, p, dig, &e10);
-      if (reads_back(dig, n, e10, v)) {
-        break;
-      }
-      char nb[24];
-      memcpy(nb, dig, sizeof(dig));
-      if (step_digits(nb, n, 1) && reads_back(nb, n, e10, v)) {
-        memcpy(dig, nb, sizeof(dig));
-        break;
-      }
-      memcpy(nb, dig, sizeof(dig));
-      if (step_digits(nb, n, -1) && reads_back(nb, n, e10, v)) {
-        memcpy(dig, nb, sizeof(dig));
-        break;
-      }
-    }
-  } else if (!(n = fmt_digits(v, 15, dig, &e10), reads_back(dig, n, e10, v))) {
-    n = fmt_digits(v, 16, dig, &e10);
-    if (!reads_back(dig, n, e10, v)) {
-      char up[24];
-      char down[24];
-      memcpy(up, dig, sizeof(dig));
-      memcpy(down, dig, sizeof(dig));
-      if (step_digits(up, n, 1) && reads_back(up, n, e10, v)) {
-        memcpy(dig, up, sizeof(dig));
-      } else if (step_digits(down, n, -1) && reads_back(down, n, e10, v)) {
-        memcpy(dig, down, sizeof(dig));
-      } else {
-        n = fmt_digits(v, 17, dig, &e10);
-      }
-    }
+  uint64_t raw;
+  memcpy(&raw, &v, sizeof raw);
+  uint64_t sig_raw = raw & (((uint64_t)1 << 52) - 1);
+  uint32_t exp_raw = (uint32_t)(raw >> 52) & 0x7ff;
+  uint64_t sig_bin = sig_raw;
+  int32_t exp_bin = 1 - 1023 - 52;
+  if (exp_raw != 0) {
+    sig_bin = sig_raw | ((uint64_t)1 << 52);
+    exp_bin = (int32_t)exp_raw - 1023 - 52;
   }
+  uint64_t sig_dec = 0;
+  int32_t exp_dec = 0;
+  f64_bin_to_dec(sig_raw, exp_raw, sig_bin, exp_bin, &sig_dec, &exp_dec);
+  /* Its digits (at most 17), two at a time from a table of pairs in
+   * two halves of eight (the pairs of avant_fmt.h), as yyjson's writer
+   * writes them: a digit a time was a chain of 17 dependent divisions. */
+  char all[17];
+  uint64_t top = sig_dec / 100000000;
+  all[0] = (char)('0' + (uint32_t)(top / 100000000));
+  put8_digits(all + 1, (uint32_t)(top % 100000000));
+  put8_digits(all + 9, (uint32_t)(sig_dec % 100000000));
+  int lead = 0;
+  while (lead < 16 && all[lead] == '0') {
+    lead++;
+  }
+  int n = 17 - lead;
+  char dig[24];
+  memcpy(dig, all + lead, (size_t)n);
+  int e10 = exp_dec + n - 1;
   while (n > 1 && dig[n - 1] == '0') {
     n--;
   }
