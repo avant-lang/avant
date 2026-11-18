@@ -4726,7 +4726,7 @@ fn main {
     puts(resp.headers().get("Content-Type") ?? "")
     puts(resp.body_text() ?? "")
   }
-  if created = http.post("http://127.0.0.1:8080/echo", "payload") {
+  if created = http.post("http://127.0.0.1:8080/echo", "payload", headers: ["X-Request-Id": "42"]) {
     puts(created.status)
   }
 }
@@ -4734,9 +4734,9 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
-| `http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | |
-| `http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`http.Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
+| `http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0, headers = [:])` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int`, `headers: Hash(String, String)` | `Response \| HttpError` | below | `headers` are sent in the hash's order; name them (`http.get(url, headers: ["Accept": "text/plain"])`) |
+| `http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | a `Content-Type` in `headers` replaces the body's |
+| `http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes`, `headers` a `Hash(String, String)` or, for a header sent as repeated lines, an `Array(Header)` (`http.Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
 | The call returns an `HttpError` when | Message |
 | --- | --- |

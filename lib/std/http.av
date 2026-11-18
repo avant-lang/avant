@@ -1413,20 +1413,43 @@ pub fn decode_component(text: String): String {
   httpc.avant_http_decode_component(text)
 }
 
-pub fn get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
-  hs: Array(Header) = []
-  request("GET", url, "".bytes, hs, follow, timeout_ms, idle_ms)
+// `headers` on every client call: a Hash of names to values, sent in
+// its order (a header that must repeat is one line with a comma list,
+// RFC 9110 5.3; `request` also takes an Array(Header) for a line that
+// must repeat as lines).
+pub fn get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0, headers: Hash(String, String) = [:]): Response | HttpError {
+  request_lines("GET", url, "".bytes, header_lines(headers), follow, timeout_ms, idle_ms)
 }
 
 // The body is a String (sent as text/plain; charset=utf-8) or Bytes
-// (application/octet-stream), its bytes as they are.
-pub fn post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+// (application/octet-stream), its bytes as they are; a Content-Type in
+// `headers` replaces that one.
+pub fn post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0, headers: Hash(String, String) = [:]): Response | HttpError {
   hs: Array(Header) = []
-  switch body {
-    case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
-    case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
+  typed = false
+  for name, _ in headers {
+    if name.eq_ignore_ascii_case("content-type") {
+      typed = true
+    }
   }
-  request("POST", url, body, hs, follow, timeout_ms, idle_ms)
+  if !typed {
+    switch body {
+      case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
+      case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
+    }
+  }
+  for name, value in headers {
+    hs.push(Header { name: name, value: value })
+  }
+  request_lines("POST", url, body, hs, follow, timeout_ms, idle_ms)
+}
+
+fn header_lines(headers: Hash(String, String)): Array(Header) {
+  out: Array(Header) = []
+  for name, value in headers {
+    out.push(Header { name: name, value: value })
+  }
+  out
 }
 
 // `timeout_ms` is a deadline for the whole call: every redirect it
@@ -1444,7 +1467,17 @@ pub fn post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: 
 // Authorization, a Proxy-Authorization, a Cookie or a Host set for one
 // server reached the server a redirect named, as browsers and curl
 // never let them.
+pub fn request(method: String, url: String, body: String | Bytes, headers: Hash(String, String), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  request_lines(method, url, body, header_lines(headers), follow, timeout_ms, idle_ms)
+}
+
+// The same with the header lines as an Array, for a header that must be
+// sent as repeated lines.
 pub fn request(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  request_lines(method, url, body, headers, follow, timeout_ms, idle_ms)
+}
+
+fn request_lines(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool, timeout_ms: Int, idle_ms: Int): Response | HttpError {
   cur_method = method
   cur_url = url
   cur_body = body_bytes(body)

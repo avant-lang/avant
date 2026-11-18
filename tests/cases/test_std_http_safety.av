@@ -670,6 +670,13 @@ fn client_request_cases(c: Checks, root: String) {
   ok.push(Header { name: "content-length", value: "0" })
   ok.push(Header { name: "Connection", value: "keep-alive" })
   c.eq_str(outcome(http.request("POST", "${base}/echo", "abc".bytes, ok, false, 4000)), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-Ok!#$%&'*+-.^_`|~: a\tb \"c\" ${chr(195)}${chr(169)}|Content-Length: 3|Connection: close", "a valid request is sent as given, without the caller's Content-Length and Connection")
+  // Headers on every call, as a Hash in its order; a Content-Type given
+  // to post replaces the one its body's type gives.
+  c.eq_str(outcome(http.get("${base}/echo", false, 4000, headers: ["Accept": "text/plain", "X-B": "2"])), "200 GET /echo HTTP/1.1|Host: 127.0.0.1:${port}|Accept: text/plain|X-B: 2|Content-Length: 0|Connection: close", "a get with headers sends them in their order")
+  c.eq_str(outcome(http.post("${base}/echo", "{}", false, 4000, headers: ["content-type": "application/json", "X-A": "1"])), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|content-type: application/json|X-A: 1|Content-Length: 2|Connection: close", "a post's Content-Type from its headers replaces the body's")
+  c.eq_str(outcome(http.post("${base}/echo", "{}", false, 4000, headers: ["X-A": "1"])), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|Content-Type: text/plain; charset=utf-8|X-A: 1|Content-Length: 2|Connection: close", "a post's headers beside its body's Content-Type")
+  c.eq_str(outcome(http.request("PUT", "${base}/echo", "x", ["X-C": "3"], false, 4000)), "200 PUT /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-C: 3|Content-Length: 1|Connection: close", "request takes a Hash of headers")
+  c.eq_str(outcome(http.get("${base}/echo", false, 4000, headers: ["X-A": "1\r\nX-B: 2"])), "invalid request header value of X-A (byte 13 at 1): ${value_rule}", "a Hash header's value is checked as any")
   c.eq_str(outcome(http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
   // A caller's Host was sent beside the URL's: two Host lines, which a
   // server refuses. It replaces the URL's, in any case of its name.
