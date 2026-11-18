@@ -9,7 +9,7 @@ type Request = http.Request
 type Response = http.Response
 
 fn body_text(resp: Response): String {
-  String.from_utf8(resp.body) ?? ""
+  resp.body_text() ?? ""
 }
 
 fn client_round(port: Int, out: sync.Channel(String)): Int {
@@ -196,7 +196,7 @@ fn ws_round(port: Int, out: sync.Channel(String), script: String, stamp: Int): I
 
 fn route_items(req: Request): Response {
   who = req.header("authorization") ?? "nobody"
-  Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${String.from_utf8(req.body()) ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
+  Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${req.body_text() ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
 }
 
 // A request built in memory, handed to a handler as a framework's
@@ -217,7 +217,10 @@ fn in_memory_cases(c: Checks) {
   plain = Request.build("GET", "/")
   c.eq_str("${plain.query() ?? "none"} ${plain.headers().count()} ${plain.body().size}", "none 0 0", "a built request with defaults")
   resp = route_items(req)
-  c.eq_str(String.from_utf8(resp.body) ?? "", "POST /items x=1&y Bearer t hi", "a handler called with a built request")
+  c.eq_str(resp.body_text() ?? "", "POST /items x=1&y Bearer t hi", "a handler called with a built request")
+  bad = Buf.new()
+  bad.push_byte(255)
+  c.eq_str("${Request.build("POST", "/", [], bad.to_bytes()).body_text() ?? "nil"} ${Response.bytes(bad.to_bytes()).body_text() ?? "nil"} ${Response.text("é").body_text() ?? "nil"}", "nil nil é", "a body as text: nil when it is not UTF-8")
   rh = resp.headers()
   c.eq_int(rh.count(), 2, "a built response's headers: its Content-Type and X-Seen")
   c.eq_str("${rh.name_at(0) ?? ""}: ${rh.value_at(0) ?? ""}", "Content-Type: application/json", "a built response's Content-Type comes first, as sent")

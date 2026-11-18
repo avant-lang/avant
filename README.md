@@ -4619,7 +4619,7 @@ fn main {
     client = spawn {
       if resp = http.get("http://127.0.0.1:${port}/hello?ada") {
         puts(resp.status)                               // => 200
-        puts(String.from_utf8(resp.body) ?? "")         // => hello ada
+        puts(resp.body_text() ?? "")         // => hello ada
       }
     }
     server.serve()
@@ -4660,7 +4660,7 @@ fn main {
 | `fallback((req) { ... })` | the handler, a lambda | the `Server` | as a route | **the fallback**: every request no route names by its method and path goes to it (without one, the server answers 404), so a framework's router gets every request (`/messages/42`); a second call replaces the first |
 | `every(ms, () { ... })` | `ms: Int` (1 or more), a lambda | the `Server` | a period under 1 traps (`avant runtime: http.Server.every(0): a period is 1 ms or more`) | runs every `ms` while serving, the first time `ms` after `serve` starts, on the server's first loop thread; like a handler it must not block, and a trap in it is printed and the server goes on |
 | `on_close(() { ... })` | a lambda | the `Server` | as a route | runs once when the server stops, on the thread that called `serve`, after its loops stopped and before `serve` returns (in `close` for a server never served); hooks run in their order |
-| a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
+| a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`), and `req.body_text()`, the body as text (`String?`, `nil` when it is not UTF-8); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
 | `http.Response.text(body, status = 200)`, `http.Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: http.Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers()`: a response's are those received, or for one built in code those it will send (its `Content-Type` first; `Content-Length` and `Connection` are the server's); `for name, value in req.headers() { ... }` walks a `Headers` value in wire order, duplicates included |
@@ -4714,7 +4714,7 @@ fn main {
 
 #### HTTP client
 
-One blocking request at a time. Redirects are followed (at most five), chunked responses are decoded, and there is no connection pooling.
+One blocking request at a time. Redirects are followed (at most five), chunked responses are decoded, and there is no connection pooling. A response's `body` is `Bytes`; `resp.body_text()` reads it as text (`nil` when it is not UTF-8).
 
 <!-- check: compile -->
 ```avant
@@ -4724,7 +4724,7 @@ fn main {
   if resp = http.get("http://127.0.0.1:8080/") {
     puts(resp.status)
     puts(resp.headers().get("Content-Type") ?? "")
-    puts(String.from_utf8(resp.body) ?? "")
+    puts(resp.body_text() ?? "")
   }
   if created = http.post("http://127.0.0.1:8080/echo", "payload") {
     puts(created.status)

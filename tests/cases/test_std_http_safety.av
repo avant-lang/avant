@@ -165,7 +165,7 @@ fn post_big_round(port: Int, out: sync.Channel(String), n: Int): Int {
     b.push_byte(97 + i % 26)
   }
   if resp = http.post("http://127.0.0.1:${port}/len", b.to_s()) {
-    out.send("status ${resp.status}: ${String.from_utf8(resp.body) ?? "?"}")
+    out.send("status ${resp.status}: ${resp.body_text() ?? "?"}")
   } else {
     out.send("HttpError")
   }
@@ -178,7 +178,7 @@ fn post_big_round(port: Int, out: sync.Channel(String), n: Int): Int {
   raw.push_byte(254)
   hs: Array(Header) = []
   if resp = http.request("POST", "http://127.0.0.1:${port}/raw", raw.to_s().bytes, hs, true, 4000) {
-    out.send("status ${resp.status}: ${String.from_utf8(resp.body) ?? "?"}")
+    out.send("status ${resp.status}: ${resp.body_text() ?? "?"}")
   } else {
     out.send("HttpError")
   }
@@ -579,7 +579,7 @@ fn client_framing_cases(c: Checks, root: String) {
     got = ""
     switch r {
       case e: HttpError { got = e.message }
-      case resp: Response { got = "${resp.status} ${String.from_utf8(resp.body) ?? "?"}" }
+      case resp: Response { got = "${resp.status} ${resp.body_text() ?? "?"}" }
     }
     c.eq_str(got, wants[i], "${method} ${paths[i]} from a server that keeps the connection open")
     c.expect(took < 2000, "${method} ${paths[i]} returns when the response is complete, not at the deadline (${took} ms)")
@@ -594,7 +594,7 @@ fn client_framing_cases(c: Checks, root: String) {
 fn outcome(r: Response | HttpError): String {
   switch r {
     case e: HttpError { e.message }
-    case resp: Response { "${resp.status} ${String.from_utf8(resp.body) ?? "?"}" }
+    case resp: Response { "${resp.status} ${resp.body_text() ?? "?"}" }
   }
 }
 
