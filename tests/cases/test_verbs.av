@@ -87,6 +87,11 @@ fn cases: Array(LCase) {
   xs.push(traps("pad-byte", "fn main {\n  b = 300\n  puts(\"7\".pad_left(3, b))\n}\n", "avant runtime: byte 300 out of range (0..255)"))
   xs.push(traps("search-byte", "fn main {\n  b = 256\n  puts(\"abc\".contains(b))\n}\n", "avant runtime: byte 256 out of range (0..255)"))
   xs.push(refused("join-types", "fn main {\n  xs = [1, 2]\n  ys = [\"a\"]\n  puts((xs + ys).size)\n}\n", "cannot join Array(Int) and Array(String)", "4:12"))
+  xs.push(refused("binary-search-order", "struct P {\n  x: Int\n}\n\nfn main {\n  ps = [P { x: 1 }]\n  puts(ps.binary_search(P { x: 1 }) ?? -1)\n}\n", "binary_search needs an ordered element type, got Array(P)", "7:10"))
+  xs.push(refused("binary-search-type", "fn main {\n  xs = [1, 2]\n  puts(xs.binary_search(\"a\") ?? -1)\n}\n", "expected Int, got String", "3:25"))
+  xs.push(refused("binary-search-block", "fn main {\n  xs = [1, 2]\n  puts(xs.binary_search((x) { x }) ?? -1)\n}\n", "expected Int, got a lambda", "3:25"))
+  xs.push(refused("sort-by-arity", "fn main {\n  xs = [1, 2]\n  xs.sort_by()\n}\n", "sort_by takes one function, (x) { key }", "3:5"))
+  xs.push(refused("sort-by-params", "fn main {\n  xs = [1, 2]\n  xs.sort_by((a, b) { a })\n}\n", "the lambda has 2 parameters where fn(Int): K takes 1 argument", "3:14"))
   xs
 }
 

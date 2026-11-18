@@ -1578,6 +1578,8 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 | `xs.each (x) { ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
 | `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
 | `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
+| `xs.sort_by (x) { key }` | sort in place by each element's key, computed once per element, stably; the key has an order (a number, a `String`, `Bytes`, a type with `fn compare`); a function by name works too (`words.sort_by(by_length)`) |
+| `xs.binary_search(v)` | `Int?`: the position of an element equal to `v` in an array sorted by the element's order (the first such one), or `nil`; `log2(size)` comparisons. On a type with its own order, equal means neither comes first |
 | `xs.reverse()`, `xs.reversed()` | reverse in place; the same as a new array |
 | `xs.has(v)`, `xs.index_of(v)`, `xs.index_of(v, from)`, `xs.last_index_of(v)`, `xs.unique()` | `Bool`; `Int?`, the first position (from `from` on, which outside `0..size` traps as `xs[from..]` does) or the last; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused; `unique` is a new array of each value's first occurrence, in order |
 | `xs.find (x) { ... }`, `xs.index_of (x) { ... }` | the first element the lambda says `true` for (`T?`), or its position (`Int?`); the walk stops there |
