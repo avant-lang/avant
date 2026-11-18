@@ -1013,6 +1013,12 @@ pub class Lexer {
           if self.peek() == 61 {
             self.bump()
             kind = tk_dot_dot_eq()
+          } else if self.peek() == 46 {
+            // Ruby's and Crystal's `...` excludes its end, CoffeeScript's
+            // too: read here as `..` and `.`, a port would fail on a
+            // confusing parse error, or as an inclusive range it would be
+            // a silent off-by-one.
+            return fail_tok(loc, "`...` is not a range in Avant: write `..` (end excluded) or `..=` (end included)")
           }
         }
         Token.new(kind, loc, "")
