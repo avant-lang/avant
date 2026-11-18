@@ -90,6 +90,7 @@ fn stop(port: Int) {
 }
 
 fn close_unread_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "pipeline_mix", ""))
   out.send(raw_client(port, root, stamp, "close_unread", "2"))
   out.send(raw_client(port, root, stamp, "close_unread", "16"))
   out.send(raw_client(port, root, stamp, "close_unread", "2000"))
@@ -1432,6 +1433,13 @@ fn test_std_http_safety(c: Checks, root: String) {
     server.get("/hidden", (req) {
       Response.text("smuggled")
     })
+    server.get("/echo-size", (req) {
+      n = (req.query() ?? "0").to_i() ?? 0
+      Response.text(repeat_byte(120, n))
+    })
+    server.websocket("/ws", (conn, msg) {
+      _ = conn.send_message(msg)
+    })
     server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
@@ -1443,6 +1451,12 @@ fn test_std_http_safety(c: Checks, root: String) {
     }
     server.serve()
     c.eq_int(handle.join() ?? -1, 0, "close-unread task")
+    // Pipelined answers are written together now (one write per
+    // answer was one system call per request): whole and in order, a
+    // large one among them, a WebSocket upgrade behind them, a close.
+    mwant: Array(String) = []
+    mwant.push("pipeline_mix=16 in order,101,echo,3 then closed")
+    expect_lines(c, out, mwant, "pipelined answers written together keep their order:")
     want: Array(String) = []
     want.push("close_unread=alive")
     want.push("close_unread=alive")

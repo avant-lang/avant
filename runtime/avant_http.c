@@ -573,6 +573,14 @@ typedef struct Conn {
   /* The bytes of the server's body budget this request's body holds
    * while it waits (its Content-Length), 0 when none. */
   int64_t budget;
+  /* Pipelined answers gathered for one write (conn_process): while
+   * corking is set, conn_send appends to cork instead of writing, and
+   * the batch goes out in one write when the requests in the buffer are
+   * answered. cork_len is 0 outside conn_process. */
+  int corking;
+  char *cork;
+  size_t cork_len;
+  size_t cork_cap;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -931,8 +939,8 @@ static int conn_out_append(Conn *conn, const char *p, size_t n) {
  * TCP instead of filling the server's memory. When the queue cannot
  * grow the connection is closed: the answer cannot be completed, and a
  * cut answer followed by another is worse than a closed connection. */
-static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
-                      size_t an, const char *b, size_t bn) {
+static void conn_send_raw(Conn *conn, struct us_socket_t *s, const char *a,
+                          size_t an, const char *b, size_t bn) {
   size_t written = 0;
   if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
     return;
@@ -980,9 +988,71 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
   conn_poll(s, LIBUS_SOCKET_WRITABLE);
 }
 
+/* The most a batch of pipelined answers gathers before it is written:
+ * a large answer goes out by itself rather than be copied. */
+#define HTTP_CORK_MAX 65536
+
+/* Writes the gathered answers, in one write (conn_send_raw queues what
+ * the socket does not take). */
+static void conn_uncork(Conn *conn, struct us_socket_t *s) {
+  size_t n = conn->cork_len;
+  if (n == 0) {
+    return;
+  }
+  conn->cork_len = 0;
+  conn_send_raw(conn, s, conn->cork, n, NULL, 0);
+}
+
+/* Appends n bytes to the batch; 0 when it would pass HTTP_CORK_MAX or
+ * memory ran out. */
+static int cork_append(Conn *conn, const char *p, size_t n) {
+  if (conn->cork_len + n > conn->cork_cap) {
+    size_t want = conn->cork_cap ? conn->cork_cap : 4096;
+    char *next;
+    while (want < conn->cork_len + n) {
+      want *= 2;
+    }
+    next = (char *)realloc(conn->cork, want);
+    if (!next) {
+      return 0;
+    }
+    conn->cork = next;
+    conn->cork_cap = want;
+  }
+  if (n > 0) {
+    memcpy(conn->cork + conn->cork_len, p, n);
+  }
+  conn->cork_len += n;
+  return 1;
+}
+
+/* Sends the two pieces of an answer. Under pipelining (conn->corking,
+ * set by conn_process while a later request waits in the buffer, or a
+ * batch has begun) they are gathered, and the batch is written once:
+ * one write per answer was one system call per request, where the
+ * fastest servers make one per batch. A piece that would pass
+ * HTTP_CORK_MAX first sends the batch, then goes as it would alone, so
+ * order is kept. */
+static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
+                      size_t an, const char *b, size_t bn) {
+  if (conn->corking) {
+    size_t before = conn->cork_len;
+    if (conn->cork_len + an + bn <= HTTP_CORK_MAX && cork_append(conn, a, an) &&
+        cork_append(conn, b, bn)) {
+      return;
+    }
+    conn->cork_len = before;
+  }
+  if (conn->cork_len) {
+    conn_uncork(conn, s);
+  }
+  conn_send_raw(conn, s, a, an, b, bn);
+}
+
 /* The answer is complete and the connection ends after it: shut down
  * now, or when the queued tail has been sent. */
 static void conn_finish(Conn *conn, struct us_socket_t *s) {
+  conn_uncork(conn, s);
   conn->answered = 1;
   if (conn_out_pending(conn)) {
     conn->close_after_flush = 1;
@@ -2441,7 +2511,7 @@ static int http_host_valid(const char *p, size_t n) {
   return 1;
 }
 
-static void conn_process(Conn *conn, struct us_socket_t *s) {
+static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
   AvantHttpServer *srv = conn->srv;
 
   if (conn->answered) {
@@ -2654,6 +2724,20 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     req.body_len = (size_t)(has_cl ? content_length : 0);
     req.keep_alive = keep_alive;
     req.minor_version = minor_version;
+    if (req.is_ws) {
+      /* The upgrade writes its 101 itself: the answers gathered go
+       * first, and one still queued keeps the handshake in the buffer
+       * until it has gone (conn_flush comes back here). */
+      conn_uncork(conn, s);
+      if (us_socket_is_closed(0, s) || conn_out_pending(conn)) {
+        return;
+      }
+    } else {
+      /* Gather this answer when a request waits behind it, or a batch
+       * has begun: the batch is written once, when the buffer's requests
+       * are answered (conn_process). */
+      conn->corking = conn->len > total || conn->cork_len > 0;
+    }
     /* The dispatch runs in a recovery point: a trap in the handler (or
      * in std.http's code for this request) returns here, the handler's
      * frames dropped, and the request is answered 500, with the
@@ -2679,6 +2763,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
                      !keep_alive ? "close"
                                  : minor_version == 0 ? "keep-alive" : NULL);
     }
+    conn->corking = 0;
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
        * bytes past the handshake are frames already in the buffer. */
@@ -2712,6 +2797,16 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       }
       return;
     }
+  }
+}
+
+/* The requests in a connection's buffer, answered in order; the
+ * answers gathered under pipelining are written once, at the end. */
+static void conn_process(Conn *conn, struct us_socket_t *s) {
+  conn_process_requests(conn, s);
+  conn->corking = 0;
+  if (conn->cork_len && !us_socket_is_closed(0, s)) {
+    conn_uncork(conn, s);
   }
 }
 
@@ -3083,6 +3178,11 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
   node->conn.out_len = 0;
   node->conn.out_off = 0;
   node->conn.out_cap = 0;
+  free(node->conn.cork);
+  node->conn.cork = NULL;
+  node->conn.cork_len = 0;
+  node->conn.cork_cap = 0;
+  node->conn.corking = 0;
   if (hl) {
     link = &hl->conns_head;
     while (*link && *link != node) {

@@ -73,6 +73,43 @@ def close_unread(count):
     return "alive" if ping_ok() else "gone"
 
 
+def pipeline_mix():
+    # Pipelined answers are gathered and written together: they must
+    # still come whole and in order, a large one among them included, a
+    # WebSocket upgrade behind them must come after them (its 101 is
+    # written by the upgrade itself), and a request with Connection:
+    # close must end the connection after its answer.
+    s = connect()
+    s.settimeout(5)
+    batch = get("/ping") * 3 + get("/echo-size?70000") + get("/ping") * 12
+    up = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    s.sendall(batch + up)
+    got = read_answers(s, 16)
+    want = [(200, b"pong")] * 3 + [(200, b"x" * 70000)] + [(200, b"pong")] * 12
+    if got != want:
+        return "answers %r" % [(st, len(b)) for st, b in got]
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            return "no 101"
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        return "not 101: %r" % head[:40]
+    ws_frame(s, 1, b"hi")
+    op, payload, buf = ws_read_frame(s, buf)
+    s.close()
+    if payload != b"hi":
+        return "echo %r" % payload
+    t = connect()
+    t.settimeout(5)
+    t.sendall(get("/ping") * 2 + get("/ping", "Connection: close\r\n") + get("/ping"))
+    got = read_answers(t, 3)
+    closed = wait_closed(t, 2)
+    return "16 in order,101,echo,%d then %s" % (len(got), "closed" if closed else "open")
+
+
 BIG = 8 * 1024 * 1024
 
 
@@ -996,6 +1033,8 @@ try:
         result = handler_trap(arg)
     elif mode == "callback_trap":
         result = callback_trap(arg)
+    elif mode == "pipeline_mix":
+        result = pipeline_mix()
     elif mode == "ws_live":
         result = ws_live()
     elif mode == "emfile":
