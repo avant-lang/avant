@@ -128,7 +128,7 @@ fn main {
   }
   puts("a".bytes.to_base64())
   puts(sha256("abc"))
-  if server = Http.listen(0) {
+  if server = http.listen(0) {
     server.close()
   }
   h = spawn {

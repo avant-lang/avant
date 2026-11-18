@@ -1376,109 +1376,104 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
 // so do not call it from a server handler; hand the work to `spawn`
 // first. Redirects are followed at most five times when `follow` is
 // set. There is no connection pooling and no TLS in this wave.
-pub class Http {
-  fn initialize {
+// Binds a server now (so a bad port fails here, and an ephemeral
+// port is known through `server.port` before serving) and returns
+// it ready for routes. The body limit is in bytes; a larger request
+// body is answered 413. `loops` is the number of event loops (one
+// thread each, all bound to the same port); when it is 0 the
+// thread pool's size is used (`--avant-threads=N` or std.sync's
+// set_pool_size, else the CPUs; it is fixed from then on). Loops plus `spawn` workers can
+// oversubscribe the machine; that is the documented consequence of
+// one chosen count.
+pub fn listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0, max_message: Int = 1048576): Server | HttpError {
+  handle = httpc.avant_http_listen(host, port, max_body, loops, max_message)
+  if httpc.avant_http_take_status() != 0 {
+    return HttpError.new("could not listen on ${host}:${port}")
   }
+  state = HttpState.new()
+  state.bound_port = httpc.avant_http_port(handle)
+  Server { handle: handle, state: state }
+}
 
-  // Binds a server now (so a bad port fails here, and an ephemeral
-  // port is known through `server.port` before serving) and returns
-  // it ready for routes. The body limit is in bytes; a larger request
-  // body is answered 413. `loops` is the number of event loops (one
-  // thread each, all bound to the same port); when it is 0 the
-  // thread pool's size is used (`--avant-threads=N` or std.sync's
-  // set_pool_size, else the CPUs; it is fixed from then on). Loops plus `spawn` workers can
-  // oversubscribe the machine; that is the documented consequence of
-  // one chosen count.
-  pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0, max_message: Int = 1048576): Server | HttpError {
-    handle = httpc.avant_http_listen(host, port, max_body, loops, max_message)
-    if httpc.avant_http_take_status() != 0 {
-      return HttpError.new("could not listen on ${host}:${port}")
-    }
-    state = HttpState.new()
-    state.bound_port = httpc.avant_http_port(handle)
-    Server { handle: handle, state: state }
-  }
+// A URL component percent-decoded, as a router decodes a path segment
+// (`caf%C3%A9` is `café`): `%XX` is a byte, `+` stays `+`, a `%`
+// without two hex digits is kept, and bytes that are not UTF-8 read as
+// U+FFFD. For a query or a form body, Params.parse.
+pub fn decode_component(text: String): String {
+  httpc.avant_http_decode_component(text)
+}
 
-  // A URL component percent-decoded, as a router decodes a path segment
-  // (`caf%C3%A9` is `café`): `%XX` is a byte, `+` stays `+`, a `%`
-  // without two hex digits is kept, and bytes that are not UTF-8 read as
-  // U+FFFD. For a query or a form body, Params.parse.
-  pub fn self.decode_component(text: String): String {
-    httpc.avant_http_decode_component(text)
-  }
+pub fn get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  hs: Array(Header) = []
+  request("GET", url, "".bytes, hs, follow, timeout_ms, idle_ms)
+}
 
-  pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
-    hs: Array(Header) = []
-    Http.request("GET", url, "".bytes, hs, follow, timeout_ms, idle_ms)
+// The body is a String (sent as text/plain; charset=utf-8) or Bytes
+// (application/octet-stream), its bytes as they are.
+pub fn post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  hs: Array(Header) = []
+  switch body {
+    case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
+    case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
   }
+  request("POST", url, body, hs, follow, timeout_ms, idle_ms)
+}
 
-  // The body is a String (sent as text/plain; charset=utf-8) or Bytes
-  // (application/octet-stream), its bytes as they are.
-  pub fn self.post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
-    hs: Array(Header) = []
-    switch body {
-      case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
-      case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
-    }
-    Http.request("POST", url, body, hs, follow, timeout_ms, idle_ms)
+// `timeout_ms` is a deadline for the whole call: every redirect it
+// follows, each one's connect, request and complete response. When
+// it passes first the call returns an HttpError, whatever has
+// arrived. Zero or less means the default, 10000. `idle_ms`, when
+// more than 0, is a second limit: an exchange that sees no byte
+// arrive or leave for that long (its connect included) ends with an
+// HttpError, however much of the deadline is left, so a long transfer
+// that moves can be given a large deadline and one that stalls is
+// still cut soon (to within a quarter of `idle_ms`).
+//
+// A redirect to another authority (another host or port) is sent the
+// caller's headers without its credentials and its Host: an
+// Authorization, a Proxy-Authorization, a Cookie or a Host set for one
+// server reached the server a redirect named, as browsers and curl
+// never let them.
+pub fn request(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  cur_method = method
+  cur_url = url
+  cur_body = body_bytes(body)
+  hops = 0
+  limit = timeout_ms
+  if limit <= 0 {
+    limit = 10000
   }
-
-  // `timeout_ms` is a deadline for the whole call: every redirect it
-  // follows, each one's connect, request and complete response. When
-  // it passes first the call returns an HttpError, whatever has
-  // arrived. Zero or less means the default, 10000. `idle_ms`, when
-  // more than 0, is a second limit: an exchange that sees no byte
-  // arrive or leave for that long (its connect included) ends with an
-  // HttpError, however much of the deadline is left, so a long transfer
-  // that moves can be given a large deadline and one that stalls is
-  // still cut soon (to within a quarter of `idle_ms`).
-  //
-  // A redirect to another authority (another host or port) is sent the
-  // caller's headers without its credentials and its Host: an
-  // Authorization, a Proxy-Authorization, a Cookie or a Host set for one
-  // server reached the server a redirect named, as browsers and curl
-  // never let them.
-  pub fn self.request(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
-    cur_method = method
-    cur_url = url
-    cur_body = body_bytes(body)
-    hops = 0
-    limit = timeout_ms
-    if limit <= 0 {
-      limit = 10000
+  deadline = now_ms() + limit
+  origin = http_parse_url(url)
+  elsewhere: Array(Header) = []
+  for h in headers {
+    if !is_credential_header(h.name) && !h.name.eq_ignore_ascii_case("host") {
+      elsewhere.push(h)
     }
-    deadline = now_ms() + limit
-    origin = http_parse_url(url)
-    elsewhere: Array(Header) = []
-    for h in headers {
-      if !is_credential_header(h.name) && !h.name.eq_ignore_ascii_case("host") {
-        elsewhere.push(h)
-      }
-    }
-    while true {
-      hop_headers = headers
-      if hops > 0 && !same_authority(origin, http_parse_url(cur_url)) {
-        hop_headers = elsewhere
-      }
-      resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline, idle_ms)?
-      redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
-      if !follow || !redirect {
-        return resp
-      }
-      location = resp.headers().get("Location") ?? return resp
-      hops += 1
-      if hops > 5 {
-        return HttpError.new("too many redirects")
-      }
-      next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
-      if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
-        cur_method = "GET"
-        cur_body = "".bytes
-      }
-      cur_url = next_url
-    }
-    HttpError.new("too many redirects")
   }
+  while true {
+    hop_headers = headers
+    if hops > 0 && !same_authority(origin, http_parse_url(cur_url)) {
+      hop_headers = elsewhere
+    }
+    resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline, idle_ms)?
+    redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
+    if !follow || !redirect {
+      return resp
+    }
+    location = resp.headers().get("Location") ?? return resp
+    hops += 1
+    if hops > 5 {
+      return HttpError.new("too many redirects")
+    }
+    next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
+    if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
+      cur_method = "GET"
+      cur_body = "".bytes
+    }
+    cur_url = next_url
+  }
+  HttpError.new("too many redirects")
 }
 
 // A WebSocket client connection, the client's counterpart of WsConn.
@@ -1535,38 +1530,35 @@ pub struct WsConnection {
   }
 }
 
-pub class Ws {
-  fn initialize {
+// The body of ws.connect (std.ws), which programs call: a WebSocket
+// client connection needs this module's C bindings and URL parsing.
+pub fn ws_connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
+  if url.starts_with("wss://") {
+    return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
   }
-
-  pub fn self.connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
-    if url.starts_with("wss://") {
-      return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
-    }
-    if !url.starts_with("ws://") {
-      return HttpError.new("only ws:// URLs are supported")
-    }
-    // The handshake's request line and Host are the URL's.
-    if refused = url_refusal(url) {
-      return refused
-    }
-    parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
-    if p = parsed {
-      key = httpc.avant_ws_client_key()
-      id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
-      code = httpc.avant_http_take_status()
-      if code == 1 {
-        return HttpError.new("could not connect to ${p.authority}")
-      }
-      if code == 2 {
-        return HttpError.new("connection to ${p.authority} timed out")
-      }
-      if code != 0 {
-        return HttpError.new("websocket handshake with ${p.authority} failed")
-      }
-      return WsConnection { id: id }
-    }
-    HttpError.new("invalid URL: ${url}")
+  if !url.starts_with("ws://") {
+    return HttpError.new("only ws:// URLs are supported")
   }
+  // The handshake's request line and Host are the URL's.
+  if refused = url_refusal(url) {
+    return refused
+  }
+  parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
+  if p = parsed {
+    key = httpc.avant_ws_client_key()
+    id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
+    code = httpc.avant_http_take_status()
+    if code == 1 {
+      return HttpError.new("could not connect to ${p.authority}")
+    }
+    if code == 2 {
+      return HttpError.new("connection to ${p.authority} timed out")
+    }
+    if code != 0 {
+      return HttpError.new("websocket handshake with ${p.authority} failed")
+    }
+    return WsConnection { id: id }
+  }
+  HttpError.new("invalid URL: ${url}")
 }
 

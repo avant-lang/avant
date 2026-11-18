@@ -4591,7 +4591,7 @@ static __thread int32_t g_ws_client_last_is_text;
 /* The open client connections, by id. An
  * Avant WsConnection value is the id alone. The registry used to hold
  * addresses and the value was the address: after close freed a
- * WsClient, the next Ws.connect was given the same address, and a copy
+ * WsClient, the next ws.connect was given the same address, and a copy
  * of the closed value then sent on, and closed, the new connection; and
  * an operation tested membership and then used the client with no lock
  * held, so a close on another thread in between freed it under the
@@ -4852,7 +4852,7 @@ typedef struct FetchState {
   size_t body_want;
   size_t scanned;
   struct phr_chunked_decoder chunks;
-  /* The idle limit (Http.request's idle_ms, 0: none) and the last time
+  /* The idle limit (http.request's idle_ms, 0: none) and the last time
    * a byte arrived or left (http_now_ms), read by fetch_on_idle. */
   uint32_t idle_ms;
   int64_t progress_at;

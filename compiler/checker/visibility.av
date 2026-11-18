@@ -1005,11 +1005,16 @@ pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
 // `.q` make a use of q an error naming both whole names. std.gc keeps
 // its own reading of `gc` (names_std_gc).
 pub fn (checker_self: Checker) last_name_module(q: String, from_mod: String, loc: Location): String {
-  if q == from_mod || q == "gc" {
+  if q == "gc" {
     return ""
   }
-  if k = checker_self.known_mods.get(q) {
-    return ""
+  // A module's own name stands for an import ending in it, when one does:
+  // a program in http.av that imports std.http means std.http by
+  // `http.listen`, since a module has no need to qualify its own names.
+  if q != from_mod {
+    if k = checker_self.known_mods.get(q) {
+      return ""
+    }
   }
   found = ""
   other = ""
@@ -1073,8 +1078,10 @@ pub fn (checker_self: Checker) qualify_last_name(expr: Expr) {
   } else {
     return
   }
-  if k2 = checker_self.known_mods.get(q) {
-    return
+  if q != checker_self.current_module {
+    if k2 = checker_self.known_mods.get(q) {
+      return
+    }
   }
   if found = checker_self.lookup(q) {
     return

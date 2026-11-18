@@ -66,7 +66,7 @@ A web server is seven lines:
 import std.http
 
 fn main {
-  if server = Http.listen(8080) {
+  if server = http.listen(8080) {
     server.get("/", (req) { Response.text("hello") })
     server.serve()
   }
@@ -3508,7 +3508,7 @@ fn main {
 }
 ```
 
-The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `Http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `sync.set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
+The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `sync.set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
 
 A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--avant-threads=2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
 
@@ -4212,7 +4212,8 @@ Each module is imported on its own and links only its own C library: a program t
 | --- | --- | --- |
 | [`std.json`](#stdjson) | `Json.parse`, a document to walk, `JsonBuilder` | yyjson |
 | [`std.regex`](#stdregex) | `Regex.compile`, `Match` values, replace and split | PCRE2, and re2c scanners for literal patterns |
-| [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
+| [`std.http`](#stdhttp) | HTTP server and client (`http.listen`, `http.get`), WebSocket server | uSockets and picohttpparser |
+| [`std.ws`](#websocket-client) | the WebSocket client, `ws.connect(url)` | `std.http` |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64`, and the URL-safe `to_base64_url`, `from_base64_url` | the aklomp Base64 codec |
 | [`std.time`](#stdtime) | `time.now()`, `t.iso()`, `Time.parse_iso(s)`, `time.sleep_ms(ms)` | the system clock |
@@ -4332,14 +4333,14 @@ Cleartext HTTP/1.1 and WebSockets: a server, a blocking HTTP client and a blocki
 import std.http
 
 fn main {
-  if server = Http.listen(0) {                 // port 0: the OS picks a free port
+  if server = http.listen(0) {                 // port 0: the OS picks a free port
     server.get("/hello", (req) {
       server.close()                             // this example answers once, then stops
       Response.text("hello ${req.query() ?? "nobody"}")
     })
     port = server.port()
     client = spawn {
-      if resp = Http.get("http://127.0.0.1:${port}/hello?ada") {
+      if resp = http.get("http://127.0.0.1:${port}/hello?ada") {
         puts(resp.status)                               // => 200
         puts(String.from_utf8(resp.body) ?? "")         // => hello ada
       }
@@ -4352,14 +4353,14 @@ fn main {
 
 #### HTTP server
 
-`Http.listen(port)` binds at once (a bad port fails there); register routes, then `serve` runs until `close`.
+`http.listen(port)` binds at once (a bad port fails there); register routes, then `serve` runs until `close`.
 
 <!-- check: compile -->
 ```avant
 import std.http
 
 fn main {
-  if server = Http.listen(8080, "0.0.0.0") {
+  if server = http.listen(8080, "0.0.0.0") {
     server.get("/", (req) {
       Response.text("hello")
     })
@@ -4376,7 +4377,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
+| `http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
 | `server.port()` | — | `Int`: the bound port | — | |
 | `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler, a lambda | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming: a framework routes from the fallback. Register every route, WebSocket ones too, the fallback, timers and hooks, before `serve` |
 | `fallback((req) { ... })` | the handler, a lambda | the `Server` | as a route | **the fallback**: every request no route names by its method and path goes to it (without one, the server answers 404), so a framework's router gets every request (`/messages/42`); a second call replaces the first |
@@ -4387,7 +4388,7 @@ fn main {
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers()`: a response's are those received, or for one built in code those it will send (its `Content-Type` first; `Content-Length` and `Connection` are the server's); `for name, value in req.headers() { ... }` walks a `Headers` value in wire order, duplicates included |
 | `req.param(name)`, `req.params()`, `Params.parse(text)` | `name`, `text: String` | `String?`, a `Params` | — | **query parameters**, decoded as a form is (`+` a space, `%XX` a byte, a `%` without two hex digits kept, bytes that are not UTF-8 read as U+FFFD); names exact, order and repeats kept. A `Params` has `get`, `has`, `get_all`, `count`, `name_at`, `value_at` as headers do; `Params.parse(String.from_utf8(req.body()) ?? "")` reads a form body |
-| `Http.decode_component(text)` | `text: String` | `String` | — | a path segment percent-decoded (`+` stays `+`), for a router |
+| `http.decode_component(text)` | `text: String` | `String` | — | a path segment percent-decoded (`+` stays `+`), for a router |
 | `Request.build(method, target, headers = [], body = "".bytes)` | `method`, `target: String` (a path with an optional `?query`), `headers: Array(Header)`, `body: Bytes` | a `Request`, as a handler would get it, with no peer (`""`) | a header that `.header` would refuse traps | **a request in memory**, for tests that call a handler or a framework's router with it |
 | `serve` | — | — | — | runs until `close` |
 | `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
@@ -4418,7 +4419,7 @@ fn main {
 import std.http
 
 fn main {
-  if opened = Http.listen(8080) {
+  if opened = http.listen(8080) {
     server = opened.head_timeout(5000).min_rate(1000, 2000).max_connections(50000)
     server.get("/", (req) {
       Response.text("hello")
@@ -4443,12 +4444,12 @@ One blocking request at a time. Redirects are followed (at most five), chunked r
 import std.http
 
 fn main {
-  if resp = Http.get("http://127.0.0.1:8080/") {
+  if resp = http.get("http://127.0.0.1:8080/") {
     puts(resp.status)
     puts(resp.headers().get("Content-Type") ?? "")
     puts(String.from_utf8(resp.body) ?? "")
   }
-  if created = Http.post("http://127.0.0.1:8080/echo", "payload") {
+  if created = http.post("http://127.0.0.1:8080/echo", "payload") {
     puts(created.status)
   }
 }
@@ -4456,9 +4457,9 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
-| `Http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | |
-| `Http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
+| `http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
+| `http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | |
+| `http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
 | The call returns an `HttpError` when | Message |
 | --- | --- |
@@ -4481,7 +4482,7 @@ WebSocket routes share the HTTP server and its port. A handler runs once per com
 import std.http
 
 fn main {
-  if server = Http.listen(8080) {
+  if server = http.listen(8080) {
     server.websocket("/echo", (conn, msg) {
       conn.send_message(msg)                   // echo, text or binary
     })
@@ -4506,12 +4507,15 @@ A `WsConn` kept after its connection closed, or after `serve` returned, answers 
 
 #### WebSocket client
 
+The client is the module `std.ws`: `ws.connect(url)` opens a connection, a `WsConnection` of `std.http`.
+
 <!-- check: compile -->
 ```avant
 import std.http
+import std.ws
 
 fn main {
-  if conn = Ws.connect("ws://127.0.0.1:8080/echo") {
+  if conn = ws.connect("ws://127.0.0.1:8080/echo") {
     conn.send_text("hi")
     if msg = conn.recv() {
       puts(msg.text() ?? "")
@@ -4523,7 +4527,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
+| `ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
 | `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage?` | `nil` when the connection closed or the timeout passed, and `close_code` says which | blocks. Never call `recv` from a server handler |
 | `close_code` | — | `Int` | — | 1006 until a close frame arrives |
 | `send_text`, `send_bytes`, `send_message` | a `String`, `Bytes`, a `WsMessage` (sent as it came, text or binary) | `Bool` | `false` after `close` | |

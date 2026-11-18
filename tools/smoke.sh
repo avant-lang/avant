@@ -321,14 +321,14 @@ src http.av <<'EOF'
 import std.http
 
 fn main {
-  if server = Http.listen(0) {
+  if server = http.listen(0) {
     server.get("/") { |req|
       server.close()
       Response.text("Hello Avant")
     }
     port = server.port()
     handle = spawn {
-      if resp = Http.get("http://127.0.0.1:${port}/") {
+      if resp = http.get("http://127.0.0.1:${port}/") {
         puts(String.from_utf8(resp.body) ?? "")
       }
       0

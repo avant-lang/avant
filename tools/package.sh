@@ -169,7 +169,7 @@ fn main {
     puts(back.size)
   }
   puts("a".bytes.to_base64())
-  if server = Http.listen(0) {
+  if server = http.listen(0) {
     server.close()
   }
   h = spawn {
