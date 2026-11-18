@@ -935,7 +935,11 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
   }
   lw.at(e.loc)
   if name == "push_byte" {
-    ops[1] = lw.byte_checked(ops[1], e.loc)
+    // A literal byte needs no check.
+    c = ops[1]
+    if c.kind != mok_int() || c.ival < 0 || c.ival > 255 {
+      ops[1] = lw.byte_checked(c, e.loc)
+    }
   }
   if name == "starts_with" {
     r = lw.call_to(mt_i32(), f, ops)

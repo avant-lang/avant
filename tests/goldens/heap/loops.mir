@@ -38,6 +38,7 @@ extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_repeat_byte(i64, i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_str_view_test(ref str) -> i32 never
+extern avant_trap_byte(i64) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
 
@@ -2097,48 +2098,51 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @loops.av:225:1 {
   let _15: i64
   let _16: i64
   let _17: i64
-  let _18: i64
+  let _18: u64
   let _19: bool
-  let _20: bool
-  let _21: u64
-  let _22: u64
-  let _23: ref %elems(Int) slot
-  let _24: i32
-  let _25: ref %Array(Int)
-  let _26: i64
-  let _27: i64
-  let _28: ref %Array(Array(Int))
-  let _29 (rows): ref %Array(Array(Int)) slot
-  let _30: bool
-  let _31: ref %Array(Int) slot
-  let _32: i64
-  let _33: i64
-  let _34: ref %Array(Int)
+  let _20: i64
+  let _21: i64
+  let _22: bool
+  let _23: bool
+  let _24: u64
+  let _25: u64
+  let _26: ref %elems(Int) slot
+  let _27: i32
+  let _28: ref %Array(Int)
+  let _29: i64
+  let _30: i64
+  let _31: ref %Array(Array(Int))
+  let _32 (rows): ref %Array(Array(Int)) slot
+  let _33: bool
+  let _34: ref %Array(Int) slot
   let _35: i64
-  let _36: ref %Array(Int)
-  let _37: i64
-  let _38: ref %loops.Box
-  let _39 (bx): ref %loops.Box slot
-  let _40: bool
-  let _41: i64
-  let _42: ref %Array(Int) slot
-  let _43: i64
+  let _36: i64
+  let _37: ref %Array(Int)
+  let _38: i64
+  let _39: ref %Array(Int)
+  let _40: i64
+  let _41: ref %loops.Box
+  let _42 (bx): ref %loops.Box slot
+  let _43: bool
   let _44: i64
-  let _45: ref %Array(Int)
+  let _45: ref %Array(Int) slot
   let _46: i64
-  let _47: ref %Array(Int)
-  let _48: i64
+  let _47: i64
+  let _48: ref %Array(Int)
+  let _49: i64
+  let _50: ref %Array(Int)
+  let _51: i64
 
 bb0:
   _4 = zero   @225:1
   _12 = zero   @225:1
-  _23 = zero   @225:1
-  _29 = zero   @225:1
-  _31 = zero   @225:1
-  _39 = zero   @225:1
+  _26 = zero   @225:1
+  _32 = zero   @225:1
+  _34 = zero   @225:1
   _42 = zero   @225:1
+  _45 = zero   @225:1
   gc.enter   @225:1
-  gc.roots _2, _4, _12, _23, _29, _31, _39, _42   @225:1
+  gc.roots _2, _4, _12, _26, _32, _34, _42, _45   @225:1
   call __avant_type_maps() nocollect   @225:1
   call avant_io_init_argv(copy _1, copy _2) collects   @225:1
   _3 = call av.loops/fill(const i64 103, const i64 5) collects   @226:8
@@ -2165,92 +2169,102 @@ bb1:
 bb2:
   _15 = mul copy _13, const i64 37   @234:20
   _16 = rem copy _15, const i64 256   @234:26
-  call avant_buf_push_byte(copy _12, copy _16) collects   @234:6
-  _17 = add copy _13, const i64 1   @235:11
-  _13 = copy _17   @235:7
-  goto bb1   @233:3
+  _17 = copy _16   @234:6
+  _18 = cast copy _17 to u64   @234:6
+  _19 = le copy _18, const u64 255   @234:6
+  branch copy _19, bb5, bb4   @234:6
 
 bb3:
-  _18 = const i64 256   @237:17
-  _19 = lt copy _18, const i64 0   @237:17
-  branch copy _19, bb4, bb5   @237:17
+  _21 = const i64 256   @237:17
+  _22 = lt copy _21, const i64 0   @237:17
+  branch copy _22, bb6, bb7   @237:17
 
 bb4:
-  call avant_trap_negative(copy _18, const i32 0) nocollect   @237:17
-  unreachable   @237:17
+  call avant_trap_byte(copy _17) nocollect   @234:6
+  unreachable   @234:6
 
 bb5:
-  _20 = gt copy _18, const i64 2147483647   @237:17
-  branch copy _20, bb6, bb7   @237:17
+  call avant_buf_push_byte(copy _12, copy _17) collects   @234:6
+  _20 = add copy _13, const i64 1   @235:11
+  _13 = copy _20   @235:7
+  goto bb1   @233:3
 
 bb6:
-  call avant_trap_size(const i32 2) nocollect   @237:17
+  call avant_trap_negative(copy _21, const i32 0) nocollect   @237:17
   unreachable   @237:17
 
 bb7:
-  _21 = cast copy _18 to u64   @237:17
-  _22 = mul copy _21, const u64 8   @237:17
-  _23 = call avant_alloc(copy _22, const u32 0) collects   @237:17
-  _24 = cast copy _18 to i32   @237:17
-  _25 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @237:17
-  (*_25).0 = copy _23 fresh   @237:17
-  (*_25).1 = copy _24   @237:17
-  (*_25).2 = copy _24   @237:17
-  _26 = call av.loops/bytes(copy _12, copy _25) nocollect   @237:8
-  call avant_puts_i64(copy _26) nocollect   @237:3
-  _27 = call av.loops/strings(const str.3, const str.4) nocollect   @238:8
-  call avant_puts_i64(copy _27) nocollect   @238:3
-  _28 = call avant_alloc(const u64 16, const u32 1022) collects   @239:29
-  _29 = copy _28   @239:3
-  _13 = const i64 0   @240:5
-  goto bb8   @241:3
+  _23 = gt copy _21, const i64 2147483647   @237:17
+  branch copy _23, bb8, bb9   @237:17
 
 bb8:
-  _30 = lt copy _13, const i64 12   @241:11
-  branch copy _30, bb9, bb10   @241:3
+  call avant_trap_size(const i32 2) nocollect   @237:17
+  unreachable   @237:17
 
 bb9:
-  _31 = call av.loops/fill(const i64 12, copy _13) collects   @242:15
-  call avant_array_push_ptr(copy _29, copy _31, const u32 65535) collects   @242:9
-  _32 = add copy _13, const i64 1   @243:11
-  _13 = copy _32   @243:7
-  goto bb8   @241:3
+  _24 = cast copy _21 to u64   @237:17
+  _25 = mul copy _24, const u64 8   @237:17
+  _26 = call avant_alloc(copy _25, const u32 0) collects   @237:17
+  _27 = cast copy _21 to i32   @237:17
+  _28 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @237:17
+  (*_28).0 = copy _26 fresh   @237:17
+  (*_28).1 = copy _27   @237:17
+  (*_28).2 = copy _27   @237:17
+  _29 = call av.loops/bytes(copy _12, copy _28) nocollect   @237:8
+  call avant_puts_i64(copy _29) nocollect   @237:3
+  _30 = call av.loops/strings(const str.3, const str.4) nocollect   @238:8
+  call avant_puts_i64(copy _30) nocollect   @238:3
+  _31 = call avant_alloc(const u64 16, const u32 1022) collects   @239:29
+  _32 = copy _31   @239:3
+  _13 = const i64 0   @240:5
+  goto bb10   @241:3
 
 bb10:
-  _33 = call av.loops/grid(copy _29, const i64 12) nocollect   @245:8
-  call avant_puts_i64(copy _33) nocollect   @245:3
-  _34 = call av.loops/fill(const i64 103, const i64 9) collects   @246:18
-  _35 = call av.loops/churn(copy _4, copy _34, const i64 1500) collects   @246:8
-  call avant_puts_i64(copy _35) nocollect   @246:3
-  _36 = call av.loops/fill(const i64 10, const i64 3) collects   @247:14
-  _37 = call av.loops/grows(copy _36) collects   @247:8
-  call avant_puts_i64(copy _37) nocollect   @247:3
-  _38 = call av.loops/Box.new(const i64 0) collects   @248:11
-  _39 = copy _38   @248:6
-  _13 = const i64 0   @249:5
-  goto bb11   @250:3
+  _33 = lt copy _13, const i64 12   @241:11
+  branch copy _33, bb11, bb12   @241:3
 
 bb11:
-  _40 = lt copy _13, const i64 10   @250:11
-  branch copy _40, bb12, bb13   @250:3
+  _34 = call av.loops/fill(const i64 12, copy _13) collects   @242:15
+  call avant_array_push_ptr(copy _32, copy _34, const u32 65535) collects   @242:9
+  _35 = add copy _13, const i64 1   @243:11
+  _13 = copy _35   @243:7
+  goto bb10   @241:3
 
 bb12:
-  _41 = mul copy _13, const i64 2   @251:18
-  _42 = copy (*_39).0   @251:7
-  call avant_array_push_i64(copy _42, copy _41) collects   @251:10
-  _43 = add copy _13, const i64 1   @252:11
-  _13 = copy _43   @252:7
-  goto bb11   @250:3
+  _36 = call av.loops/grid(copy _32, const i64 12) nocollect   @245:8
+  call avant_puts_i64(copy _36) nocollect   @245:3
+  _37 = call av.loops/fill(const i64 103, const i64 9) collects   @246:18
+  _38 = call av.loops/churn(copy _4, copy _37, const i64 1500) collects   @246:8
+  call avant_puts_i64(copy _38) nocollect   @246:3
+  _39 = call av.loops/fill(const i64 10, const i64 3) collects   @247:14
+  _40 = call av.loops/grows(copy _39) collects   @247:8
+  call avant_puts_i64(copy _40) nocollect   @247:3
+  _41 = call av.loops/Box.new(const i64 0) collects   @248:11
+  _42 = copy _41   @248:6
+  _13 = const i64 0   @249:5
+  goto bb13   @250:3
 
 bb13:
-  _44 = call av.loops/aliased(copy _39, const i64 10) collects   @254:8
-  call avant_puts_i64(copy _44) nocollect   @254:3
-  _45 = call av.loops/fill(const i64 40, const i64 0) collects   @255:14
-  _46 = call av.loops/early(copy _45) nocollect   @255:8
-  call avant_puts_i64(copy _46) nocollect   @255:3
-  _47 = call av.loops/fill(const i64 30, const i64 4) collects   @256:15
-  _48 = call av.loops/wobble(copy _47) nocollect   @256:8
-  call avant_puts_i64(copy _48) nocollect   @256:3
+  _43 = lt copy _13, const i64 10   @250:11
+  branch copy _43, bb14, bb15   @250:3
+
+bb14:
+  _44 = mul copy _13, const i64 2   @251:18
+  _45 = copy (*_42).0   @251:7
+  call avant_array_push_i64(copy _45, copy _44) collects   @251:10
+  _46 = add copy _13, const i64 1   @252:11
+  _13 = copy _46   @252:7
+  goto bb13   @250:3
+
+bb15:
+  _47 = call av.loops/aliased(copy _42, const i64 10) collects   @254:8
+  call avant_puts_i64(copy _47) nocollect   @254:3
+  _48 = call av.loops/fill(const i64 40, const i64 0) collects   @255:14
+  _49 = call av.loops/early(copy _48) nocollect   @255:8
+  call avant_puts_i64(copy _49) nocollect   @255:3
+  _50 = call av.loops/fill(const i64 30, const i64 4) collects   @256:15
+  _51 = call av.loops/wobble(copy _50) nocollect   @256:8
+  call avant_puts_i64(copy _51) nocollect   @256:3
   _0 = const i32 0   @225:1
   gc.leave   @225:1
   return   @225:1
