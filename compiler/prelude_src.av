@@ -13,7 +13,7 @@ import token
 // The names that bring the module in: its functions. A program that
 // calls none of them may declare its own IoError or ProcessError.
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output"]
+  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output", "process_output_into"]
 }
 
 // The functions of the module's second part (prelude_more_source), which
@@ -21,7 +21,7 @@ pub fn prelude_names: Array(String) {
 // only the first part's functions compiles exactly the code it did
 // before the second part existed.
 pub fn prelude_more_names: Array(String) {
-  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output"]
+  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output", "process_output_into"]
 }
 
 // Whether a module's tokens name one of the prelude module's names.
@@ -183,6 +183,7 @@ pub fn prelude_more_source: String {
     "  fun avant_sys_walk(path: String): Array(String)?",
     "  fun avant_sys_capture(path: String, args: Array(String), input: String): Int",
     "  fun avant_sys_captured(which: Int): String",
+    "  fun avant_sys_captured_into(which: Int, dst: Buf): Int",
     "  fun avant_sys_more_errno: Int",
     "  fun avant_sys_more_signal: Int",
     "}",
@@ -312,6 +313,25 @@ pub fn prelude_more_source: String {
     "    return process_failure(path, st)",
     "  }",
     "  ProcessOutput.new(st, avant_sys_more.avant_sys_captured(1), avant_sys_more.avant_sys_captured(2))",
+    "}",
+    "",
+    "// process_output into the caller's buffers: the child's stdout is",
+    "// appended to out and its stderr to err, and the exit status is the",
+    "// value, so a loop that runs many programs reuses two Bufs.",
+    "pub fn process_output_into(path: String, args: Array(String), out: Buf, err: Buf, input: String = \"\"): Int | ProcessError {",
+    "  st = avant_sys_more.avant_sys_capture(path, args, input)",
+    "  if st < 0 {",
+    "    return process_failure(path, st)",
+    "  }",
+    "  e1 = avant_sys_more.avant_sys_captured_into(1, out)",
+    "  e2 = avant_sys_more.avant_sys_captured_into(2, err)",
+    "  if e1 != 0 {",
+    "    return ProcessError.new(path, e1, 0, \"\")",
+    "  }",
+    "  if e2 != 0 {",
+    "    return ProcessError.new(path, e2, 0, \"\")",
+    "  }",
+    "  st",
     "}",
     "",
     "// Why a captured run failed: a signal, or a start (or an output too",

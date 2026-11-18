@@ -573,6 +573,37 @@ avant_int avant_sys_capture(const char *path, void *args, const char *input) {
   return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
 }
 
+/* Appends what the last capture read from the child's stdout (which 1)
+ * or stderr (2) to buf and frees it: process_output_into, which writes
+ * into the caller's buffers instead of allocating two Strings. 0, or
+ * EFBIG when buf would pass its ceiling (nothing appended). */
+avant_int avant_sys_captured_into(avant_int which, void *buf) {
+  int i = which == 2 ? 1 : 0;
+  int32_t at = (int32_t)avant_buf_size(buf);
+  size_t n = g_cap_n[i];
+  uint8_t *dst;
+  if (n > (size_t)INT32_MAX - (size_t)at) {
+    free(g_cap[i]);
+    g_cap[i] = NULL;
+    g_cap_n[i] = 0;
+    return EFBIG;
+  }
+  /* RC1/RC2: the growth may collect; the Buf is a handle, its bytes
+   * read after it. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &buf);
+  avant_buf_ensure(buf, at + (int32_t)n);
+  dst = avant_buf_bytes(buf);
+  if (n > 0) {
+    memcpy(dst + at, g_cap[i], n);
+  }
+  avant_buf_set_size(buf, at + (int32_t)n);
+  free(g_cap[i]);
+  g_cap[i] = NULL;
+  g_cap_n[i] = 0;
+  return 0;
+}
+
 /* The bytes the last capture on this thread read: 1 its stdout, 2 its
  * stderr, as a String; the C copy is freed. */
 /* gc-lint: holds nothing (C memory only). */

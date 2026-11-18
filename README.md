@@ -3736,7 +3736,7 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `file_size`, `file_delete`, `dir_list`, `dir_walk`, `dir_exists`, `dir_make` |
-| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output` |
+| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output`, `process_output_into` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
@@ -3891,6 +3891,7 @@ A `program` is a `String` and `args` an `Array(String)`; a program name without 
 | `process_run(program, args)` | `program`, `args` | `Int \| ProcessError`: its exit status | a `ProcessError` (below) | runs the program and waits; `process_run`'s child shares the program's stdin, stdout and stderr |
 | `process_run_out(program, args, out)` | `program`, `args`, `out: String` | the same | the same, with `output` when the output file could not be opened | the same, with stdout and stderr written to the file `out` |
 | `process_output(program, args, input)` | `program`, `args`, `input: String` (`""` when left out) | `ProcessOutput \| ProcessError`: its `status`, `stdout` and `stderr` | a `ProcessError` | runs the program with `input` on its stdin, then end of input, waits, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error) |
+| `process_output_into(program, args, out, err, input)` | `program`, `args`, `out: Buf`, `err: Buf`, `input` (`""` when left out) | `Int \| ProcessError`: its exit status | a `ProcessError` | `process_output` into the caller's buffers: the child's stdout is appended to `out` and its stderr to `err`, so a loop that runs many programs reuses two `Buf`s instead of making two strings each time |
 
 ```avant
 fn main {
