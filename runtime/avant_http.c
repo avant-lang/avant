@@ -180,11 +180,45 @@ static int hex_val(unsigned char ch) {
 
 static int ws_utf8_valid(const unsigned char *p, size_t n);
 
+/* The UTF-8 sequence at p[0..n), n >= 1: its length when it is a valid
+ * scalar value's, else minus the length of its maximal subpart (the
+ * longest start of it that could still begin a valid sequence, at least
+ * the one byte): Unicode's "substitution of maximal subparts", which the
+ * WHATWG Encoding standard's decoder and Python's errors="replace" use,
+ * so a truncated sequence is one U+FFFD and not one per byte. The second
+ * byte's range depends on the first (Unicode 3.9, table 3-7). */
+static int utf8_seq(const unsigned char *p, size_t n) {
+  unsigned char c0 = p[0];
+  int len;
+  unsigned char lo = 0x80, hi = 0xbf;
+  int i;
+  if (c0 < 0x80) { return 1; }
+  if (c0 >= 0xc2 && c0 <= 0xdf) { len = 2; }
+  else if (c0 >= 0xe0 && c0 <= 0xef) {
+    len = 3;
+    if (c0 == 0xe0) { lo = 0xa0; }
+    if (c0 == 0xed) { hi = 0x9f; }
+  } else if (c0 >= 0xf0 && c0 <= 0xf4) {
+    len = 4;
+    if (c0 == 0xf0) { lo = 0x90; }
+    if (c0 == 0xf4) { hi = 0x8f; }
+  } else {
+    return -1;
+  }
+  for (i = 1; i < len; i++) {
+    unsigned char c;
+    if ((size_t)i >= n) { return -i; }
+    c = p[i];
+    if (i == 1 ? (c < lo || c > hi) : (c & 0xc0) != 0x80) { return -i; }
+  }
+  return len;
+}
+
 /* Percent-decodes p[0..n) into out, which has room for 3 * n bytes;
  * '+' is a space when plus is set (application/x-www-form-urlencoded).
  * A '%' not followed by two hex digits is kept as it is. The decoded
- * bytes are read as UTF-8, each byte that does not begin a valid
- * sequence replaced by U+FFFD (three bytes). Returns the length. */
+ * bytes are read as UTF-8, each maximal subpart of an invalid sequence
+ * (utf8_seq) replaced by one U+FFFD (three bytes). Returns the length. */
 static size_t pct_decode(const char *p, size_t n, char *out, int plus) {
   unsigned char small[256];
   unsigned char *raw = n <= sizeof small ? small : (unsigned char *)malloc(n);
@@ -208,21 +242,16 @@ static size_t pct_decode(const char *p, size_t n, char *out, int plus) {
     }
   }
   while (at < r) {
-    unsigned char c0 = raw[at];
-    size_t len = c0 < 0x80                  ? 1
-                 : c0 >= 0xc2 && c0 <= 0xdf ? 2
-                 : c0 >= 0xe0 && c0 <= 0xef ? 3
-                 : c0 >= 0xf0 && c0 <= 0xf4 ? 4
-                                            : 0;
-    if (len == 1 || (len > 1 && at + len <= r && ws_utf8_valid(raw + at, len))) {
-      memcpy(out + m, raw + at, len);
-      m += len;
-      at += len;
+    int len = utf8_seq(raw + at, r - at);
+    if (len > 0) {
+      memcpy(out + m, raw + at, (size_t)len);
+      m += (size_t)len;
+      at += (size_t)len;
     } else {
       out[m++] = (char)0xef;
       out[m++] = (char)0xbf;
       out[m++] = (char)0xbd;
-      at++;
+      at += (size_t)-len;
     }
   }
   if (raw != small) {
@@ -3039,8 +3068,12 @@ static int sweep_interval(const AvantHttpServer *srv) {
  * has been idle longest, but `except`; NULL when there is none. Its idle
  * timeout was started at its last activity, so the one due soonest
  * (uSockets' ticks: 4 s each; among equals the oldest connection, the
- * list being newest first) is the longest idle. Walked only at the
- * connection limit. */
+ * list being newest first) is the longest idle. With an idle timeout
+ * past 952 s the connections run uSockets' minute clock instead (their
+ * short timeout is none), and that clock ranks them, to the minute: read
+ * as the short one, every connection was "due now" and the oldest was
+ * taken, however recently it was used. Walked only at the connection
+ * limit. */
 static ConnNode *loop_longest_idle(HttpLoop *hl, ConnNode *except) {
   ConnNode *best = NULL;
   unsigned best_left = 1000;
@@ -3052,9 +3085,15 @@ static ConnNode *loop_longest_idle(HttpLoop *hl, ConnNode *except) {
         conn_out_pending(c) || us_socket_is_closed(0, node->sock)) {
       continue;
     }
-    left = node->sock->timeout == 255
-               ? 0
-               : (node->sock->timeout + 240u - node->sock->context->timestamp) % 240u;
+    if (hl->srv->idle_mins) {
+      left = node->sock->long_timeout == 255
+                 ? 0
+                 : (node->sock->long_timeout + 240u - node->sock->context->long_timestamp) % 240u;
+    } else {
+      left = node->sock->timeout == 255
+                 ? 0
+                 : (node->sock->timeout + 240u - node->sock->context->timestamp) % 240u;
+    }
     if (left <= best_left) {
       best_left = left;
       best = node;

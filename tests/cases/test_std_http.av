@@ -247,6 +247,13 @@ fn param_cases(c: Checks) {
   form = http.Params.parse("name=Ada+Lovelace&lang=%E2%9C%93")
   c.eq_str("${form.get("name") ?? "-"}|${form.get("lang") ?? "-"}", "Ada Lovelace|✓", "a form body")
   c.eq_str(http.decode_component("caf%C3%A9+x%2Fy%"), "café+x/y%", "a path segment: %XX decoded, + kept")
+  // An invalid sequence's maximal subpart is one U+FFFD (the WHATWG
+  // decoder's and Python's errors="replace" reading), not one per byte.
+  c.eq_str(http.decode_component("a%E2%82b"), "a\u{FFFD}b", "a truncated three-byte sequence is one U+FFFD")
+  c.eq_str(http.decode_component("%F0%9F%98"), "\u{FFFD}", "a truncated four-byte sequence at the end is one U+FFFD")
+  c.eq_str(http.decode_component("%E0%80%AF"), "\u{FFFD}\u{FFFD}\u{FFFD}", "an overlong form: each byte its own U+FFFD (E0 takes A0 to BF next)")
+  c.eq_str(http.decode_component("%ED%A0%80x"), "\u{FFFD}\u{FFFD}\u{FFFD}x", "a surrogate: each byte its own U+FFFD (ED takes 80 to 9F next)")
+  c.eq_str(http.decode_component("%F4%8F%BF%BF%F4%90"), "\u{10FFFF}\u{FFFD}\u{FFFD}", "the last scalar value, then past it")
 }
 
 fn test_std_http(c: Checks) {
