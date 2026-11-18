@@ -729,6 +729,126 @@ def emfile(port_file):
     return "answered" if data.endswith(b"pong") else "not answered (%r)" % data[:40]
 
 
+def ws_live():
+    # A WebSocket connection had no deadline at all. Against a server
+    # with websocket_idle_timeout(4000) and min_rate(1000, 500), four
+    # clients at once: `quiet` connects and then neither sends nor
+    # answers pings (a peer gone without a FIN): pinged 4 to 8 s later
+    # and closed 4 to 8 s after that; `ponger` answers each ping (with
+    # the pong the RFC asks for) and stays open past that; `trickle`
+    # sends a frame a byte every 0.2 s, under the rate: closed; `stuck`
+    # asks for more than the kernel and its queue hold and never reads:
+    # closed (by the rate once the queue holds bytes the client does not
+    # take, or by the ping it cannot answer).
+    import threading
+    import struct
+    out = {}
+
+    def ended(s, limit):
+        # (seconds until the server ended the connection or None, pings seen)
+        s.settimeout(0.1)
+        start = time.time()
+        buf = b""
+        pings = 0
+        while time.time() - start < limit:
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return time.time() - start, pings
+            if not chunk:
+                return time.time() - start, pings
+            buf += chunk
+            while len(buf) >= 2 and len(buf) >= 2 + (buf[1] & 127):
+                n = buf[1] & 127
+                if n >= 126:
+                    break
+                if buf[0] & 15 == 9:
+                    pings += 1
+                buf = buf[2 + n:]
+        return None, pings
+
+    def quiet():
+        s, _ = ws_open("/ws")
+        took, pings = ended(s, 20)
+        out["quiet"] = "closed" if took is not None and 7 < took < 17 and pings == 1 else "took %s, %d pings" % (took, pings)
+
+    def ponger():
+        s, buf = ws_open("/ws")
+        s.settimeout(0.1)
+        start = time.time()
+        pings = 0
+        while time.time() - start < 18:
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                chunk = b""
+            if not chunk:
+                out["ponger"] = "closed after %.0f s" % (time.time() - start)
+                return
+            buf += chunk
+            while len(buf) >= 2 and buf[0] & 15 == 9:
+                n = buf[1] & 127
+                pings += 1
+                ws_frame(s, 10, buf[2:2 + n])
+                buf = buf[2 + n:]
+        s.close()
+        out["ponger"] = "open, pinged" if pings >= 2 else "open, %d pings" % pings
+
+    def trickle():
+        s, _ = ws_open("/ws")
+        m = b"\x01\x02\x03\x04"
+        frame = struct.pack("!BB", 0x81, 0x80 | 100) + m + bytes(x ^ m[i & 3] for i, x in enumerate(b"x" * 100))
+        start = time.time()
+        for b in frame:
+            try:
+                s.sendall(bytes([b]))
+            except OSError:
+                break
+            time.sleep(0.2)
+            if time.time() - start > 15:
+                break
+        took = time.time() - start
+        s.settimeout(1)
+        try:
+            closed = s.recv(1) == b""
+        except socket.timeout:
+            closed = False
+        except OSError:
+            closed = True
+        out["trickle"] = "closed" if closed and took < 6 else "took %.0f s, closed %s" % (took, closed)
+
+    def stuck():
+        # Asks for more than its queue holds and never reads; the
+        # server's close handler of /ws-stuck notes the close, read
+        # through GET /stuck.
+        s = small_rcvbuf()
+        s.sendall(b"GET /ws-stuck HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            buf += s.recv(4096)
+        ws_frame(s, 1, b"flood")
+        start = time.time()
+        said = b""
+        while time.time() - start < 20:
+            time.sleep(0.5)
+            status, said, _ = exchange(get("/stuck", "Connection: close\r\n"))
+            if said.endswith(b"closed"):
+                break
+        s.close()
+        out["stuck"] = "closed" if said.endswith(b"closed") else "open"
+
+    threads = [threading.Thread(target=f) for f in (quiet, ponger, trickle, stuck)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return ",".join("%s:%s" % (k, out.get(k, "?")) for k in ("quiet", "ponger", "trickle", "stuck"))
+
+
 def until_closed(s, limit):
     """Reads until the server ends the connection; returns what came and
     the seconds that took (None when it was still open after `limit`)."""
@@ -876,6 +996,8 @@ try:
         result = handler_trap(arg)
     elif mode == "callback_trap":
         result = callback_trap(arg)
+    elif mode == "ws_live":
+        result = ws_live()
     elif mode == "emfile":
         result = emfile(arg)
     elif mode == "ws_cut":

@@ -603,7 +603,9 @@ pub struct Server {
   // began to wait, else the request is answered 408 and the connection
   // closed; an answer the client is slow to read must leave at the same
   // rate, else its connection is closed (240 bytes a second over 5000
-  // ms by default). 0 bytes a second turns it off.
+  // ms by default). The same for a WebSocket connection: a message
+  // arriving in parts, and what its send queue holds, at that rate, else
+  // the connection is closed. 0 bytes a second turns it off.
   pub fn min_rate(bytes_per_second: Int, grace_ms: Int = 5000): Server {
     self.set_limit("min_rate", 2, bytes_per_second, grace_ms)
   }
@@ -638,6 +640,17 @@ pub struct Server {
   // (past 952000 ms, in minutes: less than 2 minutes after it).
   pub fn idle_timeout(ms: Int): Server {
     self.set_limit("idle_timeout", 7, ms, 0)
+  }
+
+  // How long a WebSocket connection may go without receiving anything
+  // before the server pings it (30000 ms by default, at most 14280000,
+  // counted as `idle_timeout` counts): a pong, or anything else that
+  // arrives, starts it again; when it passes again with nothing
+  // received the connection is closed (1006 to its close handler). A
+  // peer gone without a FIN or a reset (a pulled cable, a NAT that
+  // forgot the flow) is noticed so; one that answers pings stays.
+  pub fn websocket_idle_timeout(ms: Int): Server {
+    self.set_limit("websocket_idle_timeout", 8, ms, 0)
   }
 
   // How long `close` waits for the connections it leaves to finish (an

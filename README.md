@@ -4334,11 +4334,12 @@ fn main {
 | Limit | Default | When it is passed |
 | --- | --- | --- |
 | `head_timeout(ms)`: the time a request head may take from its first byte | 10000 ms | 408, closed |
-| `min_rate(bytes_per_second, grace_ms = 5000)`: the rate a request body must arrive at, and an answer the client reads must leave at, over each `grace_ms` from when it began to wait | 240 bytes a second over 5000 ms | a body: 408, closed; an answer: the connection is closed |
+| `min_rate(bytes_per_second, grace_ms = 5000)`: the rate a request body must arrive at, and an answer the client reads must leave at, over each `grace_ms` from when it began to wait; on a WebSocket, a message arriving in parts and what the send queue holds | 240 bytes a second over 5000 ms | a body: 408, closed; an answer or a WebSocket: the connection is closed |
 | `body_budget(bytes)`: what the bodies of all requests waiting for theirs may hold together (each its `Content-Length`; a body that arrives with its head holds none) | 268435456 (256 MiB) | 503, closed |
 | `memory_ceiling(bytes)`: the process's resident memory, read about once a second | 90% of the container's memory limit (cgroup); off when there is none | new requests: 503, closed |
 | `max_connections(n)`: the open connections | 10000, at most the file-descriptor limit less 64 and 8 a loop | the loop's longest idle connection is closed; with none idle, the new one |
 | `shutdown_timeout(ms)`: how long `close` waits for what it left to finish (an answer being sent, a WebSocket's closing handshake) | 30000 ms | those connections are closed and `serve` returns |
+| `websocket_idle_timeout(ms)`: how long a WebSocket connection may receive nothing before it is pinged, counted as `idle_timeout` (at most 14280000) | 30000 ms | a ping; a pong or anything else starts it again; when it passes again with nothing received, the connection is closed (1006 to its close handler) |
 | `idle_timeout(ms)`: how long an HTTP connection may stay idle, no request bytes in and no answer bytes out (at most 14280000) | 30000 ms | the connection is closed, no earlier than `ms` and less than 8 s after it (uSockets counts in 4-second ticks; past 952000 ms in minutes, less than 2 minutes after) |
 
 <!-- check: compile -->
@@ -4359,7 +4360,7 @@ fn main {
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port. When the process runs out of file descriptors (or the system of memory for sockets), new connections wait in the kernel's backlog and accepting them is tried again at most once a second, instead of spinning a core.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
 - **What a handler captures is checked as a task's** ([What may cross a task](#what-may-cross-a-task)), since every loop thread runs the same handlers at once: a number, `Bool`, `String`, `Bytes`, enum, struct of those, `Channel`, `Mutex` or the `Server` itself may be captured, and an `Array` or `Hash` of those; a class or a function value may not (keep what handlers change in a `Mutex`), the handler cannot assign a captured variable, and a captured `Array` or `Hash` is frozen from the handler's registration on (a change through its name is a compile error, through any other path a trap that fails the request). A handler is a lambda written at the call or a named function; a function value from a variable is refused, since what it captures was not checked.
-- **An idle HTTP connection is closed** after its `idle_timeout` with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
+- **An idle HTTP connection is closed** after its `idle_timeout` with no bytes in or out (a request in parts has the limits above too). A WebSocket connection silent for its `websocket_idle_timeout` is pinged, and closed when it stays silent as long again, so a peer gone without a FIN or a reset is noticed.
 - **A trap in a handler fails its request, not the server**: it is printed to standard error when it happens (`avant runtime: index 7 out of bounds …`), the handler's stack is dropped without unwinding, and the request is answered 500 (the connection kept or closed as any answer's would be); the next request is served. A trap in a WebSocket handler closes that connection with 1011. What the handler held is given back as for a [task that traps](#when-a-task-traps): a `Mutex` it held in `with` is poisoned, its `pin` blocks and `gc.hold`s end. A trap inside a C callback the handler made, and the runtime's own stops, still end the program.
 
 #### HTTP client
@@ -4429,7 +4430,7 @@ fn main {
 | `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole, or, when no memory is left to hold its rest, the connection is closed |
 | `conn.sender` | — | a sender with the same four calls | — | a connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it |
 
-A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four. Ping, the close handshake and fragmentation are handled for you. `server.close()` sends code 1001 to open connections.
+A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four. Ping, the close handshake and fragmentation are handled for you, and a silent connection is pinged after the server's `websocket_idle_timeout` and closed if it stays silent (see the limits under [HTTP server](#http-server)). `server.close()` sends code 1001 to open connections.
 
 #### WebSocket client
 

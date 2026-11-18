@@ -1056,6 +1056,60 @@ fn emfile_cases(c: Checks, root: String) {
   }
 }
 
+// A WebSocket connection had no deadline at
+// all: the upgrade cleared the idle timeout, and the head timeout and the
+// minimum rate covered HTTP only. A peer gone without a FIN (one that
+// neither sends nor answers a ping) is pinged after the WebSocket idle
+// timeout and closed when it passes again; one that answers stays; a
+// frame sent a byte at a time, and a send queue the client never reads,
+// fall under the minimum rate and are closed. raw_client.py mode
+// ws_live runs the four clients at once.
+fn ws_live_cases(c: Checks, root: String) {
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.websocket_idle_timeout(4000).min_rate(1000, 500)
+    chunk = buf_new()
+    for i in 0..65536 {
+      chunk.push_byte(97 + i % 26)
+    }
+    big = chunk.to_s()
+    server.websocket("/ws", (conn, msg) {
+      _ = conn.send_message(msg)
+    })
+    stuck = Mutex(String).new("open")
+    server.websocket("/ws-stuck", (conn, msg) {
+      n = 0
+      while n < 1000 && conn.send_text(big) {
+        n += 1
+      }
+    })
+    server.websocket_close("/ws-stuck", (conn, code, reason) {
+      stuck.with((v) { v = "closed" })
+    })
+    server.get("/stuck", (req) {
+      Response.text(stuck.with((v) { v }))
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    port = server.port()
+    stamp = now_ms()
+    out = Channel(String).new(2)
+    task = spawn {
+      out.send(raw_client(port, root, stamp, "ws_live", ""))
+      stop(port)
+      0
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "ws liveness task")
+    want: Array(String) = []
+    want.push("ws_live=quiet:closed,ponger:open, pinged,trickle:closed,stuck:closed")
+    expect_lines(c, out, want, "a silent WebSocket peer is pinged and closed, a slow one closed:")
+  } else {
+    c.expect(false, "listen for the WebSocket liveness test")
+  }
+}
+
 fn ws_deadline_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
@@ -1546,5 +1600,6 @@ fn main: Int {
   ws_deadline_cases(c, avant_test_root())
   ws_cut_cases(c, avant_test_root())
   emfile_cases(c, avant_test_root())
+  ws_live_cases(c, avant_test_root())
   c.finish()
 }

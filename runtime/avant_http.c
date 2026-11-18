@@ -296,6 +296,13 @@ typedef struct AvantWsConn {
    * memory): the stream is cut mid-frame, so the connection is closed
    * by its loop's next wakeup (ws_cut). */
   int cut;
+  /* Liveness (owner thread only): ping_sent, the server pinged the
+   * peer after its idle timeout and nothing has arrived since;
+   * recv_total and sent_total, the bytes received and the queued bytes
+   * written, which the minimum rate measures (loop_sweep). */
+  int ping_sent;
+  uint64_t recv_total;
+  uint64_t sent_total;
   struct AvantWsConn *next_all;
   struct AvantWsConn *next_global;
 } AvantWsConn;
@@ -376,6 +383,12 @@ struct AvantHttpServer {
    * 4-second ticks, or idle_mins for its minutes; both 0: none. */
   uint32_t idle_secs;
   uint32_t idle_mins;
+  /* A WebSocket connection's idle timeout, in the same clocks
+   * (Server.websocket_idle_timeout): when it passes with nothing
+   * received the peer is pinged, and when it passes again the
+   * connection is closed. */
+  uint32_t ws_idle_secs;
+  uint32_t ws_idle_mins;
   size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
   /* The limits (Server's setters before serve; 0 is off):
    * head_ms, the time a request head may take from its first byte;
@@ -1209,6 +1222,9 @@ static AvantWsConn *ws_record_take(void) {
   ws->pending_close_code = 0;
   ws->shutdown_after_flush = 0;
   ws->cut = 0;
+  ws->ping_sent = 0;
+  ws->recv_total = 0;
+  ws->sent_total = 0;
   ws->next_all = NULL;
   ws->next_global = NULL;
   return ws;
@@ -1264,6 +1280,56 @@ static size_t ws_frame_header(char *dst, int opcode, size_t len) {
   return n;
 }
 
+/* The minimum rate's clocks of a WebSocket connection (owner thread
+ * only; loop_sweep reads them). A message arriving in parts (a frame not
+ * complete in the buffer, or a fragmented message not finished) must
+ * come at the server's minimum rate, as a request body must: a client
+ * sending a frame a byte at a time held its connection for good. The
+ * clock is Conn's body_at, measured on recv_total. */
+static void ws_watch_in(Conn *conn, struct us_socket_t *s) {
+  AvantWsConn *ws = conn->ws;
+  if (!ws || !conn->srv->rate || us_socket_is_closed(0, s)) {
+    return;
+  }
+  if (!ws->dead && (conn->len > 0 || ws->frag_opcode >= 0)) {
+    if (!conn->body_at) {
+      conn->body_at = http_now_ms();
+      conn->body_from = (size_t)ws->recv_total;
+      conn_watch(conn, s);
+    }
+  } else if (conn->body_at) {
+    conn->body_at = 0;
+    if (!conn->out_at) {
+      conn_unwatch(conn, s);
+    }
+  }
+}
+
+/* Likewise for the send queue: while it holds bytes they must leave at
+ * the minimum rate, as an answer's queued tail must (a client that never
+ * read what was queued for it held its connection, the queue's bound
+ * limiting memory but not time). The clock is Conn's out_at, measured on
+ * sent_total. */
+static void ws_watch_out(AvantWsConn *ws, int queued) {
+  Conn *conn = ws->conn;
+  struct us_socket_t *s = ws->sock;
+  if (!conn || !s || !conn->srv->rate || us_socket_is_closed(0, s)) {
+    return;
+  }
+  if (queued) {
+    if (!conn->out_at) {
+      conn->out_at = http_now_ms();
+      conn->out_from = (size_t)ws->sent_total;
+      conn_watch(conn, s);
+    }
+  } else if (conn->out_at) {
+    conn->out_at = 0;
+    if (!conn->body_at) {
+      conn_unwatch(conn, s);
+    }
+  }
+}
+
 /* Loop thread only. Writes as much of the queue as the kernel takes,
  * each piece at most the server's ws_write_chunk (a frame's rest may be
  * larger than an int). */
@@ -1281,6 +1347,7 @@ static void ws_flush(AvantWsConn *ws) {
       if (written < 0) { written = 0; }
       node->off += (size_t)written;
       ws->out_bytes -= (size_t)written;
+      ws->sent_total += (uint64_t)written;
       if (written < piece) {
         full = 1;
         break;
@@ -1298,6 +1365,7 @@ static void ws_flush(AvantWsConn *ws) {
     int drained = ws->out_head == NULL;
     int want_shutdown = ws->shutdown_after_flush && drained;
     pthread_mutex_unlock(&ws->qmu);
+    ws_watch_out(ws, !drained);
     if (want_shutdown && !us_socket_is_closed(0, ws->sock)) {
       us_socket_shutdown(0, ws->sock);
     }
@@ -1395,6 +1463,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         if (!ws_enqueue(ws, framed, framed_len, written > 0)) {
           return written > 0 ? ws_cut(ws) : 0;
         }
+        ws_watch_out(ws, 1);
         return 1;
       }
       {
@@ -1412,6 +1481,8 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
            * time, until the socket is full (ws_flush asks for the event
            * then). */
           ws_flush(ws);
+        } else {
+          ws_watch_out(ws, 1);
         }
         return 1;
       }
@@ -1430,7 +1501,11 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
       }
       return ok;
     }
-    return ws_enqueue(ws, framed, framed_len, 0);
+    if (!ws_enqueue(ws, framed, framed_len, 0)) {
+      return 0;
+    }
+    ws_watch_out(ws, 1);
+    return 1;
   }
 }
 
@@ -1966,8 +2041,12 @@ avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   req->conn->ws = ws;
   req->ws_conn = ws;
   req->upgraded = 1;
+  /* The HTTP idle timeout ends; the WebSocket one starts (the
+   * connection had none: a peer gone without a FIN or a reset kept its
+   * connection until the process ended). */
   us_socket_timeout(0, req->sock, 0);
   us_socket_long_timeout(0, req->sock, 0);
+  idle_arm(req->sock, srv->ws_idle_secs, srv->ws_idle_mins);
   return 1;
 }
 
@@ -2298,6 +2377,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       conn->sent_continue = 0;
       if (conn->len > 0) {
         ws_process(conn, s);
+        ws_watch_in(conn, s);
       }
       return;
     }
@@ -2454,7 +2534,31 @@ static void loop_sweep(struct us_timer_t *t) {
     ConnNode *next = node->wnext;
     Conn *conn = &node->conn;
     struct us_socket_t *s = node->sock;
-    if (conn->answered && !conn->out_at) {
+    if (conn->ws) {
+      /* A WebSocket message arriving in parts, or a send queue, too slow
+       * over a window (ws_watch_in, ws_watch_out): closed. */
+      AvantWsConn *ws = conn->ws;
+      int slow = 0;
+      if (conn->body_at && srv->rate && now - conn->body_at >= (int64_t)srv->grace_ms) {
+        if (http_too_slow((size_t)ws->recv_total - conn->body_from, now - conn->body_at, srv->rate)) {
+          slow = 1;
+        } else {
+          conn->body_at = now;
+          conn->body_from = (size_t)ws->recv_total;
+        }
+      }
+      if (!slow && conn->out_at && srv->rate && now - conn->out_at >= (int64_t)srv->grace_ms) {
+        if (http_too_slow((size_t)ws->sent_total - conn->out_from, now - conn->out_at, srv->rate)) {
+          slow = 1;
+        } else {
+          conn->out_at = now;
+          conn->out_from = (size_t)ws->sent_total;
+        }
+      }
+      if (slow) {
+        us_socket_close(0, s, 0, NULL);
+      }
+    } else if (conn->answered && !conn->out_at) {
       conn_wait_end(conn, s);
     } else if (conn->head_at && srv->head_ms &&
                now - conn->head_at >= (int64_t)srv->head_ms) {
@@ -2579,6 +2683,12 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   if (!conn->ws) {
     /* Request bytes arrived: the idle timeout starts again. */
     idle_arm(s, conn->srv->idle_secs, conn->srv->idle_mins);
+  } else {
+    /* The peer is alive: its idle timeout starts again, a ping sent is
+     * answered (by this or anything else). */
+    conn->ws->recv_total += (uint64_t)length;
+    conn->ws->ping_sent = 0;
+    idle_arm(s, conn->srv->ws_idle_secs, conn->srv->ws_idle_mins);
   }
   if (conn->len + (size_t)length > conn->cap) {
     size_t want = conn->cap ? conn->cap : 8192;
@@ -2598,6 +2708,7 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   conn->len += (size_t)length;
   if (conn->ws) {
     ws_process(conn, s);
+    ws_watch_in(conn, s);
   } else {
     conn_process(conn, s);
   }
@@ -2684,7 +2795,22 @@ static struct us_socket_t *srv_on_end(struct us_socket_t *s) {
   return us_socket_close(0, s, 0, NULL);
 }
 
+/* An HTTP connection's idle timeout closes it. A WebSocket connection
+ * that has received nothing for its idle timeout is pinged first (a
+ * pong, or anything else that arrives, starts the timeout again); when
+ * it passes again with nothing received, or the connection is closing,
+ * it is closed (1006 to its close handler). */
 static struct us_socket_t *srv_on_timeout(struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)us_socket_ext(0, s);
+  AvantWsConn *ws = node->conn.ws;
+  if (ws && !ws->dead && !ws->close_sent && !ws->ping_sent) {
+    AvantHttpServer *srv = node->conn.srv;
+    ws->ping_sent = 1;
+    ws_send_frame(ws, 9, "", 0);
+    ws_flush(ws);
+    idle_arm(s, srv->ws_idle_secs, srv->ws_idle_mins);
+    return s;
+  }
   return us_socket_close(0, s, 0, NULL);
 }
 
@@ -3051,6 +3177,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->max_body = (int32_t)max_body;
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   idle_limit(HTTP_IDLE_TIMEOUT_MS, &srv->idle_secs, &srv->idle_mins);
+  idle_limit(HTTP_IDLE_TIMEOUT_MS, &srv->ws_idle_secs, &srv->ws_idle_mins);
   srv->ws_write_chunk = http_ws_write_chunk();
   srv->head_ms = HTTP_HEAD_TIMEOUT_MS;
   srv->rate = HTTP_MIN_RATE;
@@ -3214,7 +3341,7 @@ __attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *
 void avant_http_set_limit(void *srvp, const char *name, avant_int which,
                           avant_int a, avant_int b) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
-  long long top = (which == 3 || which == 4) ? (1LL << 62) : which == 7 ? HTTP_IDLE_MAX_MS : INT32_MAX;
+  long long top = (which == 3 || which == 4) ? (1LL << 62) : (which == 7 || which == 8) ? HTTP_IDLE_MAX_MS : INT32_MAX;
   if (a < 0 || b < 0 || a > top || b > INT32_MAX) {
     char msg[200];
     if (which == 2) {
@@ -3250,6 +3377,9 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
       break;
     case 7:
       idle_limit((uint32_t)a, &srv->idle_secs, &srv->idle_mins);
+      break;
+    case 8:
+      idle_limit((uint32_t)a, &srv->ws_idle_secs, &srv->ws_idle_mins);
       break;
     default:
       break;
