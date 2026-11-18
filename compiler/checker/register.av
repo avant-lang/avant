@@ -21,14 +21,6 @@ pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
   nil
 }
 
-pub fn (checker_self: Checker) find_method(owner: String, name: String): FuncSig? {
-  key = "${owner}__${name}"
-  if id = checker_self.method_index.get(key) {
-    return checker_self.methods[id]
-  }
-  nil
-}
-
 pub fn (checker_self: Checker) symbol_table: SymbolTable {
   table = SymbolTable.new(checker_self.resolver)
   i = 1
@@ -435,7 +427,21 @@ pub fn (checker_self: Checker) check_type_name(name: String, loc: Location, what
   }
 }
 
+// A lib block's C signatures name its module's types: a C layout of one
+// name in two modules is each module's own (before, every signature was
+// resolved outside any module, so one module's `Ptr(Pair)` named the
+// other's layout).
 pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
+  saved_mod = checker_self.current_module
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.current_module = lib_def.mod_name
+  checker_self.resolver.scope_mod = lib_def.mod_name
+  checker_self.register_lib_in(lib_def)
+  checker_self.current_module = saved_mod
+  checker_self.resolver.scope_mod = saved_scope
+}
+
+pub fn (checker_self: Checker) register_lib_in(lib_def: LibDef) {
   if id = checker_self.lib_names.get(lib_def.name) {
     other = ""
     if o = checker_self.lib_mod.get(lib_def.name) {
@@ -471,7 +477,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     k = 0
     while k < cfun.params.size {
       checker_self.resolver.c_scalar_ok = true
-      pty = checker_self.resolver.resolve_value(cfun.params[k].type)
+      pty = checker_self.resolve_value_in_module(cfun.params[k].type)
       checker_self.resolver.c_scalar_ok = false
       checker_self.pull_resolve()
       if pty.is_fn() {
@@ -502,7 +508,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     ret = checker_self.t_void()
     if t = cfun.return_type {
       checker_self.resolver.c_scalar_ok = true
-      ty = checker_self.resolver.resolve(t)
+      ty = checker_self.resolve_in_module(t)
       checker_self.resolver.c_scalar_ok = false
       checker_self.pull_resolve()
       if ty.is_opaque() {

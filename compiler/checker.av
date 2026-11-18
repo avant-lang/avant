@@ -3334,6 +3334,16 @@ pub class Checker {
     got
   }
 
+  // Whether the method ms (its owner's name already matched) takes a
+  // receiver of type object: a Ptr's owner name does not say which
+  // module's C layout it points to, its receiver's type does.
+  pub fn ptr_method_of(ms: FuncSig, object: Ty): Bool {
+    if r = ms.node.receiver {
+      return recv_ty_of(ms.node).same_as(object)
+    }
+    true
+  }
+
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
     owner = method_owner_name(object)
     pointee = object
@@ -3342,16 +3352,18 @@ pub class Checker {
     }
     if pointee.is_clayout() {
       if field_ty = pointee.field_named(expr.ident) {
-        if sig = find_method(owner, expr.ident) {
-          fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
-          return ty_c_view(field_ty)
+        for ms0 in self.methods {
+          if ms0.owner == owner && ms0.name == expr.ident && ptr_method_of(ms0, object) {
+            fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
+            return ty_c_view(field_ty)
+          }
         }
         return ty_c_view(field_ty)
       }
     }
     has_zero = false
     for ms in self.methods {
-      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) {
+      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && ptr_method_of(ms, object) {
         has_zero = true
       }
     }

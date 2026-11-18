@@ -616,6 +616,14 @@ pub class TypeResolver {
       // value's.
       saved = self.c_scalar_ok
       self.c_scalar_ok = true
+      if inner.mod_name.size == 0 && inner.args.size == 0 && self.scope_mod.size > 0 {
+        if own = get_named_in(self.scope_mod, inner.name), own.is_clayout() {
+          // The module's own C layout of that name, not another
+          // module's (a C layout's name is its module's).
+          self.c_scalar_ok = saved
+          return ty_ptr(own)
+        }
+      }
       pt = no_hasher(resolve_uninline(inner), inner, "a Ptr")
       self.c_scalar_ok = saved
       if !ptr_pointee_ok(pt) {
