@@ -20,7 +20,6 @@ lib process_sys {
   fun avant_sys_signal_wait(slot: Int): Int
 }
 
-import std.sync
 
 // The program's name, then its arguments.
 pub fn args: Array(String) {
@@ -111,7 +110,7 @@ fn failure(path: String, st: Int): ProcessError {
 // `process.signal_of(n)` the signal of a number (a ProcessError's
 // `signal`), nil for one that is not among them (a real-time signal).
 pub enum Signal {
-  hup,
+  hup = 1,
   int,
   quit,
   ill,
@@ -143,138 +142,19 @@ pub enum Signal {
   pwr,
   sys
 
+  // The signal's number (SIGTERM's 15).
   pub fn number: Int {
-    switch self {
-      case hup { 1 }
-      case int { 2 }
-      case quit { 3 }
-      case ill { 4 }
-      case trap { 5 }
-      case abrt { 6 }
-      case bus { 7 }
-      case fpe { 8 }
-      case kill { 9 }
-      case usr1 { 10 }
-      case segv { 11 }
-      case usr2 { 12 }
-      case pipe { 13 }
-      case alrm { 14 }
-      case term { 15 }
-      case stkflt { 16 }
-      case chld { 17 }
-      case cont { 18 }
-      case stop { 19 }
-      case tstp { 20 }
-      case ttin { 21 }
-      case ttou { 22 }
-      case urg { 23 }
-      case xcpu { 24 }
-      case xfsz { 25 }
-      case vtalrm { 26 }
-      case prof { 27 }
-      case winch { 28 }
-      case io { 29 }
-      case pwr { 30 }
-      case sys { 31 }
-    }
+    self.to_i()
   }
 }
 
 pub fn signal_of(n: Int): Signal? {
-  if n == 1 {
-    return Signal.hup
+  // The members are numbered 1 to 31 in order (a member's index, not
+  // from_i's search of every number).
+  if n < 1 || n > 31 {
+    return nil
   }
-  if n == 2 {
-    return Signal.int
-  }
-  if n == 3 {
-    return Signal.quit
-  }
-  if n == 4 {
-    return Signal.ill
-  }
-  if n == 5 {
-    return Signal.trap
-  }
-  if n == 6 {
-    return Signal.abrt
-  }
-  if n == 7 {
-    return Signal.bus
-  }
-  if n == 8 {
-    return Signal.fpe
-  }
-  if n == 9 {
-    return Signal.kill
-  }
-  if n == 10 {
-    return Signal.usr1
-  }
-  if n == 11 {
-    return Signal.segv
-  }
-  if n == 12 {
-    return Signal.usr2
-  }
-  if n == 13 {
-    return Signal.pipe
-  }
-  if n == 14 {
-    return Signal.alrm
-  }
-  if n == 15 {
-    return Signal.term
-  }
-  if n == 16 {
-    return Signal.stkflt
-  }
-  if n == 17 {
-    return Signal.chld
-  }
-  if n == 18 {
-    return Signal.cont
-  }
-  if n == 19 {
-    return Signal.stop
-  }
-  if n == 20 {
-    return Signal.tstp
-  }
-  if n == 21 {
-    return Signal.ttin
-  }
-  if n == 22 {
-    return Signal.ttou
-  }
-  if n == 23 {
-    return Signal.urg
-  }
-  if n == 24 {
-    return Signal.xcpu
-  }
-  if n == 25 {
-    return Signal.xfsz
-  }
-  if n == 26 {
-    return Signal.vtalrm
-  }
-  if n == 27 {
-    return Signal.prof
-  }
-  if n == 28 {
-    return Signal.winch
-  }
-  if n == 29 {
-    return Signal.io
-  }
-  if n == 30 {
-    return Signal.pwr
-  }
-  if n == 31 {
-    return Signal.sys
-  }
-  nil
+  Signal.members()[n - 1]
 }
 
 // The signals delivered to the program, Go's signal.Notify: a server
@@ -291,11 +171,9 @@ pub fn signal_of(n: Int): Signal? {
 // A signal named here no longer ends the program, from this call on, for
 // the program's life. SIGKILL and SIGSTOP cannot be caught, and the crash
 // signals (segv, bus, fpe, ill, abrt, trap) are the runtime's: naming one
-// traps. A task of std.process waits for the signals (it does not count
-// as running in the pool while it waits) and puts each, in order, on a
-// channel of 16; a signal that comes while it is full waits in the pipe
-// behind it. Each call has a channel and a reader of its own, for the
-// signals it names (at most 16 calls).
+// traps. Each call has a pipe of its own, which the runtime's handler
+// writes each signal it names to, in order (at most 16 calls); `recv`
+// reads the next.
 pub fn notify(signals: Array(Signal)): Signals {
   mask = 0
   for sig in signals {
@@ -309,26 +187,17 @@ pub fn notify(signals: Array(Signal)): Signals {
     }
     _ = none.expect("process.notify: at most 16 calls in a program")
   }
-  ch = sync.Channel(Int).new(16)
-  _ = spawn {
-    while true {
-      _ = ch.send(process_sys.avant_sys_signal_wait(slot))
-    }
-  }
-  Signals { ch: ch }
+  Signals { slot: slot }
 }
 
-// The signals notify delivers: a channel's half that crosses to any task.
+// The signals notify delivers: a number, so it crosses to any task.
 pub struct Signals {
-  ch: sync.Channel(Int)
+  slot: Int
 
-  // The next signal, waiting for it.
+  // The next signal, waiting for it (natively: the waiting task does
+  // not count as running in the pool, and the collector runs without
+  // it). Signals that came before are kept, in order, and given first.
   pub fn recv: Signal? {
-    while n = self.ch.recv() {
-      if got = signal_of(n) {
-        return got
-      }
-    }
-    nil
+    signal_of(process_sys.avant_sys_signal_wait(self.slot))
   }
 }

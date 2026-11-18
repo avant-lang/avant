@@ -4417,7 +4417,7 @@ fn main {
 }
 ```
 
-A `Signals` value crosses to any task. SIGKILL and SIGSTOP cannot be caught and the crash signals (`segv`, `bus`, `fpe`, `ill`, `abrt`, `trap`) are the runtime's: naming one traps. A task of `std.process` waits for the signals without counting as running in the pool; each `notify` has its own (at most 16 calls).
+A `Signals` value crosses to any task, and its `recv()` waits natively, without counting as running in the pool; each `notify` call has its own pipe of signals, kept in order (at most 16 calls). SIGKILL and SIGSTOP cannot be caught and the crash signals (`segv`, `bus`, `fpe`, `ill`, `abrt`, `trap`) are the runtime's: naming one traps.
 
 ### Time and math
 
