@@ -354,6 +354,9 @@ struct HttpLoop {
   struct ConnNode *watch; /* the connections with a deadline running */
   struct us_timer_t *sweep;
   int64_t close_at; /* when this loop began to close (the shutdown deadline) */
+  /* accept failed for want of descriptors or memory: the listening
+   * socket is not polled until the next sweep (us_internal_accept_paused) */
+  int accept_paused;
   pthread_t thread;
   int spawned;
 };
@@ -2409,6 +2412,14 @@ static void loop_sweep(struct us_timer_t *t) {
   AvantHttpServer *srv = hl->srv;
   int64_t now = http_now_ms();
   ConnNode *node;
+  if (hl->accept_paused) {
+    /* A connection could not be accepted for want of descriptors: try
+     * again now, at most once a sweep. */
+    hl->accept_paused = 0;
+    if (hl->listen) {
+      us_poll_change(&hl->listen->s.p, hl->loop, LIBUS_SOCKET_READABLE);
+    }
+  }
   if (srv->mem_ceiling > 0 && hl == &srv->loops[0]) {
     __atomic_store_n(&srv->over_mem, http_rss() >= srv->mem_ceiling, __ATOMIC_RELAXED);
   }
@@ -2454,6 +2465,19 @@ static void loop_sweep(struct us_timer_t *t) {
       }
     }
     node = next;
+  }
+}
+
+/* uSockets' hook (its loop.c, an Avant patch): accept failed with
+ * EMFILE, ENFILE, ENOBUFS or ENOMEM and uSockets stopped polling the
+ * listening socket, which stayed readable with the connection in its
+ * backlog: polled again at once, the loop spun a core for as long as the
+ * shortage lasted. The loop's next sweep (at most a second away) polls it
+ * again. Only a server's loop has listening sockets. */
+void us_internal_accept_paused(struct us_listen_socket_t *ls) {
+  HttpLoop *hl = *(HttpLoop **)us_socket_context_ext(0, us_socket_context(0, &ls->s));
+  if (hl) {
+    hl->accept_paused = 1;
   }
 }
 

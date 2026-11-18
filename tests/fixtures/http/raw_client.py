@@ -705,6 +705,30 @@ def ws_cut(port_file):
     return "%s; %s" % (first, payload.decode("latin1"))
 
 
+def emfile(port_file):
+    # tests/fixtures/http/emfile.av: a connection made while the server
+    # has no descriptor left waits in the backlog; it is accepted and
+    # answered once the server gives its descriptors back (about 1.3 s
+    # later), then the server is stopped.
+    if not wait_port(port_file):
+        return "no port"
+    start = time.time()
+    s = connect()
+    s.sendall(get("/ping"))
+    data = b""
+    try:
+        while not data.endswith(b"pong") and time.time() - start < 8:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        pass
+    s.close()
+    exchange(get("/__stop"))
+    return "answered" if data.endswith(b"pong") else "not answered (%r)" % data[:40]
+
+
 def until_closed(s, limit):
     """Reads until the server ends the connection; returns what came and
     the seconds that took (None when it was still open after `limit`)."""
@@ -852,6 +876,8 @@ try:
         result = handler_trap(arg)
     elif mode == "callback_trap":
         result = callback_trap(arg)
+    elif mode == "emfile":
+        result = emfile(arg)
     elif mode == "ws_cut":
         result = ws_cut(arg)
     elif mode == "ws_big":

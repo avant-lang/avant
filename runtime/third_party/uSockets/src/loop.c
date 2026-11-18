@@ -20,6 +20,24 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
+#include <errno.h>
+
+/* Avant patch (runtime/third_party/NOTICE.md): accept failed because the
+ * process or the system is out of descriptors or memory (EMFILE, ENFILE,
+ * ENOBUFS, ENOMEM). The connection stays in the backlog and the listening
+ * socket readable, so the loop polled it again at once, a busy loop for as
+ * long as the shortage lasted. The socket's polling is stopped and the
+ * program's hook is told, which polls it again later; without a hook
+ * (none defined) nothing changes. */
+void us_internal_accept_paused(struct us_listen_socket_t *ls) __attribute__((weak));
+
+static void avant_accept_failed(struct us_listen_socket_t *ls, struct us_loop_t *loop) {
+    int err = errno;
+    if (us_internal_accept_paused && (err == EMFILE || err == ENFILE || err == ENOBUFS || err == ENOMEM)) {
+        us_poll_change(&ls->s.p, loop, 0);
+        us_internal_accept_paused(ls);
+    }
+}
 
 /* The loop has 2 fallthrough polls */
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
@@ -269,6 +287,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
                     /* Todo: start timer here */
+                    avant_accept_failed(listen_socket, us_socket_context(0, &listen_socket->s)->loop);
 
                 } else {
 
@@ -291,6 +310,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         }
 
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    if (!us_socket_is_closed(0, &listen_socket->s)) {
+                        avant_accept_failed(listen_socket, us_socket_context(0, &listen_socket->s)->loop);
+                    }
                 }
             }
         }
