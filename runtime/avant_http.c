@@ -124,6 +124,8 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
 /* The packed form of a header block built in memory ("Name: value\r\n"
  * lines, each checked as Response.header checks it): a Request made by
  * Request.new, the headers of a Response built in code. */
+/* gc-lint: holds nothing (build_packed_headers roots the block and takes
+ * the offsets before it allocates; only C memory is read after it). */
 char *avant_http_headers_pack(const char *block) {
   size_t n = avant_str_n(block);
   size_t count = 0;
@@ -232,6 +234,8 @@ static size_t pct_decode(const char *p, size_t n, char *out, int plus) {
 /* A query string's (or a form body's) parameters, decoded, in the packed
  * form of a header set: '&' separates them, the first '=' a name from its
  * value (none: an empty value), empty pieces are skipped. */
+/* gc-lint: holds nothing (the decoded block is C memory; the text is not
+ * read after build_packed_headers allocates). */
 char *avant_http_params_pack(const char *text) {
   size_t n = avant_str_n(text);
   size_t count = 0;
@@ -281,6 +285,8 @@ char *avant_http_params_pack(const char *text) {
 
 /* A URL component percent-decoded (a path segment: '+' stays '+'), read
  * as UTF-8 with U+FFFD for what is not. */
+/* gc-lint: holds nothing (the decoded text is C memory; the argument is
+ * not read after make_string allocates). */
 char *avant_http_decode_component(const char *text) {
   size_t n = avant_str_n(text);
   char *buf = (char *)malloc(3 * n + 1);
