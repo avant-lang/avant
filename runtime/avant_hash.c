@@ -47,7 +47,7 @@
  * byte per entry (0 deleted, 1 live; 0x80 below) and, for String keys, a
  * uint32 hash per entry, in meta after the index. A deletion slides the
  * index's cluster back and marks its entry deleted; a growth copies the
- * live entries in order. In both, a growth when at least half the entries
+ * live entries in order. In both, a growth when a quarter or more of the entries
  * made since the last one are deleted compacts the table at its size.
  *
  * The seed. Every hash function takes the hash's seed (h->seed), set at
@@ -932,13 +932,117 @@ static void compact_in_place(AvantHash *h) {
   h->used = w;
 }
 
+/* An open table's compaction where it is (no new buffer): the deleted
+ * positions become empty and each live entry is placed again from its
+ * home, as absl's in-place rehash does for open addressing: the live
+ * entries are first marked to place (state 3); each one marked is
+ * placed at the first position of its probe path that is empty or still
+ * to place (moved there, or swapped with the one there, which is then
+ * placed in turn), or kept where it is when its path reaches it first.
+ * A placed entry never moves again, so every position before it on its
+ * path is full: lookups find it. The order of insertion is kept through
+ * an inverse map of positions to order numbers (malloc'd, freed at the
+ * end), the order array compacted first. Integer keys hold no
+ * references; values that do take one barrier for the buffer (RC3) and
+ * a proof's log is told first (RC5).
+ * gc-lint: holds nothing (no allocation of the collector). */
+static int open_compact_in_place(AvantHash *h) {
+  int32_t cap = h->cap;
+  int32_t mask = cap - 1;
+  uint8_t *st = states_of(h);
+  uint32_t *ord = order_of(h);
+  int32_t *inv = (int32_t *)malloc((size_t)cap * sizeof(int32_t));
+  size_t kb = kw_of(h);
+  size_t vb = (size_t)1 << h->vshift;
+  uint64_t ktmp[2];
+  unsigned char vstack[64];
+  void *vtmp = vb <= sizeof(vstack) ? (void *)vstack : malloc(vb);
+  int32_t n;
+  int32_t w = 0;
+  int32_t i;
+  if (!inv || !vtmp) {
+    free(inv);
+    if (vtmp != (void *)vstack) {
+      free(vtmp);
+    }
+    return 0;
+  }
+  if (val_refs(h)) {
+    avant_gc_overwrite(h->vals);
+    avant_barrier(h->vals);
+  }
+  for (n = 0; n < h->used; n++) {
+    int32_t x = (int32_t)ord[n];
+    if (st[x] == 1) {
+      ord[w] = (uint32_t)x;
+      inv[x] = w;
+      w++;
+    }
+  }
+  for (i = 0; i < cap; i++) {
+    st[i] = st[i] == 1 ? 3 : 0;
+  }
+  for (i = 0; i < cap; i++) {
+    while (st[i] == 3) {
+      int32_t p = (int32_t)(hash_int(ikey_at(h, h->keys, i), h->seed) & (uint32_t)mask);
+      while (p != i && st[p] == 1) {
+        p = (p + 1) & mask;
+      }
+      if (p == i) {
+        st[i] = 1;
+        break;
+      }
+      int32_t r = inv[i];
+      if (st[p] == 0) {
+        memcpy((char *)h->keys + (size_t)p * kb, (char *)h->keys + (size_t)i * kb, kb);
+        memcpy(val_at(h, h->vals, p), val_at(h, h->vals, i), vb);
+        memset(val_at(h, h->vals, i), 0, vb);
+        st[p] = 1;
+        st[i] = 0;
+        inv[p] = r;
+        ord[r] = (uint32_t)p;
+        break;
+      }
+      /* p holds an entry still to place: the two swap, the one now at p
+       * is placed, the one now at i is placed next. */
+      int32_t r2 = inv[p];
+      memcpy(ktmp, (char *)h->keys + (size_t)p * kb, kb);
+      memcpy((char *)h->keys + (size_t)p * kb, (char *)h->keys + (size_t)i * kb, kb);
+      memcpy((char *)h->keys + (size_t)i * kb, ktmp, kb);
+      memcpy(vtmp, val_at(h, h->vals, p), vb);
+      memcpy(val_at(h, h->vals, p), val_at(h, h->vals, i), vb);
+      memcpy(val_at(h, h->vals, i), vtmp, vb);
+      st[p] = 1;
+      inv[p] = r;
+      ord[r] = (uint32_t)p;
+      inv[i] = r2;
+      ord[r2] = (uint32_t)i;
+    }
+  }
+  h->used = w;
+  free(inv);
+  if (vtmp != (void *)vstack) {
+    free(vtmp);
+  }
+  return 1;
+}
+
 static void grow(AvantHash *h) {
   int32_t ncap = h->cap ? h->cap * 2 : 8;
-  /* A table with at least half its entries deleted: the live ones are
-   * compacted at the same size, a compact table's where it is. */
-  if (h->cap && h->size < fill_max(h->cap) / 2) {
+  /* A table whose live entries are at most three quarters of the entries
+   * it takes (a quarter or more deleted): the live ones are compacted at
+   * the same size, a compact table's where it is. A table that deletes
+   * as much as it inserts so stays at its size (a deleted position is
+   * not taken again before a growth, so the threshold decides its
+   * memory), and each compaction is followed by at least a quarter of
+   * the table's entries made anew, so its cost stays a constant per
+   * insertion. */
+  if (h->cap && h->size <= fill_max(h->cap) - fill_max(h->cap) / 4) {
     if (is_compact(h)) {
       compact_in_place(h);
+      return;
+    }
+    if (open_compact_in_place(h)) {
       return;
     }
     ncap = h->cap;
