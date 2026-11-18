@@ -183,6 +183,14 @@ compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 
+# Every avant_* symbol an object calls is defined globally by one of them:
+# a hidden function of a core unit that another object calls is made local
+# by the merge above unless avant_rt.exports lists it, and the surface
+# check cannot see that (the exports file is its reference); the link of
+# the first program needing that object would fail instead, far from the
+# cause. link-check.sh names the symbol, the object and the reason.
+sh "$root/link-check.sh" "$root/build" "$root/avant_rt.exports"
+
 # The bind helper: tools/bind.c against libclang, into
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
 # the release ships it beside avant. Without llvm-config or libclang it is
