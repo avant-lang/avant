@@ -716,7 +716,7 @@ fn main {
 
 ### For
 
-`for` walks a range or an array.
+`for` walks a range, an array, a `Set`, the bytes of `Bytes`, a `Buf` or a string, or anything with a `next` method.
 
 ```avant
 fn main {
@@ -762,8 +762,62 @@ fn main {
 }
 ```
 
-- A range is only a `for` form: it is not a value you can store.
+- A range is only a `for` form: it is not a value you can store. There is no `...`: it is refused with a message naming `..` and `..=` (in Ruby and Crystal `...` excludes its end, so a port would otherwise be off by one).
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
+
+**More forms.** A position beside the element, a step, bytes, and any type with `next`:
+
+```avant
+class Countdown {
+  n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  pub fn next: Int? {
+    if self.n == 0 {
+      return nil
+    }
+    self.n -= 1
+    self.n + 1
+  }
+}
+
+fn main {
+  line = ""
+  for i, name in ["ada", "bob"] {
+    line = line + "${i}=${name};"
+  }
+  puts(line)                  // => 0=ada;1=bob;
+  steps = 0
+  for i in 0..10 by 4 {       // 0, 4, 8
+    steps += i
+  }
+  puts(steps)                 // => 12
+  sum = 0
+  for b in "hé".bytes {       // 104, 195, 169
+    sum += b
+  }
+  puts(sum)                   // => 468
+  down = ""
+  for v in Countdown.new(3) {
+    down = down + "${v}"
+  }
+  puts(down)                  // => 321
+  letters = 0
+  for w in " to  be ".fields() {
+    letters += w.size
+  }
+  puts(letters)               // => 4
+}
+```
+
+- **`for i, x in xs`** gives the position, then the element, over an `Array`, `Bytes`, a `Buf` or `s.bytes`. The position is the loop's own, as the variable is: it cannot be assigned, and a `continue` moves it. A range has one variable.
+- **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a positive integer literal. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. A step down is written with `while`.
+- **Bytes:** `for b in bytes`, `for b in buf` and `for b in s.bytes` give each byte as an `Int` (`s.bytes` walks the string's own bytes, with no copy). A bare `for c in s` is refused with the two walks it may mean: the bytes (`s.bytes`) or the characters (`s.chars()`).
+- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
+- **`for w in s.fields()`** scans the string and gives each field as `fields()` would, without building the array.
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
 
 ### Switch
@@ -1266,7 +1320,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.strip()`, `s.strip_left()`, `s.strip_right()` | whitespace trimmed |
 | `s.chars()` | `Array(String)`, one per code point |
 | `s.code_points()` | `Array(Int)`, each code point's number |
-| `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf) |
+| `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf); `for b in s.bytes` walks them without a copy |
 | `s.to_i()`, `s.to_u64()`, `s.to_f()` | [parsed numbers](#parsing-numbers), optional |
 | `s[a..b]`, `s[a..]`, `s[..b]`, `s[a..=b]` | a [slice](#slices): the bytes `a` up to `b` (`..=` includes `b`), a new `String` |
 | `s.slice(a, b)`, `s.slice(a)`, `s.try_slice(...)` | the same slices as calls; `try_slice` gives `nil` where the slice would trap |
@@ -3255,7 +3309,7 @@ fn main {
     jobs.close()
   }
   total = 0
-  while v = jobs.recv() {               // nil once the channel is closed and empty
+  for v in jobs {                       // until the channel is closed and empty
     total += v
   }
   _ = producer.join()
@@ -3263,7 +3317,7 @@ fn main {
 }
 ```
 
-- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty (so `while v = ch.recv() { ... }` drains it); `close` closes.
+- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty, so `for v in ch { ... }` receives until then; `close` closes.
 - A `send` on a closed channel returns `false` at once, buffered or not, full or not; a waiting send returns `false` when the channel closes, its value not received. Values sent before the close stay to be drained. A program that closes only after its last send can ignore the result (`ch.send(v)` as a statement).
 - A sent value follows the `spawn` capture rule ([What may cross a task](#what-may-cross-a-task)), except that an `Array` is copied at every level, so each side owns its own. `T` may be any type: a channel can carry channels (a reply channel per request) or mutexes.
 - A `Channel` or `Mutex` holds no memory outside the object: make as many as you like.
@@ -4052,7 +4106,7 @@ fn main {
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member, an element | `nil` when there is none | |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
-| `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { while e = it.next() { ... } }` |
+| `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { for e in it { ... } }` |
 | `arr(key)`, then `next` on it | `key: String` | `JsonIter?`: the elements of the member `key` | `nil` when there is no such member or it is not an array | `it = doc.arr("numbers") ?? return bad_request()` |
 | `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
@@ -4105,7 +4159,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 | `m.group(i)`, `m.group("name")` | `i: Int`, or a group's name | `String?`: a group's text | `nil` when it did not take part | |
 | `m.span(i)`, `m.group_count()` | `i: Int` | a group's bounds (`Span?` with `lo` and `hi`); the number of groups | — | |
 | `re.count(text)` | `text: String` | `Int`: the number of non-overlapping matches | — | |
-| `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last | |
+| `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last | `for m in re.matches(text) { ... }` |
 | `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | — | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
 | `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | — | |
 | `re.close()`, `re.is_closed()`, `re.scoped (r) { ... }` | a lambda for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
@@ -4817,8 +4871,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
-| A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
-| `for v in ch` over a channel | decided | `while v = ch.recv() { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap in an `std.http` handler that ends only its request; a pre-forked server mode | decided | a supervisor that restarts the process |
