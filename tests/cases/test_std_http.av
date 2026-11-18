@@ -417,8 +417,14 @@ fn test_std_http(c: Checks) {
       sent = conn.close(1000, "done")
     })
     events = Channel(String).new(16)
-    server.websocket_open("/echo", (conn) {
-      events.send("open")
+    server.websocket_open("/echo", (conn, req) {
+      // The handshake request: its method, path, a header and the peer.
+      seen = "${req.method} ${req.path} ${req.header("sec-websocket-version") ?? "-"} ${req.peer()}"
+      if seen == "GET /echo 13 127.0.0.1" {
+        events.send("open")
+      } else {
+        events.send("open with ${seen}")
+      }
     })
     server.websocket_close("/echo", (conn, code, reason) {
       events.send("close=${code}:${reason}")

@@ -471,7 +471,7 @@ struct WsRoute {
 
 struct WsOpenRoute {
   path: String
-  handler: fn(WsConn)
+  handler: fn(WsConn, Request)
 }
 
 struct WsCloseRoute {
@@ -532,7 +532,7 @@ class HttpState {
     -1
   }
 
-  fn add_ws_open(path: String, handler: fn(WsConn)) {
+  fn add_ws_open(path: String, handler: fn(WsConn, Request)) {
     if self.serving {
       httpc.avant_http_route_while_serving("websocket_open route ${path}")
     }
@@ -571,10 +571,19 @@ class HttpState {
     false
   }
 
-  fn ws_open_dispatch(path: String, conn: WsConn) {
+  fn has_ws_open_route(path: String): Bool {
     for r in self.ws_open_routes {
       if r.path == path {
-        (r.handler)(conn)
+        return true
+      }
+    }
+    false
+  }
+
+  fn ws_open_dispatch(path: String, conn: WsConn, req: Request) {
+    for r in self.ws_open_routes {
+      if r.path == path {
+        (r.handler)(conn, req)
       }
     }
   }
@@ -586,6 +595,24 @@ class HttpState {
       }
     }
     Response.text("not found", 404)
+  }
+}
+
+// The request the C loop parsed, as a handler gets it. Without a query
+// the path is the target; the split is the only copy, so a plain request
+// allocates no second string here.
+fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
+  method = httpc.avant_http_req_method(raw)
+  raw_headers = httpc.avant_http_req_headers(raw)
+  req_body = httpc.avant_http_req_body(raw)
+  Request {
+    method: method,
+    path: path,
+    raw_query: query,
+    hs: Headers { data: raw_headers },
+    data: req_body,
+    peer_hi: httpc.avant_http_req_peer(raw, 0),
+    peer_lo: httpc.avant_http_req_peer(raw, 1)
   }
 }
 
@@ -602,30 +629,20 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // to ordinary routing and its 404. The connection's C record keeps
   // its path's first message route (the loop threads share no table of
   // connections; the route tables are only read while serving).
+  // The open handlers get the handshake request (its headers, a cookie
+  // or an Authorization, and its peer), made only when the path has one.
   if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
     if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
       wid = httpc.avant_http_req_ws_id(raw)
       whandle = httpc.avant_http_req_ws_conn(raw)
       conn = WsConn { id: wid, handle: whandle }
-      state.ws_open_dispatch(path, conn)
+      if state.has_ws_open_route(path) {
+        state.ws_open_dispatch(path, conn, received_request(raw, path, query))
+      }
     }
     return
   }
-  // Without a query the path is the target; the slice above is the
-  // only copy, so a plain request allocates no second string here.
-  method = httpc.avant_http_req_method(raw)
-  raw_headers = httpc.avant_http_req_headers(raw)
-  req_body = httpc.avant_http_req_body(raw)
-  req = Request {
-    method: method,
-    path: path,
-    raw_query: query,
-    hs: Headers { data: raw_headers },
-    data: req_body,
-    peer_hi: httpc.avant_http_req_peer(raw, 0),
-    peer_lo: httpc.avant_http_req_peer(raw, 1)
-  }
-  resp = state.dispatch(req)
+  resp = state.dispatch(received_request(raw, path, query))
   // The response head and body travel into C as raw heap pointers; the
   // respond entry is no safepoint, so no thread collects while it writes
   // (until the handshake a defer region here and a second one in the
@@ -737,7 +754,10 @@ pub struct Server {
     self
   }
 
-  pub fn websocket_open(path: String, handler: fn(WsConn)): Server {
+  // The handler runs once per connection, after the upgrade, with the
+  // handshake request: its headers (a cookie, an Authorization), its
+  // query and its peer, which a handler may check and close on.
+  pub fn websocket_open(path: String, handler: fn(WsConn, Request)): Server {
     self.state.add_ws_open(path, handler)
     self
   }
