@@ -1259,7 +1259,7 @@ Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`. `Float6
 | `y.atan2(x)` | the angle of the point (x, y), in −π..π |
 | `x.to_i()`, `x.to_bits()` | an `Int` toward zero ([Conversions](#conversions)), the 64 bits as a `UInt64` |
 
-`Float64.pi` and `Float64.e` are the constants. The prelude also has `sqrt(x)` and `exp(x)`. The rest of C's math library (`cbrt`, `hypot`, `asin`) is a `lib` block away, with no flag ([C interop](#c-interop)).
+`Float64.pi` and `Float64.e` are the constants. The math is methods only: `sqrt(x)` is not a function (a call says to write `x.sqrt()`). The rest of C's math library (`cbrt`, `hypot`, `asin`) is a `lib` block away, with no flag ([C interop](#c-interop)).
 
 ```avant
 fn main {
@@ -4009,7 +4009,7 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Time | `now_ms`, `now_us` |
-| Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
+| Hashing and formatting | `sha256`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `buf_new` ([String operations](#string-operations)) |
 
 Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`. In the tables below, a dash means there is nothing to say: no parameter, no result, or no failure.
@@ -4202,7 +4202,7 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `now_ms()`, `now_us()` | — | `Int` milliseconds, microseconds | — | a monotonic clock, without wrapping: intervals, not the time of day |
 | `sha256(s)` | `s: String` | `String`: 64 hexadecimal characters | — | the SHA-256 of a string |
-| `sqrt(x)`, `exp(x)`, `fmt_float(x, digits)` | | | | in [Floats](#floats) |
+| `fmt_float(x, digits)` | | | | in [Floats](#floats); the square root and the exponential are `x.sqrt()` and `x.exp()` |
 | `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` | | each an `Int32` | | also taken, for the benchmark programs |
 | `wide_op`, `wide_hi` and `hash_last_key` | | | | also taken, for the benchmark programs |
 
@@ -4211,7 +4211,7 @@ fn main {
   t0 = now_us()
   puts(now_us() >= t0)       // => true
   puts(sha256("abc"))        // => ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
-  puts(sqrt(144.0))          // => 12.0
+  puts(144.0.sqrt())         // => 12.0
 }
 ```
 

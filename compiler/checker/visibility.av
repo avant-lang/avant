@@ -405,9 +405,28 @@ pub fn (checker_self: Checker) alias_not_value_text(name: String, loc: Location)
   ""
 }
 
+// The spelling that replaced a prelude function the language no longer
+// has, "" for any other name. Asked only where a call or a value names
+// no function, so a program's own function of that name is its own.
+pub fn removed_prelude_spelling(name: String): String {
+  if name == "sqrt" {
+    return "x.sqrt()"
+  }
+  if name == "exp" {
+    return "x.exp()"
+  }
+  ""
+}
+
 // A bare name of an imported std module's function: refused with its
-// qualified spelling; true when refused.
+// qualified spelling; a prelude function the language no longer has:
+// refused with the spelling that replaced it; true when refused.
 pub fn (checker_self: Checker) refuse_std_bare(loc: Location, name: String): Bool {
+  gone = removed_prelude_spelling(name)
+  if gone.size > 0 {
+    checker_self.fail(loc, "${name} is a Float64 method: write ${gone}")
+    return true
+  }
   spelled = checker_self.std_bare_spelling(name)
   if spelled.size == 0 {
     return false

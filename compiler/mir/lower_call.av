@@ -1,6 +1,6 @@
 // The lowering of calls and scalar members: direct calls of the
 // program's plain functions, the builtins `puts`, `puts_u`, `now_ms`,
-// `now_us`, `sqrt`, `exp`, and the conversions and members of the
+// `now_us`, and the conversions and members of the
 // integer types (`to_f to_i to_u64 abs`) and Float64
 // (`to_i abs floor sqrt exp`), in their field (`x.to_f`) and call
 // (`x.to_f()`) forms.
@@ -269,17 +269,6 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       unit = "us"
     }
     return lw.call_to(mt_i64(), "avant_clock_${unit}", none)
-  }
-  if (c == "sqrt" || c == "exp") && e.args.size == 1 {
-    a = lw.lower_expr(e.args[0])
-    if lw.failed() {
-      return zero
-    }
-    lw.at(e.loc)
-    if c == "sqrt" {
-      return lw.call_f64("sqrt", a)
-    }
-    return lw.call_f64("exp", a)
   }
   if mir_str_builtin_arity(c) == e.args.size {
     return lw.lower_str_builtin(e, c)
