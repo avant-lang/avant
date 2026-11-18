@@ -852,10 +852,10 @@ avant_int avant_fs_mkdir_p(const char *path) {
 
 /* cp: copies src to dst byte for byte, with src's permission bits, through
  * a temporary beside dst renamed into place, so dst is never half
- * written (a gate keeps the fixed point's next compiler this way). It uses
- * stdio, not read()/write(): an Avant program's own fn read or fn write is
- * a global symbol of the same name and would replace libc's for every
- * caller in the process. */
+ * written (a gate keeps the fixed point's next compiler this way). It
+ * copies through stdio with a 64 KB buffer. (An Avant program's own
+ * fn read or fn write cannot replace libc's: Avant functions are emitted
+ * internal, under an av. prefix.) */
 avant_int avant_fs_copy(const char *src, const char *dst) {
   char tmp[4096];
   char buf[65536];
