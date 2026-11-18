@@ -1097,8 +1097,11 @@ fn emfile_cases(c: Checks, root: String) {
 // timeout and closed when it passes again; one that answers stays; a
 // frame sent a byte at a time, and a send queue the client never reads,
 // fall under the minimum rate and are closed. raw_client.py mode
-// ws_live runs the four clients at once.
-fn ws_live_cases(c: Checks, root: String) {
+// ws_live runs the four clients at once. The round mostly waits (for a
+// ping and a close at 4 to 16 s, a ponger held 18 s), so it runs in a
+// task of its own beside the rounds after it (main): ws_live_run serves
+// and gives what it saw, ws_live_cases checks it.
+fn ws_live_run(root: String): String {
   if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.websocket_idle_timeout(4000).min_rate(1000, 500)
     chunk = Buf.new()
@@ -1142,14 +1145,17 @@ fn ws_live_cases(c: Checks, root: String) {
       0
     }
     server.serve()
-    c.eq_int(task.join() ?? -1, 0, "ws liveness task")
-    want: Array(String) = []
-    want.push("ws_live=quiet:closed,ponger:open, pinged,trickle:closed,stuck:closed")
-    expect_lines(c, out, want, "a silent WebSocket peer is pinged and closed, a slow one closed:")
-    c.eq_str(refused.with((v) { v }), "true: the WebSocket connection's send queue is full", "a send the queue refuses answers WsSendError.full")
-  } else {
-    c.expect(false, "listen for the WebSocket liveness test")
+    joined = task.join() ?? -1
+    return "${joined}|${out.recv() ?? "no line"}|${refused.with((v) { v })}"
   }
+  "listen failed"
+}
+
+fn ws_live_cases(c: Checks, seen: String) {
+  parts = seen.split("|")
+  c.eq_str(parts.get(0) ?? "", "0", "ws liveness task (${seen})")
+  c.eq_str(parts.get(1) ?? "", "ws_live=quiet:closed,ponger:open, pinged,trickle:closed,stuck:closed", "a silent WebSocket peer is pinged and closed, a slow one closed")
+  c.eq_str(parts.get(2) ?? "", "true: the WebSocket connection's send queue is full", "a send the queue refuses answers WsSendError.full")
 }
 
 // Answering later: a handler takes its request's reply, hands it to a
@@ -1720,6 +1726,12 @@ fn main: Int {
   }
   c = Checks.new()
   c.started = now_ms()
+  root = avant_test_root()
+  // The WebSocket liveness round waits most of its 20 s: it runs beside
+  // the others, and is checked at the end.
+  live = spawn {
+    ws_live_run(root)
+  }
   test_std_http_safety(c, avant_test_root())
   client_cases(c)
   ws_route_cases(c)
@@ -1739,7 +1751,7 @@ fn main: Int {
   ws_deadline_cases(c, avant_test_root())
   ws_cut_cases(c, avant_test_root())
   emfile_cases(c, avant_test_root())
-  ws_live_cases(c, avant_test_root())
   later_cases(c, avant_test_root())
+  ws_live_cases(c, live.join() ?? "the liveness task trapped")
   c.finish()
 }
