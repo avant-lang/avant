@@ -771,7 +771,6 @@ void *avant_json_get(void *node, const char *key);
 void *avant_json_at(void *node, avant_int i);
 void *avant_json_first(void *node);
 void *avant_json_next(void *node);
-void *avant_json_f64s(void *node, const char *key);
 avant_int avant_json_len(void *node);
 avant_int avant_json_as_int(void *node);
 avant_int avant_json_obj_int(void *node, const char *key);

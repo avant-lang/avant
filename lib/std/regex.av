@@ -32,16 +32,16 @@ pub enum RegexErrorKind {
 
 // A pattern that does not compile: the message is PCRE2's, with
 // the pattern offset it points at ("invalid regular expression at
-// offset 3: missing closing parenthesis"); offset is -1 when there
+// offset 3: missing closing parenthesis"); offset is nil when there
 // is none. A match that failed (try_find): the operation and PCRE2's
 // reason ("Regex.try_find: match limit exceeded (PCRE2 error -47)"),
-// offset -1. kind says which.
+// offset nil. kind says which.
 pub class RegexError: Error {
   pub message: String
-  pub offset: Int = -1
+  pub offset: Int? = nil
   pub kind: RegexErrorKind = RegexErrorKind.pattern
 
-  fn initialize(message: String, offset: Int = -1, kind: RegexErrorKind = RegexErrorKind.pattern) {
+  fn initialize(message: String, offset: Int? = nil, kind: RegexErrorKind = RegexErrorKind.pattern) {
     self.message = message
     self.offset = offset
     self.kind = kind
@@ -53,13 +53,13 @@ fn regex_error(status: Int): RegexError {
     off = rec.avant_regex_error_offset()
     return RegexError.new("invalid regular expression at offset ${off}: ${rec.avant_regex_error_text()}", off)
   }
-  RegexError.new("regular expression compile ran out of memory", -1, RegexErrorKind.memory)
+  RegexError.new("regular expression compile ran out of memory", nil, RegexErrorKind.memory)
 }
 
 // The last match's failure on this thread, as a value.
 fn match_error: RegexError {
   kind = RegexErrorKind.from_i(rec.avant_regex_failure_kind()) ?? RegexErrorKind.failed
-  RegexError.new(rec.avant_regex_failure_text(), -1, kind)
+  RegexError.new(rec.avant_regex_failure_text(), nil, kind)
 }
 
 // Every operation on a closed Regex traps: a use after close is a

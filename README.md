@@ -4102,7 +4102,7 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none) | |
+| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none) | |
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
 | `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
@@ -4111,9 +4111,8 @@ fn main {
 | `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
-| `f64s(key)` | `key: String` | `Array(Float64)?`: the numeric member `key` of every element of an array of objects | `nil` otherwise | |
 | `text` | — | `String`: the value written back as JSON text | — | |
-| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document; an object's members are in `members`, a `Hash` by name (a repeated name keeps its first value), and their names in `keys`, in the document's order |
+| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document, and a `JsonBuilder` writes it back (`b.value(v)`); an object's members are in `members`, a `Hash` by name (a repeated name keeps its first value), and their names in `keys`, in the document's order |
 
 **Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 
@@ -4127,7 +4126,7 @@ fn main {
 | `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in the order of its `keys`). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 
@@ -4152,7 +4151,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, `e.kind` is `RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
+| `Regex.compile(pattern, caseless = false, match_limit = 10000000, depth_limit = 10000000, heap_limit = 268435456)` | `pattern: String`, `caseless: Bool`, the limits `Int` (below) | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`, an `Int?`, `nil` for a failed match; `e.kind` is `RegexErrorKind.pattern`); a limit below 1 traps | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
 | `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none; a limit reached traps | |
 | `re.try_find(text, from = 0)` | `text: String`, `from: Int` | `Match? \| RegexError`: `find`'s answer, or why there is none | a limit reached is a `RegexError` (`Regex.try_find: match limit exceeded (PCRE2 error -47)`; `e.kind`: `match_limit`, `depth_limit`, `heap_limit`, `memory` or `failed`) | for a pattern or a text from outside |
 | `m.start`, `m.end` | — | `Int`: the match's bounds, in bytes | — | a `Match` is a value: there are no global match cursors |

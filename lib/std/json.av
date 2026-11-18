@@ -8,7 +8,6 @@ lib jsonc {
   fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)
   fun avant_json_first(node: Ptr(Void)): Ptr(Void)
   fun avant_json_next(node: Ptr(Void)): Ptr(Void)
-  fun avant_json_f64s(node: Ptr(Void), key: String): Array(Float64)
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
@@ -44,12 +43,12 @@ const no_value = 0
 
 // A document that does not parse: the message says what yyjson found
 // and where ("invalid JSON at byte 7: unexpected character"); offset is
-// that byte offset, -1 when the error has none.
+// that byte offset, nil when the error has none.
 pub class JsonError: Error {
   pub message: String
-  pub offset: Int = -1
+  pub offset: Int? = nil
 
-  fn initialize(message: String, offset: Int = -1) {
+  fn initialize(message: String, offset: Int? = nil) {
     self.message = message
     self.offset = offset
   }
@@ -195,14 +194,6 @@ pub struct Json {
       return nil
     }
     JsonIter.new(child_node, self.pool, jsonc.avant_json_len(child_node))
-  }
-
-  pub fn f64s(key: String): Array(Float64)? {
-    values = jsonc.avant_json_f64s(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
-      return nil
-    }
-    values
   }
 
   pub fn key_at(index: Int): String? {
@@ -503,6 +494,39 @@ pub class JsonBuilder {
     self
   }
 
+  // A JsonValue tree (Json.to_value's, or one built by hand) written
+  // back: an object's members in the order of its keys, each name's
+  // value from members (a name in keys without a member is written as
+  // null).
+  pub fn value(v: JsonValue): JsonBuilder {
+    switch v.kind {
+      case null { self.null() }
+      case bool { value(v.bool_val) }
+      case int { value(v.int_val) }
+      case float { value(v.f64_val) }
+      case str { value(v.str_val) }
+      case arr {
+        self.arr()
+        for e in v.arr {
+          value(e)
+        }
+        self.end()
+      }
+      case obj {
+        self.obj()
+        for k in v.keys {
+          key(k)
+          if m = v.members[k] {
+            value(m)
+          } else {
+            self.null()
+          }
+        }
+        self.end()
+      }
+    }
+  }
+
   pub fn add(v: Int): JsonBuilder {
     value(v)
   }
@@ -524,6 +548,10 @@ pub class JsonBuilder {
   }
 
   pub fn add(v: JsonBuilder): JsonBuilder {
+    value(v)
+  }
+
+  pub fn add(v: JsonValue): JsonBuilder {
     value(v)
   }
 
@@ -553,6 +581,11 @@ pub class JsonBuilder {
   }
 
   pub fn set(name: String, v: JsonBuilder): JsonBuilder {
+    key(name)
+    value(v)
+  }
+
+  pub fn set(name: String, v: JsonValue): JsonBuilder {
     key(name)
     value(v)
   }

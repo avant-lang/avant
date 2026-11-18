@@ -125,8 +125,8 @@ void *avant_json_parse(const char *s) {
      * dropped. Before, it was allocated mature
      * (avant_alloc_in_mature), so a dropped document waited for a full
      * collection, and with collections at the helpers' own allocations
-     * (RC1) the full trigger fired inside avant_json_f64s while the new
-     * document was still live (Json::ParseMapping 34 -> 90 MB). The
+     * (RC1) the full trigger fired inside a helper that allocated an
+     * array from the document while the new document was still live (Json::ParseMapping 34 -> 90 MB). The
      * bracket also turned a mature-allocating thread's setting off. */
     /* The previous document's pool is usually dead by now: let the due
      * young collection free it before this one exists. */
@@ -260,58 +260,6 @@ void *avant_json_next(void *nodep) {
     return NULL;
   }
   return unsafe_yyjson_get_next(v);
-}
-
-typedef struct {
-  void *buf;
-  int32_t size;
-  int32_t cap;
-} AvantArrayBox;
-
-/* One sequential C traversal that projects a numeric field of every
- * element into a collector Array(Float64). NULL with status 1 when the
- * receiver is not an array or any element lacks a numeric field. */
-void *avant_json_f64s(void *nodep, const char *key) {
-  yyjson_val *arr = (yyjson_val *)nodep;
-  yyjson_arr_iter iter;
-  yyjson_val *el;
-  AvantArrayBox *out;
-  double *buf = NULL;
-  size_t n;
-  size_t i = 0;
-  set_status(0);
-  if (!arr || !key || !yyjson_is_arr(arr)) {
-    set_status(1);
-    return NULL;
-  }
-  n = yyjson_arr_size(arr);
-  /* RC1: the node (an interior address of its document's pool), the key
-   * and the fresh array are handles across the allocations. */
-  out = NULL;
-  AVANT_GC_SCOPE(3);
-  AVANT_GC_ROOT(0, &arr);
-  AVANT_GC_ROOT(1, &key);
-  AVANT_GC_ROOT(2, &out);
-  out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
-  avant_size_check((uint64_t)n, AVANT_SIZE_ARRAY);
-  if (n > 0) {
-    buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
-  }
-  avant_barrier(out);
-  out->buf = buf;
-  out->size = (int32_t)n;
-  out->cap = (int32_t)n;
-  iter = yyjson_arr_iter_with(arr);
-  while ((el = yyjson_arr_iter_next(&iter)) != NULL) {
-    yyjson_val *field = yyjson_is_obj(el) ? yyjson_obj_get(el, key) : NULL;
-    if (!field || !yyjson_is_num(field)) {
-      set_status(1);
-      return NULL;
-    }
-    buf[i] = yyjson_get_num(field);
-    i++;
-  }
-  return out;
 }
 
 avant_int avant_json_len(void *nodep) {

@@ -196,7 +196,7 @@
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
  *     avant_json_parse                             C (yyjson allocates
  *                                                  from its own pool)
- *     avant_json_f64s, copy_str                    C
+ *     copy_str (avant_json.c)                      C
  *     base64 encode/decode, zlib                   C
  *     sha256 (avant_codec.c)                       N (digest in C)
  *     avant_argv, avant_sys_list                   C (array filled in

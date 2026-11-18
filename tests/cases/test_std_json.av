@@ -284,27 +284,21 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(true, "iterator stays done")
     }
-    if scalars = arr.f64s("x") {
-      c.expect(false, "f64s on scalar elements is nil")
-    } else {
-      c.expect(true, "f64s on scalar elements is nil")
-    }
   } else {
     c.expect(false, "parse array")
   }
   if objs = Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
-    if xs = objs.f64s("x") {
-      c.eq_int(xs.size, 3, "f64s size")
-      c.eq_int((xs[0] * 10.0).to_i(), 15, "f64s first")
-      c.eq_int((xs[2] * 10.0).to_i(), 30, "f64s last")
-    } else {
-      c.expect(false, "f64s")
+    // A numeric member of every element, by the walk: the general form.
+    it = objs.arr() ?? return c.expect(false, "objects: arr")
+    xs: Array(Float64) = []
+    while e = it.next() {
+      if x = e.f64("x") {
+        xs.push(x)
+      }
     }
-    if badp = objs.f64s("missing") {
-      c.expect(false, "f64s missing key is nil")
-    } else {
-      c.expect(true, "f64s missing key is nil")
-    }
+    c.eq_int(xs.size, 3, "a member of each element")
+    c.eq_int((xs[0] * 10.0).to_i(), 15, "the first element's member")
+    c.eq_int((xs[2] * 10.0).to_i(), 30, "the last element's member")
     if notarr = objs.int() {
       c.expect(false, "int on array is nil")
     } else {
@@ -353,6 +347,36 @@ fn test_json_kinds(c: Checks) {
   } else {
     c.expect(false, "parse kinds")
   }
+}
+
+// A JsonValue is written back by a JsonBuilder (value, add, set): the
+// tree Json.to_value copies out of a document gives the document's text
+// again, an object's members in their order, a repeated name once.
+fn test_json_value_written(c: Checks) {
+  text = "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709551615}"
+  doc = Json.parse(text) ?? return c.expect(false, "value written: parse")
+  v = doc.to_value()
+  b = JsonBuilder.new()
+  b.value(v)
+  c.eq_str(b.to_s(), "{\"n\":7,\"f\":1.5,\"s\":\"a\\\"b\",\"t\":true,\"z\":null,\"xs\":[1,[2,{}],[]],\"o\":{\"k\":\"v\"},\"big\":18446744073709552000.0}", "to_value written back (an integer beyond Int as its float)")
+  dup = Json.parse("{\"a\":1,\"a\":2}") ?? return c.expect(false, "value written: parse dup")
+  d = JsonBuilder.new()
+  d.value(dup.to_value())
+  c.eq_str(d.to_s(), "{\"a\":1}", "a repeated name written once, with its first value")
+  out = Json.object()
+  item = JsonValue.new()
+  item.kind = JsonKind.str
+  item.str_val = "x"
+  out.set("one", item)
+  out.key("list").arr().add(item).add(v.get("o") ?? item).end()
+  out.end()
+  c.eq_str(out.to_s(), "{\"one\":\"x\",\"list\":[\"x\",{\"k\":\"v\"}]}", "set and add take a JsonValue")
+  hand = JsonValue.new()
+  hand.kind = JsonKind.obj
+  hand.keys.push("gone")
+  h = JsonBuilder.new()
+  h.value(hand)
+  c.eq_str(h.to_s(), "{\"gone\":null}", "a name in keys without a member is null")
 }
 
 // JsonValue's object members: a Hash by name, their names in the
@@ -416,5 +440,6 @@ fn main: Int {
   test_std_json(c)
   test_json_kinds(c)
   test_json_members(c)
+  test_json_value_written(c)
   c.finish()
 }
