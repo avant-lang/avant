@@ -94,6 +94,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     }
     out.push_str("\n")
   }
+  if e.used_buf_nil {
+    out.push_str("@buf.nil = private constant [16 x i8] zeroinitializer, align 8\n\n")
+  }
   if e.used_str_nil {
     out.push_str("@str.nil = private constant { i64, [1 x i8] } { i64 ${ll_str_header(0)}, [1 x i8] zeroinitializer }, align 8\n\n")
   }
@@ -705,6 +708,8 @@ fn ll_call(e: LlEmit, st: MStmt) {
       result = ll_str_size(e, st.args)
     } else if x.name == "avant_str_data" && e.inline_fast {
       result = ll_str_data(e, st.args)
+    } else if x.name == "avant_buf_size" && e.inline_fast {
+      result = ll_buf_size(e, st.args)
     } else if x.name == "avant_buf_push_byte" && e.inline_fast {
       result = ll_buf_push_byte(e, st.args)
     } else if x.name == "avant_str_view_test" && e.inline_fast {

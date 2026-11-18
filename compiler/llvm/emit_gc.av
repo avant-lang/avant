@@ -603,6 +603,27 @@ pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
   r
 }
 
+// _d = call avant_buf_size(_b): a Buf's size read in place (its header's
+// second word), so a loop testing it keeps no call. A null Buf, which the
+// runtime reads as empty, reads the static zero header @buf.nil instead
+// (a select, no branch). The call form when inline fast paths are off.
+pub fn ll_buf_size(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.used_buf_nil = true
+  b = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${b}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr @buf.nil, ptr ${b}")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${q}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  w
+}
+
 // call avant_buf_push_byte(_b, _c): the runtime's fast path in place
 // (runtime/avant_buf.c): a Buf (AvantBuf: its data, its size, its
 // capacity) with room stores the byte at its size and counts it; one
