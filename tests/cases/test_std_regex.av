@@ -121,6 +121,93 @@ fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
   must_compile(c, "a+", false, "fallback")
 }
 
+fn count_of(r: Int | RegexError): String {
+  switch r {
+    case n: Int { "count ${n}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn text_of(r: String | RegexError): String {
+  switch r {
+    case t: String { "text ${t}" }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn parts_of(r: Array(String) | RegexError): String {
+  switch r {
+    case ps: Array(String) {
+      out = "parts"
+      for i in 0..ps.size {
+        if i == 0 {
+          out = out + " " + ps[i]
+        } else {
+          out = out + "|" + ps[i]
+        }
+      }
+      out
+    }
+    case e: RegexError { "error ${e.kind}: ${e.message}" }
+  }
+}
+
+fn walk_of(it: TryMatchIter): String {
+  got = ""
+  while m = it.next() {
+    got = got + " ${m.start}..${m.end}"
+  } else e {
+    if err = e {
+      got = got + " error ${err.kind}: ${err.message}"
+    } else {
+      got = got + " end"
+    }
+  }
+  got
+}
+
+// The try_ twins of count, replace, replace_into, split and matches give
+// a match that reaches a limit as a RegexError, as try_find does; the
+// plain ones trap. `(a+)+b` finds "ab" at once and backtracks past a
+// match limit of 1000 on twenty a's followed by a c (a b later in the
+// text, so PCRE2's required-character check does not end the match
+// first).
+fn regex_try_forms(c: Checks) {
+  pat = "(a+)+"
+  pat = pat + "b"
+  re = Regex.compile(pat, match_limit: 1000) ?? return c.expect(false, "compile the try_ pattern")
+  ok = "ab-ab-x"
+  bad = "ab-ab-" + repeated("a", 20, "c b")
+  limit = "error match_limit: Regex.try_"
+  c.eq_str(count_of(re.try_count(ok)), "count 2", "try_count counts")
+  c.eq_str(count_of(re.try_count("")), "count 0", "try_count of no match is 0")
+  c.eq_str(count_of(re.try_count(bad)), "${limit}count: match limit exceeded (PCRE2 error -47)", "try_count at the limit is a RegexError")
+  c.eq_str(text_of(re.try_replace(ok, "<$1>")), "text <a>-<a>-x", "try_replace replaces")
+  c.eq_str(text_of(re.try_replace(bad, "<$1>")), "${limit}replace: match limit exceeded (PCRE2 error -47)", "try_replace at the limit is a RegexError")
+  dst = Buf.new()
+  dst.push_str("kept:")
+  if err = re.try_replace_into(dst, bad, "<$1>") {
+    c.eq_str("${err.kind}", "match_limit", "try_replace_into at the limit is a RegexError")
+  } else {
+    c.expect(false, "try_replace_into at the limit is a RegexError")
+  }
+  c.eq_str(dst.to_s(), "kept:", "and leaves its Buf as it was")
+  if err = re.try_replace_into(dst, ok, "_") {
+    c.expect(false, "try_replace_into appends: ${err}")
+  }
+  c.eq_str(dst.to_s(), "kept:_-_-x", "try_replace_into appends")
+  c.eq_str(parts_of(re.try_split(ok)), "parts |-|-x", "try_split splits")
+  c.eq_str(parts_of(re.try_split(bad)), "${limit}split: match limit exceeded (PCRE2 error -47)", "try_split at the limit is a RegexError")
+  c.eq_str(walk_of(re.try_matches(ok)), " 0..2 3..5 end", "try_matches walks")
+  c.eq_str(walk_of(re.try_matches(bad)), " 0..2 3..5 error match_limit: Regex.try_matches: match limit exceeded (PCRE2 error -47)", "try_matches gives the matches before the failure, then the RegexError")
+  it = re.try_matches(bad)
+  _ = walk_of(it)
+  c.eq_str(kind_of(it.next()), "nil", "a walk ends after its RegexError")
+  c.eq_str(kind_of(re.try_find(bad, 6)), "error ${RegexErrorKind.match_limit.to_i()}", "try_find keeps its own name")
+  c.eq_str(message_of(re.try_find(bad, 6)), "Regex.try_find: match limit exceeded (PCRE2 error -47)", "try_find's message")
+  re.close()
+}
+
 // Patterns held by Regex values that are never closed (a dropped Regex
 // is not closed for the program) no longer keep the cache from others:
 // with its 128 entries all held, a new pattern takes the place of the
@@ -460,6 +547,7 @@ fn test_std_regex(c: Checks) {
   deep.close()
 
   regex_limits(c)
+  regex_try_forms(c)
   regex_cache_held(c)
 
   // Groups past the 63rd are read: the span pairs were capped at 64, so

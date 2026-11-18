@@ -622,17 +622,19 @@ int64_t avant_regex_span_pair(avant_int i) {
   return ((int64_t)lo << 32) | (uint32_t)hi;
 }
 
-/* Why this thread's last avant_regex_find returned -2: PCRE2's error
- * code. The Avant side traps through avant_regex_failed with the
- * operation it was running (lib/std/regex.av, RegexState.op: 0 find,
- * 1 replace, 2 split, 3 matches). */
+/* Why this thread's last avant_regex_find returned -2, or its last
+ * avant_regex_try_count -1: PCRE2's error code. The Avant side traps
+ * through avant_regex_failed with the operation it was running
+ * (lib/std/regex.av, RegexState.op: 0 find, 1 replace, 2 split, 3
+ * matches), or makes a RegexError of it. */
 static __thread int g_re_match_err;
 
 /* What this thread's last failed match was, for a RegexError
  * (std.regex's RegexErrorKind: 3 the match limit, 4 the depth limit, 5
  * the heap limit, 2 no memory, 6 anything else), and PCRE2's words for
- * it with the operation ("Regex.try_find: match limit exceeded (PCRE2
- * error -47)"). */
+ * it with the try_ operation `op` (0 try_find, 1 try_replace, 2
+ * try_split, 3 try_matches, 4 try_count: "Regex.try_find: match limit
+ * exceeded (PCRE2 error -47)"). */
 avant_int avant_regex_failure_kind(void) {
   switch (g_re_match_err) {
   case PCRE2_ERROR_MATCHLIMIT:
@@ -649,7 +651,10 @@ avant_int avant_regex_failure_kind(void) {
 }
 
 /* gc-lint: holds nothing (C memory only). */
-char *avant_regex_failure_text(void) {
+char *avant_regex_failure_text(avant_int op) {
+  static const char *const names[] = {"Regex.try_find", "Regex.try_replace",
+                                      "Regex.try_split", "Regex.try_matches",
+                                      "Regex.try_count"};
   PCRE2_UCHAR msg[160];
   char buf[224];
   int n;
@@ -657,8 +662,9 @@ char *avant_regex_failure_text(void) {
   if (pcre2_get_error_message(g_re_match_err, msg, sizeof msg) < 0) {
     memcpy(msg, "unknown error", 14);
   }
-  n = snprintf(buf, sizeof buf, "Regex.try_find: %s (PCRE2 error %d)",
-               (const char *)msg, g_re_match_err);
+  n = snprintf(buf, sizeof buf, "%s: %s (PCRE2 error %d)",
+               names[op >= 0 && op < 5 ? op : 0], (const char *)msg,
+               g_re_match_err);
   if (n < 0) {
     n = 0;
   }
@@ -798,8 +804,11 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
 
 /* The number of matches can be one more than the text's bytes (an empty
  * match at every position and at the end): 2^31 for a text of the
- * largest size, past int32_t, so it is counted in avant_int. */
-avant_int avant_regex_count(void *handle, const char *s) {
+ * largest size, past int32_t, so it is counted in avant_int. A failed
+ * match traps (Regex.count) when `trap` is set; else the count is -1,
+ * its PCRE2 code in g_re_match_err (Regex.try_count). Inlined into both
+ * entries, so count's loop keeps its constant. */
+static inline __attribute__((always_inline)) avant_int re_count(void *handle, const char *s, int trap) {
   ReEntry *e;
   pcre2_match_data *md;
   size_t slen;
@@ -819,6 +828,10 @@ avant_int avant_regex_count(void *handle, const char *s) {
     ReText txt;
     int32_t got;
     if (!re_text(&txt, s)) {
+      if (!trap) {
+        g_re_match_err = PCRE2_ERROR_NOMEMORY;
+        return -1;
+      }
       re_trap("Regex.count", PCRE2_ERROR_NOMEMORY);
     }
     got = avant_re2c_count((int32_t)(uintptr_t)handle, re_text_obj(&txt, s));
@@ -838,6 +851,10 @@ avant_int avant_regex_count(void *handle, const char *s) {
   if (!e->jit) {
     own = md_own(e->code);
     if (!own) {
+      if (!trap) {
+        g_re_match_err = PCRE2_ERROR_NOMEMORY;
+        return -1;
+      }
       re_trap("Regex.count", PCRE2_ERROR_NOMEMORY);
     }
     md = own;
@@ -870,6 +887,10 @@ avant_int avant_regex_count(void *handle, const char *s) {
         if (own) {
           pcre2_match_data_free(own);
         }
+        if (!trap) {
+          g_re_match_err = rc;
+          return -1;
+        }
         re_trap("Regex.count", rc);
       }
       break;
@@ -886,6 +907,14 @@ avant_int avant_regex_count(void *handle, const char *s) {
     pcre2_match_data_free(own);
   }
   return n;
+}
+
+avant_int avant_regex_count(void *handle, const char *s) {
+  return re_count(handle, s, 1);
+}
+
+avant_int avant_regex_try_count(void *handle, const char *s) {
+  return re_count(handle, s, 0);
 }
 
 /* PCRE2's text for the last failed compile ("missing closing

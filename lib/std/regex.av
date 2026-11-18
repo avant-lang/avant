@@ -8,13 +8,14 @@ lib rec {
   fun avant_regex_span_pair(i: Int): Int
   fun avant_regex_span_at(code: Ptr(Void), text: String, from: Int, i: Int): Int
   fun avant_regex_count(code: Ptr(Void), text: String): Int
+  fun avant_regex_try_count(code: Ptr(Void), text: String): Int
   fun avant_re2c_handle(id: Int): Ptr(Void)
   fun avant_regex_error_text: String
   fun avant_regex_error_offset: Int
   fun avant_regex_closed
   fun avant_regex_failed(op: Int)
   fun avant_regex_failure_kind: Int
-  fun avant_regex_failure_text: String
+  fun avant_regex_failure_text(op: Int): String
 }
 
 // Why a RegexError is: a pattern that does not compile, a match that
@@ -56,10 +57,12 @@ fn regex_error(status: Int): RegexError {
   RegexError.new("regular expression compile ran out of memory", nil, RegexErrorKind.memory)
 }
 
-// The last match's failure on this thread, as a value.
-fn match_error: RegexError {
+// The last match's failure on this thread, as a value; `op` names the
+// try_ operation in its message: 0 try_find, 1 try_replace, 2 try_split,
+// 3 try_matches, 4 try_count.
+fn match_error(op: Int): RegexError {
   kind = RegexErrorKind.from_i(rec.avant_regex_failure_kind()) ?? RegexErrorKind.failed
-  RegexError.new(rec.avant_regex_failure_text(), nil, kind)
+  RegexError.new(rec.avant_regex_failure_text(op), nil, kind)
 }
 
 // Every operation on a closed Regex traps: a use after close is a
@@ -359,6 +362,12 @@ pub struct Regex {
   // instead of a trap: for a pattern or a text from outside, where one
   // request must not end the program. nil is no match.
   pub fn try_find(text: String, from: Int = 0): Match? | RegexError {
+    try_find_as(text, from, 0)
+  }
+
+  // try_find for the try_ operation `op` (match_error's codes), whose
+  // name a failure's message gives.
+  fn try_find_as(text: String, from: Int, op: Int): Match? | RegexError {
     if self.state.closed {
       regex_closed()
       return nil
@@ -366,11 +375,120 @@ pub struct Regex {
     p0 = rec.avant_regex_find(self.scan, text, from)
     if p0 < 0 {
       if p0 != -1 {
-        return match_error()
+        return match_error(op)
       }
       return nil
     }
     found(text, from, p0)
+  }
+
+  // The try_ twins of count, replace, replace_into, split and matches:
+  // a match that reaches a limit is a RegexError, as from try_find,
+  // instead of a trap. For a pattern or a text from outside.
+  pub fn try_count(text: String): Int | RegexError {
+    if self.state.closed {
+      regex_closed()
+      return 0
+    }
+    n = rec.avant_regex_try_count(self.code, text)
+    if n < 0 {
+      return match_error(4)
+    }
+    n
+  }
+
+  pub fn try_replace(text: String, repl: String): String | RegexError {
+    buf = buf_new()
+    if err = try_replace_buf(buf, text, repl) {
+      return err
+    }
+    buf.to_s()
+  }
+
+  // On a failure dst is left as it was: the text is built apart and
+  // appended once every match has been found.
+  pub fn try_replace_into(dst: Buf, text: String, repl: String): RegexError? {
+    buf = buf_new()
+    if err = try_replace_buf(buf, text, repl) {
+      return err
+    }
+    dst.push_str(buf)
+    nil
+  }
+
+  fn try_replace_buf(dst: Buf, text: String, repl: String): RegexError? {
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
+    last = 0
+    at = 0
+    while at <= text.size {
+      switch try_find_as(text, at, 1) {
+        case e: RegexError {
+          return e
+        }
+        case m: Match {
+          dst.push_slice(text, last, m.start)
+          push_replacement(dst, repl, m)
+          last = m.end
+          if m.end == m.start {
+            if m.end < text.size {
+              dst.push_slice(text, m.end, m.end + 1)
+              last = m.end + 1
+              at = m.end + 1
+            } else {
+              at = text.size + 1
+            }
+          } else {
+            at = m.end
+          }
+        }
+        else {
+          break
+        }
+      }
+    }
+    dst.push_slice(text, last, text.size)
+    nil
+  }
+
+  pub fn try_split(text: String): Array(String) | RegexError {
+    parts: Array(String) = []
+    if self.state.closed {
+      regex_closed()
+      return parts
+    }
+    last = 0
+    at = 0
+    while at <= text.size {
+      switch try_find_as(text, at, 2) {
+        case e: RegexError {
+          return e
+        }
+        case m: Match {
+          if m.end == m.start {
+            at = m.end + 1
+          } else {
+            parts.push(str_slice(text, last, m.start))
+            last = m.end
+            at = m.end
+          }
+        }
+        else {
+          break
+        }
+      }
+    }
+    parts.push(str_slice(text, last, text.size))
+    parts
+  }
+
+  // Each match in turn, as matches gives them; a failure is the
+  // RegexError of next, which then ends the walk:
+  // `while m = it.next() { ... } else e { ... }`.
+  pub fn try_matches(text: String): TryMatchIter {
+    TryMatchIter.new(self, text)
   }
 
   // The Match of a find that succeeded: p0 is its packed whole span, the
@@ -520,6 +638,45 @@ pub class MatchIter {
     }
     self.done = true
     nil
+  }
+}
+
+pub class TryMatchIter {
+  re: Regex
+  text: String
+  at: Int = 0
+  done: Bool = false
+
+  fn initialize(re: Regex, text: String) {
+    self.re = re
+    self.text = text
+  }
+
+  pub fn next: Match? | RegexError {
+    if self.done {
+      return nil
+    }
+    switch self.re.try_find_as(self.text, self.at, 3) {
+      case e: RegexError {
+        self.done = true
+        return e
+      }
+      case m: Match {
+        if m.end == m.start {
+          self.at = m.end + 1
+        } else {
+          self.at = m.end
+        }
+        if self.at > self.text.size {
+          self.done = true
+        }
+        return m
+      }
+      else {
+        self.done = true
+        return nil
+      }
+    }
   }
 }
 
