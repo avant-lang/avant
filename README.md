@@ -399,7 +399,7 @@ fn main {
 `fn name(params): Result { body }`; no result type means `Void`, and result types are never inferred.
 
 - A function without parameters is declared without parentheses (`fn answer: Int`; `fn answer(): Int` is refused with that hint), a `lib` block's C function too (`fun avant_gc_collect`), and called with them (`answer()`); a bare `answer` is the function as a value.
-- **Every method call takes parentheses**, argumentless and builtin ones included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`), so a mutation never reads as a field. After a dot, a name without them is a field or one of two builtin read-only properties: `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`) and `bytes` (a `String`'s bytes as `Bytes`). `xs.sort` says `a method call takes parentheses: write sort()`; `s.size()` says `size is read without parentheses: write .size`. `avant format --calls FILE...` adds missing parentheses ([Formatter](#formatter)).
+- **Every method call takes parentheses**, argumentless and builtin ones included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`), so a mutation never reads as a field. After a dot, a name without them is a field or one of the builtin read-only properties: `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`), `bytes` (a `String`'s bytes as `Bytes`) and `message` (of every [error](#declaring-an-error), a field or a method). `xs.sort` says `a method call takes parentheses: write sort()`; `s.size()` says `size is read without parentheses: write .size`. `avant format --calls FILE...` adds missing parentheses ([Formatter](#formatter)).
 
 ```avant
 fn area(w: Int, h: Int): Int {
@@ -2321,7 +2321,7 @@ fn main {
 
 ### Declaring an error
 
-An error type is a class or struct marked `: Error` with a `String` field `message` or a method `fn message: String` (an enum, [below](#an-enum-as-an-error)); `e.message` reads the field, `e.message()` the method, and interpolation prints either.
+An error type is a class or struct marked `: Error` with a `String` field `message` or a method `fn message: String` (an enum, [below](#an-enum-as-an-error)); `e.message` reads it either way (a method's parentheses may be left off, on every type marked `Error`), and interpolation prints it.
 
 ```avant
 struct TooLong: Error {
@@ -2423,7 +2423,7 @@ fn main {
 }
 ```
 
-It is read, refused as dropped and discarded like any error; a `switch` over the result names it as a member. `e.message()` reads the message (a method; `e.message` without parentheses reads only a field).
+It is read, refused as dropped and discarded like any error; a `switch` over the result names it as a member. `e.message` reads the message, as on every error.
 
 The library's errors that are a kind and nothing else are enums: `ZlibError` and `Base64Error` (`invalid_data`, `too_large`: the result would pass a `Buf`'s size limit) and `MutexError` (`poisoned`). The errors that carry data stay classes: `IoError` (its operation, path and `errno`), `JsonError` and `RegexError` (an offset), `ProcessError`, `HttpError`, `TaskError`.
 
@@ -4124,7 +4124,7 @@ import std.fs
 
 fn remove(path: String) {
   fs.delete(path) else e {
-    puts(e.message())
+    puts(e.message)
     return
   }
   puts("removed ${path}")

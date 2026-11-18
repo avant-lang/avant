@@ -2785,6 +2785,14 @@ pub class Checker {
       // `Float64.pi`), written in place as its literal.
       return false
     }
+    if expr.kind == ex_call() && expr.callee == "message" && expr.args.size == 0 {
+      // An error's message is read as `e.message` on every type marked
+      // Error, whether the type keeps it in a field or computes it in a
+      // method: the one thing every error has, spelled one way.
+      if recv = expr.receiver, rt = recv.ty, rt.error_mark {
+        return false
+      }
+    }
     if expr.kind != ex_field() {
       return true
     }
@@ -2793,6 +2801,11 @@ pub class Checker {
     }
     if obj = expr.object, ot = obj.ty, is_builtin_property(ot, expr.ident) {
       return false
+    }
+    if expr.ident == "message" {
+      if obj2 = expr.object, ot2 = obj2.ty, ot2.error_mark {
+        return false
+      }
     }
     true
   }
