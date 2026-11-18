@@ -15,10 +15,13 @@
 //     optional or union of those; a Channel or a Mutex is shared too,
 //     as a task capture shares it: it is a handle whose purpose is to be
 //     shared;
+//   - a union of several types is copied by its member's own clone: the
+//     call becomes a switch over the members (union_clone), so a
+//     recursive alias (`type J = Int | Array(J)`) is copied at every
+//     level as its arrays and hashes are;
 //   - refused, naming the field: a function value (it may capture mutable
 //     state the copy would share), a Ptr (C memory the compiler cannot
-//     copy), a JoinHandle (one task's result, waited once), a Buf, and a
-//     union of several types holding something to copy;
+//     copy), a JoinHandle (one task's result, waited once) and a Buf;
 //   - a type cannot define its own `clone`: a clone is always the derived
 //     deep copy, so a copy is never shared with its original;
 //   - the copy follows the type: an object reached twice is copied twice,
@@ -108,7 +111,19 @@ pub fn (checker_self: Checker) clone_problem(ty: Ty, seen: Array(String), path: 
     if ty.is_nilable() {
       return checker_self.clone_problem(ty_without_nil(ty), seen, path)
     }
-    return "a union of several types that holds something to copy${where}, ${ty.show()}, is not copied yet"
+    // Each member by its own rule; a recursive alias met again inside
+    // itself is being looked at already.
+    if !ty_walk_enter(ty, wk_clone()) {
+      return ""
+    }
+    found = ""
+    for m in ty.members {
+      if found.size == 0 {
+        found = checker_self.clone_problem(m, seen, path)
+      }
+    }
+    ty_walk_leave(ty, wk_clone())
+    return found
   }
   if ty.is_class() || ty.is_struct() {
     key = "${ty.mod_name}.${ty.name}"
@@ -188,6 +203,8 @@ pub fn (checker_self: Checker) check_clone_call(expr: Expr, object: Ty, expected
   } else if object.is_nilable() {
     name = "__avant_clone_opt"
     subst.push(ty_without_nil(object))
+  } else if object.is_union() {
+    return checker_self.union_clone(expr, object)
   }
   if recv = expr.receiver, sig = checker_self.clone_template(name) {
     if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
@@ -203,6 +220,51 @@ pub fn (checker_self: Checker) check_clone_call(expr: Expr, object: Ty, expected
   object
 }
 
+// `u.clone()` of a union of several types (expr, its receiver checked to
+// object): the expression becomes
+// `switch u { case __avant_v: M { __avant_v.clone() } ... }`, each member
+// copied by its own clone (a member that is its own copy, and nil, as it
+// is), checked with object as its discriminant and its value.
+pub fn (checker_self: Checker) union_clone(expr: Expr, object: Ty): Ty {
+  if recv = expr.receiver {
+    loc = expr.loc
+    cases: Array(SwitchCase) = []
+    for m in object.members {
+      arm = SwitchCase.new(loc)
+      if m.is_nil() {
+        arm.labels.push(CaseLabel.new(lb_nil(), loc))
+        arm.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
+      } else {
+        label = CaseLabel.new(lb_type(), loc)
+        label.tname = ty_to_type_name(m, loc)
+        label.bind = "__avant_v"
+        arm.labels.push(label)
+        v = Expr.new(ex_name(), loc)
+        v.ident = "__avant_v"
+        if !checker_self.clone_shares(m) {
+          call = Expr.new(ex_call(), loc)
+          call.callee = "clone"
+          call.receiver = v
+          v = call
+        }
+        arm.body.push(stmt_expr(loc, v))
+      }
+      cases.push(arm)
+    }
+    expr.kind = ex_switch()
+    expr.cond = recv
+    expr.cases = cases
+    expr.receiver = nil
+    expr.callee = ""
+    expr.args = []
+    expr.method_call = false
+    expr.derived = true
+    checker_self.switch_pre = object
+    return checker_self.check_expr_as(expr, object)
+  }
+  object
+}
+
 // Whether e is a clone (`x.clone()` of any type, after check_clone_call):
 // the derived method of a class or struct, an Array's builtin copy, or
 // one of the templates below. Its value is new: every mutable part is
@@ -210,6 +272,10 @@ pub fn (checker_self: Checker) check_clone_call(expr: Expr, object: Ty, expected
 // are shared, and no type may replace the derived method, so nothing
 // else reaches it (checker/guard.av guard_fresh, guard_reaches).
 pub fn is_clone_call(e: Expr): Bool {
+  if e.kind == ex_switch() && e.derived {
+    // A union's clone (union_clone).
+    return true
+  }
   if e.kind != ex_call() {
     return false
   }

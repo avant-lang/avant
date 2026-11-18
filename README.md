@@ -2088,10 +2088,10 @@ fn main {
 }
 ```
 
-- Every class and struct has it, derived from its fields: a class field is cloned in turn, an `Array`, `Hash` or `Set` is copied at every level (its class elements cloned), a struct is copied with its class fields cloned, an optional is cloned by its value. `initialize` does not run: the copy's fields are the original's, copied.
+- Every class and struct has it, derived from its fields: a class field is cloned in turn, an `Array`, `Hash` or `Set` is copied at every level (its class elements cloned), a struct is copied with its class fields cloned, an optional is cloned by its value, a union of several types by its member's own clone (`Int | Box` copies the `Box`; a [recursive alias](#a-recursive-alias) is copied at every level, as its arrays and hashes are). `initialize` does not run: the copy's fields are the original's, copied.
 - What cannot change is shared, since a copy would read the same: numbers, `Bool`, enums, `String`, `Bytes`. A `Channel` or a `Mutex` field is shared too, as a task shares one: the copy talks to the same channel and locks the same value.
-- `clone` exists on arrays, hashes, sets and optionals too (`grid.clone()`), and on every other value, where it is the value itself.
-- Refused at compile time, naming the field: a `fn` field (a function may capture mutable state the copy would share), a `Ptr` (C memory), a `JoinHandle`, a `Buf`, and a union of several types holding something to copy (`Int | Box`; an optional `Box?` is cloned).
+- `clone` exists on arrays, hashes, sets, optionals and unions too (`grid.clone()`), and on every other value, where it is the value itself.
+- Refused at compile time, naming the field: a `fn` field (a function may capture mutable state the copy would share), a `Ptr` (C memory), a `JoinHandle` and a `Buf`, also as a union's member.
 - A type cannot define its own `clone`: a clone is always this deep copy.
 - The copy follows the type, recursively, as a recursive function would: an object reached twice is copied twice, a chain is copied one call deeper per link (a linked list of 100,000 nodes runs out of stack in a `--debug` build, as any recursion that deep does), and a cycle never ends. Copy such structures with a loop of your own.
 
