@@ -8,6 +8,7 @@ lib jsonc {
   fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)?
   fun avant_json_first(node: Ptr(Void)): Ptr(Void)?
   fun avant_json_next(node: Ptr(Void)): Ptr(Void)?
+  fun avant_json_first_key(node: Ptr(Void)): Ptr(Void)?
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
@@ -21,6 +22,8 @@ lib jsonc {
   fun avant_json_text(node: Ptr(Void)): String
   fun avant_json_error_text: String
   fun avant_json_error_offset: Int
+  fun avant_json_error_count: Int
+  fun avant_json_error_limit: Int
   fun avant_json_misuse(what: String)
 }
 
@@ -433,151 +436,24 @@ pub class JsonBuilder {
     self
   }
 
-  pub fn null: JsonBuilder {
+  // A value of any type json.encode writes (an Int, a Float64, a String,
+  // a Bool, nil, an optional, an Array, a Hash(String, V), a struct or a
+  // class by its pub fields, an enum, a Json, a JsonValue, another
+  // JsonBuilder), written as json.encode writes it, into this builder's
+  // text; nil writes null (`set(name, nil)`, `add(nil)`).
+  pub fn value(v: T): JsonBuilder {
     self.before_value()
-    self.buf.push_str("null")
+    encode_into(self.buf, v)
     self
   }
 
-  pub fn value(v: Int): JsonBuilder {
-    self.before_value()
-    self.buf.push_fmt_i(v)
-    self
-  }
-
-  pub fn value(v: Float64): JsonBuilder {
-    d = v - v
-    if d != 0.0 {
-      // NaN and the infinities have no JSON text: writing null or nan
-      // would change the value or give text no reader takes.
-      jsonc.avant_json_misuse("json.JsonBuilder.value: ${v} is not a JSON number; write null or a string for it")
-    }
-    self.before_value()
-    self.buf.push_str("${v}")
-    self
-  }
-
-  pub fn value(v: String): JsonBuilder {
-    self.before_value()
-    builder_escape(self.buf, v)
-    self
-  }
-
-  pub fn value(v: Bool): JsonBuilder {
-    self.before_value()
-    if v {
-      self.buf.push_str("true")
-    } else {
-      self.buf.push_str("false")
-    }
-    self
-  }
-
-  pub fn value(v: Json): JsonBuilder {
-    self.before_value()
-    self.buf.push_str(v.text())
-    self
-  }
-
-  pub fn value(v: JsonBuilder): JsonBuilder {
-    self.before_value()
-    self.buf.push_str(v.to_s())
-    self
-  }
-
-  // A JsonValue tree (Json.to_value's, or one built by hand) written
-  // back: an object's members in their order.
-  pub fn value(v: JsonValue): JsonBuilder {
-    switch v.kind {
-      case null { self.null() }
-      case bool { value(v.bool_val) }
-      case int { value(v.int_val) }
-      case float { value(v.f64_val) }
-      case str { value(v.str_val) }
-      case arr {
-        self.arr()
-        for e in v.arr {
-          value(e)
-        }
-        self.end()
-      }
-      case obj {
-        self.obj()
-        for k, m in v.members {
-          key(k)
-          value(m)
-        }
-        self.end()
-      }
-    }
-  }
-
-  pub fn add(v: Int): JsonBuilder {
+  pub fn add(v: T): JsonBuilder {
     value(v)
   }
 
-  pub fn add(v: Float64): JsonBuilder {
-    value(v)
-  }
-
-  pub fn add(v: String): JsonBuilder {
-    value(v)
-  }
-
-  pub fn add(v: Bool): JsonBuilder {
-    value(v)
-  }
-
-  pub fn add(v: Json): JsonBuilder {
-    value(v)
-  }
-
-  pub fn add(v: JsonBuilder): JsonBuilder {
-    value(v)
-  }
-
-  pub fn add(v: JsonValue): JsonBuilder {
-    value(v)
-  }
-
-  pub fn set(name: String, v: Int): JsonBuilder {
+  pub fn set(name: String, v: T): JsonBuilder {
     key(name)
     value(v)
-  }
-
-  pub fn set(name: String, v: Float64): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set(name: String, v: String): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set(name: String, v: Bool): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set(name: String, v: Json): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set(name: String, v: JsonBuilder): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set(name: String, v: JsonValue): JsonBuilder {
-    key(name)
-    value(v)
-  }
-
-  pub fn set_null(name: String): JsonBuilder {
-    key(name)
-    self.null()
   }
 
   pub fn to_s: String {
@@ -586,14 +462,6 @@ pub class JsonBuilder {
     }
     self.buf.to_s()
   }
-}
-
-// C functions declared after the lines above, which keep their numbers
-// (and so the places their traps name).
-lib jsonmore {
-  fun avant_json_first_key(node: Ptr(Void)): Ptr(Void)?
-  fun avant_json_error_count: Int
-  fun avant_json_error_limit: Int
 }
 
 // A parse's limit, checked (1 or more) and given to the runtime.
@@ -615,16 +483,16 @@ fn parse_limit_or_none(name: String, n: Int?): Int {
 // A parse refused for a limit, or out of memory (json_error's codes 2
 // to 5, the runtime's).
 fn limit_error(code: Int): JsonError {
-  limit = jsonmore.avant_json_error_limit()
+  limit = jsonc.avant_json_error_limit()
   if code == 3 {
     off = jsonc.avant_json_error_offset().to_i()
     return JsonError.new("JSON nested deeper than max_depth ${limit} at byte ${off}", off)
   }
   if code == 4 {
-    return JsonError.new("JSON document of ${jsonmore.avant_json_error_count()} values is over max_entries ${limit}")
+    return JsonError.new("JSON document of ${jsonc.avant_json_error_count()} values is over max_entries ${limit}")
   }
   if code == 5 {
-    return JsonError.new("JSON text of ${jsonmore.avant_json_error_count()} bytes is over max_bytes ${limit}")
+    return JsonError.new("JSON text of ${jsonc.avant_json_error_count()} bytes is over max_bytes ${limit}")
   }
   JsonError.new("JSON parse ran out of memory")
 }
@@ -700,7 +568,7 @@ fn codec_missing(key: String): JsonError {
 // an error; nil when every name is known (a name given twice: the first
 // is the one read, as get reads it).
 fn codec_unknown(j: Json, known: Array(String)): JsonError? {
-  key = jsonmore.avant_json_first_key(j.node)
+  key = jsonc.avant_json_first_key(j.node)
   i = 0
   while kn = key {
     k = jsonc.avant_json_as_str(kn)

@@ -4541,13 +4541,13 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `json.Json.object`, `json.Json.array` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open (not `obj` and `arr`: those read a parsed value) |
 | `json.JsonBuilder.into(buf)` | `buf: Buf` | a `JsonBuilder` | — | starts one that writes into your `Buf` |
-| `set(name, v)`, `set_null(name)` | `name: String`, `v` (below) | the builder | — | a member of the open object |
-| `add(v)`, `null` | `v` (below) | the builder | — | an element of the open array |
+| `set(name, v)` | `name: String`, `v` (below) | the builder | — | a member of the open object; `set(name, nil)` writes `null` |
+| `add(v)` | `v` (below) | the builder | — | an element of the open array; `add(nil)` writes `null` |
 | `key(name)`, then `obj`, `arr` or `value(v)` | `name: String`, `v` (below) | the builder | `key` outside an object traps | a member that is itself a container or a value |
 | `end` | — | the builder | `end` with nothing open traps (`avant runtime: json.JsonBuilder.end: nothing open`) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`json.JsonBuilder.to_s: 2 containers still open`) | |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json`, another `JsonBuilder` or a `JsonValue` (its object's members in their order). Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: json.JsonBuilder.value: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).
+`v` is any value `json.encode` writes, written as it writes it ([Typed decode and encode](#stdjson), above): an `Int`, `Float64`, `String` or `Bool`, `nil`, an optional, an `Array`, a `Hash(String, V)`, an enum, a struct or a class by its pub fields, a `Json`, a `JsonValue` (its object's members in their order) or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: json.encode: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 

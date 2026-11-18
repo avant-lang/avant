@@ -254,7 +254,7 @@ fn test_std_json(c: Checks) {
   built.key("point").obj().set("x", 1).set("y", 2).end()
   built.set("ok", true)
   built.set("pi", 3.5)
-  built.set_null("nothing")
+  built.set("nothing", nil)
   built.end()
   if doc2 = Json.parse(built.to_s()) {
     if name2 = doc2.str("name") {
@@ -453,6 +453,28 @@ fn test_json_members(c: Checks) {
   }
 }
 
+// A JsonBuilder's set, add and value take any value json.encode writes,
+// written as it writes them: a struct by its pub fields, an Array, an
+// optional, nil (where set_null and null were), alongside the scalars,
+// a Json and another builder.
+struct Pos {
+  pub x: Int
+  pub y: Int
+}
+
+fn test_builder_values(c: Checks) {
+  maybe: Int? = nil
+  b = Json.object()
+  b.set("at", Pos { x: 1, y: 2 })
+  b.set("path", [Pos { x: 0, y: 0 }])
+  b.set("none", nil)
+  b.set("maybe", maybe)
+  b.set("n", 7)
+  b.key("list").arr().add(1.5).add("s").add(nil).add([true]).end()
+  b.end()
+  c.eq_str(b.to_s(), "{\"at\":{\"x\":1,\"y\":2},\"path\":[{\"x\":0,\"y\":0}],\"none\":null,\"maybe\":null,\"n\":7,\"list\":[1.5,\"s\",null,[true]]}", "set and add take a struct, an Array, an optional and nil")
+}
+
 // The limits of a parse: max_depth (256 unless set) refuses arrays and
 // objects nested deeper, at the bracket that goes past it; max_bytes and
 // max_entries (none unless set) refuse a longer text or a document of
@@ -498,5 +520,6 @@ fn main: Int {
   test_json_members(c)
   test_json_value_written(c)
   test_json_limits(c)
+  test_builder_values(c)
   c.finish()
 }
