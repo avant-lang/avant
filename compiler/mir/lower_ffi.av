@@ -862,6 +862,40 @@ pub fn (lw: MirLower) lower_ptr_index_read(e: Expr): MOperand {
   lw.tmp(ty, b.rv_use(b.copy(p)))
 }
 
+// `String.from_c(p, n)`, `Bytes.from_c(p, n)`: p as an untyped pointer
+// and n in locals, a negative n or a NULL p with n above 0 trapping
+// (compares and a cold block), then the runtime's copy of the n bytes
+// (avant_str_from_c).
+pub fn (lw: MirLower) lower_from_c(e: Expr, what: String): MOperand {
+  b = lw.lw_b
+  po = lw.lower_expr(e.args[0])
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  pty = lw.ety(e.args[0])
+  if pty != mt_ptr() {
+    po = lw.tmp(mt_ptr(), b.rv_cast(po, mt_ptr()))
+  }
+  p = lw.hold(po, mt_ptr())
+  no = lw.lower_expr(e.args[1])
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  n = lw.hold(no, mt_int())
+  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(n), b.c_i64(0)))
+  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(p), b.c_null(mt_ptr())))
+  some = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(n), b.c_i64(0)))
+  nul = lw.tmp(mt_bool(), b.rv_bin(mop_and(), isnull, some))
+  bad = lw.tmp(mt_bool(), b.rv_bin(mop_or(), neg, nul))
+  ok = lw.trap_open(bad, true)
+  targs: Array(MOperand) = []
+  targs.push(b.str_const("${what}.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL"))
+  lw.trap_close(ok, "avant_trap_expect", targs, e.loc)
+  lw.call_to(mt_str(), "avant_str_from_c", lw.two(b.copy_local(p), b.copy_local(n)))
+}
+
 // A reference-carrying value stored into a C-layout field (the old
 // back end's emit_assign, c_layout_heap_store): the value in a local, the
 // field's address in a local (one GEP: `addr` of a place reached through

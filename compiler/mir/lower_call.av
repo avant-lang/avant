@@ -109,6 +109,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       // runtime's string with an ok flag, as String?.
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
     }
+    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && e.callee == "from_c" && e.args.size == 2 {
+      return lw.lower_from_c(e, recv.ident)
+    }
     if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_code_point" && e.args.size == 1 {
       // String.from_code_point(n): the runtime's UTF-8 of one code point
       // (it traps outside them).

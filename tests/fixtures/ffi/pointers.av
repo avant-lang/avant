@@ -45,6 +45,8 @@ lib pt {
   fun pt_out_u8(b: Ptr(UInt8))
   fun pt_out_f32(f: Ptr(Float32))
   fun pt_out_two(a: Ptr(Int), d: Ptr(Float64)): Int
+  fun pt_blob: Ptr(UInt8)
+  fun pt_none: Ptr(Int8)?
   fun free(p: Ptr(Pair))
 }
 
@@ -141,4 +143,12 @@ fn main {
   see: fn(): Int32 = () { boxed }
   _ = pt.pt_out_int(&boxed)
   puts("${boxed} ${see()}")
+  blob = pt.pt_blob()
+  whole = String.from_c(blob, 5)
+  puts("${whole.size} ${String.from_c(blob, 2)}")
+  raw = Bytes.from_c(blob, 5)
+  puts("${raw.size} ${raw[1]} ${raw[2]} ${raw[3]}")
+  puts(String.from_c(pt.pt_none(), 0).size)
+  four = Bytes.from_c(pt.pt_ints_at(), 4)
+  puts("${four.size} ${four[0]}")
 }

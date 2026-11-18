@@ -3453,6 +3453,25 @@ fn main {
 - `release` is a statement taking a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout; anything else is a compile error.
 - **Forgetting a release costs memory, never correctness** (the value stays pinned until exit). **Releasing too early is a dangling C pointer**: the next collection may move or free the value under C. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
 
+A C buffer with a length (a `char *str` with its `size_t len`, a document's bytes, a message's payload) is copied out with `Bytes.from_c(p, n)`, or `String.from_c(p, n)`: `n` bytes at `p` (any `Ptr`, or a `Ptr(T)?`) into a new value, NUL bytes kept; a `String` result or field stops at its first NUL. A negative `n`, or a NULL `p` with `n` above 0, traps. As Go's `C.GoBytes` and `C.GoStringN`, it is a copy: C may free its buffer afterwards.
+
+```avant
+lib c {
+  fun calloc(n: Int, size: Int): Ptr(UInt8)
+  fun free(p: Ptr(UInt8))
+}
+
+fn main {
+  p = c.calloc(4, 1)
+  p[0] = 104
+  p[2] = 105
+  b = Bytes.from_c(p, 4)
+  c.free(p)
+  puts(b.size)     // => 4
+  puts(b[2])       // => 105
+}
+```
+
 ### Callbacks
 
 A `fun` parameter of an Avant `fn` type declares a C callback: pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments.

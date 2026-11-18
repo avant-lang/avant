@@ -1062,3 +1062,7 @@ int64_t pt_out_two(int64_t *a, double *d) {
   return 3;
 }
 int pt_names(char **argv, void **slots) { return argv != NULL && slots != NULL; }
+/* pointers.av: bytes with a length, a NUL among them (from_c). */
+static const uint8_t pt_blob_bytes[5] = { 'a', 'b', 0, 'c', 'd' };
+const uint8_t *pt_blob(void) { return pt_blob_bytes; }
+const char *pt_none(void) { return NULL; }

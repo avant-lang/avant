@@ -73,6 +73,8 @@ fn test_null_traps(c: Checks, compiler: String) {
   null_trap(c, compiler, stamp, "index-read", "  q = e.realloc(nil, 1 << 62)\n  puts(q[1])\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32) (a pointer C may leave NULL is declared Ptr(Int32)? and tested: if p = ...) at ${site}index-read.av:19:")
   null_trap(c, compiler, stamp, "index-write", "  q = e.realloc(nil, 1 << 62)\n  q[0] = 5\n", 1, "before\navant runtime: an element read or written through a NULL Ptr(Int32)")
   null_trap(c, compiler, stamp, "index-range", "  u = e.strdup(\"ab\")\n  puts(u[0])\n  u[1] = u[0] + 200\n", 1, "before\n97\navant runtime: 297 out of range for the C type UInt8 (0..255)")
+  null_trap(c, compiler, stamp, "from-c-null", "  q = e.realloc(nil, 1 << 62)\n  puts(String.from_c(q, 3))\n", 1, "before\navant runtime: String.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL at ${site}from-c-null.av:19:")
+  null_trap(c, compiler, stamp, "from-c-negative", "  u = e.strdup(\"ab\")\n  puts(Bytes.from_c(u, -1).size)\n", 1, "before\navant runtime: Bytes.from_c needs a length of 0 or more")
   null_trap(c, compiler, stamp, "task", "  t = spawn {\n    q = e.malloc(1 << 62)\n    q.a.to_i()\n  }\n  if v = t.join() {\n    puts(v)\n  } else err {\n    puts(\"task: \${err.what}\")\n  }\n  puts(\"after\")\n", 0, "task: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...)\nafter\n")
 }
 

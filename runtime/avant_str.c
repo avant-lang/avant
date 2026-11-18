@@ -1546,6 +1546,20 @@ char *avant_str_from_code_point(avant_int cp) {
   return dup_bytes(b, n);
 }
 
+/* String.from_c(p, n) and Bytes.from_c(p, n): a copy of the N bytes of C
+ * memory at P, NULs kept. The generated code traps before the call on a
+ * negative N and on a NULL P with N above 0, so P is read only when N > 0. */
+/* gc-lint: holds nothing (P is C memory, outside the collected heap). */
+char *avant_str_from_c(const void *p, avant_int n) {
+  char *s = avant_str_alloc((uint64_t)n);
+  if (n > 0) {
+    memcpy(s, p, (size_t)n);
+  }
+  s[n] = 0;
+  avant_str_tag(s);
+  return s;
+}
+
 /* The names the seed's compiler calls: the compiler B, built by the seed
  * release, links this runtime. They go when a release that emits
  * avant_str_cat_int and avant_str_from_int_bytes is the seed. */

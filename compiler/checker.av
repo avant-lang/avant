@@ -5307,6 +5307,33 @@ pub class Checker {
     true
   }
 
+  // `String.from_c(p, n)` and `Bytes.from_c(p, n)`: n bytes of C memory
+  // at p (any Ptr, or a Ptr that may be NULL) copied into a new String or
+  // Bytes, NULs kept; a negative n, or a NULL p with n above 0, traps.
+  pub fn check_from_c(expr: Expr, what: String): Ty {
+    res = t_string()
+    if what == "Bytes" {
+      res = t_bytes()
+    }
+    if expr.args.size != 2 {
+      fail(expr.loc, "${what}.from_c takes a Ptr and a length: ${what}.from_c(p, n)")
+      return res
+    }
+    pt = check_expr(expr.args[0])
+    ok = pt.is_ptr()
+    if r = ty_opt_ref(pt), r.is_ptr() {
+      ok = true
+    }
+    if !ok {
+      fail(expr.args[0].loc, "${what}.from_c reads C memory through a Ptr, got ${pt.show()}")
+    }
+    nt = check_expr_as(expr.args[1], t_int())
+    if !nt.is_int() {
+      fail(expr.args[1].loc, "${what}.from_c's length must be Int, got ${nt.show()}")
+    }
+    res
+  }
+
   pub fn check_lib_call(expr: Expr, lib_name: String): Ty {
     key = "${lib_name}.${expr.callee}"
     if id = self.cfun_index.get(key) {
@@ -5609,6 +5636,12 @@ pub class Checker {
     }
     if expr.callee == "new" {
       return check_constructor(expr, recv, has_want, want)
+    }
+    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && expr.callee == "from_c" {
+      if found = lookup(recv.ident) {
+      } else {
+        return check_from_c(expr, recv.ident)
+      }
     }
     if recv.kind == ex_name() {
       if recv.ident == "String" {

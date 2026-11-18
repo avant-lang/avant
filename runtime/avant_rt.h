@@ -317,6 +317,8 @@ char *avant_str_from_utf8(const char *s, int32_t *found);
 void *avant_str_code_points(const char *s);
 void *avant_bytes_code_points(const char *s);
 char *avant_str_from_code_point(avant_int cp);
+/* String.from_c(p, n), Bytes.from_c(p, n): N bytes of C memory copied. */
+char *avant_str_from_c(const void *p, avant_int n);
 void *avant_bytes_to_buf(const char *s);
 
 void *avant_buf_new(avant_int cap);
