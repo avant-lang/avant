@@ -3434,7 +3434,7 @@ fn main {
 }
 ```
 
-`v.as(T)` reads a `Ptr(Void)` as a `Ptr(T)` (C's cast of a `void *`; `T` any type a `Ptr` points to), and any `Ptr` passes as a `Ptr(Void)`, as C converts to `void *`: one `malloc` serves every layout.
+`v.as(T)` reads a `Ptr(Void)` as a `Ptr(T)` (C's cast of a `void *`; `T` any type a `Ptr` points to, `v.as(Ptr(Node)?)` for an array of pointers), and any `Ptr` passes as a `Ptr(Void)`, as C converts to `void *`: one `malloc` serves every layout.
 
 ```avant
 lib c {

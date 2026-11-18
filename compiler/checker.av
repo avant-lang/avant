@@ -3122,7 +3122,7 @@ pub class Checker {
 
   // `p.as(T)`: a Ptr(Void) as a Ptr(T) (C's cast of a `void *`), T any
   // type a Ptr points to, written as a type (`v.as(Pair)`, `v.as(UInt8)`,
-  // `v.as(Ptr(Node))`). A Ptr(T) passes as a Ptr(Void) without it.
+  // `v.as(Ptr(Node)?)`). A Ptr(T) passes as a Ptr(Void) without it.
   pub fn check_ptr_as(expr: Expr, object: Ty): Ty {
     if inner = object.inner, !inner.is_void() {
       fail(expr.loc, "as converts a Ptr(Void); ${object.show()} is already typed (it passes as a Ptr(Void) as it is)")
@@ -3146,8 +3146,16 @@ pub class Checker {
   }
 
   // The type name an argument written as a type spells (`Pair`, `UInt8`,
-  // `Ptr(Node)`, `mod.Pair`), or nil.
+  // `Ptr(Node)`, `Ptr(Node)?`, `mod.Pair`), or nil.
   pub fn expr_type_name(e: Expr): TypeName? {
+    if e.kind == ex_try() {
+      // `Ptr(Node)?` reads as a `?` after the type: an optional pointer.
+      if i = e.inner, tn0 = expr_type_name(i) {
+        tn0.nilable = true
+        return tn0
+      }
+      return nil
+    }
     if e.kind == ex_name() && e.type_args.size == 0 {
       tn = TypeName.new(e.loc, e.ident)
       tn.mod_name = e.mod_name
