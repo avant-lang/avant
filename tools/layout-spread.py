@@ -2,7 +2,7 @@
 """How much each LangArena task's time depends on where its code sits, from
 timed rounds of the same program at several code shifts.
 
-  python3 tools/layout-spread.py spread [--bar PCT] [--out DIR] SESSION...
+  python3 tools/layout-spread.py spread [--bar PCT] [--out DIR] [--sides S,...] SESSION...
   python3 tools/layout-spread.py compare [--bar PCT] BASE.tsv NEW.tsv [OUT.md]
 
 SESSION is a tools/rounds.py LangArena session (its raw/round-R/SIDE--SLUG.run
@@ -10,7 +10,8 @@ files) whose sides are layouts of one program, as tools/placement-probe.sh
 times them: side s<SHIFT> is the program with its code SHIFT bytes later,
 side s0c<N> a copy of s0 (the same bytes in another file). Several sessions
 (one per group of tasks) read as one; a task in two sessions takes the
-runs of both. Only undisturbed runs count (rounds.py's rule).
+runs of both. Only undisturbed runs count (rounds.py's rule). --sides
+keeps only those sides (to compare with a session that timed fewer).
 
 spread, per task:
   median      the median over the layouts of each layout's median: the
@@ -44,7 +45,7 @@ def die(msg):
     sys.exit(2)
 
 
-def read_session(d, runs):
+def read_session(d, runs, keep=None):
     rd = os.path.join(d, "raw")
     if not os.path.isdir(rd):
         die("%s: no raw/ directory (not a rounds.py session)" % d)
@@ -55,7 +56,7 @@ def read_session(d, runs):
             rec = dict(l.rstrip("\n").split("\t", 1) for l in open(os.path.join(rd, r, f)) if "\t" in l)
             if rec.get("output") != "ok" or rec.get("exit") != "0":
                 die("not a result: %s" % os.path.join(rd, r, f))
-            if rec.get("undisturbed", "yes") != "yes":
+            if rec.get("undisturbed", "yes") != "yes" or (keep and rec["side"] not in keep):
                 continue
             runs.setdefault(rec["task"], {}).setdefault(rec["side"], []).append(int(rec["wall_ns"]) / 1e9)
 
@@ -99,13 +100,15 @@ COLS = ["task", "median_s", "min_s", "max_s", "spread_pct", "noise_pct", "within
 
 
 def cmd_spread(argv):
-    bar, out, sessions = 2.0, None, []
+    bar, out, sessions, keep = 2.0, None, [], None
     while argv:
         x = argv.pop(0)
         if x == "--bar":
             bar = float(argv.pop(0))
         elif x == "--out":
             out = argv.pop(0)
+        elif x == "--sides":
+            keep = set(argv.pop(0).split(","))
         elif x.startswith("-"):
             die("unknown option %s" % x)
         else:
@@ -114,7 +117,7 @@ def cmd_spread(argv):
         die("spread needs at least one SESSION")
     runs = {}
     for d in sessions:
-        read_session(d, runs)
+        read_session(d, runs, keep)
     rows = spread_rows(runs, bar)
     if not rows:
         die("no task with two layouts in %s" % " ".join(sessions))

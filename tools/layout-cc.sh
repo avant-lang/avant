@@ -44,7 +44,9 @@ for s in ${LAYOUT_SHIFTS:-0 64 192 448}; do
   if [ ! -f "$pad" ]; then
     # Written once, under a name of this process's own, then renamed into
     # place: links run in parallel.
-    printf '.section .text\n.p2align 6\n.skip %d, 0xcc\n.section .note.GNU-stack,"",@progbits\n' "$s" > "$dir/pads/shift$s.$$.s" || exit 2
+    # The block has a section of its own, so a link that orders sections
+    # (ld's --section-ordering-file) can keep it first.
+    printf '.section .text.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n.section .note.GNU-stack,"",@progbits\n' "$s" > "$dir/pads/shift$s.$$.s" || exit 2
     as -o "$dir/pads/shift$s.$$.o" "$dir/pads/shift$s.$$.s" || exit 2
     mv -f "$dir/pads/shift$s.$$.o" "$pad"; rm -f "$dir/pads/shift$s.$$.s"
   fi
