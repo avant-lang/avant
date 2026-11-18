@@ -1386,6 +1386,17 @@ pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
     if t = checker_self.named_type_seen(segs[0]), t.is_enum() {
       return t
     }
+    // An alias of an enum (`type Kind = json.JsonKind`) reaches its
+    // members as the enum's own name does (`Kind.obj`).
+    if a = checker_self.alias_value_target(segs[0], recv.loc), a.args.size == 0 {
+      if a.mod_name.size > 0 {
+        if t = checker_self.resolver.get_named_in(a.mod_name, a.name), t.is_enum() {
+          return t
+        }
+      } else if t = checker_self.named_type_seen(a.name), t.is_enum() {
+        return t
+      }
+    }
   } else if segs.size > 1 {
     mod = checker_self.join_segs(segs, segs.size - 1)
     if checker_self.qualifier_ok(mod, checker_self.current_module) {

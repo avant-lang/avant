@@ -6,6 +6,7 @@ import std.process
 type Match = regex.Match
 type Regex = regex.Regex
 type RegexError = regex.RegexError
+type RegexErrorKind = regex.RegexErrorKind
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -209,7 +210,7 @@ fn regex_try_forms(c: Checks) {
   it = re.try_matches(bad)
   _ = walk_of(it)
   c.eq_str(kind_of(it.next()), "nil", "a walk ends after its RegexError")
-  c.eq_str(kind_of(re.try_find(bad, 6)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "try_find keeps its own name")
+  c.eq_str(kind_of(re.try_find(bad, 6)), "error ${RegexErrorKind.match_limit.to_i()}", "try_find keeps its own name")
   c.eq_str(message_of(re.try_find(bad, 6)), "regex.Regex.try_find: match limit exceeded (PCRE2 error -47)", "try_find's message")
   re.close()
 }
@@ -279,7 +280,7 @@ fn regex_limits(c: Checks) {
   bt_pat = bt_pat + "$"
   bt = must_compile(c, bt_pat, false, "backtracking")
   wild = repeated("a", 40, "b aaa")
-  c.eq_str(kind_of(bt.try_find(wild)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "try_find past the match limit is a RegexError of kind match_limit")
+  c.eq_str(kind_of(bt.try_find(wild)), "error ${RegexErrorKind.match_limit.to_i()}", "try_find past the match limit is a RegexError of kind match_limit")
   c.eq_str(message_of(bt.try_find(wild)), "regex.Regex.try_find: match limit exceeded (PCRE2 error -47)", "its message names the operation and PCRE2's reason")
   c.eq_str(kind_of(bt.try_find("xaay")), "nil", "try_find without a match is nil")
   c.eq_str(kind_of(bt.try_find("baa")), "match 1..3", "try_find with a match is the Match")
@@ -289,7 +290,7 @@ fn regex_limits(c: Checks) {
   short = repeated("a", 12, "b")
   c.eq_str(kind_of(bt.try_find(short)), "nil", "within the default match limit: no match")
   if tight = Regex.compile(bt_pat, match_limit: 1000) {
-    c.eq_str(kind_of(tight.try_find(short)), "error ${regex.RegexErrorKind.match_limit.to_i()}", "a match_limit of the Regex's own is reached")
+    c.eq_str(kind_of(tight.try_find(short)), "error ${RegexErrorKind.match_limit.to_i()}", "a match_limit of the Regex's own is reached")
     c.eq_str(kind_of(tight.try_find("baa")), "match 1..3", "and a short match is still found under it")
     tight.close()
   } else {
@@ -302,7 +303,7 @@ fn regex_limits(c: Checks) {
   deep_pat = deep_pat + "c"
   deep_text = repeated("ab", 20000, "c")
   if small = Regex.compile(deep_pat, heap_limit: 262144) {
-    c.eq_str(kind_of(small.try_find(deep_text)), "error ${regex.RegexErrorKind.heap_limit.to_i()}", "a deep match past heap_limit (256 KiB) is a RegexError of kind heap_limit")
+    c.eq_str(kind_of(small.try_find(deep_text)), "error ${RegexErrorKind.heap_limit.to_i()}", "a deep match past heap_limit (256 KiB) is a RegexError of kind heap_limit")
     c.eq_str(kind_of(small.try_find(repeated("ab", 200, "c"))), "match 0..401", "a shallow one is found under it")
     small.close()
   } else {
@@ -312,7 +313,7 @@ fn regex_limits(c: Checks) {
     // The depth limit binds the interpreter: the JIT's stack is made
     // small here (the suite's internal variable) so the match reaches it.
     set_env("AVANT_RE_JIT_STACK_KB", "32")
-    c.eq_str(kind_of(shallow.try_find(deep_text)), "error ${regex.RegexErrorKind.depth_limit.to_i()}", "past depth_limit on the interpreter: a RegexError of kind depth_limit")
+    c.eq_str(kind_of(shallow.try_find(deep_text)), "error ${RegexErrorKind.depth_limit.to_i()}", "past depth_limit on the interpreter: a RegexError of kind depth_limit")
     set_env("AVANT_RE_JIT_STACK_KB", "")
     c.eq_str(kind_of(shallow.try_find(deep_text)), "match 0..40001", "the JIT's larger stack answers it")
     shallow.close()
@@ -333,7 +334,7 @@ fn regex_limits(c: Checks) {
 
   switch Regex.compile("(open") {
     case e: RegexError {
-      c.expect(e.kind == regex.RegexErrorKind.pattern, "a pattern that does not compile is of kind pattern")
+      c.expect(e.kind == RegexErrorKind.pattern, "a pattern that does not compile is of kind pattern")
     }
     case Regex {
       c.expect(false, "a pattern that does not compile is of kind pattern")
