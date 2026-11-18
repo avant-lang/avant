@@ -3,19 +3,18 @@ file 0 "lib/std/sync.av"
 file 1 "channels.av"
 file 2 "<task>"
 
-layout %std.sync.MutexError = class { }  size 0 align 1 id 1
-layout %task.TaskError = class { 0 what: ref str, 1 site: ref str }  size 16 align 8 id 2
-layout %std.sync.Channel(Int) = class { 0 slots: ref %Array((Nil|Int)), 1 cap: i64, 2 count: i64, 3 head: i64, 4 closed: bool, 5 has: bool, 6 sent: i64, 7 taken: i64, 8 gate: u64, 9 cell: %(Nil|Int) }  size 80 align 8 id 3
-layout %std.sync.Channel(String) = class { 0 slots: ref %Array((Nil|String)), 1 cap: i64, 2 count: i64, 3 head: i64, 4 closed: bool, 5 has: bool, 6 sent: i64, 7 taken: i64, 8 gate: u64, 9 cell: ref str }  size 72 align 8 id 4
+layout %task.TaskError = class { 0 what: ref str, 1 site: ref str }  size 16 align 8 id 1
+layout %std.sync.Channel(Int) = class { 0 slots: ref %Array((Nil|Int)), 1 cap: i64, 2 count: i64, 3 head: i64, 4 closed: bool, 5 has: bool, 6 sent: i64, 7 taken: i64, 8 gate: u64, 9 cell: %(Nil|Int) }  size 80 align 8 id 2
+layout %std.sync.Channel(String) = class { 0 slots: ref %Array((Nil|String)), 1 cap: i64, 2 count: i64, 3 head: i64, 4 closed: bool, 5 has: bool, 6 sent: i64, 7 taken: i64, 8 gate: u64, 9 cell: ref str }  size 72 align 8 id 3
 layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
 layout %elems((Nil|Int)) = elems { 0: %(Nil|Int) }  size 16 align 8
 layout %Array((Nil|Int)) = array { 0 data: ref %elems((Nil|Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems((Nil|String)) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array((Nil|String)) = array { 0 data: ref %elems((Nil|String)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %spawn_cap(av.channels/main#spawn1) = record { 0 nums: ref %std.sync.Channel(Int) }  size 8 align 8 id 5
-layout %spawn_cap(av.channels/main#spawn2) = record { 0 nums: ref %std.sync.Channel(Int) }  size 8 align 8 id 6
-layout %spawn_cap(av.channels/main#spawn3) = record { 0 texts: ref %std.sync.Channel(String), 1 prefix: ref str }  size 16 align 8 id 7
-layout %spawn_cap(av.channels/main#spawn4) = record { 0 replies: ref %std.sync.Channel(String), 1 id: i64 }  size 16 align 8 id 8
+layout %spawn_cap(av.channels/main#spawn1) = record { 0 nums: ref %std.sync.Channel(Int) }  size 8 align 8 id 4
+layout %spawn_cap(av.channels/main#spawn2) = record { 0 nums: ref %std.sync.Channel(Int) }  size 8 align 8 id 5
+layout %spawn_cap(av.channels/main#spawn3) = record { 0 texts: ref %std.sync.Channel(String), 1 prefix: ref str }  size 16 align 8 id 6
+layout %spawn_cap(av.channels/main#spawn4) = record { 0 replies: ref %std.sync.Channel(String), 1 id: i64 }  size 16 align 8 id 7
 layout %(Int|task.TaskError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %task.TaskError }  size 24 align 8
 layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
 layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
@@ -34,14 +33,13 @@ typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1020 %String view stride 0 bits [0x1]
-typemap 1 %std.sync.MutexError stride 0 bits [0x0]
-typemap 2 %task.TaskError stride 0 bits [0x3]
-typemap 3 %std.sync.Channel(Int) stride 0 bits [0x1]
-typemap 4 %std.sync.Channel(String) stride 0 bits [0x101]
-typemap 5 %spawn_cap(av.channels/main#spawn1) stride 0 bits [0x1]
-typemap 6 %spawn_cap(av.channels/main#spawn2) stride 0 bits [0x1]
-typemap 7 %spawn_cap(av.channels/main#spawn3) stride 0 bits [0x3]
-typemap 8 %spawn_cap(av.channels/main#spawn4) stride 0 bits [0x1]
+typemap 1 %task.TaskError stride 0 bits [0x3]
+typemap 2 %std.sync.Channel(Int) stride 0 bits [0x1]
+typemap 3 %std.sync.Channel(String) stride 0 bits [0x101]
+typemap 4 %spawn_cap(av.channels/main#spawn1) stride 0 bits [0x1]
+typemap 5 %spawn_cap(av.channels/main#spawn2) stride 0 bits [0x1]
+typemap 6 %spawn_cap(av.channels/main#spawn3) stride 0 bits [0x3]
+typemap 7 %spawn_cap(av.channels/main#spawn4) stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
@@ -75,13 +73,11 @@ extern avant_trap_frozen(i32) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
 
-fn av.std.sync/__avant_mutex_poisoned() -> ref %std.sync.MutexError frame @lib/std/sync.av:208:5 {
-  let _0: ref %std.sync.MutexError
-  let _1: ref %std.sync.MutexError
+fn av.std.sync/__avant_mutex_poisoned() -> u8 leaf @lib/std/sync.av:208:5 {
+  let _0: u8
 
 bb0:
-  _1 = call av.std.sync/MutexError.new() collects   @209:13
-  _0 = copy _1   @209:13
+  _0 = const u8 0   @209:13
   return   @209:13
 }
 
@@ -354,11 +350,11 @@ bb0:
   call avant_io_init_argv(copy _1, copy _2) collects   @20:1
   _3 = call av.std.sync/Channel(Int).new(const i64 8) collects   @21:22
   _4 = copy _3   @21:8
-  _5 = call avant_alloc(const u64 8, const u32 5) collects fresh   @22:8
+  _5 = call avant_alloc(const u64 8, const u32 4) collects fresh   @22:8
   (*_5).0 = copy _4 fresh   @22:8
   _6 = call avant_spawn_f(const fn av.channels/main#spawn1, copy _5, const fn av.channels/main#spawn1#fail) collects   @22:8
   _7 = copy _6   @22:6
-  _8 = call avant_alloc(const u64 8, const u32 6) collects fresh   @23:8
+  _8 = call avant_alloc(const u64 8, const u32 5) collects fresh   @23:8
   (*_8).0 = copy _4 fresh   @23:8
   _9 = call avant_spawn_f(const fn av.channels/main#spawn2, copy _8, const fn av.channels/main#spawn2#fail) collects   @23:8
   _10 = copy _9   @23:6
@@ -468,7 +464,7 @@ bb17:
   _53 = call av.std.sync/Channel(String).new(const i64 0) collects   @35:26
   _54 = copy _53   @35:9
   _55 = const str.0   @36:10
-  _56 = call avant_alloc(const u64 16, const u32 7) collects fresh   @37:8
+  _56 = call avant_alloc(const u64 16, const u32 6) collects fresh   @37:8
   (*_56).0 = copy _54 fresh   @37:8
   (*_56).1 = copy _55 fresh   @37:8
   _57 = call avant_spawn_f(const fn av.channels/main#spawn3, copy _56, const fn av.channels/main#spawn3#fail) collects   @37:8
@@ -558,7 +554,7 @@ bb30:
 
 bb31:
   _90 = copy _88   @62:8
-  _91 = call avant_alloc(const u64 16, const u32 8) collects fresh   @63:18
+  _91 = call avant_alloc(const u64 16, const u32 7) collects fresh   @63:18
   (*_91).0 = copy _85 fresh   @63:18
   (*_91).1 = copy _90   @63:18
   _92 = call avant_spawn_f(const fn av.channels/main#spawn4, copy _91, const fn av.channels/main#spawn4#fail) collects   @63:18
@@ -773,7 +769,7 @@ bb0:
 
 bb1:
   _5 = copy _2   @23:3
-  _6 = call avant_alloc(const u64 16, const u32 2) collects fresh   @24:21
+  _6 = call avant_alloc(const u64 16, const u32 1) collects fresh   @24:21
   call av.task/TaskError.initialize(copy _6, copy _5, copy _3) collects   @24:21
   _7 = union %(Int|task.TaskError) tag 1 (copy _6)   @24:21
   _0 = copy _7   @24:5
@@ -797,31 +793,20 @@ bb0:
   _3 = zero   @31:5
   gc.enter   @31:5
   gc.roots _1, _2, _3   @31:5
-  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @32:12
+  _3 = call avant_alloc(const u64 16, const u32 1) collects fresh   @32:12
   call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @32:12
   _0 = copy _3   @32:12
   gc.leave   @32:12
   return   @32:12
 }
 
-fn av.std.sync/MutexError.message(_1: ref %std.sync.MutexError) -> ref str frame @lib/std/sync.av:202:7 {
+fn av.std.sync/std.sync.MutexError.message(_1: u8) -> ref str frame @lib/std/sync.av:202:7 {
   let _0: ref str
-  let _1 (self): ref %std.sync.MutexError
+  let _1 (self): u8
 
 bb0:
   _0 = const str.2   @203:5
   return   @203:5
-}
-
-fn av.std.sync/MutexError.__avant_error_text(_1: ref %std.sync.MutexError) -> ref str frame @lib/std/sync.av:201:5 {
-  let _0: ref str
-  let _1 (self): ref %std.sync.MutexError
-  let _2: ref str
-
-bb0:
-  _2 = call av.std.sync/MutexError.message(copy _1) collects   @201:5
-  _0 = copy _2   @201:5
-  return   @201:5
 }
 
 fn av.task/TaskError.initialize(_1: ref %task.TaskError, _2: ref str, _3: ref str) -> void frame @<task>:7:3 {
@@ -1767,16 +1752,6 @@ bb0:
   return   @124:7
 }
 
-fn av.std.sync/MutexError.new() -> ref %std.sync.MutexError frame @lib/std/sync.av:201:5 {
-  let _0: ref %std.sync.MutexError
-  let _1: ref %std.sync.MutexError
-
-bb0:
-  _1 = call avant_alloc(const u64 0, const u32 1) collects   @201:5
-  _0 = copy _1   @201:5
-  return   @201:5
-}
-
 fn av.task/TaskError.new(_1: ref str, _2: ref str) -> ref %task.TaskError frame @<task>:3:5 {
   let _0: ref %task.TaskError
   let _1 (what): ref str slot
@@ -1787,7 +1762,7 @@ bb0:
   _3 = zero   @3:5
   gc.enter   @3:5
   gc.roots _1, _2, _3   @3:5
-  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @3:5
+  _3 = call avant_alloc(const u64 16, const u32 1) collects fresh   @3:5
   call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @3:5
   _0 = copy _3   @3:5
   gc.leave   @3:5
@@ -1803,7 +1778,7 @@ bb0:
   _2 = zero   @34:5
   gc.enter   @34:5
   gc.roots _2   @34:5
-  _2 = call avant_alloc(const u64 80, const u32 3) collects   @34:5
+  _2 = call avant_alloc(const u64 80, const u32 2) collects   @34:5
   call av.std.sync/Channel(Int).initialize(copy _2, copy _1) collects   @34:5
   _0 = copy _2   @34:5
   gc.leave   @34:5
@@ -1819,7 +1794,7 @@ bb0:
   _2 = zero   @34:5
   gc.enter   @34:5
   gc.roots _2   @34:5
-  _2 = call avant_alloc(const u64 72, const u32 4) collects   @34:5
+  _2 = call avant_alloc(const u64 72, const u32 3) collects   @34:5
   call av.std.sync/Channel(String).initialize(copy _2, copy _1) collects   @34:5
   _0 = copy _2   @34:5
   gc.leave   @34:5

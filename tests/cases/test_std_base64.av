@@ -53,13 +53,13 @@ fn test_std_base64(c: Checks) {
   dst = buf_new(64)
   dst.push_str("x")
   if err = "aaa".bytes.to_base64_into(dst) {
-    c.expect(false, "encode_into ${err.message}")
+    c.expect(false, "encode_into ${err}")
   } else {
     c.eq_str(dst.to_s(), "xYWFh", "encode_into appends")
   }
   dst.clear()
   if err2 = "YWFh".bytes.from_base64_into(dst) {
-    c.expect(false, "decode_into ${err2.message}")
+    c.expect(false, "decode_into ${err2}")
   } else {
     c.eq_str(dst.to_s(), "aaa", "decode_into after clear")
   }
@@ -133,20 +133,24 @@ fn test_base64_url(c: Checks) {
   into = buf_new(16)
   into.push_str(">")
   if err = "aa".bytes.to_base64_url_into(into) {
-    c.expect(false, "url: encode_into ${err.message}")
+    c.expect(false, "url: encode_into ${err}")
   } else {
     c.eq_str(into.to_s(), ">YWE", "url: encode_into appends")
   }
   into.clear()
   if err2 = "-_-_".bytes.from_base64_url_into(into) {
-    c.expect(false, "url: decode_into ${err2.message}")
+    c.expect(false, "url: decode_into ${err2}")
   } else {
     c.eq_int(into.size, 3, "url: decode_into")
   }
   keep = buf_new(8)
   keep.push_str("k")
   if err3 = "a/b".bytes.from_base64_url_into(keep) {
-    c.eq_str(err3.message, "invalid base64 data", "url: decode_into refuses /")
+    c.eq_str(err3.message(), "invalid base64 data", "url: decode_into refuses /")
+    switch err3 {
+      case invalid_data { c.expect(true, "url: decode_into refuses / as invalid_data") }
+      case too_large { c.expect(false, "url: decode_into refuses / as invalid_data") }
+    }
   } else {
     c.expect(false, "url: decode_into refuses /")
   }

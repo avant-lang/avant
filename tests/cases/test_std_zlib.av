@@ -13,12 +13,13 @@ fn test_std_zlib(c: Checks) {
   plain = "nope".bytes
   if ignored = plain.uncompress() {
     c.expect(false, "plain text is not zlib")
-  } else {
-    c.expect(true, "plain text is not zlib")
+  } else e {
+    c.expect(e == ZlibError.invalid_data, "plain text is not zlib: the kind invalid_data")
+    c.eq_str("${e}", "invalid zlib data", "plain text is not zlib: the message")
   }
   dst = buf_new(64)
   if err = raw.compress_into(dst) {
-    c.expect(false, "compress_into ${err.message}")
+    c.expect(false, "compress_into ${err}")
   } else {
     if back2 = dst.to_bytes().uncompress() {
       text2 = String.from_utf8(back2) ?? ""
@@ -29,7 +30,7 @@ fn test_std_zlib(c: Checks) {
   }
   udst = buf_new(64)
   if err2 = raw.compress().uncompress_into(udst) {
-    c.expect(false, "uncompress_into ${err2.message}")
+    c.expect(false, "uncompress_into ${err2}")
   } else {
     text3 = String.from_utf8(udst.to_bytes()) ?? ""
     c.eq_str(text3, "hello", "uncompress_into")

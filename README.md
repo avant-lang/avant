@@ -2318,7 +2318,7 @@ fn main {
 }
 ```
 
-`Error` is a marker on the declaration and a [bound](#bounds), not a type to store; no type may be named `Error`. The library's errors are marked: `IoError`, `ProcessError`, `JsonError`, `RegexError`, `HttpError`, `ZlibError`, `Base64Error`.
+`Error` is a marker on the declaration and a [bound](#bounds), not a type to store; no type may be named `Error`. The library's errors are marked: `IoError`, `ProcessError`, `JsonError`, `RegexError`, `HttpError`, `TaskError`, and the enums `ZlibError`, `Base64Error` and `MutexError` ([An enum as an error](#an-enum-as-an-error)).
 
 ### Causes
 
@@ -2393,7 +2393,9 @@ fn main {
 }
 ```
 
-It is read, refused as dropped and discarded like any error; a `switch` over the result names it as a member.
+It is read, refused as dropped and discarded like any error; a `switch` over the result names it as a member. `e.message()` reads the message (a method; `e.message` without parentheses reads only a field).
+
+The library's errors that are a kind and nothing else are enums: `ZlibError` and `Base64Error` (`invalid_data`, `too_large`: the result would pass a `Buf`'s size limit) and `MutexError` (`poisoned`). The errors that carry data stay classes: `IoError` (its operation, path and `errno`), `JsonError` and `RegexError` (an offset), `ProcessError`, `HttpError`, `TaskError`.
 
 ### Errors cannot be dropped
 

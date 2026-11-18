@@ -3,23 +3,22 @@ file 0 "lib/std/sync.av"
 file 1 "fresh.av"
 file 2 "<task>"
 
-layout %std.sync.MutexError = class { }  size 0 align 1 id 1
-layout %fresh.Held = class { 0 n: i64, 1 log: ref str }  size 16 align 8 id 2
-layout %task.TaskError = class { 0 what: ref str, 1 site: ref str }  size 16 align 8 id 3
-layout %std.sync.Mutex(fresh.Held) = class { 0 cell: ref %fresh.Held, 1 gate: u64, 2 heal: ref %std.sync.MutexHeal(fresh.Held) }  size 24 align 8 id 4
-layout %std.sync.MutexHeal(fresh.Held) = class { 0 f: %fn():fresh.Held }  size 16 align 8 id 5
+layout %fresh.Held = class { 0 n: i64, 1 log: ref str }  size 16 align 8 id 1
+layout %task.TaskError = class { 0 what: ref str, 1 site: ref str }  size 16 align 8 id 2
+layout %std.sync.Mutex(fresh.Held) = class { 0 cell: ref %fresh.Held, 1 gate: u64, 2 heal: ref %std.sync.MutexHeal(fresh.Held) }  size 24 align 8 id 3
+layout %std.sync.MutexHeal(fresh.Held) = class { 0 f: %fn():fresh.Held }  size 16 align 8 id 4
 layout %fn():fresh.Held = fnval { 0 env: ref, 1 code: code(ref) -> ref %fresh.Held }  size 16 align 8
 layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %par_cap(av.fresh/main#par1) = record { 0 in: ref %Array(Int), 1 out: ref %Array(Int), 2 base: i64 }  size 24 align 8 id 6
-layout %box(Int) = record { 0 v: i64 }  size 8 align 8 id 7
-layout %env(av.fresh/main#lam1) = record { 0 x: ref %box(Int), 1 base: ref %box(Int) }  size 16 align 8 id 8
+layout %par_cap(av.fresh/main#par1) = record { 0 in: ref %Array(Int), 1 out: ref %Array(Int), 2 base: i64 }  size 24 align 8 id 5
+layout %box(Int) = record { 0 v: i64 }  size 8 align 8 id 6
+layout %env(av.fresh/main#lam1) = record { 0 x: ref %box(Int), 1 base: ref %box(Int) }  size 16 align 8 id 7
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %par_cap(av.fresh/main#par2) = record { 0 in: ref %Array(String), 1 out: ref %Array(String) }  size 16 align 8 id 9
-layout %box(String) = record { 0 v: ref str }  size 8 align 8 id 10
-layout %env(av.fresh/main#lam2) = record { 0 w: ref %box(String) }  size 8 align 8 id 11
-layout %spawn_cap(av.fresh/main#spawn1) = record { 0 held: ref %std.sync.Mutex(fresh.Held) }  size 8 align 8 id 12
+layout %par_cap(av.fresh/main#par2) = record { 0 in: ref %Array(String), 1 out: ref %Array(String) }  size 16 align 8 id 8
+layout %box(String) = record { 0 v: ref str }  size 8 align 8 id 9
+layout %env(av.fresh/main#lam2) = record { 0 w: ref %box(String) }  size 8 align 8 id 10
+layout %spawn_cap(av.fresh/main#spawn1) = record { 0 held: ref %std.sync.Mutex(fresh.Held) }  size 8 align 8 id 11
 layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
 layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %(Int|task.TaskError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %task.TaskError }  size 24 align 8
@@ -40,18 +39,17 @@ typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1020 %String view stride 0 bits [0x1]
-typemap 1 %std.sync.MutexError stride 0 bits [0x0]
-typemap 2 %fresh.Held stride 0 bits [0x2]
-typemap 3 %task.TaskError stride 0 bits [0x3]
-typemap 4 %std.sync.Mutex(fresh.Held) stride 0 bits [0x5]
-typemap 5 %std.sync.MutexHeal(fresh.Held) stride 0 bits [0x1]
-typemap 6 %par_cap(av.fresh/main#par1) stride 0 bits [0x3]
-typemap 7 %box(Int) stride 0 bits [0x0]
-typemap 8 %env(av.fresh/main#lam1) stride 0 bits [0x3]
-typemap 9 %par_cap(av.fresh/main#par2) stride 0 bits [0x3]
-typemap 10 %box(String) stride 0 bits [0x1]
-typemap 11 %env(av.fresh/main#lam2) stride 0 bits [0x1]
-typemap 12 %spawn_cap(av.fresh/main#spawn1) stride 0 bits [0x1]
+typemap 1 %fresh.Held stride 0 bits [0x2]
+typemap 2 %task.TaskError stride 0 bits [0x3]
+typemap 3 %std.sync.Mutex(fresh.Held) stride 0 bits [0x5]
+typemap 4 %std.sync.MutexHeal(fresh.Held) stride 0 bits [0x1]
+typemap 5 %par_cap(av.fresh/main#par1) stride 0 bits [0x3]
+typemap 6 %box(Int) stride 0 bits [0x0]
+typemap 7 %env(av.fresh/main#lam1) stride 0 bits [0x3]
+typemap 8 %par_cap(av.fresh/main#par2) stride 0 bits [0x3]
+typemap 9 %box(String) stride 0 bits [0x1]
+typemap 10 %env(av.fresh/main#lam2) stride 0 bits [0x1]
+typemap 11 %spawn_cap(av.fresh/main#spawn1) stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
@@ -85,13 +83,11 @@ extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_trap_poisoned() -> void never noreturn
 
-fn av.std.sync/__avant_mutex_poisoned() -> ref %std.sync.MutexError frame @lib/std/sync.av:208:5 {
-  let _0: ref %std.sync.MutexError
-  let _1: ref %std.sync.MutexError
+fn av.std.sync/__avant_mutex_poisoned() -> u8 leaf @lib/std/sync.av:208:5 {
+  let _0: u8
 
 bb0:
-  _1 = call av.std.sync/MutexError.new() collects   @209:13
-  _0 = copy _1   @209:13
+  _0 = const u8 0   @209:13
   return   @209:13
 }
 
@@ -307,7 +303,7 @@ bb0:
   (*_7).1 = const i32 4   @26:8
   (*_7).2 = const i32 4   @26:8
   _8 = copy _7   @26:6
-  _4 = call avant_alloc(const u64 8, const u32 7) collects   @27:3
+  _4 = call avant_alloc(const u64 8, const u32 6) collects   @27:3
   (*_4).0 = const i64 100   @27:8
   _9 = copy _8   @28:11
   _10 = copy (*_9).1   @28:11
@@ -319,7 +315,7 @@ bb0:
   (*_14).1 = copy _10   @28:11
   (*_14).2 = copy _10   @28:11
   _15 = copy _14   @28:11
-  _16 = call avant_alloc(const u64 24, const u32 6) collects fresh   @28:11
+  _16 = call avant_alloc(const u64 24, const u32 5) collects fresh   @28:11
   (*_16).0 = copy _9 fresh   @28:11
   (*_16).1 = copy _15 fresh   @28:11
   _17 = copy (*_4).0   @28:11
@@ -389,7 +385,7 @@ bb2:
   (*_58).1 = copy _54   @34:16
   (*_58).2 = copy _54   @34:16
   _59 = copy _58   @34:16
-  _60 = call avant_alloc(const u64 16, const u32 9) collects fresh   @34:16
+  _60 = call avant_alloc(const u64 16, const u32 8) collects fresh   @34:16
   (*_60).0 = copy _53 fresh   @34:16
   (*_60).1 = copy _59 fresh   @34:16
   call avant_array_freeze(copy _53, const i32 1) nocollect   @34:16
@@ -442,7 +438,7 @@ bb5:
   branch copy _90, bb6, bb7   @42:3
 
 bb6:
-  _91 = call avant_alloc(const u64 8, const u32 12) collects fresh   @43:13
+  _91 = call avant_alloc(const u64 8, const u32 11) collects fresh   @43:13
   (*_91).0 = copy _86 fresh   @43:13
   _92 = call avant_spawn(const fn av.fresh/main#spawn1, copy _91) collects   @43:13
   call avant_array_push_ptr(copy _88, copy _92, const u32 65535) collects   @43:7
@@ -567,7 +563,7 @@ bb0:
 
 bb1:
   _5 = copy _2   @23:3
-  _6 = call avant_alloc(const u64 16, const u32 3) collects fresh   @24:21
+  _6 = call avant_alloc(const u64 16, const u32 2) collects fresh   @24:21
   call av.task/TaskError.initialize(copy _6, copy _5, copy _3) collects   @24:21
   _7 = union %(Int|task.TaskError) tag 1 (copy _6)   @24:21
   _0 = copy _7   @24:5
@@ -591,31 +587,20 @@ bb0:
   _3 = zero   @31:5
   gc.enter   @31:5
   gc.roots _1, _2, _3   @31:5
-  _3 = call avant_alloc(const u64 16, const u32 3) collects fresh   @32:12
+  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @32:12
   call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @32:12
   _0 = copy _3   @32:12
   gc.leave   @32:12
   return   @32:12
 }
 
-fn av.std.sync/MutexError.message(_1: ref %std.sync.MutexError) -> ref str frame @lib/std/sync.av:202:7 {
+fn av.std.sync/std.sync.MutexError.message(_1: u8) -> ref str frame @lib/std/sync.av:202:7 {
   let _0: ref str
-  let _1 (self): ref %std.sync.MutexError
+  let _1 (self): u8
 
 bb0:
   _0 = const str.4   @203:5
   return   @203:5
-}
-
-fn av.std.sync/MutexError.__avant_error_text(_1: ref %std.sync.MutexError) -> ref str frame @lib/std/sync.av:201:5 {
-  let _0: ref str
-  let _1 (self): ref %std.sync.MutexError
-  let _2: ref str
-
-bb0:
-  _2 = call av.std.sync/MutexError.message(copy _1) collects   @201:5
-  _0 = copy _2   @201:5
-  return   @201:5
 }
 
 fn av.fresh/Held.initialize(_1: ref %fresh.Held, _2: i64) -> void frame @fresh.av:20:3 {
@@ -718,7 +703,7 @@ bb0:
 
 bb1:
   _7 = copy _3   @143:5
-  _8 = call avant_alloc(const u64 16, const u32 5) collects fresh   @144:31
+  _8 = call avant_alloc(const u64 16, const u32 4) collects fresh   @144:31
   call av.std.sync/MutexHeal(fresh.Held).initialize(copy _8, copy _7) collects   @144:31
   barrier copy _1   @144:17
   (*_1).2 = copy _8   @144:17
@@ -828,16 +813,6 @@ bb0:
   return   @195:5
 }
 
-fn av.std.sync/MutexError.new() -> ref %std.sync.MutexError frame @lib/std/sync.av:201:5 {
-  let _0: ref %std.sync.MutexError
-  let _1: ref %std.sync.MutexError
-
-bb0:
-  _1 = call avant_alloc(const u64 0, const u32 1) collects   @201:5
-  _0 = copy _1   @201:5
-  return   @201:5
-}
-
 fn av.fresh/Held.new(_1: i64) -> ref %fresh.Held frame @fresh.av:16:1 {
   let _0: ref %fresh.Held
   let _1 (n): i64
@@ -847,7 +822,7 @@ bb0:
   _2 = zero   @16:1
   gc.enter   @16:1
   gc.roots _2   @16:1
-  _2 = call avant_alloc(const u64 16, const u32 2) collects fresh   @16:1
+  _2 = call avant_alloc(const u64 16, const u32 1) collects fresh   @16:1
   (*_2).1 = const str.7 fresh   @18:3
   call av.fresh/Held.initialize(copy _2, copy _1) collects   @16:1
   _0 = copy _2   @16:1
@@ -865,7 +840,7 @@ bb0:
   _3 = zero   @3:5
   gc.enter   @3:5
   gc.roots _1, _2, _3   @3:5
-  _3 = call avant_alloc(const u64 16, const u32 3) collects fresh   @3:5
+  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @3:5
   call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @3:5
   _0 = copy _3   @3:5
   gc.leave   @3:5
@@ -882,7 +857,7 @@ bb0:
   _3 = zero   @132:5
   gc.enter   @132:5
   gc.roots _1, _2, _3   @132:5
-  _3 = call avant_alloc(const u64 24, const u32 4) collects fresh   @132:5
+  _3 = call avant_alloc(const u64 24, const u32 3) collects fresh   @132:5
   (*_3).2 = const ref %std.sync.MutexHeal(fresh.Held) null fresh   @138:3
   call av.std.sync/Mutex(fresh.Held).initialize(copy _3, copy _1, copy _2) collects   @132:5
   _0 = copy _3   @132:5
@@ -899,7 +874,7 @@ bb0:
   _2 = zero   @186:1
   gc.enter   @186:1
   gc.roots _1, _2   @186:1
-  _2 = call avant_alloc(const u64 16, const u32 5) collects fresh   @186:1
+  _2 = call avant_alloc(const u64 16, const u32 4) collects fresh   @186:1
   call av.std.sync/MutexHeal(fresh.Held).initialize(copy _2, copy _1) collects   @186:1
   _0 = copy _2   @186:1
   gc.leave   @186:1
@@ -939,12 +914,12 @@ bb0:
   _7 = copy (*_5).1   @28:11
   _8 = copy (*_6).0   @28:11
   _9 = copy (*_8)[copy _1]   @28:11
-  _3 = call avant_alloc(const u64 8, const u32 7) collects   @28:21
+  _3 = call avant_alloc(const u64 8, const u32 6) collects   @28:21
   (*_3).0 = copy _9   @28:21
   _10 = copy (*_5).2   @28:11
-  _4 = call avant_alloc(const u64 8, const u32 7) collects   @28:11
+  _4 = call avant_alloc(const u64 8, const u32 6) collects   @28:11
   (*_4).0 = copy _10   @28:11
-  _11 = call avant_alloc(const u64 16, const u32 8) collects fresh   @29:23
+  _11 = call avant_alloc(const u64 16, const u32 7) collects fresh   @29:23
   (*_11).0 = copy _3 fresh   @29:23
   (*_11).1 = copy _4 fresh   @29:23
   _12 = fnval %fn(Int):Int (copy _11, const fn av.fresh/main#lam1)   @29:23
@@ -1008,9 +983,9 @@ bb0:
   _5 = copy (*_4).0   @34:16
   _6 = copy (*_4).1   @34:16
   _7 = call avant_array_get_ptr(copy _5, copy _1) nocollect   @34:16
-  _3 = call avant_alloc(const u64 8, const u32 10) collects fresh   @34:26
+  _3 = call avant_alloc(const u64 8, const u32 9) collects fresh   @34:26
   (*_3).0 = copy _7 fresh   @34:26
-  _8 = call avant_alloc(const u64 8, const u32 11) collects fresh   @35:23
+  _8 = call avant_alloc(const u64 8, const u32 10) collects fresh   @35:23
   (*_8).0 = copy _3 fresh   @35:23
   _9 = fnval %fn():String (copy _8, const fn av.fresh/main#lam2)   @35:23
   _10 = copy _9   @35:5
