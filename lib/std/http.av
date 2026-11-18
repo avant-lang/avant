@@ -51,15 +51,6 @@ lib httpc {
   fun avant_ws_send_text_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_send_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_close_by_id(id: Int, code: Int, reason: String): Int
-  fun avant_ws_client_connect(host: String, port: Int, target: String, key: String, timeout_ms: Int): Int
-  fun avant_ws_client_recv(id: Int, timeout_ms: Int): Bytes
-  fun avant_ws_client_last_is_text: Int
-  fun avant_ws_client_close_code(id: Int): Int
-  fun avant_ws_client_send_text(id: Int, data: String): Int
-  fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
-  fun avant_ws_client_send_text_bytes(id: Int, data: Bytes): Int
-  fun avant_ws_client_close(id: Int): Int
-  fun avant_ws_client_key: String
   fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int, idle_ms: Int): Bytes
   fun avant_http_resp_status(raw: Bytes): Int
   fun avant_http_resp_headers(raw: Bytes): Bytes
@@ -1544,92 +1535,3 @@ fn request_lines(method: String, url: String, body: String | Bytes, headers: Arr
   }
   HttpError.new("too many redirects")
 }
-
-// A WebSocket client connection, the client's counterpart of WsConn.
-// `recv` blocks the calling thread until a message arrives, so do not
-// call it from a server handler. There is no TLS: a `wss://` URL is an
-// HttpError, never a silent downgrade. A connection that is never
-// closed leaks its loop thread until the process exits; there is no
-// finalizer.
-// The value is the connection's id in the runtime, a number that is
-// never given twice: after `close`, every copy of the value finds
-// nothing there, so `send_text` and `send_bytes` return
-// WsSendError.closed, `recv`
-// returns nil, `close_code` is 1006 and a second `close` does nothing,
-// whatever connections were opened since.
-pub struct WsConnection {
-  id: Int
-
-  pub fn send_text(text: String): Void | WsSendError {
-    ws_sent(httpc.avant_ws_client_send_text(self.id, text))?
-  }
-
-  pub fn send_bytes(data: Bytes): Void | WsSendError {
-    ws_sent(httpc.avant_ws_client_send_bytes(self.id, data))?
-  }
-
-  // Sends a message onward with its kind kept, as WsConn.send_message
-  // does on the server.
-  pub fn send_message(msg: WsMessage): Void | WsSendError {
-    if msg.is_text {
-      ws_sent(httpc.avant_ws_client_send_text_bytes(self.id, msg.body))?
-      return
-    }
-    ws_sent(httpc.avant_ws_client_send_bytes(self.id, msg.body))?
-  }
-
-  // The next message, or nil when the connection has closed. With a
-  // timeout, nil also means the timeout passed; `close_code` says
-  // which: it is 1006 until a close frame arrives.
-  pub fn recv(timeout_ms: Int = -1): WsMessage? {
-    data = httpc.avant_ws_client_recv(self.id, timeout_ms)
-    if httpc.avant_http_take_status() != 0 {
-      return nil
-    }
-    is_text = httpc.avant_ws_client_last_is_text() != 0
-    WsMessage { is_text: is_text, body: data }
-  }
-
-  pub fn close_code: Int {
-    httpc.avant_ws_client_close_code(self.id)
-  }
-
-  // Safe to call more than once, through any copy: a second close
-  // does nothing. A `recv` waiting in another task returns nil.
-  pub fn close {
-    httpc.avant_ws_client_close(self.id)
-  }
-}
-
-// The body of ws.connect (std.ws), which programs call: a WebSocket
-// client connection needs this module's C bindings and URL parsing.
-pub fn ws_connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
-  if url.starts_with("wss://") {
-    return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
-  }
-  if !url.starts_with("ws://") {
-    return HttpError.new("only ws:// URLs are supported")
-  }
-  // The handshake's request line and Host are the URL's.
-  if refused = url_refusal(url) {
-    return refused
-  }
-  parsed = http_parse_url("http://${url[5..]}")
-  if p = parsed {
-    key = httpc.avant_ws_client_key()
-    id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
-    code = httpc.avant_http_take_status()
-    if code == 1 {
-      return HttpError.new("could not connect to ${p.authority}")
-    }
-    if code == 2 {
-      return HttpError.new("connection to ${p.authority} timed out")
-    }
-    if code != 0 {
-      return HttpError.new("websocket handshake with ${p.authority} failed")
-    }
-    return WsConnection { id: id }
-  }
-  HttpError.new("invalid URL: ${url}")
-}
-

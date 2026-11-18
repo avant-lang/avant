@@ -4784,7 +4784,7 @@ A `WsConn` kept after its connection closed, or after `serve` returned, answers 
 
 #### WebSocket client
 
-The client is the module `std.ws`: `ws.connect(url)` opens a connection, a `WsConnection` of `std.http`.
+The client is the module `std.ws`: `ws.connect(url)` opens a connection, a `ws.WsConnection`; its messages are `std.http`'s `WsMessage`.
 
 <!-- check: compile -->
 ```avant
@@ -4797,8 +4797,10 @@ fn main {
       puts("not sent: ${e}")
       return
     }
-    if msg = conn.recv() {
-      puts(msg.text() ?? "")
+    switch conn.recv(5000) {
+      case msg: http.WsMessage { puts(msg.text() ?? "") }
+      case e: ws.WsClosed { puts("closed: ${e.code} ${e.reason}") }
+      else { puts("nothing within 5 s") }
     }
     conn.close()
   }
@@ -4808,12 +4810,12 @@ fn main {
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
 | `ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
-| `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage?` | `nil` when the connection closed or the timeout passed, and `close_code` says which | blocks. Never call `recv` from a server handler |
+| `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage? \| WsClosed` | a `WsClosed` once the connection has ended: `code` (the peer's, 1005 when its close frame named none, 1006 without one or after this side's `close`), `reason`, and `clean` (whether a close frame came) | `nil` only when the timeout passed on an open connection. Blocks: never call `recv` from a server handler |
 | `close_code` | — | `Int` | — | 1006 until a close frame arrives |
 | `send_text`, `send_bytes`, `send_message` | a `String`, `Bytes`, a `WsMessage` (sent as it came, text or binary) | `Void \| WsSendError` | `WsSendError.closed` after `close`; `full` when no memory is left to queue it | |
-| `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `WsSendError.closed`, `recv` `nil`, `close_code` 1006, and another `close` does nothing |
+| `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: a send returns `WsSendError.closed`, `recv` a `WsClosed` (1006), `close_code` 1006, and another `close` does nothing |
 
-Both timeouts use the monotonic clock. An unclosed connection keeps its thread until the process exits. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
+Both timeouts use the monotonic clock. An unclosed connection keeps its thread until the process exits. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return a `WsClosed`.
 
 ### std.zlib
 

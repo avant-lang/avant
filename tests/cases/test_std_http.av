@@ -165,6 +165,31 @@ fn sent_word(r: Void | http.WsSendError): String {
   }
 }
 
+// What a client's recv answered: the text, "nil" for its timeout, or the
+// WsClosed's code, reason and whether a close frame came.
+fn recv_word(r: http.WsMessage? | ws.WsClosed): String {
+  switch r {
+    case m: http.WsMessage { m.text() ?? "binary" }
+    case e: ws.WsClosed { "closed ${e.code} [${e.reason}] ${e.clean}" }
+    else { "nil" }
+  }
+}
+
+// recv's three outcomes: a message, nil when the timeout passes on an
+// open connection, and a WsClosed once the peer closed (1000 "done",
+// with a close frame), again on the next call.
+fn ws_recv_round(port: Int): String {
+  if conn = ws.connect("ws://127.0.0.1:${port}/bye") {
+    quiet = recv_word(conn.recv(100))
+    _ = conn.send_text("x")
+    first = recv_word(conn.recv(5000))
+    again = recv_word(conn.recv(5000))
+    conn.close()
+    return "${quiet}|${first}|${again}|${conn.close_code()}"
+  }
+  "no connection"
+}
+
 fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
   if conn = ws.connect("ws://127.0.0.1:${port}/shout") {
     _ = conn.send_text("abc")
@@ -193,8 +218,9 @@ fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
     }
     conn.close()
     conn.close()
-    // A send after close: the error says the connection is closed.
-    out.send("ws-client-after=${sent_word(conn.send_text("late"))} ${sent_word(conn.send_message(http.WsMessage { is_text: true, body: "x".bytes }))}")
+    // A send after close: the error says the connection is closed; so
+    // does recv, as a WsClosed.
+    out.send("ws-client-after=${sent_word(conn.send_text("late"))} ${sent_word(conn.send_message(http.WsMessage { is_text: true, body: "x".bytes }))} ${recv_word(conn.recv(100))}")
   } else {
     out.send("ws-client=BAD0")
   }
@@ -298,7 +324,7 @@ fn test_std_http(c: Checks) {
     c.expect(false, "wss is HttpError")
     wse.close()
   } else werr {
-    c.eq_str(werr.message, "wss is not supported yet: std.http speaks plain ws:// only", "wss is HttpError, saying what is supported")
+    c.eq_str(werr.message, "wss is not supported yet: std.ws speaks plain ws:// only", "wss is HttpError, saying what is supported")
   }
   if wse2 = ws.connect("http://127.0.0.1:1/echo") {
     c.expect(false, "http scheme is HttpError for Ws")
@@ -554,13 +580,15 @@ fn test_std_http(c: Checks) {
       Response.text("bye")
     })
     out = sync.Channel(String).new(4)
-    cout = sync.Channel(String).new(2)
+    cout = sync.Channel(String).new(4)
     port = server.port()
     handle = spawn {
       ws_round(port, out, wscript, stamp)
     }
     chandle = spawn {
       ws_client_round(port, cout)
+      cout.send(ws_recv_round(port))
+      0
     }
     server.serve()
     c.eq_int(handle.join() ?? -1, 0, "ws round task")
@@ -570,7 +598,8 @@ fn test_std_http(c: Checks) {
     } else {
       c.expect(false, "ws client round present")
     }
-    c.eq_str(cout.recv() ?? "none", "ws-client-after=closed closed", "a client's send after close answers WsSendError.closed")
+    c.eq_str(cout.recv() ?? "none", "ws-client-after=closed closed closed 1006 [] false", "a client's send after close answers WsSendError.closed, its recv a WsClosed")
+    c.eq_str(cout.recv() ?? "none", "nil|closed 1000 [done] true|closed 1000 [done] true|1006", "recv: nil for a timeout, a WsClosed for the end")
     c.eq_str(byes.recv() ?? "none", "bye sent closed closed closed", "a server's send or close after close answers WsSendError.closed")
     want: Array(String) = []
     want.push("ws-echo=ok")

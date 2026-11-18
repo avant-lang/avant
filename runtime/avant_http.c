@@ -4135,6 +4135,11 @@ typedef struct WsClient {
   int closed;
   int close_sent;
   int close_code;
+  /* The peer's close frame arrived (std.ws's WsClosed.clean), with its
+   * reason's first bytes (a close frame's reason is at most 123). */
+  int close_clean;
+  size_t close_reason_len;
+  char close_reason[124];
   char *request; /* the handshake, malloc'd to its length */
   size_t request_len;
   size_t request_sent; /* how much of it the socket has taken */
@@ -4335,8 +4340,15 @@ static void ws_client_process(WsClient *c) {
         ws_client_send_frame(c, 10, (const char *)payload, payload_len);
       } else if (opcode == 8) {
         if (payload_len >= 2) {
+          size_t rl = payload_len - 2 > 123 ? 123 : payload_len - 2;
           c->close_code = ((int)payload[0] << 8) | payload[1];
+          memcpy(c->close_reason, payload + 2, rl);
+          c->close_reason_len = rl;
+        } else {
+          /* No status in the frame: 1005 (RFC 6455 7.1.5). */
+          c->close_code = 1005;
         }
+        c->close_clean = 1;
         c->closed = 1;
         if (!c->close_sent) {
           c->close_sent = 1;
@@ -4725,6 +4737,36 @@ static WsClient *ws_client_unregister(avant_int id) {
 }
 
 avant_int avant_ws_client_last_is_text(void) { return g_ws_client_last_is_text; }
+
+/* std.ws's WsClosed: whether the peer's close frame arrived, and its
+ * reason ("" without one, and for a connection this side closed: its
+ * record is gone). */
+avant_int avant_ws_client_close_clean(avant_int id) {
+  WsClient *c = ws_client_acquire(id);
+  avant_int clean;
+  if (!c) { return 0; }
+  clean = c->close_clean;
+  ws_client_release(c);
+  return clean;
+}
+
+char *avant_ws_client_close_reason(avant_int id) {
+  WsClient *c = ws_client_acquire(id);
+  char reason[124];
+  size_t n;
+  if (!c) { return avant_str_empty(); }
+  n = c->close_reason_len;
+  memcpy(reason, c->close_reason, n);
+  /* Not read after this: the allocation below may collect. */
+  ws_client_release(c);
+  return make_string(reason, n);
+}
+
+/* std.ws's own reading of the status a client call left (std.http's
+ * avant_http_take_status: a C function is bound by one module). */
+avant_int avant_ws_client_take_status(void) {
+  return avant_http_take_status();
+}
 
 avant_int avant_ws_client_close_code(avant_int id) {
   WsClient *c = ws_client_acquire(id);

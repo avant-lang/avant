@@ -1,11 +1,228 @@
 // std.ws: the WebSocket client. `ws.connect(url)` opens a connection to
 // a ws:// URL (no TLS: a wss:// URL is an HttpError, never a silent
-// downgrade); the connection is std.http's WsConnection, and a server's
-// side is std.http's (server.ws). See std.http's WsConnection for its
-// calls.
+// downgrade) and returns a WsConnection; the server's side is std.http's
+// (`server.websocket`). Messages are std.http's WsMessage, a refused
+// send std.http's WsSendError.
 import std.http
 
+lib wsc {
+  fun avant_ws_client_take_status: Int
+  fun avant_ws_client_connect(host: String, port: Int, target: String, key: String, timeout_ms: Int): Int
+  fun avant_ws_client_recv(id: Int, timeout_ms: Int): Bytes
+  fun avant_ws_client_last_is_text: Int
+  fun avant_ws_client_close_code(id: Int): Int
+  fun avant_ws_client_close_clean(id: Int): Int
+  fun avant_ws_client_close_reason(id: Int): String
+  fun avant_ws_client_send_text(id: Int, data: String): Int
+  fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
+  fun avant_ws_client_send_text_bytes(id: Int, data: Bytes): Int
+  fun avant_ws_client_close(id: Int): Int
+  fun avant_ws_client_key: String
+}
+
+type HttpError = http.HttpError
+type WsMessage = http.WsMessage
+type WsSendError = http.WsSendError
+
+// The end of a connection, as `recv` reports it: `code` is the peer's
+// close code (1005 when its close frame named none, 1006 when the
+// connection ended without one or this side closed it), `reason` its
+// reason, `clean` whether a close frame arrived.
+pub struct WsClosed: Error {
+  pub code: Int
+  pub reason: String
+  pub clean: Bool
+
+  fn message: String {
+    if !self.clean {
+      return "the WebSocket connection ended without a close frame"
+    }
+    if self.reason.size > 0 {
+      return "the WebSocket connection was closed with ${self.code}: ${self.reason}"
+    }
+    "the WebSocket connection was closed with ${self.code}"
+  }
+}
+
+// A WebSocket client connection, the client's counterpart of std.http's
+// WsConn. `recv` blocks the calling thread until a message arrives, so
+// do not call it from a server handler. A connection that is never
+// closed keeps its loop thread until the process exits; there is no
+// finalizer. The value is the connection's id in the runtime, a number
+// that is never given twice: after `close`, every copy of the value
+// finds nothing there, so a send returns WsSendError.closed and `recv`
+// a WsClosed (1006), whatever connections were opened since.
+pub struct WsConnection {
+  id: Int
+
+  pub fn send_text(text: String): Void | WsSendError {
+    client_sent(wsc.avant_ws_client_send_text(self.id, text))?
+  }
+
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    client_sent(wsc.avant_ws_client_send_bytes(self.id, data))?
+  }
+
+  // Sends a message onward with its kind kept, as WsConn.send_message
+  // does on the server.
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
+    if msg.is_text {
+      client_sent(wsc.avant_ws_client_send_text_bytes(self.id, msg.body))?
+      return
+    }
+    client_sent(wsc.avant_ws_client_send_bytes(self.id, msg.body))?
+  }
+
+  // The next message; nil when `timeout_ms` (0 or more) passed first and
+  // the connection is still open; a WsClosed when the connection has
+  // ended (its close code, reason, and whether a close frame came).
+  pub fn recv(timeout_ms: Int = -1): WsMessage? | WsClosed {
+    data = wsc.avant_ws_client_recv(self.id, timeout_ms)
+    code = wsc.avant_ws_client_take_status()
+    if code == 2 {
+      return nil
+    }
+    if code != 0 {
+      return WsClosed { code: wsc.avant_ws_client_close_code(self.id), reason: wsc.avant_ws_client_close_reason(self.id), clean: wsc.avant_ws_client_close_clean(self.id) != 0 }
+    }
+    is_text = wsc.avant_ws_client_last_is_text() != 0
+    WsMessage { is_text: is_text, body: data }
+  }
+
+  // The peer's close code: 1006 until a close frame arrives (and after
+  // this side's close), 1005 for a close frame that named none.
+  pub fn close_code: Int {
+    wsc.avant_ws_client_close_code(self.id)
+  }
+
+  // Safe to call more than once, through any copy: a second close
+  // does nothing. A `recv` waiting in another task returns a WsClosed.
+  pub fn close {
+    _ = wsc.avant_ws_client_close(self.id)
+  }
+}
+
+// The runtime's answer to a client send: 1 queued, 2 no memory to queue
+// it, 0 closed.
+fn client_sent(code: Int): Void | WsSendError {
+  if code == 1 {
+    return
+  }
+  if code == 2 {
+    return http.WsSendError.full
+  }
+  return http.WsSendError.closed
+}
+
+struct Target {
+  host: String
+  port: Int
+  authority: String
+  path: String
+}
+
+// A ws:// URL's host, port (80 by default), authority and request
+// target (its path and query, without a fragment); nil when it is not a
+// well-formed URL with a host. The same reading as std.http's client.
+fn split_url(rest: String): Target? {
+  auth_end = rest.size
+  for i in 0..rest.size {
+    c = rest[i]
+    if c == 47 || c == 63 || c == 35 {
+      auth_end = i
+      break
+    }
+  }
+  authority = rest[..auth_end]
+  if authority.size == 0 || authority.contains("@") {
+    return nil
+  }
+  host = authority
+  port = 80
+  if authority[0] == 91 {
+    close = authority.index_of("]") ?? return nil
+    host = authority[1..close]
+    if close + 1 < authority.size {
+      if authority[close + 1] != 58 {
+        return nil
+      }
+      port = port_of(authority[close + 2..]) ?? return nil
+    }
+  } else {
+    colon = -1
+    for j in 0..authority.size {
+      if authority[j] == 58 {
+        colon = j
+      }
+    }
+    if colon >= 0 {
+      host = authority[..colon]
+      port = port_of(authority[colon + 1..]) ?? return nil
+    }
+  }
+  if host.size == 0 {
+    return nil
+  }
+  path = rest[auth_end..]
+  if hash = path.index_of("#") {
+    path = path[..hash]
+  }
+  if path.size == 0 {
+    path = "/"
+  } else if path[0] == 63 {
+    path = "/${path}"
+  }
+  Target { host: host, port: port, authority: authority, path: path }
+}
+
+// A port, 1 to 65535 in decimal digits; nil for anything else.
+fn port_of(text: String): Int? {
+  if text.size == 0 {
+    return nil
+  }
+  n = 0
+  for i in 0..text.size {
+    c = text[i]
+    if c < 48 || c > 57 {
+      return nil
+    }
+    n = n * 10 + (c - 48)
+    if n > 65535 {
+      return nil
+    }
+  }
+  if n == 0 {
+    return nil
+  }
+  n
+}
+
 // Connects and completes the handshake within timeout_ms milliseconds.
-pub fn connect(url: String, timeout_ms: Int = 10000): http.WsConnection | http.HttpError {
-  http.ws_connect(url, timeout_ms)
+// A URL with a space or a control character is refused without
+// connecting: the handshake's request line and Host are the URL's.
+pub fn connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
+  if url.starts_with("wss://") {
+    return HttpError.new("wss is not supported yet: std.ws speaks plain ws:// only")
+  }
+  if !url.starts_with("ws://") {
+    return HttpError.new("only ws:// URLs are supported")
+  }
+  for i in 0..url.size {
+    if url[i] <= 32 || url[i] == 127 {
+      return HttpError.new("invalid URL (byte ${url[i]} at ${i}): a URL holds no space or control character (RFC 3986)")
+    }
+  }
+  t = split_url(url[5..]) ?? return HttpError.new("invalid URL: ${url}")
+  id = wsc.avant_ws_client_connect(t.host, t.port, t.path, wsc.avant_ws_client_key(), timeout_ms)
+  code = wsc.avant_ws_client_take_status()
+  if code == 1 {
+    return HttpError.new("could not connect to ${t.authority}")
+  }
+  if code == 2 {
+    return HttpError.new("connection to ${t.authority} timed out")
+  }
+  if code != 0 {
+    return HttpError.new("websocket handshake with ${t.authority} failed")
+  }
+  WsConnection { id: id }
 }
