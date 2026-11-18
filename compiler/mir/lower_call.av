@@ -1,5 +1,5 @@
 // The lowering of calls and scalar members: direct calls of the
-// program's plain functions, the builtins `puts`, `puts_u`, `now_ms`,
+// program's plain functions, the builtins `puts`, `now_ms`,
 // `now_us`, and the conversions and members of the
 // integer types (`to_f to_i to_u64 abs`) and Float64
 // (`to_i abs floor sqrt exp`), in their field (`x.to_f`) and call
@@ -234,9 +234,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   c = e.callee
-  if c == "puts" || c == "puts_u" {
+  if c == "puts" {
     if e.args.size == 1 {
-      return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
+      return lw.lower_puts(e.args[0], false, e.loc)
     }
   }
   if (c == "puts" || c == "eputs") && e.args.size == 0 {
@@ -306,7 +306,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
 // Int32 widened by its sign) or avant_puts_u64 (UInt64, UInt32 widened
 // by zero), each of which checks stdout after its write (it was printf,
 // whose failed write was found only later).
-// puts_u prints the bits unsigned at their own width.
+// unsigned prints the bits unsigned at their own width.
 pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)

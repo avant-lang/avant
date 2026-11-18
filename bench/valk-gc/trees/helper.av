@@ -2,7 +2,8 @@
 // Origin: langarena/helper.av, from the Avant LangArena harness
 // (langarena 37367d3; tasks for kostya/LangArena, MIT, (c) 2026 Konstantin
 // Makarchev; the Avant sources are the Avant project's).
-// Changed: nothing but this header.
+// Changed: this header; the checksums written here and the wide type
+// of 32-bit halves gone, as in the harness's helper since.
 class Rng {
   last: Int
 
@@ -33,6 +34,22 @@ class Rng {
 // 64-bit): the value wraps to its low 32 bits, signed.
 fn hash_byte(h: Int, b: Int): Int {
   (((h << 5) &+ h) &+ b).wrap_i32().to_i()
+}
+
+// The references' checksums (helper.go Checksum, ChecksumFloat64;
+// helper.rs checksum_str, checksum_f64): djb2 over the bytes at 32 bits,
+// and a float's checksum is its text's with 7 decimals (Go's "%.7f",
+// Rust's "{:.7}"). Int32, the bits the tasks add up.
+fn checksum_str(s: String): Int32 {
+  h: UInt32 = 5381
+  for b in s.bytes {
+    h = (h << 5) &+ h &+ b.wrap_u32()
+  }
+  h.wrap_i32()
+}
+
+fn checksum_f64(v: Float64): Int32 {
+  checksum_str(fmt_float(v, 7))
 }
 
 fn min_int(a: Int, b: Int): Int {
@@ -153,86 +170,6 @@ fn prefix4(s: String): String {
 
 fn round8(x: Float64): Float64 {
   (x * 100000000.0 + 0.5).floor() / 100000000.0
-}
-
-class Wide {
-  lo: Int
-  hi: Int
-
-  fn initialize(lo: Int, hi: Int) {
-    self.lo = lo
-    self.hi = hi
-  }
-}
-
-fn wide_from_i(n: Int): Wide {
-  h = 0
-  if n < 0 {
-    h = -1
-  }
-  Wide.new(n, h)
-}
-
-fn wide_add(a: Wide, b: Wide): Wide {
-  lo = wide_op(0, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_sub(a: Wide, b: Wide): Wide {
-  lo = wide_op(1, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_mul(a: Wide, b: Wide): Wide {
-  lo = wide_op(2, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_sdiv(a: Wide, b: Wide): Wide {
-  lo = wide_op(3, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_smod(a: Wide, b: Wide): Wide {
-  lo = wide_op(4, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_udiv(a: Wide, b: Wide): Wide {
-  lo = wide_op(5, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_shl(a: Wide, n: Int): Wide {
-  lo = wide_op(6, a.lo, a.hi, n, 0)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_shr(a: Wide, n: Int): Wide {
-  lo = wide_op(7, a.lo, a.hi, n, 0)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_and(a: Wide, b: Wide): Wide {
-  lo = wide_op(8, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_or(a: Wide, b: Wide): Wide {
-  lo = wide_op(9, a.lo, a.hi, b.lo, b.hi)
-  Wide.new(lo, wide_hi())
-}
-
-fn wide_lt_u(a: Wide, b: Wide): Int {
-  wide_op(11, a.lo, a.hi, b.lo, b.hi)
-}
-
-fn wide_eq(a: Wide, b: Wide): Int {
-  wide_op(12, a.lo, a.hi, b.lo, b.hi)
-}
-
-fn wide_lt_s(a: Wide, b: Wide): Int {
-  wide_op(13, a.lo, a.hi, b.lo, b.hi)
 }
 
 fn hex_of(n: Int): String {

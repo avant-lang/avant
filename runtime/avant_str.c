@@ -960,34 +960,6 @@ avant_int avant_str_byte(const char *s, avant_int i) {
   return (avant_int)(unsigned char)s[i];
 }
 
-static int32_t checksum_bytes(const char *s, size_t n) {
-  uint32_t hash = 5381u;
-  size_t i;
-  for (i = 0; i < n; i++) {
-    hash = ((hash << 5) + hash) + (unsigned char)s[i];
-  }
-  return (int32_t)hash;
-}
-
-int32_t avant_checksum_str(const char *s) {
-  size_t n;
-  s = avant_str_bytes(s, &n);
-  return checksum_bytes(s, n);
-}
-
-int32_t avant_checksum_f64(double v) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%.7f", v);
-  if (k < 0) {
-    k = 0;
-  }
-  if ((size_t)k >= sizeof(buf)) {
-    k = (int)sizeof(buf) - 1;
-  }
-  /* A C buffer, not a String: its bytes by its own length. */
-  return checksum_bytes(buf, (size_t)k);
-}
-
 static int is_ascii_space(unsigned char c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }

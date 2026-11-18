@@ -4027,7 +4027,6 @@ Runnable programs using them are in [examples/](examples), in the repository and
 | `print(x)` | `x` | — | as `puts` | writes `x` alone to stdout |
 | `eputs(x)` | `x`, or none | — | as `puts` | writes `x` and a newline to stderr; `eputs()` an empty line |
 | `eprint(x)` | `x` | — | as `puts` | writes `x` alone to stderr |
-| `puts_u(n)` | `n`, an integer | — | as `puts` | prints an integer as the unsigned number its bits spell |
 | `exit(status)` | `status`, 0 to 255 | never returns | a status outside 0 to 255 traps at the call (`exit status 256 out of range (0..255)`) | writes nothing: flushes stdout, removes the program's temporary directory and ends the process with that exit status, from any task |
 
 ```avant
@@ -4215,6 +4214,8 @@ fn main {
   puts(144.0.sqrt())         // => 12.0
 }
 ```
+
+An integer's unsigned text is its bits as an unsigned type, printed: `puts(n.wrap_u32())`, `"${n.wrap_u64()}"`. CRC-32 and SHA-256 are [std.digest](#stddigest)'s; a multiply's high half, carries and rotations [std.bits](#stdbits)'.
 
 The time of day, RFC 3339 text and `time.sleep_ms` are [std.time](#stdtime)'s.
 

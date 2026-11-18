@@ -270,11 +270,11 @@ double cs_pix_total(const CsPix *p) {
 }
 
 /* rereg.av: a C thread calls the callback (it
- * registers implicitly, and the callback leaves a heap key in the
- * runtime's thread-local hash_last_key slot), unregisters itself
+ * registers implicitly, and the callback leaves a JSON parse's pool in
+ * the runtime's thread-local pool slot), unregisters itself
  * (avant_gc_unregister_thread), waits while the main thread collects, and
  * calls the callback again (it registers again). Unregistering clears the
- * thread's runtime-root slots: before, the slot kept naming the key the
+ * thread's runtime-root slots: before, the slot kept naming the pool the
  * main thread's collections had freed, and the second registration's
  * collections read it. */
 void avant_gc_unregister_thread(void);

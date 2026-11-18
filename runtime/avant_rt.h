@@ -296,8 +296,6 @@ int32_t avant_str_eq(const char *a, const char *b);
 int32_t avant_str_cmp(const char *a, const char *b);
 avant_int avant_str_size(const char *s);
 avant_int avant_str_byte(const char *s, avant_int i);
-int32_t avant_checksum_str(const char *s);
-int32_t avant_checksum_f64(double v);
 char *avant_str_strip(const char *s, int32_t mode);
 void *avant_str_split(const char *s, const char *sep);
 void *avant_str_split_n(const char *s, const char *sep, avant_int limit);
@@ -362,8 +360,6 @@ avant_int avant_base64url_encode_into(const char *s, void *buf);
 avant_int avant_base64url_decode_into(const char *s, void *buf);
 avant_int avant_base64_decode_into(const char *s, void *buf);
 avant_int avant_base64_take_status(void);
-int32_t avant_crc32_bytes(const char *s);
-int32_t avant_sha256_word0(const char *s);
 char *avant_zlib_compress(const char *s);
 char *avant_zlib_uncompress(const char *s);
 avant_int avant_zlib_compress_into(const char *s, void *buf);
@@ -379,8 +375,6 @@ int32_t avant_re_c0(void);
 int32_t avant_re_c1(void);
 void avant_re_set_span(int32_t m0, int32_t m1, int32_t c0, int32_t c1);
 int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
-avant_int avant_wide_op(avant_int op, avant_int a_lo, avant_int a_hi, avant_int b_lo, avant_int b_hi);
-avant_int avant_wide_hi(void);
 
 /* Hash(K, V) (avant_hash.c). The descriptor avant_hash_create takes: the
  * key's width in bytes (AVANT_HASH_K_WIDTH: 1, 2, 4 or 8), whether an
@@ -452,7 +446,6 @@ void avant_hash_clear(void *h);
 void avant_hash_del_sk(void *h, const char *key);
 void avant_hash_del_ik(void *h, avant_int key);
 avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_int stop);
-const char *avant_hash_last_key(void);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
 

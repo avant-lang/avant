@@ -210,21 +210,6 @@ static inline uint32_t hash_seed(void) {
   return hash_seed_draw();
 }
 
-static __thread const char *g_last_key;
-static __thread int g_last_key_rooted;
-
-/* g_last_key names a heap key (or a static string), so it is a root of
- * this thread's collections (avant_gc_add_root), registered the first
- * time a helper that sets it runs. Every write of g_last_key comes after
- * this reset in the same helper. */
-static void last_key_reset(void) {
-  if (!g_last_key_rooted) {
-    g_last_key_rooted = 1;
-    avant_gc_add_root((void **)&g_last_key);
-  }
-  g_last_key = AVANT_STR_EMPTY;
-}
-
 /* What a lookup of an absent key points at: zeros, read by the generated
  * code with the value's type and ignored, since the found flag is 0. A
  * value whose slot is wider than these is read by the generated code
@@ -2369,7 +2354,6 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
   AVANT_GC_SCOPE(2);
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &s);
-  last_key_reset();
   if (!h || !is_str_int(h)) {
     return 0;
   }
@@ -2392,7 +2376,6 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
       avant_trap_overflow();
     }
     *v = c;
-    g_last_key = skey_at(h->keys, e);
     return c;
   }
   ensure_cap(h);
@@ -2410,12 +2393,7 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
   e = claim(h, pos, (uint8_t)(1u | HASH_HEAP_LEN));
   store_str_key(h, e, key, hv);
   *(avant_int *)val_at(h, h->vals, e) = 1;
-  g_last_key = key;
   return 1;
-}
-
-const char *avant_hash_last_key(void) {
-  return g_last_key ? g_last_key : AVANT_STR_EMPTY;
 }
 
 const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
@@ -2494,7 +2472,6 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
   int32_t mask;
   int32_t i;
   int32_t n;
-  last_key_reset();
   if (found) {
     *found = 0;
   }
@@ -2515,7 +2492,6 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
         if (found) {
           *found = 1;
         }
-        g_last_key = slot;
         return *(avant_int *)val_at(h, h->vals, e);
       }
     }

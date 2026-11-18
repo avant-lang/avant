@@ -76,7 +76,6 @@ fn test_holes(c: Checks) {
   c.eq_int(hs.inc_slice("ab ab", 0, 2), 1, "inc_slice 1")
   c.eq_int(hs.inc_slice("ab ab", 3, 5), 2, "inc_slice 2")
   c.eq_int(hs.size, 1, "inc_slice size")
-  c.eq_str(hash_last_key(), "ab", "hash_last_key")
   hs["ab"] = 9
   if v = hs.get_concat("a", "b") {
     c.eq_int(v, 9, "get_concat")
@@ -85,11 +84,8 @@ fn test_holes(c: Checks) {
   }
 
   c.eq_int((str_to_f_slice("x=12.9,", 2, 6) ?? 0.0).to_i(), 12, "str_to_f_slice")
-  lo = wide_op(0, -1, 0, 1, 0)
-  c.eq_int(lo, 0, "wide_op lo")
-  c.eq_int(wide_hi(), 1, "wide_hi")
-  cs = checksum_f64(1.0)
-  c.expect(cs != 0, "checksum_f64")
+  p = bits.mul(18446744073709551615u64, 2u64)
+  c.expect(p.hi == 1u64 && p.lo == 18446744073709551614u64, "bits.mul")
   c.eq_int(4.0.sqrt().to_i(), 2, "sqrt")
   jb = Buf.new(64)
   gen = json.JsonBuilder.into(jb)

@@ -1295,12 +1295,6 @@ pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
   if expr.callee == "sha256" && expr.mod_name.size == 0 {
     return checker_self.check_one_string(expr, checker_self.t_string())
   }
-  if expr.callee == "crc32_bytes" {
-    return checker_self.check_bytes_checksum(expr)
-  }
-  if expr.callee == "sha256_word0" {
-    return checker_self.check_bytes_checksum(expr)
-  }
   nil
 }
 
@@ -1340,25 +1334,6 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
     checker_self.fail(expr.args[1].loc, "${expr.callee} expects String")
   }
   checker_self.t_void()
-}
-
-// crc32_bytes and sha256_word0 take Bytes (the references hash a
-// uint8_t buffer; the Array(Int) form is gone).
-pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
-  if expr.args.size == 1 {
-    if b = expr.block {
-      checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
-      return ty_int32()
-    }
-  } else {
-    checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
-    return ty_int32()
-  }
-  got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
-  if !got.is_bytes() {
-    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Bytes")
-  }
-  ty_int32()
 }
 
 pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
@@ -1444,90 +1419,6 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       checker_self.fail(expr.loc, "start and stop must be Int")
     }
     return ty_nilable(checker_self.t_float())
-  }
-  if expr.callee == "hash_last_key" {
-    if expr.args.size == 0 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "hash_last_key takes no arguments")
-        return checker_self.t_string()
-      }
-      return checker_self.t_string()
-    }
-    checker_self.fail(expr.loc, "hash_last_key takes no arguments")
-    return checker_self.t_string()
-  }
-  if expr.callee == "wide_op" {
-    if expr.args.size == 5 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "wide_op takes five Ints")
-        return checker_self.t_int()
-      }
-    } else {
-      checker_self.fail(expr.loc, "wide_op takes five Ints")
-      return checker_self.t_int()
-    }
-    i = 0
-    while i < expr.args.size {
-      got = checker_self.check_expr_as(expr.args[i], checker_self.t_int())
-      if !got.is_int() {
-        checker_self.fail(expr.args[i].loc, "wide_op expects Int")
-      }
-      i += 1
-    }
-    return checker_self.t_int()
-  }
-  if expr.callee == "wide_hi" {
-    if expr.args.size == 0 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "wide_hi takes no arguments")
-        return checker_self.t_int()
-      }
-      return checker_self.t_int()
-    }
-    checker_self.fail(expr.loc, "wide_hi takes no arguments")
-    return checker_self.t_int()
-  }
-  // The 32-bit checksums (checksum_f64, checksum_str, crc32_bytes,
-  // sha256_word0) are Int32: the bits they always had.
-  if expr.callee == "checksum_f64" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-        return ty_int32()
-      }
-    } else {
-      checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-      return ty_int32()
-    }
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric() {
-      checker_self.fail(expr.args[0].loc, "checksum_f64 expects Float64")
-    }
-    if !got.is_float() {
-      expr.args[0].ty = checker_self.t_float()
-    }
-    return ty_int32()
-  }
-  if expr.callee == "checksum_str" {
-    return checker_self.check_one_string(expr, ty_int32())
-  }
-  if expr.callee == "puts_u" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "puts_u takes one integer")
-        return checker_self.t_void()
-      }
-    } else {
-      checker_self.fail(expr.loc, "puts_u takes one integer")
-      return checker_self.t_void()
-    }
-    // An integer, printed as the unsigned number of its bits at its own
-    // width (an Int as UInt64, an Int32 as UInt32).
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_integer() {
-      checker_self.fail(expr.args[0].loc, "puts_u expects an integer")
-    }
-    return checker_self.t_void()
   }
   nil
 }

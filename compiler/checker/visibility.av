@@ -424,6 +424,20 @@ pub fn removed_prelude_spelling(name: String): String {
   ""
 }
 
+// The message for a call of a prelude function that left the language
+// for a std module or for the program's own code, "" for any other name.
+// Asked only where a call names no function, so a program's own
+// function of that name is its own.
+pub fn left_prelude_text(name: String): String {
+  if name == "puts_u" {
+    return "puts_u is gone: write puts(n.wrap_u32()) for a 32-bit value's unsigned text, puts(n.wrap_u64()) for a 64-bit one"
+  }
+  if name == "crc32_bytes" {
+    return "crc32_bytes is gone: write digest.crc32(b) (import std.digest)"
+  }
+  ""
+}
+
 // A bare name of an imported std module's function: refused with its
 // qualified spelling; a prelude function the language no longer has:
 // refused with the spelling that replaced it; true when refused.
@@ -431,6 +445,11 @@ pub fn (checker_self: Checker) refuse_std_bare(loc: Location, name: String): Boo
   gone = removed_prelude_spelling(name)
   if gone.size > 0 {
     checker_self.fail(loc, "${name} is a Float64 method: write ${gone}")
+    return true
+  }
+  left = left_prelude_text(name)
+  if left.size > 0 {
+    checker_self.fail(loc, left)
     return true
   }
   spelled = checker_self.std_bare_spelling(name)

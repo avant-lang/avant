@@ -223,14 +223,18 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   }
 }
 
-// The runtime entries the LangArena tasks call at the
-// references' widths: crc32_bytes and sha256_word0 take Bytes; the BWT
-// entries take the bytes in a Buf, the suffix array and the inverse's
-// links as Array(Int), the ranks and counts as Array(Int32).
+// The prelude's benchmark names are gone: a call of puts_u or crc32_bytes
+// says what to write instead, a program's own function of such a name
+// is its own (LangArena's helper writes its checksums so), and the
+// unsigned text of an integer is its wrap_u32 or wrap_u64 printed. The
+// BWT entries take the bytes in a Buf, the suffix array and the
+// inverse's links as Array(Int), the ranks and counts as Array(Int32).
 fn byte_entry_cases: Array(FCase) {
   xs: Array(FCase) = []
-  xs.push(accepted("checksum-bytes", "fn main {\n  puts(crc32_bytes(\"123456789\".bytes))\n  puts(sha256_word0(\"123456789\".bytes))\n  puts(sha256_word0(\"\".bytes))\n  b = Buf.new()\n  for r in 0..3 {\n    for i in 0..256 {\n      b.push_byte(i)\n    }\n  }\n  b.push_str(\"xyz\")\n  d = b.to_bytes()\n  puts(crc32_bytes(d))\n  puts(sha256_word0(d))\n}\n", "-873187034\n-1940684025\n1743128938\n1133535873\n950977636\n"))
-  xs.push(refused("checksum-array", "fn main {\n  puts(crc32_bytes([1, 2]))\n}\n", "crc32_bytes expects Bytes"))
+  xs.push(refused("puts-u-gone", "fn main {\n  puts_u(-1)\n}\n", "puts_u is gone: write puts(n.wrap_u32()) for a 32-bit value's unsigned text, puts(n.wrap_u64()) for a 64-bit one"))
+  xs.push(refused("crc32-bytes-gone", "fn main {\n  puts(crc32_bytes(\"a\".bytes))\n}\n", "crc32_bytes is gone: write digest.crc32(b) (import std.digest)"))
+  xs.push(refused("checksum-str-gone", "fn main {\n  puts(checksum_str(\"a\"))\n}\n", "unknown function checksum_str"))
+  xs.push(accepted("own-checksum-str", "fn checksum_str(s: String): Int32 {\n  h: UInt32 = 5381\n  for b in s.bytes {\n    h = (h << 5) &+ h &+ b.wrap_u32()\n  }\n  h.wrap_i32()\n}\nfn puts_u(n: Int32) {\n  puts(n.wrap_u32())\n}\nfn main {\n  puts_u(checksum_str(\"hello\"))\n  x: Int32 = -1\n  puts(x.wrap_u32())\n  puts((0 - 1).wrap_u64())\n}\n", "261238937\n4294967295\n18446744073709551615\n"))
   // One integer spelling: the forms that
   // named Int's for one release are refused with the form to write.
   xs.push(refused("int64-type-removed", "fn main {\n  a: Int64 = 5\n  puts(a)\n}\n", "Int64 was removed: Int is the 64-bit integer (write Int)"))

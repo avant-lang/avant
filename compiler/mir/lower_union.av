@@ -1241,34 +1241,16 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 
 // The builtins of the old back end that need no FFI and are neither
 // string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
-// `argv`, `file_exists`, `env_get`,
-// `wide_op`, `wide_hi`, `checksum_f64`, `sha256`, `crc32_bytes`,
-// `sha256_word0`; nil when c is not one of them.
+// `argv`, `file_exists`, `env_get`, `sha256` (the compiler's own
+// sources only); nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   if c == "env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
   }
-  if c == "wide_op" && e.args.size == 5 {
-    // calls.av:291-309: the arguments last to first, then the call.
-    wops = lw.lower_args_rev(e.args)
-    if lw.failed() {
-      return b.c_i32(0)
-    }
-    lw.at(e.loc)
-    return lw.call_to(mt_int(), "avant_wide_op", wops)
-  }
   f = ""
-  if c == "wide_hi" && e.args.size == 0 {
-    f = "avant_wide_hi"
-  } else if c == "checksum_f64" && e.args.size == 1 {
-    f = "avant_checksum_f64"
-  } else if c == "sha256" && e.args.size == 1 && e.resolved.size == 0 {
+  if c == "sha256" && e.args.size == 1 && e.resolved.size == 0 {
     f = "avant_sha256"
-  } else if c == "crc32_bytes" && e.args.size == 1 {
-    f = "avant_crc32_bytes"
-  } else if c == "sha256_word0" && e.args.size == 1 {
-    f = "avant_sha256_word0"
   } else if c == "#gc.collect" && e.args.size == 0 {
     // std.gc's `gc.collect()` (checker/visibility.av check_gc_call): the
     // runtime's complete collection.
