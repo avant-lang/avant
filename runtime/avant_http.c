@@ -3223,7 +3223,7 @@ static struct us_socket_t *srv_on_writable(struct us_socket_t *s) {
   return s;
 }
 
-static void timers_close(AvantHttpServer *srv);
+static void timers_stop(AvantHttpServer *srv);
 
 static void srv_on_wakeup(struct us_loop_t *loop) {
   HttpLoop *hl = *(HttpLoop **)us_loop_ext(loop);
@@ -3250,8 +3250,13 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
     hl->listen = NULL;
   }
   if (hl == &hl->srv->loops[0]) {
-    /* The program's timers stop with the server. */
-    timers_close(hl->srv);
+    /* The program's timers stop with the server: disarmed here and
+     * closed at teardown, after the loop has ended. Closing one inside
+     * the running loop is not possible: us_poll_free counts every poll
+     * out of the loop's num_polls, a fallthrough timer too, which never
+     * counted in, so the loop's count went one below its sockets and
+     * the loop never ended (serve hung). */
+    timers_stop(hl->srv);
   }
   if (!hl->close_at) {
     hl->close_at = http_now_ms();
@@ -3304,6 +3309,15 @@ static void timer_fire(struct us_timer_t *t) {
   enter_avant();
   (void)avant_task_recover_call(srv->timer_dispatch, srv->state, ht);
   leave_avant();
+}
+
+static void timers_stop(AvantHttpServer *srv) {
+  int i;
+  for (i = 0; i < srv->ntimers; i++) {
+    if (srv->timers[i].t) {
+      us_timer_set(srv->timers[i].t, timer_fire, 0, 0);
+    }
+  }
 }
 
 static void timers_close(AvantHttpServer *srv) {
