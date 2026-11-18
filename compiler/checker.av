@@ -2017,6 +2017,11 @@ pub class Checker {
         fail(stmt.loc, "compound assignment ${compound_text(stmt.op)} needs ${place.show()} to define fn ${fn_op_name(binop)}")
         return
       }
+      if place.is_string() && binop == tk_plus() {
+        // `s += t` is `s = s + t`: a new string.
+        compound_through_method(stmt, target, value, binop, place)
+        return
+      }
       got = place
       if shift_op(binop) {
         // A shift's amount is an Int whatever the shifted type, as in the

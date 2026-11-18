@@ -4,7 +4,7 @@ import backends
 // The refusals of the sequence and array verbs: slices (`xs[a..b]`, the
 // open and inclusive forms, `slice`, `try_slice`), the verbs that take a
 // lambda (`find`, `index_of`, `min_by`, `max_by`, `delete_if`), `fill`,
-// `unique`, `first`, `push_str`'s argument; a function given by name, `insert`, `concat`, `a + b`, `shuffle`'s generator, `try_shl`, and the names with one spelling (`retain`, `remove`); the search methods of String, Bytes and Buf, an array's `index_of` from a start, `join`, `replace`, `pad_left`, `split` with a limit; the traps of `count`, `replace`, `repeat`, `split`'s limit and a pattern or fill byte outside 0..255. What they compute is in
+// `unique`, `first`, `push_str`'s argument; a function given by name, `insert`, `concat`, `a + b`, `shuffle`'s generator, `try_shl`, and the names with one spelling (`retain`, `remove`); the search methods of String, Bytes and Buf, an array's `index_of` from a start, `join`, `replace`, `pad_left`, `split` with a limit, and `-=` on a String (only `+=` joins strings); the traps of `count`, `replace`, `repeat`, `split`'s limit and a pattern or fill byte outside 0..255. What they compute is in
 // the run goldens of tests/fixtures/heap/slices.av, verbs.av and
 // trap_slice.av, and tests/fixtures/strings/search.av, build.av and
 // trap_search_from.av. Each program is compiled in parallel; a refused one must
@@ -69,6 +69,7 @@ fn cases: Array(LCase) {
   xs.push(refused("replace-arity", "fn main {\n  s = \"abc\"\n  puts(s.replace(\"a\"))\n}\n", "replace takes the String to find and the String to put in its place", "3:9"))
   xs.push(refused("pad-fill", "fn main {\n  s = \"7\"\n  puts(s.pad_left(3, \"0\"))\n}\n", "the width and the fill byte of pad_left are Int, got String", "3:22"))
   xs.push(refused("split-limit", "fn main {\n  s = \"a,b\"\n  puts(s.split(\",\", \"2\").size)\n}\n", "the limit of split is an Int, got String", "3:21"))
+  xs.push(refused("minus-eq-string", "fn main {\n  s = \"abc\"\n  s -= \"a\"\n  puts(s)\n}\n", "compound assignment expects a numeric target, got String", "3:5"))
   xs.push(traps("count-empty", "fn main {\n  s = \"abc\"\n  p = \"\"\n  puts(s.count(p))\n}\n", "avant runtime: count of an empty pattern"))
   xs.push(traps("replace-empty", "fn main {\n  s = \"abc\"\n  p = \"\"\n  puts(s.replace(p, \"x\"))\n}\n", "avant runtime: replace of an empty pattern"))
   xs.push(traps("repeat-negative", "fn main {\n  n = -2\n  puts(\"ab\".repeat(n))\n}\n", "avant runtime: repeat count -2 is negative"))

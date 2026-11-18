@@ -1334,6 +1334,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.repeat(n)` | `n` copies of `s`; a negative `n` traps |
 | `s.pad_left(width)`, `s.pad_right(width)`, `s.pad_left(width, '0')` | `s` with spaces (or the byte given) added before or after it up to `width` bytes; `s` itself when it is that long already |
 | `xs.join(sep)` | the strings of an `Array(String)` with `sep` between them |
+| `a += b` | `a = a + b`: a new string (to build a long text piece by piece, a [`Buf`](#bytes-and-buf) copies less) |
 | `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
