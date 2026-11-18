@@ -1167,9 +1167,11 @@ static void str_array_put(AvantArray *a, char *p) {
   *slot = p;
 }
 
-/* Keeps empty fields. Empty separator traps. RC1: the text, the
- * separator and the array are handles across each piece's allocation. */
-void *avant_str_split(const char *s, const char *sep) {
+/* Keeps empty fields. Empty separator traps. At most LIMIT fields (the
+ * last holds the rest of the text, separators and all); a LIMIT below 1
+ * means no limit. RC1: the text, the separator and the array are handles
+ * across each piece's allocation. */
+static void *split_limit(const char *s, const char *sep, int64_t limit) {
   size_t n;
   size_t m;
   size_t i;
@@ -1187,7 +1189,7 @@ void *avant_str_split(const char *s, const char *sep) {
   if (m == 0) {
     avant_trap_text("split separator is empty");
   }
-  for (i = 0; i + m <= n; i++) {
+  for (i = 0; i + m <= n && (limit < 1 || count < limit); i++) {
     if (memcmp(d + i, e, m) == 0) {
       count++;
       i += m - 1;
@@ -1203,7 +1205,7 @@ void *avant_str_split(const char *s, const char *sep) {
   /* RC2: both texts' bytes are formed again after each allocation. */
   d = avant_str_bytes(s, &n);
   e = avant_str_bytes(sep, &m);
-  while (i + m <= n) {
+  while (i + m <= n && a->size + 1 < count) {
     if (memcmp(d + i, e, m) == 0) {
       char *p = str_part(s, start, i - start);
       str_array_put(a, p);
@@ -1220,6 +1222,23 @@ void *avant_str_split(const char *s, const char *sep) {
     str_array_put(a, p);
   }
   return a;
+}
+
+/* gc-lint: holds nothing (split_limit is its only statement). */
+void *avant_str_split(const char *s, const char *sep) {
+  return split_limit(s, sep, 0);
+}
+
+/* s.split(sep, limit): at most LIMIT fields, the last the rest of the
+ * text; a LIMIT below 1 traps. */
+/* gc-lint: holds nothing (split_limit is its last statement). */
+void *avant_str_split_n(const char *s, const char *sep, avant_int limit) {
+  if (limit < 1) {
+    char msg[64];
+    snprintf(msg, sizeof msg, "split limit %lld is less than 1", (long long)limit);
+    avant_trap_text(msg);
+  }
+  return split_limit(s, sep, limit);
 }
 
 /* Splits on runs of ASCII whitespace and drops empty fields. */
@@ -1569,4 +1588,186 @@ char *avant_str_cat_i32(const char *prefix, avant_int n) {
 
 char *avant_str_from_i32_bytes(void *arr) {
   return avant_str_from_int_bytes(arr);
+}
+
+/* s.replace(from, to): every FROM in S, left to right and without
+ * overlapping, replaced by TO; an empty FROM traps (as split's empty
+ * separator does). No FROM: S itself. RC1: the three strings are handles
+ * across the allocation; RC2: their bytes are formed after it. */
+char *avant_str_replace(const char *s, const char *from, const char *to) {
+  size_t n;
+  size_t m;
+  size_t k;
+  size_t i = 0;
+  size_t o = 0;
+  uint64_t count = 0;
+  const char *d;
+  const char *f;
+  const char *t;
+  const char *at;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (!from) {
+    from = AVANT_STR_EMPTY;
+  }
+  if (!to) {
+    to = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  f = avant_str_bytes(from, &m);
+  avant_str_bytes(to, &k);
+  if (m == 0) {
+    avant_trap_text("replace of an empty pattern");
+  }
+  while (i + m <= n && (at = (const char *)memmem(d + i, n - i, f, m)) != NULL) {
+    count++;
+    i = (size_t)(at - d) + m;
+  }
+  if (count == 0) {
+    return (char *)s;
+  }
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &from);
+  AVANT_GC_ROOT(2, &to);
+  p = avant_str_alloc((uint64_t)n - count * (uint64_t)m + count * (uint64_t)k);
+  d = avant_str_bytes(s, &n);
+  f = avant_str_bytes(from, &m);
+  t = avant_str_bytes(to, &k);
+  i = 0;
+  while (i + m <= n && (at = (const char *)memmem(d + i, n - i, f, m)) != NULL) {
+    size_t j = (size_t)(at - d);
+    memcpy(p + o, d + i, j - i);
+    o += j - i;
+    memcpy(p + o, t, k);
+    o += k;
+    i = j + m;
+  }
+  memcpy(p + o, d + i, n - i);
+  o += n - i;
+  p[o] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.repeat(n): N copies of S one after another; a negative N traps. RC1:
+ * S is a handle across the allocation. */
+char *avant_str_repeat(const char *s, avant_int count) {
+  size_t n;
+  uint64_t total;
+  size_t i;
+  const char *d;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (count < 0) {
+    avant_trap_negative(count, 2);
+  }
+  avant_str_bytes(s, &n);
+  if (count == 0 || n == 0) {
+    return empty_str();
+  }
+  if (count == 1) {
+    return (char *)s;
+  }
+  if (__builtin_mul_overflow((uint64_t)n, (uint64_t)count, &total)) {
+    total = UINT64_MAX;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc(total);
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < (size_t)count; i++) {
+    memcpy(p + i * n, d, n);
+  }
+  p[total] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.pad_left(width, fill) (LEFT 1) and s.pad_right(width, fill) (LEFT
+ * 0): S with the byte FILL added before or after it up to WIDTH bytes; S
+ * itself when it has WIDTH bytes or more. A FILL outside 0..255 traps.
+ * RC1: S is a handle across the allocation. */
+char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left) {
+  size_t n;
+  size_t extra;
+  const char *d;
+  char *p;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if ((uint64_t)fill > 255u) {
+    avant_trap_byte(fill);
+  }
+  avant_str_bytes(s, &n);
+  if (width <= 0 || (uint64_t)width <= (uint64_t)n) {
+    return (char *)s;
+  }
+  extra = (size_t)width - n;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc((uint64_t)width);
+  d = avant_str_bytes(s, &n);
+  if (left) {
+    memset(p, (unsigned char)fill, extra);
+    memcpy(p + extra, d, n);
+  } else {
+    memcpy(p, d, n);
+    memset(p + n, (unsigned char)fill, extra);
+  }
+  p[width] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* xs.join(sep) of an Array(String): the elements in order with SEP
+ * between them; an empty array is "", one element is that element. RC1:
+ * the array and the separator are handles across the allocation; RC2:
+ * every element's bytes are formed after it. */
+char *avant_str_join(void *arr, const char *sep) {
+  AvantArray *a = (AvantArray *)arr;
+  size_t m;
+  size_t n;
+  uint64_t total = 0;
+  int32_t i;
+  size_t o = 0;
+  const char *e;
+  char *p;
+  if (!sep) {
+    sep = AVANT_STR_EMPTY;
+  }
+  if (!a || a->size <= 0) {
+    return empty_str();
+  }
+  if (a->size == 1) {
+    char *only = ((char **)a->buf)[0];
+    return only ? only : empty_str();
+  }
+  avant_str_bytes(sep, &m);
+  for (i = 0; i < a->size; i++) {
+    avant_str_bytes(((char **)a->buf)[i], &n);
+    total += (uint64_t)n;
+  }
+  total += (uint64_t)m * (uint64_t)(a->size - 1);
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &sep);
+  p = avant_str_alloc(total);
+  e = avant_str_bytes(sep, &m);
+  for (i = 0; i < a->size; i++) {
+    const char *d = avant_str_bytes(((char **)a->buf)[i], &n);
+    if (i > 0) {
+      memcpy(p + o, e, m);
+      o += m;
+    }
+    memcpy(p + o, d, n);
+    o += n;
+  }
+  p[o] = 0;
+  avant_str_tag(p);
+  return p;
 }

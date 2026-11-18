@@ -1315,7 +1315,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `a + b` | a new string |
 | `a == b`, `a != b` | equality by content |
 | `a < b`, `<=`, `>`, `>=` | byte order, a prefix first: the order `sort`, `min` and `max` use |
-| `s.split(sep)` | `Array(String)`, empty fields kept; an empty separator traps |
+| `s.split(sep)`, `s.split(sep, limit)` | `Array(String)`, empty fields kept; with a limit, at most `limit` fields, the last holding the rest (`"k=v=w".split("=", 2)` is `["k", "v=w"]`); an empty separator or a limit below 1 traps |
 | `s.fields()` | split on runs of whitespace, empty fields dropped |
 | `s.strip()`, `s.strip_left()`, `s.strip_right()` | whitespace trimmed |
 | `s.chars()` | `Array(String)`, one per code point |
@@ -1325,6 +1325,15 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s[a..b]`, `s[a..]`, `s[..b]`, `s[a..=b]` | a [slice](#slices): the bytes `a` up to `b` (`..=` includes `b`), a new `String` |
 | `s.slice(a, b)`, `s.slice(a)`, `s.try_slice(...)` | the same slices as calls; `try_slice` gives `nil` where the slice would trap |
 | `s.is_empty()` | `s.size == 0` |
+| `s.contains(p)` | `Bool`: whether `p` occurs in `s` |
+| `s.index_of(p)`, `s.index_of(p, from)` | `Int?`: the first position of `p`, searching `s[from..]` (positions still counted from the start of `s`); a `from` outside `0..size` traps as that slice does |
+| `s.last_index_of(p)` | `Int?`: the last position of `p` |
+| `s.starts_with(p)`, `s.ends_with(p)` | `Bool` |
+| `s.count(p)` | how many times `p` occurs, without overlapping (`"aaaa".count("aa")` is 2); an empty `p` traps |
+| `s.replace(from, to)` | a new string with every `from`, left to right and without overlapping, replaced by `to`; an empty `from` traps |
+| `s.repeat(n)` | `n` copies of `s`; a negative `n` traps |
+| `s.pad_left(width)`, `s.pad_right(width)`, `s.pad_left(width, '0')` | `s` with spaces (or the byte given) added before or after it up to `width` bytes; `s` itself when it is that long already |
+| `xs.join(sep)` | the strings of an `Array(String)` with `sep` between them |
 | `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
@@ -1332,7 +1341,29 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
 | `String.from_code_point(n)` | the UTF-8 of one code point; traps outside `0..0x10FFFF` and on a surrogate |
 
-`String` has no `contains`, `starts_with`, `index_of`, `replace`, `join` or case conversion yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) finds, replaces and splits.
+The pattern `p` of `contains`, `index_of`, `last_index_of`, `starts_with`, `ends_with` and `count` is a `String`, `Bytes`, `Buf` or one byte, an `Int` as `s[i]` gives (`'/'`, or its number; outside `0..255` it traps); the same methods search `Bytes` and `Buf`. A search reads the bytes in place, a slice's included, and allocates nothing; `index_of` with a start walks every match without slicing:
+
+```avant
+fn main {
+  path = "/api/v1/users/"
+  puts(path.contains("v1"))                    // => true
+  puts(path.index_of('/', 1) ?? -1)            // => 4
+  puts(path.last_index_of('/') ?? -1)          // => 13
+  puts(path.ends_with("/"))                    // => true
+  puts(path.count('/'))                        // => 4
+  puts(path.replace("/", "."))                 // => .api.v1.users.
+  puts(path.split("/", 3)[2])                  // => v1/users/
+  puts(["a", "b", "c"].join(", "))             // => a, b, c
+  puts("7".pad_left(3, '0'))                   // => 007
+  at = 0
+  while i = path.index_of('/', at) {
+    at = i + 1
+  }
+  puts(at)                                     // => 14
+}
+```
+
+Case conversion is not built yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) matches patterns.
 
 ### Parsing numbers
 
@@ -1389,6 +1420,7 @@ fn main {
 | `b.size`, `b[i]`, `b.get(i)` | as for `String` |
 | `b[a..b]`, `b[a..]`, `b[..b]`, `b.slice(start, stop)`, `b.slice(start)`, `b.try_slice(...)` | a new `Bytes`, as a [slice](#slices) of a `String` |
 | `b.is_empty()` | `b.size == 0` |
+| `b.contains(p)`, `b.index_of(p)`, `b.index_of(p, from)`, `b.last_index_of(p)`, `b.starts_with(p)`, `b.ends_with(p)`, `b.count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte |
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
@@ -1402,7 +1434,7 @@ fn main {
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
 | `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
 | `buf.is_empty()` | `buf.size == 0` |
-| `starts_with(s)` | `Bool` |
+| `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`, `starts_with(p)`, `ends_with(p)`, `count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte, read in place |
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
 
@@ -1516,7 +1548,7 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 | `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
 | `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
 | `xs.reverse()`, `xs.reversed()` | reverse in place; the same as a new array |
-| `xs.has(v)`, `xs.index_of(v)`, `xs.unique()` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused; `unique` is a new array of each value's first occurrence, in order |
+| `xs.has(v)`, `xs.index_of(v)`, `xs.index_of(v, from)`, `xs.last_index_of(v)`, `xs.unique()` | `Bool`; `Int?`, the first position (from `from` on, which outside `0..size` traps as `xs[from..]` does) or the last; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused; `unique` is a new array of each value's first occurrence, in order |
 | `xs.find (x) { ... }`, `xs.index_of (x) { ... }` | the first element the lambda says `true` for (`T?`), or its position (`Int?`); the walk stops there |
 | `xs.min_by (x) { key }`, `xs.max_by (x) { key }` | the first element of the smallest or largest key (`T?`), the key a number, `String` or `Bytes`, computed once per element |
 | `xs.delete_if (x) { ... }` | remove the elements the lambda says `true` for, in place, keeping the others in order |
@@ -1526,7 +1558,8 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 | `xs.parallel (x) { ... }` | a new array, computed [in parallel](#parallel) |
 
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
-- No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
+- `xs.join(sep)` joins an `Array(String)` ([String operations](#string-operations)).
+- No `map`, `select` or `reduce` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
 - `sort` and `sorted` are stable: elements neither of which comes before the other keep their order (with a lambda, one that says whether `a` comes strictly first, `a.x < b.x`, never `<=`).
 - Those builtins (but `parallel`) take a function too, by its name or as a variable holding one: `xs.each(show)`, `xs.any(is_big)`, `xs.sort(by_age)` run the same loop with one call of it per element; a lambda written there is inlined instead.
 - One spelling each: `delete_if` (no `retain`), `unique` (no in-place twin), `delete_at` (no `remove`).
@@ -4867,7 +4900,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
-| `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion | planned | slices, loops, [`std.regex`](#stdregex) |
+| `String` case conversion and case-insensitive comparison, `lines`, removing a given prefix or suffix | planned | a loop over the bytes, `split("\n")`, `ends_with` and a slice |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |

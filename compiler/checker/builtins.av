@@ -132,15 +132,60 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
     return checker_self.t_string()
   }
   if expr.callee == "split" {
-    if expr.args.size != 1 {
-      checker_self.fail(expr.loc, "split takes one String separator")
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "split takes a String separator and an optional limit, split(sep, limit)")
       return ty_array(checker_self.t_string())
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
     if !ty_assignable(got, checker_self.t_string()) {
       checker_self.fail(expr.args[0].loc, "split expects String separator")
     }
+    if expr.args.size == 2 {
+      lim = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+      if !lim.is_int() {
+        checker_self.fail(expr.args[1].loc, "the limit of split is an Int, got ${lim.show()}")
+      }
+    }
     return ty_array(checker_self.t_string())
+  }
+  if expr.callee == "replace" {
+    if expr.args.size != 2 {
+      checker_self.fail(expr.loc, "replace takes the String to find and the String to put in its place, replace(from, to)")
+      return checker_self.t_string()
+    }
+    for a in expr.args {
+      got = checker_self.check_expr_as(a, checker_self.t_string())
+      if !ty_assignable(got, checker_self.t_string()) {
+        checker_self.fail(a.loc, "replace expects String, got ${got.show()}")
+        return checker_self.t_string()
+      }
+    }
+    return checker_self.t_string()
+  }
+  if expr.callee == "repeat" {
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "repeat takes one Int, the count")
+      return checker_self.t_string()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if !got.is_int() {
+      checker_self.fail(expr.args[0].loc, "the count of repeat is an Int, got ${got.show()}")
+    }
+    return checker_self.t_string()
+  }
+  if expr.callee == "pad_left" || expr.callee == "pad_right" {
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "${expr.callee} takes a width and an optional fill byte, ${expr.callee}(width, ' ')")
+      return checker_self.t_string()
+    }
+    for a in expr.args {
+      got = checker_self.check_expr_as(a, checker_self.t_int())
+      if !got.is_int() {
+        checker_self.fail(a.loc, "the width and the fill byte of ${expr.callee} are Int, got ${got.show()}")
+        return checker_self.t_string()
+      }
+    }
+    return checker_self.t_string()
   }
   if expr.callee == "fields" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "fields takes no arguments")
@@ -549,8 +594,8 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       checker_self.fail(expr.loc, "index_of takes a value or a function, not both")
       return ty_nilable(checker_self.t_int())
     }
-    if expr.args.size != 1 {
-      checker_self.fail(expr.loc, "index_of takes one argument")
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "index_of takes a value and an optional start, index_of(v, from)")
       return ty_nilable(checker_self.t_int())
     }
     if e = array.inner {
@@ -559,7 +604,35 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.fail(expr.args[0].loc, "index_of expects ${e.show()}")
         return ty_nilable(checker_self.t_int())
       }
+      if expr.args.size == 2 {
+        ft = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+        if !ft.is_int() {
+          checker_self.fail(expr.args[1].loc, "the start of index_of is an Int, got ${ft.show()}")
+          return ty_nilable(checker_self.t_int())
+        }
+        checker_self.search_array_from(expr, e)
+        return ty_nilable(checker_self.t_int())
+      }
       checker_self.search_by_eq(expr, e)
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if expr.callee == "last_index_of" {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "last_index_of does not take a block")
+      return ty_nilable(checker_self.t_int())
+    }
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "last_index_of takes one value")
+      return ty_nilable(checker_self.t_int())
+    }
+    if e = array.inner {
+      got = checker_self.check_expr_as(expr.args[0], e)
+      if !ty_assignable(got, e) {
+        checker_self.fail(expr.args[0].loc, "last_index_of expects ${e.show()}")
+        return ty_nilable(checker_self.t_int())
+      }
+      checker_self.search_array_from(expr, e)
     }
     return ty_nilable(checker_self.t_int())
   }

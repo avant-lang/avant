@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "avant_fmt.h"
@@ -545,4 +546,144 @@ int32_t avant_buf_starts(void *buf, const char *s) {
     return 0;
   }
   return memcmp(b->data, s, n) == 0 ? 1 : 0;
+}
+
+/* The bytes of a sequence for the search methods: a Buf when KIND is 1,
+ * else a String or Bytes (flat or a view). Read in place; the searches
+ * below never allocate, so the address stays valid while they run. */
+static const char *seq_bytes(void *p, int32_t kind, size_t *n) {
+  if (kind == 1) {
+    AvantBuf *b = (AvantBuf *)p;
+    if (!b || !b->data || b->size <= 0) {
+      *n = 0;
+      return "";
+    }
+    *n = (size_t)b->size;
+    return (const char *)b->data;
+  }
+  return avant_str_bytes((const char *)p, n);
+}
+
+/* The last place of the NN bytes of ND in the HN bytes of H, or -1: a
+ * backward scan, memcmp at each place whose first byte matches. */
+static avant_int seq_last(const char *h, size_t hn, const char *nd, size_t nn) {
+  size_t i;
+  if (nn > hn) {
+    return -1;
+  }
+  i = hn - nn + 1;
+  while (i > 0) {
+    i--;
+    if (h[i] == nd[0] && memcmp(h + i, nd, nn) == 0) {
+      return (avant_int)i;
+    }
+  }
+  return -1;
+}
+
+/* The first place of the NN bytes of ND (NN of 2 or more) in the HN
+ * bytes of H, or NULL. memchr finds each place that starts with ND's
+ * first byte and memcmp tests it: little setup, so a walk over many
+ * matches (index_of with a start, count) pays little per match, and a
+ * rare first byte is skipped at memchr's speed. After 16 places that
+ * start alike but differ (a common first byte), memmem takes the rest,
+ * its setup paid once. */
+static const char *seq_find_from(const char *h, size_t hn, const char *nd, size_t nn) {
+  const char *p = h;
+  const char *last;
+  int misses = 0;
+  if (nn > hn) {
+    return NULL;
+  }
+  last = h + (hn - nn);
+  while (p <= last && (p = (const char *)memchr(p, (unsigned char)nd[0], (size_t)(last - p) + 1)) != NULL) {
+    if (memcmp(p, nd, nn) == 0) {
+      return p;
+    }
+    p++;
+    if (++misses == 16) {
+      return (const char *)memmem(p, (size_t)(h + hn - p), nd, nn);
+    }
+  }
+  return NULL;
+}
+
+/* One search of the N bytes of ND in the HN bytes of H. MODE: 0 the
+ * first place at or after FROM (-1 when there is none; FROM outside
+ * 0..HN traps as the slice h[from..] does), 1 the last place, 2 whether H
+ * starts with ND, 3 whether it ends with it, 4 how many times ND occurs
+ * without overlapping (an empty ND traps). An empty ND is found at FROM
+ * (0) and at the end (1). */
+static avant_int seq_search(const char *h, size_t hn, const char *nd, size_t nn, avant_int from, int32_t mode) {
+  const char *at;
+  avant_int count = 0;
+  size_t i = 0;
+  switch (mode) {
+  case 0:
+    if (from < 0 || (uint64_t)from > (uint64_t)hn) {
+      avant_trap_slice(from, (avant_int)hn, (avant_int)hn);
+    }
+    if (nn == 0) {
+      return from;
+    }
+    if (nn > hn - (size_t)from) {
+      return -1;
+    }
+    if (nn == 1) {
+      at = (const char *)memchr(h + from, (unsigned char)nd[0], hn - (size_t)from);
+    } else {
+      at = seq_find_from(h + from, hn - (size_t)from, nd, nn);
+    }
+    return at ? (avant_int)(at - h) : -1;
+  case 1:
+    if (nn == 0) {
+      return (avant_int)hn;
+    }
+    return seq_last(h, hn, nd, nn);
+  case 2:
+    return nn <= hn && (nn == 0 || memcmp(h, nd, nn) == 0) ? 1 : 0;
+  case 3:
+    return nn <= hn && (nn == 0 || memcmp(h + hn - nn, nd, nn) == 0) ? 1 : 0;
+  default:
+    if (nn == 0) {
+      avant_trap_text("count of an empty pattern");
+    }
+    while (i + nn <= hn) {
+      if (nn == 1) {
+        at = (const char *)memchr(h + i, (unsigned char)nd[0], hn - i);
+      } else {
+        at = seq_find_from(h + i, hn - i, nd, nn);
+      }
+      if (!at) {
+        break;
+      }
+      count++;
+      i = (size_t)(at - h) + nn;
+    }
+    return count;
+  }
+}
+
+/* The search methods of String, Bytes and Buf (contains, index_of,
+ * last_index_of, starts_with, ends_with, count): the receiver HAY and
+ * the pattern NEEDLE, each a Buf when its kind is 1 and a String or
+ * Bytes otherwise, both read in place (a view's bytes are its base's). */
+avant_int avant_seq_find(void *hay, int32_t hay_kind, void *needle, int32_t needle_kind, avant_int from, int32_t mode) {
+  size_t hn;
+  size_t nn;
+  const char *h = seq_bytes(hay, hay_kind, &hn);
+  const char *nd = seq_bytes(needle, needle_kind, &nn);
+  return seq_search(h, hn, nd, nn, from, mode);
+}
+
+/* The same with one byte as the pattern (0..255, else a trap). */
+avant_int avant_seq_find_byte(void *hay, int32_t hay_kind, avant_int byte, avant_int from, int32_t mode) {
+  size_t hn;
+  char c;
+  const char *h = seq_bytes(hay, hay_kind, &hn);
+  if ((uint64_t)byte > 255u) {
+    avant_trap_byte(byte);
+  }
+  c = (char)(unsigned char)byte;
+  return seq_search(h, hn, &c, 1, from, mode);
 }

@@ -913,6 +913,16 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if name == "get" {
     return lw.lower_get(e, recv, rt, args)
   }
+  if name == "join" && args.size == 1 {
+    // An Array(String)'s elements with the separator between them: the
+    // separator, then the array; the result allocated once.
+    ops = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    return lw.str_call("avant_str_join", ops)
+  }
   if name == "index_of" || name == "min" || name == "max" {
     return lw.lower_arr_opt(e, recv, rt, name, args)
   }

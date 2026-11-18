@@ -61,6 +61,9 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
     checker_self.call_verb_template(expr, "__avant_${c}", object)
     return res
   }
+  if (object.is_string() || object.is_bytes() || object.is_buf()) && is_search_verb(c) {
+    return checker_self.check_search_verb(expr, object)
+  }
   if (c == "slice" || c == "try_slice") && seq {
     res = object
     if c == "try_slice" {
@@ -93,6 +96,76 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
   nil
 }
 
+// The search methods String, Bytes and Buf share.
+pub fn is_search_verb(c: String): Bool {
+  c == "contains" || c == "index_of" || c == "last_index_of" || c == "starts_with" || c == "ends_with" || c == "count"
+}
+
+// `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`,
+// `starts_with(p)`, `ends_with(p)` and `count(p)` on a String, Bytes or
+// Buf: the pattern p is a String, Bytes, Buf or one byte (an Int, as
+// `s[i]` gives); `from` is an Int, the start of the search.
+pub fn (checker_self: Checker) check_search_verb(expr: Expr, object: Ty): Ty {
+  c = expr.callee
+  res = checker_self.t_bool()
+  if c == "index_of" || c == "last_index_of" {
+    res = ty_nilable(checker_self.t_int())
+  } else if c == "count" {
+    res = checker_self.t_int()
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${c} does not take a block")
+    return res
+  }
+  most = 1
+  if c == "index_of" {
+    most = 2
+  }
+  if expr.args.size < 1 || expr.args.size > most {
+    shape = "one pattern: a String, Bytes, Buf or a byte"
+    if c == "index_of" {
+      shape = "a pattern (a String, Bytes, Buf or a byte) and an optional start, index_of(p, from)"
+    }
+    checker_self.fail(expr.loc, "${c} takes ${shape}")
+    return res
+  }
+  got = checker_self.check_expr(expr.args[0])
+  if !(got.is_string() || got.is_bytes() || got.is_buf() || got.is_int()) {
+    checker_self.fail(expr.args[0].loc, "the pattern of ${c} is a String, Bytes, Buf or a byte (Int), got ${got.show()}")
+    return res
+  }
+  if expr.args.size == 2 {
+    ft = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if !ft.is_int() {
+      checker_self.fail(expr.args[1].loc, "the start of index_of is an Int, got ${ft.show()}")
+    }
+  }
+  res
+}
+
+// `xs.index_of(v, from)` and `xs.last_index_of(v)` (expr, its arguments
+// checked) with elements of type e: the loop of the template, comparing
+// by the element's == as `index_of(v)` does; `from` outside 0..size traps
+// as the slice xs[from..] does.
+pub fn (checker_self: Checker) search_array_from(expr: Expr, e: Ty) {
+  if !(e.is_integer() || e.is_float() || e.is_bool() || e.is_string() || (e.is_class() && !checker_self.user_op(e, "=="))) {
+    seen: Array(String) = []
+    missing = checker_self.eq_missing(e, seen)
+    if missing.size > 0 || (e.is_union() && !e.is_nilable()) {
+      checker_self.fail(expr.loc, "${expr.callee} compares the elements with ==: ${checker_self.eq_refusal(e, missing)}")
+      return
+    }
+    if e.is_struct() {
+      checker_self.derive_eq_method(e, expr.loc)
+    }
+  }
+  name = "__avant_index_of_from"
+  if expr.callee == "last_index_of" {
+    name = "__avant_last_index_of"
+  }
+  checker_self.call_verb_template(expr, name, e)
+}
+
 // The array verbs without a function argument: `dup`, `reversed`,
 // `first`, `last`, `unique`, and `fill` of any element type. nil for
 // another name.
@@ -112,6 +185,25 @@ pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): T
     }
     checker_self.fail_hint(expr.loc, "no method ${c} on ${array.show()}", hint)
     return checker_self.t_void()
+  }
+  if c == "join" {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "join does not take a block")
+      return checker_self.t_string()
+    }
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "join takes one String, the separator")
+      return checker_self.t_string()
+    }
+    if !e.is_string() {
+      checker_self.fail(expr.loc, "join takes an Array(String), got ${array.show()}: push each element's text (\"\${x}\") into an Array(String) first")
+      return checker_self.t_string()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if !ty_assignable(got, checker_self.t_string()) {
+      checker_self.fail(expr.args[0].loc, "join expects a String separator, got ${got.show()}")
+    }
+    return checker_self.t_string()
   }
   if !(c == "dup" || c == "reversed" || c == "first" || c == "last" || c == "unique") {
     return nil
@@ -346,6 +438,12 @@ pub fn verb_template_source(name: String): String {
   }
   if name == "__avant_fill" {
     return "fn __avant_fill(xs: Array(T), v: T) {\n  i = 0\n  while i < xs.size {\n    xs[i] = v\n    i += 1\n  }\n}\n"
+  }
+  if name == "__avant_index_of_from" {
+    return "fn __avant_index_of_from(xs: Array(T), v: T, from: Int): Int? {\n  if from < 0 || from > xs.size {\n    _ = xs.slice(from)\n  }\n  i = from\n  while i < xs.size {\n    if xs[i] == v {\n      return i\n    }\n    i += 1\n  }\n  nil\n}\n"
+  }
+  if name == "__avant_last_index_of" {
+    return "fn __avant_last_index_of(xs: Array(T), v: T): Int? {\n  i = xs.size - 1\n  while i >= 0 {\n    if xs[i] == v {\n      return i\n    }\n    i -= 1\n  }\n  nil\n}\n"
   }
   if name == "__avant_try_delete_at" {
     return "fn __avant_try_delete_at(xs: Array(T), i: Int): T? {\n  if i < 0 || i >= xs.size {\n    return nil\n  }\n  xs.delete_at(i)\n}\n"

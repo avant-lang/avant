@@ -310,6 +310,11 @@ int32_t avant_checksum_str(const char *s);
 int32_t avant_checksum_f64(double v);
 char *avant_str_strip(const char *s, int32_t mode);
 void *avant_str_split(const char *s, const char *sep);
+void *avant_str_split_n(const char *s, const char *sep, avant_int limit);
+char *avant_str_replace(const char *s, const char *from, const char *to);
+char *avant_str_repeat(const char *s, avant_int count);
+char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left);
+char *avant_str_join(void *arr, const char *sep);
 void *avant_str_fields(const char *s);
 char *avant_str_from_utf8(const char *s, int32_t *found);
 /* String.code_points (and Bytes'): each code point's number, an
@@ -352,6 +357,8 @@ void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs,
  * a pointer kept across the growth faults and is reported. */
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
+avant_int avant_seq_find(void *hay, int32_t hay_kind, void *needle, int32_t needle_kind, avant_int from, int32_t mode);
+avant_int avant_seq_find_byte(void *hay, int32_t hay_kind, avant_int byte, avant_int from, int32_t mode);
 
 char *avant_base64_encode(const char *s);
 char *avant_base64_decode(const char *s);

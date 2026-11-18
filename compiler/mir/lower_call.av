@@ -199,6 +199,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
         args2.push(y)
         return lw.call_to(mt_f64(), float_math_binary(e.callee), args2)
       }
+      if (mir_is_str_ty(rt) || rt.is_buf()) && e.resolved.size == 0 {
+        if found = lw.seq_search(e, recv, rt, e.callee, e.args) {
+          return found
+        }
+      }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
       }

@@ -308,7 +308,7 @@ void avant_trap_precision(avant_int prec) {
 }
 
 /* A negative count where a size is meant. what names the
- * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
+ * operation: 0 Array(T).new's size, 1 repeat_byte's count, 2 repeat's. */
 /* A size or capacity past its ceiling (avant_rt.h,
  * AVANT_SIZE_MAX): kind is AVANT_SIZE_STRING, _BUF, _ARRAY or _HASH. */
 void avant_trap_size(int32_t kind) {
@@ -330,9 +330,9 @@ void avant_trap_size_at(int32_t kind, int32_t site) {
 }
 
 void avant_trap_negative(avant_int n, int32_t what) {
-  static const char *names[] = {"Array size", "repeat_byte count"};
+  static const char *names[] = {"Array size", "repeat_byte count", "repeat count"};
   trap_head();
-  trap_out("%s %lld is negative", names[what == 1 ? 1 : 0], (long long)n);
+  trap_out("%s %lld is negative", names[what >= 0 && what <= 2 ? what : 0], (long long)n);
   trap_tail();
 }
 
