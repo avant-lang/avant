@@ -183,24 +183,7 @@ pub struct Response {
 }
 
 fn is_managed_header(name: String): Bool {
-  name_is(name, "content-length") || name_is(name, "connection")
-}
-
-fn name_is(name: String, lit: String): Bool {
-  if name.size != lit.size {
-    return false
-  }
-  for i in 0..name.size {
-    a = name[i]
-    b = lit[i]
-    if a >= 65 && a <= 90 {
-      a += 32
-    }
-    if a != b {
-      return false
-    }
-  }
-  true
+  name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("connection")
 }
 
 // One WebSocket message. `body` is the one collector copy of the
@@ -963,7 +946,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     // URL's, it made two Host lines, which a server refuses.
     host_value = p.authority
     for h in headers {
-      if name_is(h.name, "host") {
+      if h.name.eq_ignore_ascii_case("host") {
         host_value = h.value
       }
     }
@@ -975,7 +958,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     // Content-Length line from the caller was a second reading of where
     // the body ends, as Response.header skips them.
     while i < headers.size {
-      if !is_managed_header(headers[i].name) && !name_is(headers[i].name, "host") {
+      if !is_managed_header(headers[i].name) && !headers[i].name.eq_ignore_ascii_case("host") {
         buf.push_str(headers[i].name)
         buf.push_str(": ")
         buf.push_str(headers[i].value)
