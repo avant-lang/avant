@@ -940,12 +940,14 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
 
 // The members of String and Bytes that make an Array or a Buf
 // (the old back end): `split(sep)` (the separator,
-// then the string), `fields`, `lines`, `chars`, `code_points`, `Bytes.to_buf`;
+// then the string; Bytes too), `fields`, `lines`, `chars`, `code_points`, `Bytes.to_buf`;
 // nil when name is not one of them.
 pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
   f = ""
   n = 0
-  if rt.is_string() && name == "split" {
+  if (rt.is_string() || rt.is_bytes()) && name == "split" {
+    // Bytes splits as a String does (one representation); its parts
+    // are Bytes.
     f = "avant_str_split"
     n = 1
     if args.size == 2 {

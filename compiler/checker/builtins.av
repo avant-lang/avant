@@ -126,6 +126,27 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
   if expr.callee == "code_points" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_int()), "code_points takes no arguments")
   }
+  // String's split and strip, over bytes: the parts are Bytes.
+  if expr.callee == "split" {
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "split takes a separator (Bytes or a String) and an optional limit, split(sep, limit)")
+      return ty_array(checker_self.t_bytes())
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if !got.is_bytes() && !got.is_string() {
+      checker_self.fail(expr.args[0].loc, "the separator of split is Bytes or a String, got ${got.show()}")
+    }
+    if expr.args.size == 2 {
+      lim = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+      if !lim.is_int() {
+        checker_self.fail(expr.args[1].loc, "the limit of split is an Int, got ${lim.show()}")
+      }
+    }
+    return ty_array(checker_self.t_bytes())
+  }
+  if expr.callee == "strip" || expr.callee == "strip_left" || expr.callee == "strip_right" {
+    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "${expr.callee} takes no arguments")
+  }
   none: Ty? = nil
   checker_self.dispatch_method(expr, checker_self.t_bytes(), none)
 }

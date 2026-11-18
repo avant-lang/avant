@@ -1436,6 +1436,8 @@ fn main {
 | `b.is_empty()` | `b.size == 0` |
 | `b.contains(p)`, `b.index_of(p)`, `b.index_of(p, from)`, `b.last_index_of(p)`, `b.starts_with(p)`, `b.ends_with(p)`, `b.count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte |
 | `b.eq_ignore_ascii_case(t)` | as for `String`, `t` a `String`, `Bytes` or `Buf` |
+| `b.split(sep)`, `b.split(sep, limit)` | `Array(Bytes)`, as `String.split`, `sep` `Bytes` or a `String` |
+| `b.strip()`, `b.strip_left()`, `b.strip_right()` | ASCII whitespace trimmed, a `Bytes` |
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
