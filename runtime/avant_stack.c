@@ -17,9 +17,9 @@
 #include <unistd.h>
 
 /* A stack overflow's message. Each thread the runtime registers (the main
- * thread, a pool worker, an HTTP loop, a C thread at its first callback
- * that allocates, or at its first callback in a program that spawns or
- * serves HTTP: avant_stack_ensure) gets a small signal stack of its own
+ * thread, a pool worker, an HTTP loop, a C thread at its first callback:
+ * avant_stack_ensure, which every callback's thunk calls) gets a small
+ * signal stack of its own
  * (sigaltstack), and the process a
  * SIGSEGV handler that runs on it: a fault at the end of the thread's
  * stack (in or just below its guard) is a stack overflow, which prints
@@ -148,16 +148,25 @@ void avant_stack_thread_init(void *lo, void *hi, int foreign) {
   (void)pthread_setspecific(st_key, st_alt);
 }
 
-/* A callback's entry on a thread the collector does not know yet (a C
- * thread whose callback has not allocated): the thread gets its signal
+/* A callback's entry (its thunk calls this, or avant_task_cb_enter in a
+ * program that spawns or serves HTTP): a thread the collector does not
+ * know yet (a C thread whose callback has not allocated) gets its signal
  * stack now, as a C thread; its registration, if it comes, keeps it. */
+static __attribute__((noinline, cold)) void stack_ensure_slow(void);
+
 void avant_stack_ensure(void) {
+  /* Every callback's entry: the test alone, with no frame of locals (so
+   * no stack protector), the rest out of line. */
+  if (__builtin_expect(st_lo != 0, 1)) {
+    return;
+  }
+  stack_ensure_slow();
+}
+
+static void stack_ensure_slow(void) {
   pthread_attr_t attr;
   void *addr = NULL;
   size_t sz = 0;
-  if (st_lo) {
-    return;
-  }
   if (pthread_getattr_np(pthread_self(), &attr) != 0) {
     return;
   }
@@ -444,6 +453,31 @@ static void chain(int sig, siginfo_t *si, void *ucv) {
   raise(sig);
 }
 
+/* stdout's buffered bytes, written with write(2), when the fault is
+ * inside the C library. A write to the stream copies its bytes into the
+ * buffer before it moves the write pointer, so [write base, write
+ * pointer) holds whole earlier writes, never part of the one under way
+ * and never bytes already written out (a flush moves the pointer back as
+ * soon as its write returns); the process ends next, so the buffer is not
+ * flushed again. glibc's FILE fields; on another C library, nothing. */
+static void out_pending(void) {
+#if defined(__GLIBC__)
+  FILE *f = stdout;
+  const char *b = f->_IO_write_base;
+  const char *p = f->_IO_write_ptr;
+  if (!b || !p || p <= b || !f->_IO_buf_base || b < f->_IO_buf_base || p > f->_IO_buf_end) {
+    return;
+  }
+  while (b < p) {
+    ssize_t w = write(1, b, (size_t)(p - b));
+    if (w <= 0) {
+      return;
+    }
+    b += w;
+  }
+#endif
+}
+
 static void on_fault(int sig, siginfo_t *si, void *ucv) {
   uintptr_t a = si ? (uintptr_t)si->si_addr : 0;
   uintptr_t pc = ctx_pc(ucv);
@@ -465,11 +499,15 @@ static void on_fault(int sig, siginfo_t *si, void *ucv) {
   if (e.fd >= 0) {
     close(e.fd);
   }
-  /* What the program printed comes first, as for a trap; not when the
-   * fault is inside the C library, which may be in the middle of a write
-   * to stdout itself. */
+  /* What the program printed comes first, as for a trap. Inside the C
+   * library the thread may be in the middle of a write to stdout (its
+   * lock held by this very thread), where a flush could write a line
+   * twice: the bytes the buffer holds up to its write pointer go out
+   * instead (out_pending). */
   if (in_exe) {
     fflush(stdout);
+  } else {
+    out_pending();
   }
   m.n = 0;
   put(&m, "avant runtime: stack overflow");

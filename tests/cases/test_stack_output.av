@@ -1,0 +1,81 @@
+import harness
+import backends
+
+// A stack overflow inside the C library (a recursion that prints a
+// Float64 at every level overflows while the C library formats it)
+// keeps the program's output: what earlier writes left in stdout's buffer
+// is written out before the message, whole, so stdout holds every line
+// the program printed, in order, each complete. Before, the buffer was
+// dropped and stdout ended at a 4096-byte boundary, mid-line. Run with
+// the collector's modes unset: the program never collects, and the
+// stress mode's scan of a stack this deep at every allocation would only
+// slow it.
+
+fn program: String {
+  "fn deep(n: Int, x: Float64): Int {\n  puts(x)\n  deep(n + 1, x + 0.5) + 1\n}\n\nfn main {\n  puts(\"start\")\n  puts(deep(0, 0.25))\n}\n"
+}
+
+// Every line of out is the next value the program prints, and out ends
+// with a newline: "" when so, else what is wrong.
+fn lines_whole(out: String): String {
+  if out.size == 0 || out[out.size - 1] != 10 {
+    return "stdout does not end with a newline"
+  }
+  ls = out.split("\n")
+  if ls[0] != "start" {
+    return "the first line is not start"
+  }
+  x = 0.25
+  i = 1
+  while i < ls.size - 1 {
+    if ls[i] != "${x}" {
+      return "line ${i + 1} is ${ls[i]}, not ${x}"
+    }
+    x += 0.5
+    i += 1
+  }
+  if ls.size < 1000 {
+    return "only ${ls.size} lines"
+  }
+  ""
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_stack_output.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    dir = scratch_dir()
+    src = "${dir}/so-print.av"
+    _ = file_write(src, program())
+    modes = ["--debug", "--release"]
+    jobs: Array(HJob) = []
+    for m in modes {
+      a: Array(String) = ["compile", src, "${dir}/so-print${m}.bin", m]
+      jobs.push(env_job("", compiler, a, "${dir}/so-print${m}.log"))
+    }
+    run_waves(jobs)
+    runs: Array(HJob) = []
+    for m2 in modes {
+      runs.push(run_job_env(dir, "so-print${m2}.bin", "so-print${m2}", "-u AVANT_GC_STRESS -u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY"))
+    }
+    run_waves(runs)
+    for i in 0..modes.size {
+      m3 = modes[i]
+      c.eq_int(jobs[i].code, 0, "${m3}: compiles")
+      c.eq_int(runs[i].code, 1, "${m3}: the overflow ends it with status 1")
+      c.expect(log_text("${dir}/so-print${m3}.err").contains("avant runtime: stack overflow in deep on the main thread"), "${m3}: names the overflow")
+      c.eq_str(lines_whole(log_text("${dir}/so-print${m3}.out")), "", "${m3}: stdout keeps every line, whole")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

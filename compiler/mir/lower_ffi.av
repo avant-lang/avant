@@ -624,6 +624,13 @@ pub fn (lw: MirLower) lower_cb_thunks {
     recovers = lw.recovers()
     if recovers {
       b.call(-1, "avant_task_cb_enter", none)
+    } else {
+      // A C thread Avant did not start gets its signal stack at its
+      // first callback (runtime/avant_stack.c), whether or not the
+      // callback allocates (its registration would give it one too),
+      // so a stack overflow there says so as on any other thread; on a
+      // thread that has one, a thread-local test.
+      b.call(-1, "avant_stack_ensure", none)
     }
     if ret == mt_void() {
       b.call(-1, cb.target, args)
