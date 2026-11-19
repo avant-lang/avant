@@ -64,6 +64,7 @@ pub fn driver_format_lambdas(args: Array(String)) {
   failed = false
   for root in args {
     loader = Loader.new()
+    loader.pipes = true
     if merged = loader.load_root(root) {
       if e = loader.err {
         diag_puts("${root}: does not load; its blocks are rewritten from the source alone")
@@ -130,6 +131,7 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
   lex2 = Lexer.new(src)
   toks = lex2.tokenize()
   p = Parser.new(src, toks)
+  p.accept_pipes = true
   p.parse()
   if e = p.err {
     tally.left.push("${path}: does not parse; left")
@@ -325,6 +327,8 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
     return text
   }
   p3 = Parser.new(src2, t3)
+  // A block left in pipes (reported) stays in the text.
+  p3.accept_pipes = true
   p3.parse()
   if e = p3.err {
     tally.left.push("${path}: the rewritten text does not parse (${e.show()}); left")

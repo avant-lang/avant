@@ -124,6 +124,10 @@ pub class Parser {
   // first token by the block's offset.
   pub pipe_blocks: Array(Block) = []
   pub pipe_heads: Array(Bool) = []
+  // Whether a block in pipes, or a block after a call, parses without an
+  // error: only for `avant format --lambdas`, which rewrites them. Every
+  // other parse refuses both and names the lambda form.
+  pub accept_pipes: Bool = false
   pub stmt_starts: Hash(String, Int)
   stmt_start_now: Int = 0
   // The modules this file imports, as written, so a type's qualifier may
@@ -2254,6 +2258,12 @@ pub class Parser {
       return expr
     }
     head = !self.allow_struct_lit
+    // `x = gc.hold { ... }` is left to the checker, which says that
+    // gc.hold is a statement.
+    hold = i >= 3 && self.tokens[i - 1].value == "hold" && self.tokens[i - 2].kind == tk_dot() && self.tokens[i - 3].value == "gc"
+    if !self.accept_pipes && !hold && !self.pipes_after_brace(i) {
+      fail(self.tokens[i].loc, block_after_call_message())
+    }
     tb = self.parse_trailing_block()
     self.pipe_blocks.push(tb)
     self.pipe_heads.push(head)
@@ -3461,6 +3471,13 @@ pub class Parser {
     dummy_expr(tok.loc)
   }
 
+  // Whether the `{` at index i is followed by pipes (line breaks
+  // between them skipped).
+  pub fn pipes_after_brace(i: Int): Bool {
+    j = self.skip_nl_at(i + 1)
+    j < self.tokens.size && (self.tokens[j].kind == tk_pipe() || self.tokens[j].kind == tk_pipe_pipe())
+  }
+
   pub fn lambda_ahead: Bool {
     if self.current().kind != tk_l_brace() {
       return false
@@ -4199,6 +4216,9 @@ pub class Parser {
     loc = expect(tk_l_brace()).loc
     self.skip_newlines()
     block = Block.new(loc)
+    if !self.accept_pipes && (self.current().kind == tk_pipe() || self.current().kind == tk_pipe_pipe()) {
+      fail(loc, pipes_message())
+    }
     if self.current().kind == tk_pipe_pipe() {
       self.bump()
       self.skip_newlines()
@@ -4701,4 +4721,15 @@ pub fn range_body(s: Stmt, rs: RangeStep, raw_body: Array(Stmt), var: String, lo
   }
   s.body = range_advance(rs, raw_body, var, loc)
   range_step_into(rs, loc, var, s.body)
+}
+
+// The refusal of a block in pipes (`{ |x| ... }`, `{ || ... }`).
+pub fn pipes_message: String {
+  "a block in pipes is not Avant: write a lambda in parentheses, `(x) { ... }` (`xs.each((x) { ... })`, or `xs.each (x) { ... }` when it is the call's only argument); a block that leaves its function with `return`, `break` or `?` is a `for` loop (`for x in xs { ... }`)"
+}
+
+// The refusal of a block written after a call (`f(a) { ... }`,
+// `t.group { ... }`).
+pub fn block_after_call_message: String {
+  "a block after a call is not an argument: pass a lambda in parentheses, `f(a, (x) { ... })`, or `f (x) { ... }` when it is the call's only argument; a block that leaves its function with `return`, `break` or `?` is a `for` loop"
 }

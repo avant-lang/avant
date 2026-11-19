@@ -310,6 +310,8 @@ pub class Loader {
   lib_read: Bool = false
   lib_rec: String = ""
   pub dep_set: DepSet? = nil
+  // Blocks in pipes accepted (`avant format --lambdas`, which rewrites them).
+  pub pipes: Bool = false
 
   fn initialize {
     h = Hash(String, Int).new()
@@ -694,6 +696,7 @@ pub class Loader {
         self.wants_prelude_old = true
       }
       parser = Parser.new(file, tokens)
+      parser.accept_pipes = self.pipes
       program = parser.parse()
       if e2 = parser.err {
         self.stack.pop()

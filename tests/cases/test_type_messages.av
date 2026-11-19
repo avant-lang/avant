@@ -115,7 +115,7 @@ fn cases: Array(TCase) {
   xs.push(only("casc-field-type", "struct Nd {\n  a: Int32\n}\n\nfn main {\n  n = 5\n  d = Nd { a: n }\n  puts(d.a)\n}\n", "field a is Int, expected Int32", "7:15"))
   xs.push(only("casc-array-element", "fn main {\n  n = 5\n  xs: Array(Int32) = [1, n]\n  puts(xs.size)\n}\n", "array element is Int, expected Int32", "3:26"))
   xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new()\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
-  xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
+  xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1, (a, b) { a + b }))\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
   // A constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
   xs.push(only("ctor-int-mix", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Nd.new(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.new is Int, expected Int32: Nd.new(a: Int32)", "11:9"))
   xs.push(only("ctor-count", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1, 2)\n  puts(d.a)\n}\n", "Nd.new takes 1 argument, given 2: Nd.new(a: Int32)", "10:9"))
@@ -129,9 +129,9 @@ fn cases: Array(TCase) {
   xs.push(only("unsigned-negative-suffix", "fn main {\n  a = -1u64\n  puts(a)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
   xs.push(accepted("unsigned-negative-overload", "fn f(a: UInt32): Int {\n  1\n}\n\nfn f(a: Int): Int {\n  2\n}\n\nfn main {\n  puts(f(-1))\n  puts(f(1))\n}\n", "2\n2\n"))
   // The two messages written earlier without a program that reaches them.
-  xs.push(only("deferred-no-fit", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "6:8"))
+  xs.push(only("deferred-no-fit", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\", (n) { n + 1 }))\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "6:8"))
   xs.push(only("deferred-no-fit-name", "fn helper(n: Int): Int {\n  n\n}\n\nfn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\", helper))\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "10:8"))
-  xs.push(only("deferred-no-fit-overloads", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn apply(b: Bool, f: fn(Int): Int): Int {\n  f(1)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "no overload of apply takes (String, a lambda): apply(n: Int, f: fn(Int): Int): Int, apply(b: Bool, f: fn(Int): Int): Int", "10:8"))
+  xs.push(only("deferred-no-fit-overloads", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn apply(b: Bool, f: fn(Int): Int): Int {\n  f(1)\n}\n\nfn main {\n  puts(apply(\"x\", (n) { n + 1 }))\n}\n", "no overload of apply takes (String, a lambda): apply(n: Int, f: fn(Int): Int): Int, apply(b: Bool, f: fn(Int): Int): Int", "10:8"))
   xs.push(with_mods(only("template-two-modules-field", "import ga\nimport gb\n\nclass W(T) {\n  pub b: Box(T)\n\n  fn initialize(b: Box(T)) {\n    self.b = b\n  }\n}\n\nfn main {\n  w = W(Int).new(ga.Box(Int).new(1))\n  puts(w.b.v)\n}\n", "Box is a type of both ga and gb: write ga.Box or gb.Box", "5:10"), ["ga", "pub class Box(T) {\n  pub v: T\n\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n", "gb", "pub class Box(T) {\n  pub v: T\n\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n"]))
   // An argument whose type is a stand-in until a parameter takes it
   // reads as written: a `[]`, and an integer literal above Int's range.

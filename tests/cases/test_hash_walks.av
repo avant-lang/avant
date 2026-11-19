@@ -102,7 +102,7 @@ fn cases: Array(PCase) {
   xs.push(accepted("delete-if-set-string", "fn main {\n  s: Set(String) = [\"a\", \"bb\", \"c\", \"dd\"]\n  s.delete_if (v) { v.size > 1 }\n  line = \"\"\n  for v in s {\n    line = \"\${line}\${v}\"\n  }\n  puts(\"\${s.size} \${line}\")\n}\n", "2 ac\n"))
   xs.push(accepted("delete-if-return", "fn main {\n  h = [\"a\": 1, \"b\": 2, \"c\": 3]\n  h.delete_if (k, v) {\n    if k == \"b\" {\n      return true\n    }\n    false\n  }\n  puts(h.keys().size)\n}\n", "2\n"))
   xs.push(traps("delete-if-changes-other", "fn main {\n  h = [1: 1, 2: 2, 3: 3]\n  g = h\n  h.delete_if (k, v) {\n    _ = g.delete(3)\n    false\n  }\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
-  xs.push(refused("delete-if-pipes", "fn main {\n  h = [1: 1]\n  h.delete_if { |k, v| v > 0 }\n}\n", "delete_if takes a lambda", "3:15"))
+  xs.push(refused("delete-if-pipes", "fn main {\n  h = [1: 1]\n  h.delete_if { |k, v| v > 0 }\n}\n", "a block in pipes is not Avant", "3:15"))
   xs.push(refused("delete-if-not-bool", "fn main {\n  s: Set(Int) = [1]\n  s.delete_if (v) { v }\n}\n", "the predicate of delete_if must give a Bool, got Int", "3:15"))
   xs.push(accepted("eq-hash", "fn main {\n  a = [\"x\": 1, \"y\": 2]\n  b = [\"y\": 2, \"x\": 1]\n  c = [\"x\": 1, \"y\": 3]\n  d = [\"x\": 1]\n  puts(\"\${a == b} \${a == c} \${a == d} \${a != c}\")\n  e = Hash(Int, Array(Int)).new()\n  f = Hash(Int, Array(Int)).new()\n  e[1] = [1, 2]\n  f[1] = [1, 2]\n  puts(e == f)\n  f[1] = [2, 1]\n  puts(e == f)\n}\n", "true false false true\ntrue\nfalse\n"))
   xs.push(accepted("eq-set", "fn main {\n  a: Set(Int) = [1, 2, 3]\n  b: Set(Int) = [3, 2, 1]\n  c: Set(Int) = [1, 2]\n  puts(\"\${a == b} \${a == c} \${a != c}\")\n}\n", "true false true\n"))

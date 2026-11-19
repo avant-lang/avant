@@ -92,7 +92,7 @@ fn test_testing_docs(c: Checks) {
     // checker does not do: `avant test` running a file's parallel bodies
     // after its serial work, the golden checks beside their files (the
     // README's block is marked skip), and `avant run FILE -- ARGS`.
-    par_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish()\n}\n"
+    par_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.test(\"adds\", () {\n    t.check(1 + 2 == 3, \"1+2\")\n  })\n  t.parallel(\"other\", () {\n    t.check(true, \"other\")\n  })\n  t.finish()\n}\n"
     _ = fs.write("${dir}/test_parallel.av", par_body)
     par_log = "${dir}/parallel.log"
     par_rc = "${dir}/parallel.rc"
@@ -112,7 +112,7 @@ fn test_testing_docs(c: Checks) {
     // compiled binary, skipped its t.parallel bodies without a word and
     // exited 0 with the serial checks alone. With no runner listening the
     // bodies now run in that process: the same checks every way.
-    both_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(1 + 1 == 2, \"serial\")\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"in a test body\")\n  }\n  t.parallel(\"first\") {\n    t.check(true, \"first a\")\n    t.check(true, \"first b\")\n  }\n  t.parallel(\"second\") {\n    t.check(2 * 2 == 4, \"second a\")\n  }\n  t.parallel(\"third\") {\n    t.check(true, \"third a\")\n    t.check(true, \"third b\")\n  }\n  t.finish()\n}\n"
+    both_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(1 + 1 == 2, \"serial\")\n  t.test(\"adds\", () {\n    t.check(1 + 2 == 3, \"in a test body\")\n  })\n  t.parallel(\"first\", () {\n    t.check(true, \"first a\")\n    t.check(true, \"first b\")\n  })\n  t.parallel(\"second\", () {\n    t.check(2 * 2 == 4, \"second a\")\n  })\n  t.parallel(\"third\", () {\n    t.check(true, \"third a\")\n    t.check(true, \"third b\")\n  })\n  t.finish()\n}\n"
     mkdir_p("${dir}/both")
     _ = fs.write("${dir}/both/test_both.av", both_body)
     both_rc = "${dir}/both.rc"
@@ -136,7 +136,7 @@ fn test_testing_docs(c: Checks) {
     // status 0. Each is given a path that is a directory (it cannot be
     // written, whoever runs the suite): the run fails and names the file
     // and the reason.
-    lost_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"serial\")\n  t.parallel(\"one\") {\n    t.check(true, \"in one\")\n  }\n  t.finish()\n}\n"
+    lost_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"serial\")\n  t.parallel(\"one\", () {\n    t.check(true, \"in one\")\n  })\n  t.finish()\n}\n"
     mkdir_p("${dir}/lost/isdir")
     _ = fs.write("${dir}/lost/test_lost.av", lost_body)
     lost_rc = "${dir}/lost.rc"

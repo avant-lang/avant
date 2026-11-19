@@ -394,7 +394,7 @@ fn main {
 - Overflow, division by zero or a shift outside the width is a compile error at the constant. A constant whose value does not fit its place gets the literal's error, naming it (`the constant big = 3000000000 does not fit in Int32`).
 - Such constants may use each other in any order; one that refers to itself is an error.
 - Such a constant may label a `switch` arm or bound a range label (`case max_depth`, `case lo..=hi`); any other name there is an error.
-- A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors); there is no `const` in a function. A parameter or a binding (`if v = ...`, `case n: Int`, a block's `|x|`) may take a constant's name in its body.
+- A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors); there is no `const` in a function. A parameter or a binding (`if v = ...`, `case n: Int`, a lambda's `(x)`) may take a constant's name in its body.
 - A bare name is, in order: a local or parameter, a field of the receiver, a method of the receiver, a constant, a function. Another module's `pub const` is reached bare or as `module.name`; two constants of one name a module sees (its own included) are ambiguous: qualify it ([Name clashes](#name-clashes)).
 
 Any other value (a `String`, an array, a hash or a `Set`, a struct or class value, a call) is computed once, before `main`, and each use reads it:
@@ -2817,7 +2817,7 @@ fn main {
 - `break` and `continue` in a lambda have no loop of the lambda's to leave: a compile error, unless inside a loop of its own body.
 - **When the lambda is a call's only argument**, the call's own parentheses may be dropped: `xs.each (x) { puts(x) }` is `xs.each((x) { puts(x) })`, `users.map (u) { u.name }`, `t.group () { ... }`. Not directly in the head of an `if`, `while`, `for` or `switch`, where the `{` begins the statement's body: there, write `if xs.any((x) { x > 3 }) { ... }`. A call with another argument writes the lambda among them: `fold(xs, 0, (acc, x) { acc + x })`.
 - An operator or a method after the call applies to its result: `twice (x) { x - 5 }.abs()`, `count (x) { x > 2 } > 1`.
-- The braces with pipes, `{ |x| ... }`, are the older spelling, still accepted in this release with their old meaning (a builtin's block in pipes is a loop body whose `return` leaves the function); the next release refuses them. `avant format --lambdas FILE...` rewrites them: a block whose body leaves its function with `return`, `break`, `continue` or `?` becomes a `for`.
+- A block in pipes (`{ |x| ... }`) and a block after a call's closing parenthesis (`f(a) { ... }`) are compile errors whose hint names the lambda form, `(x) { ... }`; a loop whose body leaves its function with `return`, `break` or `?` is a `for` (`for x in xs { ... }`, `for k, v in h { ... }`).
 
 Your own `map`:
 

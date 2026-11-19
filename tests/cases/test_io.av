@@ -89,7 +89,7 @@ fn writer_cases(xs: Array(IoCase)) {
   pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i() {\n    return n\n  }\n  Bad.new()\n}\n"
   xs.push(refused("print-empty", "fn main {\n  print()\n}\n", "print takes one argument", "2:3"))
   xs.push(refused("eprint-empty", "fn main {\n  eprint()\n}\n", "eprint takes one argument", "2:3"))
-  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "print does not take a block", "2:3"))
+  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "a block in pipes is not Avant", "2:12"))
   xs.push(accepted("print-scalars", "fn main {\n  print(\"a\")\n  print(1)\n  print(-2)\n  print(2.5)\n  print(true)\n  n: Int32 = 7\n  print(n)\n  print(18446744073709551615u64)\n  puts(\"|\")\n}\n", "a1-22.5true718446744073709551615|\n"))
   xs.push(with_err(accepted("eputs-eprint", "fn main {\n  puts(\"out\")\n  eputs(\"e1\")\n  eprint(\"e\")\n  eprint(2)\n  eputs(1.5)\n  eputs(false)\n}\n", "out\n"), "e1\ne21.5\nfalse\n"))
   xs.push(merged(accepted("eputs-order", "fn main {\n  puts(\"a\")\n  eputs(\"b\")\n  print(\"c\")\n  eprint(\"d\")\n  puts(\"e\")\n}\n", "a\nb\ncde\n")))
@@ -129,7 +129,7 @@ fn leave_cases(xs: Array(IoCase)) {
   xs.push(with_status(accepted("exit-if-end", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  } else {\n    exit(6)\n  }\n}\nfn main {\n  puts(pick(2))\n  puts(pick(0))\n}\n", "2\n"), 6))
   xs.push(with_status(accepted("exit-switch-arm", "enum Tok { a, b }\nfn code(t: Tok): Int {\n  switch t {\n    case a { 10 }\n    case b { exit(7) }\n  }\n}\nfn main {\n  puts(code(Tok.a))\n  puts(code(Tok.b))\n}\n", "10\n"), 7))
   xs.push(refused("exit-guard-other-call", bad + "fn main {\n  n = f(\"x\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "11:14"))
-  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = { |c: Int| puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
+  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = (c: Int) { puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
 }
 
 fn input_cases(xs: Array(IoCase)) {

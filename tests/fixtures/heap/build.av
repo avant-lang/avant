@@ -1,10 +1,10 @@
-// `Array(T).new(n) { |i| ... }` under the collector: the buffer
+// `Array(T).new(n, (i) { ... })` under the collector: the buffer
 // fills while the block allocates, so collections run between
 // the stores, the buffer is promoted or born mature while
 // elements are still young, and every element must survive. Each
 // build is read back after more garbage. The two store forms are
 // both here: a fresh fill closed by one barrier (a block that
-// cannot return) and a barrier at each store (a block that can).
+// cannot return) and a barrier at each store (one that can).
 
 class Node {
   pub v: Int = 0
@@ -52,16 +52,15 @@ fn few(n: Int): Array(Node) {
   })
 }
 
-// The block can return: a barrier at each store.
+// The lambda can return: a barrier at each store.
 fn until(n: Int, stop: Int) {
-  ns = Array(Node).new(n) { |i|
-    if i == stop {
-      puts("left at ${i}")
-      return
+  ns = Array(Node).new(n, (i) {
+    if i >= stop {
+      return Node.new(0)
     }
     g = garbage(512)
     Node.new(i + g - 512)
-  }
+  })
   _ = garbage(100000)
   puts(sum_nodes(ns))
 }

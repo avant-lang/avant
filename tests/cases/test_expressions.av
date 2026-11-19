@@ -100,11 +100,11 @@ fn check_bool_ll(c: Checks, compiler: String, dir: String) {
 fn lambda_if_cases: Array(ECase) {
   ap = "fn apply(x: Int, f: fn(Int): U): U {\n  f(x)\n}\nfn apply_s(s: String, f: fn(String): U): U {\n  f(s)\n}\n"
   xs: Array(ECase) = []
-  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2) { |x| if x > 1 { x * 10 } else { 0 } })\n  puts(apply_s(\"7\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply_s(\"q\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply(2) { |x| if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } })\n}\n", "20\n7\n-1\nb\n"))
-  xs.push(accepted("lambda-if-statement", "${ap}fn main {\n  apply(1) { |x| if x > 0 { puts(\"pos\") } else { puts(\"neg\") } }\n  apply(2) { |x|\n    if x > 0 {\n      puts(x)\n    }\n  }\n}\n", "pos\n2\n"))
-  xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v) { |x|\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    })\n  }\n}\n", "9\n2\n"))
-  xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { puts(x) } })\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
-  xs.push(refused("lambda-if-types", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { \"no\" } })\n}\n", "if branches have different types Int and String", "8:23"))
+  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2, (x) { if x > 1 { x * 10 } else { 0 } }))\n  puts(apply_s(\"7\", (s) { if n = s.to_i() { n } else { -1 } }))\n  puts(apply_s(\"q\", (s) { if n = s.to_i() { n } else { -1 } }))\n  puts(apply(2, (x) { if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } }))\n}\n", "20\n7\n-1\nb\n"))
+  xs.push(accepted("lambda-if-statement", "${ap}fn main {\n  apply(1, (x) { if x > 0 { puts(\"pos\") } else { puts(\"neg\") } })\n  apply(2, (x) {\n    if x > 0 {\n      puts(x)\n    }\n  })\n}\n", "pos\n2\n"))
+  xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v, (x) {\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    }))\n  }\n}\n", "9\n2\n"))
+  xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1, (x) { if x > 0 { x } else { puts(x) } }))\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
+  xs.push(refused("lambda-if-types", "${ap}fn main {\n  puts(apply(1, (x) { if x > 0 { x } else { \"no\" } }))\n}\n", "if branches have different types Int and String", "8:23"))
   xs
 }
 
@@ -129,7 +129,7 @@ fn effect_cases: Array(ECase) {
   xs.push(refused("effect-field", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  p.x\n  puts(p.x)\n}\n", "this line computes a value and drops it", "6:3"))
   xs.push(refused("effect-branch", "fn main {\n  x = process.args().size\n  if x > 0 {\n    x == 1\n  }\n}\nimport std.process\n", "this line computes a value and drops it", "4:5"))
   xs.push(refused("effect-fn-name", "fn cleanup {\n  puts(1)\n}\nfn main {\n  cleanup\n}\n", "cleanup alone is the function as a value; to call it, write cleanup()", "5:3"))
-  xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = { |n| n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
+  xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = (n) { n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
   xs.push(refused("effect-bind-void", "fn two {\n  puts(2)\n}\nfn main {\n  x = two()\n  puts(x)\n}\n", "cannot bind a Void value: two has no result type", "5:5"))
   xs.push(accepted("effect-kept", "fn three: Int {\n  3\n}\nfn main {\n  x = 1\n  _ = x + 1\n  xs = [1, 2]\n  xs.pop()\n  x.abs()\n  puts(three())\n  puts(xs.size)\n}\n", "3\n1\n"))
   xs
@@ -152,11 +152,11 @@ fn empty_array_cases: Array(ECase) {
 fn trailing_block_cases: Array(ECase) {
   xs: Array(ECase) = []
   pre = "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn find(f: fn(Int): Bool): Int? {\n  if f(3) {\n    return 3\n  }\n  nil\n}\n\n"
-  xs.push(accepted("block-then-coalesce", pre + "fn main {\n  a = find { |x| x > 2 } ?? 0\n  b = find { |x| x > 5 } ?? -1\n  puts(a)\n  puts(b)\n}\n", "3\n-1\n"))
-  xs.push(accepted("block-then-arith", pre + "fn main {\n  n = twice { |x| x + 1 } * 10 + 1\n  puts(n)\n  puts(twice { |x| x * 3 } == 9)\n}\n", "31\ntrue\n"))
-  xs.push(accepted("block-then-coalesce-return", pre + "fn pick: Int {\n  v = find { |x| x > 5 } ?? return 7\n  v\n}\n\nfn main {\n  puts(pick())\n}\n", "7\n"))
-  xs.push(accepted("block-then-continued-line", pre + "fn main {\n  a = find { |x| x > 5 }\n    ?? 4\n  puts(a)\n}\n", "4\n"))
-  xs.push(accepted("block-then-arg", pre + "fn add(a: Int, b: Int): Int {\n  a + b\n}\n\nfn main {\n  puts(add(find { |x| x > 5 } ?? 2, 3))\n}\n", "5\n"))
+  xs.push(accepted("block-then-coalesce", pre + "fn main {\n  a = find (x) { x > 2 } ?? 0\n  b = find (x) { x > 5 } ?? -1\n  puts(a)\n  puts(b)\n}\n", "3\n-1\n"))
+  xs.push(accepted("block-then-arith", pre + "fn main {\n  n = twice (x) { x + 1 } * 10 + 1\n  puts(n)\n  puts(twice (x) { x * 3 } == 9)\n}\n", "31\ntrue\n"))
+  xs.push(accepted("block-then-coalesce-return", pre + "fn pick: Int {\n  v = find (x) { x > 5 } ?? return 7\n  v\n}\n\nfn main {\n  puts(pick())\n}\n", "7\n"))
+  xs.push(accepted("block-then-continued-line", pre + "fn main {\n  a = find (x) { x > 5 }\n    ?? 4\n  puts(a)\n}\n", "4\n"))
+  xs.push(accepted("block-then-arg", pre + "fn add(a: Int, b: Int): Int {\n  a + b\n}\n\nfn main {\n  puts(add(find (x) { x > 5 } ?? 2, 3))\n}\n", "5\n"))
   xs
 }
 

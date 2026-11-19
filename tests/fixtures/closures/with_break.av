@@ -1,8 +1,6 @@
-// `break` inside a `Mutex.with` block inside a `while`. It was once
-// refused: the lock was released only at the block's end, and the
-// program hung on the next `with`. Now the
-// lock is released on every way out of the block, so `break` leaves the
-// block and the loop, and the next `with` finds the lock free.
+// A `Mutex.with` lambda that returns early inside a `while`, and the
+// loop left by `break` after it: the lock is released on every way out
+// of the lambda, so the next `with` finds the lock free.
 // tests/cases/test_frontend.av runs it under the collector's modes.
 
 import std.sync
@@ -11,11 +9,15 @@ fn run: Int {
   m = sync.Mutex(Int).new(0)
   i = 0
   while i < 3 {
-    m.with { |x|
+    stop = m.with((x): Bool {
       x += 1
       if i == 1 {
-        break
+        return true
       }
+      false
+    })
+    if stop {
+      break
     }
     i += 1
   }

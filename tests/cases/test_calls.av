@@ -89,12 +89,12 @@ fn expect_cases(xs: Array(CCase)) {
 // `box.f(x)` calls the function a field holds; a type cannot have a
 // field and a method of one name, inherent or external.
 fn field_fn_cases(xs: Array(CCase)) {
-  ctr = "class Ctr {\n  pub n: Int = 0\n  pub on: fn(Int): Int = { |x: Int| x * 10 }\n  pub done: fn() = { || puts(\"done\") }\n}\nstruct S {\n  g: fn(String): String\n}\n"
-  xs.push(accepted("field-fn-call", ctr + "fn main {\n  c = Ctr.new()\n  c.n = c.on(4)\n  puts(c.n)\n  c.done()\n  c.on = { |x: Int| x - 1 }\n  puts(c.on(4))\n  puts((c.on)(5))\n  s = S { g: { |t: String| t + \"!\" } }\n  puts(s.g(\"hi\"))\n  cs = [c]\n  puts(cs[0].on(1))\n}\n", "40\ndone\n3\n4\nhi!\n0\n"))
+  ctr = "class Ctr {\n  pub n: Int = 0\n  pub on: fn(Int): Int = (x: Int) { x * 10 }\n  pub done: fn() =() { puts(\"done\") }\n}\nstruct S {\n  g: fn(String): String\n}\n"
+  xs.push(accepted("field-fn-call", ctr + "fn main {\n  c = Ctr.new()\n  c.n = c.on(4)\n  puts(c.n)\n  c.done()\n  c.on = (x: Int) { x - 1 }\n  puts(c.on(4))\n  puts((c.on)(5))\n  s = S { g: (t: String) { t + \"!\" } }\n  puts(s.g(\"hi\"))\n  cs = [c]\n  puts(cs[0].on(1))\n}\n", "40\ndone\n3\n4\nhi!\n0\n"))
   xs.push(refused("field-fn-arity", ctr + "fn main {\n  c = Ctr.new()\n  puts(c.on(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "11:9"))
   xs.push(refused("field-fn-arg-type", ctr + "fn main {\n  c = Ctr.new()\n  puts(c.on(\"x\"))\n}\n", "argument 1 is String, expected Int", "11:13"))
   xs.push(refused("field-not-fn", "class Box {\n  pub n: Int = 1\n}\nfn main {\n  puts(Box.new().n(2))\n}\n", "Box.n is a field, not a method", "5:17"))
-  xs.push(refused("field-and-method", "class Box {\n  pub f: fn(Int): Int = { |x: Int| x }\n\n  fn f(x: Int): Int {\n    x\n  }\n}\nfn main {\n  puts(Box.new().f(1))\n}\n", "Box.f is both a field and a method", "4:3"))
+  xs.push(refused("field-and-method", "class Box {\n  pub f: fn(Int): Int = (x: Int) { x }\n\n  fn f(x: Int): Int {\n    x\n  }\n}\nfn main {\n  puts(Box.new().f(1))\n}\n", "Box.f is both a field and a method", "4:3"))
   xs.push(refused("field-and-external-method", "struct P {\n  x: Int\n}\nfn (p: P) x: Int {\n  2\n}\nfn main {\n  puts(P { x: 1 }.x)\n}\n", "P.x is both a field and a method", "4:1"))
 }
 
@@ -113,8 +113,8 @@ fn pop_cases(xs: Array(CCase)) {
 // their parameters' types, as in every other call.
 fn early_arg_cases(xs: Array(CCase)) {
   decl = "fn apply(xs: Array(Int), f: fn(Int): Int): Int {\n  t = 0\n  for x in xs {\n    t += f(x)\n  }\n  t + xs.size\n}\nfn big(n: UInt64, f: fn(UInt64): UInt64): UInt64 {\n  f(n)\n}\nclass Box {\n  fn each_of(xs: Array(String), f: fn(String): Int): Int {\n    n = 0\n    for x in xs {\n      n += f(x)\n    }\n    n\n  }\n}\n"
-  xs.push(accepted("lambda-call-empty-array", decl + "fn main {\n  puts(apply([]) { |x| x * 2 })\n  puts(apply([1, 2]) { |x| x * 2 })\n  puts(big(18446744073709551615) { |n| n / 5 })\n  puts(Box.new().each_of([]) { |s| s.size })\n}\n", "0\n8\n3689348814741910323\n0\n"))
-  xs.push(refused("lambda-call-empty-array-generic", "fn first(xs: Array(T), f: fn(T): T): Int {\n  xs.size\n}\nfn main {\n  puts(first([]) { |x| x })\n}\n", "cannot infer type argument", "5:8"))
+  xs.push(accepted("lambda-call-empty-array", decl + "fn main {\n  puts(apply([], (x) { x * 2 }))\n  puts(apply([1, 2], (x) { x * 2 }))\n  puts(big(18446744073709551615, (n) { n / 5 }))\n  puts(Box.new().each_of([], (s) { s.size }))\n}\n", "0\n8\n3689348814741910323\n0\n"))
+  xs.push(refused("lambda-call-empty-array-generic", "fn first(xs: Array(T), f: fn(T): T): Int {\n  xs.size\n}\nfn main {\n  puts(first([], (x) { x }))\n}\n", "cannot infer type argument", "5:8"))
 }
 
 // initialize: what a value `if` sets in both branches is set after it.

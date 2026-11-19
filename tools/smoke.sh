@@ -189,7 +189,7 @@ fn main {
   xs: Array(Int) = [1, 2]
   xs.push(3)
   sum = 0
-  xs.each { |n| sum += n }
+  xs.each (n) { sum += n }
   puts(sum)
   puts(xs.size)
 
@@ -322,10 +322,10 @@ import std.http
 
 fn main {
   if server = http.listen(0) {
-    server.get("/") { |req|
+    server.get("/", (req) {
       server.close()
       http.Response.text("Hello Avant")
-    }
+    })
     port = server.port()
     handle = spawn {
       if resp = http.get("http://127.0.0.1:${port}/") {

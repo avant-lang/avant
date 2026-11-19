@@ -92,7 +92,7 @@ fn test_cb_scalars(c: Checks, compiler: String) {
   csrc = "${scratch()}/c_layout-${stamp}-cbs.c"
   _ = fs.write(csrc, "#include <stdint.h>\nint cbs_args(int (*f)(uint8_t, int8_t, uint16_t, int16_t, float)) {\n  return f(255, -128, 65535, -32768, 1.5f);\n}\nint cbs_u8(uint8_t (*f)(int), int x) {\n  return f(x);\n}\ndouble cbs_f32(float (*f)(float), float x) {\n  return (double)f(x);\n}\nint cbs_i8(int8_t (*f)(int8_t), int x) {\n  return f((int8_t)x);\n}\n")
   decls = "lib cbs {\n  fun cbs_args(f: fn(UInt8, Int8, UInt16, Int16, Float32): Int32): Int32\n  fun cbs_u8(f: fn(Int32): UInt8, x: Int32): Int32\n  fun cbs_f32(f: fn(Float32): Float32, x: Float32): Float64\n  fun cbs_i8(f: fn(Int8): Int8, x: Int32): Int32\n}\n"
-  body = "fn all(a: Int, b: Int, d: Int, e: Int, f: Float64): Int32 {\n  puts(\"\${a} \${b} \${d} \${e} \${f}\")\n  (a + b + d + e).to_i32()\n}\nfn plus(x: Int32): Int {\n  x.to_i() + 1\n}\nfn third(x: Float64): Float64 {\n  x / 3.0\n}\nfn main {\n  puts(cbs.cbs_args(all))\n  puts(cbs.cbs_u8(plus, 254))\n  puts(cbs.cbs_f32(third, 1.0))\n  puts(cbs.cbs_i8({ |x| -x - 1 }, 127))\n  puts(cbs.cbs_u8(plus, 255))\n}\n"
+  body = "fn all(a: Int, b: Int, d: Int, e: Int, f: Float64): Int32 {\n  puts(\"\${a} \${b} \${d} \${e} \${f}\")\n  (a + b + d + e).to_i32()\n}\nfn plus(x: Int32): Int {\n  x.to_i() + 1\n}\nfn third(x: Float64): Float64 {\n  x / 3.0\n}\nfn main {\n  puts(cbs.cbs_args(all))\n  puts(cbs.cbs_u8(plus, 254))\n  puts(cbs.cbs_f32(third, 1.0))\n  puts(cbs.cbs_i8((x) { -x - 1 }, 127))\n  puts(cbs.cbs_u8(plus, 255))\n}\n"
   asrc = "${scratch()}/c_layout-${stamp}-cbs.av"
   _ = fs.write(asrc, "${decls}${body}")
   fl: Array(String) = []
