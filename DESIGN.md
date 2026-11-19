@@ -30,7 +30,7 @@ One line holds them all: an operation gives the mathematically correct value or 
 
 - `Int` is a 64-bit signed integer and the type of every count, size, index, time and id by default: a 32-bit counter would trap at 2.1 billion, and one type for positions needs no conversion between them.
 - `Int32` and `UInt32` are for dense storage (an `Array(Int32)` takes half an `Array(Int)`'s memory) and are C's `int` and `unsigned int`; `UInt64` is for bit patterns, hashes and C's 64-bit unsigned values; `Float64` is the float.
-- `Int8`, `Int16`, `UInt8`, `UInt16` and `Float32` exist only at the C boundary, to describe C's layouts and signatures: fewer types inside Avant mean fewer conversions between them.
+- `Int8`, `Int16`, `UInt8`, `UInt16` and `Float32` are for C's layouts and signatures. Avant code uses `Int`, `Int32` and `UInt32` for dense storage, `UInt64` for bit patterns and hashes, and `Float64`; bytes are a `Buf`'s and a `Bytes`'s. Another dense type joins when a measured program needs it.
 
 ### Literals
 
@@ -188,3 +188,4 @@ So that a review does not re-reject these from an older report:
 
 - **Destructuring** (several locals from one struct result at once): to be decided with a count of the struct results unpacked into locals in real code.
 - **Optional chaining** (`a?.b`): to be measured on real code first.
+- **`Float32` storage inside Avant** (an `Array(Float32)` outside C): graphics, audio and machine learning store floats in 32 bits, for half the memory and twice the SIMD width.
