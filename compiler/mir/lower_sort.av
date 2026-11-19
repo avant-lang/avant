@@ -1,0 +1,604 @@
+// The comparator sort, `xs.sort (a, b) { c }` and `xs.sorted (a, b) { c }`
+// (and `sort_by`, whose template sorts an index array with it): a stable,
+// run-adaptive merge sort inlined in the calling function, O(n log n)
+// comparisons, n - 1 on input already in order or strictly descending.
+//
+// The algorithm is the one Rust's slice::sort (driftsort), Java's TimSort
+// and CPython's list.sort share for their stable path:
+//
+// - runs: from the left, the longest prefix already in order (each next
+//   element not before the one ahead of it) or strictly descending (each
+//   next element before the one ahead of it; reversed in place, which
+//   keeps the sort stable because no two of its elements are equal); a
+//   run shorter than sort_min_run() is extended to that length by an
+//   insertion sort (the small sort of Rust's and Go's stable sorts);
+// - the merges: powersort's rule (CPython since 3.11, driftsort's merge
+//   tree): each new run's boundary with the run before it gets a power
+//   from the two runs' midpoints, and the runs on the stack whose power
+//   is above it are merged first; at the end the stack is merged from its
+//   top. The stack holds at most one run a power, 32 for an i32 size;
+// - a merge first compares the two elements at the boundary and does
+//   nothing when they are already in order; otherwise the shorter run is
+//   copied into the scratch buffer and the two merged back into place,
+//   from the front when the left run was copied and from the back when
+//   the right one was, the left element first on a tie (stable), as in
+//   TimSort and Rust's merge. The scratch has half the array's size,
+//   allocated at the first merge (none for input already in order).
+//
+// The comparator is lowered at each of the six places that compare (the
+// run in order, the descending run, the insertion, the merge's boundary,
+// the merge's steps up and down), as Rust's sort has its closure inlined at each: each
+// loop is a plain loop LLVM optimizes alone (one place for all, a jump
+// back to the step that asked, cost about five times the comparisons'
+// time on input in order). Lowering a block again is safe: its lambdas
+// and tasks are named once, by the pre-walk, and queued once. A `break`
+// or `next` of a block in pipes answers false, as in the insertion sort
+// this replaces. Every element read after a comparison reads the buffer
+// again (the comparator may collect and move it); the scratch is a buffer
+// of the array's own type, held in a local the collector updates, and
+// every store of a reference into it or into the array is behind that
+// buffer's barrier. In place (not `sorted`), the array's freeze is
+// checked after every comparison, before the stores it leads to (the
+// comparator may have started a task that reads the array).
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_call
+import mir.lower_agg
+import mir.lower_arr
+
+// The shortest run the merges take: a shorter one is extended by an
+// insertion sort.
+pub fn sort_min_run: Int { 16 }
+
+// The run stack's room: a start and a power a run, one run a power.
+fn sort_stack_room: Int { 72 }
+
+// A new i32 local holding rv.
+fn (lw: MirLower) sort_int(rv: MRvalue): Int {
+  b = lw.lw_b
+  t = b.temp(mt_i32())
+  b.assign(b.pl(t), rv)
+  t
+}
+
+// local = local + d.
+fn (lw: MirLower) sort_bump(local: Int, d: Int) {
+  b = lw.lw_b
+  b.assign(b.pl(local), b.rv_bin(mop_add(), b.copy_local(local), b.c_i32(d)))
+}
+
+// A branch on `x op y` of two i32 operands.
+fn (lw: MirLower) sort_if(op: Int, x: MOperand, y: MOperand, bt: Int, bf: Int) {
+  b = lw.lw_b
+  c = lw.tmp(mt_bool(), b.rv_cmp(op, x, y))
+  b.branch(c, bt, bf)
+}
+
+// The element at index ix of the scratch buffer in s.
+fn (lw: MirLower) sort_scratch_get(s: Int, et: Int, ix: Int): MOperand {
+  b = lw.lw_b
+  lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(s)), b.copy_local(ix)))))
+}
+
+// Stores v at index ix of the scratch buffer in s, behind its barrier
+// when the element carries references.
+fn (lw: MirLower) sort_scratch_set(s: Int, rc: Bool, ix: Int, v: MOperand) {
+  b = lw.lw_b
+  if rc {
+    b.barrier(s)
+  }
+  b.assign(b.index(b.deref(b.pl(s)), b.copy_local(ix)), b.rv_use(v))
+}
+
+// The comparator on xv and yv (is xv before yv?) into a new Bool local,
+// the code going on after it; -1 when the lowering failed. A `break` or
+// `next` of a block in pipes answers false. In place, the array's freeze
+// is checked after it, before the stores it leads to.
+fn (lw: MirLower) sort_cmp(bl: Block, want: Ty, et: Int, xv: MOperand, yv: MOperand, loc: Location, arr: Int, in_place: Bool): Int {
+  b = lw.lw_b
+  r = b.temp(mt_bool())
+  no = b.block()
+  after = b.block()
+  lw.bind_name(bl.params[0], want, et, xv, bl.loc, true)
+  lw.bind_name(bl.params[1], want, et, yv, bl.loc, true)
+  cv = lw.block_value(bl, no, no)
+  if lw.failed() {
+    return -1
+  }
+  if lw.open_now() {
+    lw.at(loc)
+    b.assign(b.pl(r), b.rv_use(cv))
+    b.goto(after)
+  }
+  b.at(no)
+  lw.at(loc)
+  b.assign(b.pl(r), b.rv_use(b.c_bool(false)))
+  b.goto(after)
+  b.at(after)
+  lw.at(loc)
+  if in_place {
+    lw.frozen_check(arr, mir_frozen_sort(), loc)
+  }
+  r
+}
+
+pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  arr = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  if do_copy {
+    c = b.temp(aty)
+    b.call(c, "avant_array_copy", lw.three(b.copy_local(arr), lw.elem_size(aty), lw.buf_tid(aty)))
+    arr = c
+  }
+  in_place = !do_copy
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(recv)
+  rc = b.types.ref_carrying(et)
+  sty = b.types.ref_to(lw.elems_of(aty))
+  room = sort_stack_room()
+  fs: Array(Int) = []
+  ns: Array(String) = []
+  for q in 0..room {
+    fs.push(mt_i32())
+    ns.push("")
+  }
+  stk_ty = b.types.agg(b.note_layout("carray(i32x${room})", mlk_carray(), fs, ns))
+
+  // The state, every index an i32 (an array's size is).
+  n = lw.sort_int(b.rv_use(b.copy(b.field(b.deref(b.pl(arr)), 1))))
+  nxt = lw.sort_int(b.rv_use(b.c_i32(0)))
+  rs = lw.sort_int(b.rv_use(b.c_i32(0)))
+  k = lw.sort_int(b.rv_use(b.c_i32(0)))
+  re = lw.sort_int(b.rv_use(b.c_i32(0)))
+  ps = lw.sort_int(b.rv_use(b.c_i32(0)))
+  pe = lw.sort_int(b.rv_use(b.c_i32(0)))
+  top = lw.sort_int(b.rv_use(b.c_i32(0)))
+  power = lw.sort_int(b.rv_use(b.c_i32(0)))
+  lo = lw.sort_int(b.rv_use(b.c_i32(0)))
+  hi = lw.sort_int(b.rv_use(b.c_i32(0)))
+  ins_end = lw.sort_int(b.rv_use(b.c_i32(0)))
+  j = lw.sort_int(b.rv_use(b.c_i32(0)))
+  m_lo = lw.sort_int(b.rv_use(b.c_i32(0)))
+  m_mid = lw.sort_int(b.rv_use(b.c_i32(0)))
+  m_hi = lw.sort_int(b.rv_use(b.c_i32(0)))
+  m_len = lw.sort_int(b.rv_use(b.c_i32(0)))
+  r_len = lw.sort_int(b.rv_use(b.c_i32(0)))
+  mi = lw.sort_int(b.rv_use(b.c_i32(0)))
+  mj = lw.sort_int(b.rv_use(b.c_i32(0)))
+  mk = lw.sort_int(b.rv_use(b.c_i32(0)))
+  dmi = lw.sort_int(b.rv_use(b.c_i32(0)))
+  dmj = lw.sort_int(b.rv_use(b.c_i32(0)))
+  m_final = b.temp(mt_bool())
+  b.assign(b.pl(m_final), b.rv_use(b.c_bool(false)))
+  x = b.temp(et)
+  b.assign(b.pl(x), b.rv_zero())
+  y = b.temp(et)
+  b.assign(b.pl(y), b.rv_zero())
+  v = b.temp(et)
+  b.assign(b.pl(v), b.rv_zero())
+  t = b.temp(et)
+  b.assign(b.pl(t), b.rv_zero())
+  has_s = b.temp(mt_bool())
+  b.assign(b.pl(has_s), b.rv_use(b.c_bool(false)))
+  s = b.temp(sty)
+  b.assign(b.pl(s), b.rv_use(b.c_null(sty)))
+  stk = b.temp(stk_ty)
+  b.assign(b.pl(stk), b.rv_zero())
+  pa = b.temp(mt_i64())
+  b.assign(b.pl(pa), b.rv_use(b.c_i64(0)))
+  pb = b.temp(mt_i64())
+  b.assign(b.pl(pb), b.rv_use(b.c_i64(0)))
+  n64 = b.temp(mt_i64())
+  b.assign(b.pl(n64), b.rv_use(b.c_i64(0)))
+
+  next_run = b.block()
+  run_one = b.block()
+  asc_head = b.block()
+  asc_stop = b.block()
+  asc_step = b.block()
+  desc_start = b.block()
+  desc_head = b.block()
+  desc_step = b.block()
+  desc_end = b.block()
+  rev_head = b.block()
+  rev_body = b.block()
+  run_end = b.block()
+  ext_short = b.block()
+  ext_whole = b.block()
+  ext_test = b.block()
+  ins_outer = b.block()
+  ins_load = b.block()
+  ins_inner = b.block()
+  ins_cmp = b.block()
+  ins_shift = b.block()
+  ins_place = b.block()
+  ins_store = b.block()
+  ins_step = b.block()
+  found = b.block()
+  first_run = b.block()
+  later_run = b.block()
+  pl_head = b.block()
+  pl_both = b.block()
+  pl_low = b.block()
+  pl_shift = b.block()
+  collapse = b.block()
+  collapse_top = b.block()
+  ctop = b.block()
+  push = b.block()
+  merged_c = b.block()
+  fin = b.block()
+  fin_top = b.block()
+  merged_f = b.block()
+  merge = b.block()
+  alloc = b.block()
+  alloc_do = b.block()
+  copy_in = b.block()
+  cin_head = b.block()
+  cin_body = b.block()
+  mstart = b.block()
+  mloop = b.block()
+  take_right = b.block()
+  take_left = b.block()
+  mjoin = b.block()
+  mtest = b.block()
+  tail_head = b.block()
+  tail_body = b.block()
+  dn_head = b.block()
+  dn_body = b.block()
+  dn_start = b.block()
+  dn_loop = b.block()
+  dn_left = b.block()
+  dn_right = b.block()
+  dn_join = b.block()
+  dn_test = b.block()
+  dn_tail = b.block()
+  dn_tail_body = b.block()
+  merge_done = b.block()
+  done = b.block()
+
+  // Fewer than two elements: nothing to do.
+  lw.sort_if(mop_lt(), b.copy_local(n), b.c_i32(2), done, next_run)
+
+  // The next run from nxt, or the final merges at the end.
+  b.at(next_run)
+  lw.at(e.loc)
+  lw.sort_if(mop_ge(), b.copy_local(nxt), b.copy_local(n), fin, run_one)
+  b.at(run_one)
+  b.assign(b.pl(rs), b.rv_use(b.copy_local(nxt)))
+  b.assign(b.pl(k), b.rv_bin(mop_add(), b.copy_local(nxt), b.c_i32(1)))
+  // A last single element is a run in order.
+  lw.sort_if(mop_ge(), b.copy_local(k), b.copy_local(n), run_end, asc_head)
+
+  // In order while element k is not before element k - 1.
+  b.at(asc_head)
+  km = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(k), b.c_i32(1)))
+  ra = lw.sort_cmp(bl, want, et, lw.block_elem(arr, aty, k), lw.block_elem(arr, aty, km), e.loc, arr, in_place)
+  if ra < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(ra), asc_stop, asc_step)
+  b.at(asc_step)
+  lw.sort_bump(k, 1)
+  lw.sort_if(mop_lt(), b.copy_local(k), b.copy_local(n), asc_head, run_end)
+  // The first pair descending: the run is strictly descending while each
+  // element is before the one ahead of it.
+  b.at(asc_stop)
+  k1 = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(rs), b.c_i32(1)))
+  lw.sort_if(mop_eq(), b.copy_local(k), b.copy_local(k1), desc_start, run_end)
+  b.at(desc_start)
+  lw.sort_bump(k, 1)
+  lw.sort_if(mop_lt(), b.copy_local(k), b.copy_local(n), desc_head, desc_end)
+  b.at(desc_head)
+  kd = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(k), b.c_i32(1)))
+  rd = lw.sort_cmp(bl, want, et, lw.block_elem(arr, aty, k), lw.block_elem(arr, aty, kd), e.loc, arr, in_place)
+  if rd < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(rd), desc_step, desc_end)
+  b.at(desc_step)
+  lw.sort_bump(k, 1)
+  lw.sort_if(mop_lt(), b.copy_local(k), b.copy_local(n), desc_head, desc_end)
+  // Reversed in place: no two of its elements are equal, so the order
+  // stays stable.
+  b.at(desc_end)
+  b.assign(b.pl(lo), b.rv_use(b.copy_local(rs)))
+  b.assign(b.pl(hi), b.rv_bin(mop_sub(), b.copy_local(k), b.c_i32(1)))
+  b.goto(rev_head)
+  b.at(rev_head)
+  lw.sort_if(mop_lt(), b.copy_local(lo), b.copy_local(hi), rev_body, run_end)
+  b.at(rev_body)
+  a1 = mir_bare_copy(lw.block_elem(arr, aty, lo))
+  a2 = mir_bare_copy(lw.block_elem(arr, aty, hi))
+  lw.block_store(arr, aty, lo, b.copy_local(a2))
+  lw.block_store(arr, aty, hi, b.copy_local(a1))
+  lw.sort_bump(lo, 1)
+  lw.sort_bump(hi, -1)
+  b.goto(rev_head)
+
+  // The run is rs..k. One shorter than the minimum (and not at the end)
+  // is extended to it by an insertion sort.
+  b.at(run_end)
+  b.assign(b.pl(re), b.rv_use(b.copy_local(k)))
+  left = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(n), b.copy_local(rs)))
+  lw.sort_if(mop_gt(), b.copy_local(left), b.c_i32(sort_min_run()), ext_short, ext_whole)
+  b.at(ext_short)
+  b.assign(b.pl(ins_end), b.rv_bin(mop_add(), b.copy_local(rs), b.c_i32(sort_min_run())))
+  b.goto(ext_test)
+  b.at(ext_whole)
+  b.assign(b.pl(ins_end), b.rv_use(b.copy_local(n)))
+  b.goto(ext_test)
+  b.at(ext_test)
+  b.goto(ins_outer)
+
+  // The insertion: element re moves left while it is before the one
+  // ahead of it, rs..re being in order.
+  b.at(ins_outer)
+  lw.sort_if(mop_lt(), b.copy_local(re), b.copy_local(ins_end), ins_load, found)
+  b.at(ins_load)
+  b.assign(b.pl(v), b.rv_use(lw.block_elem(arr, aty, re)))
+  b.assign(b.pl(j), b.rv_use(b.copy_local(re)))
+  b.goto(ins_inner)
+  b.at(ins_inner)
+  lw.sort_if(mop_gt(), b.copy_local(j), b.copy_local(rs), ins_cmp, ins_place)
+  b.at(ins_cmp)
+  jm = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(j), b.c_i32(1)))
+  b.assign(b.pl(y), b.rv_use(lw.block_elem(arr, aty, jm)))
+  ri = lw.sort_cmp(bl, want, et, b.copy_local(v), b.copy_local(y), e.loc, arr, in_place)
+  if ri < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(ri), ins_shift, ins_place)
+  b.at(ins_shift)
+  lw.block_store(arr, aty, j, b.copy_local(y))
+  lw.sort_bump(j, -1)
+  b.goto(ins_inner)
+  b.at(ins_place)
+  lw.sort_if(mop_ne(), b.copy_local(j), b.copy_local(re), ins_store, ins_step)
+  b.at(ins_store)
+  lw.block_store(arr, aty, j, b.copy_local(v))
+  b.goto(ins_step)
+  b.at(ins_step)
+  lw.sort_bump(re, 1)
+  b.goto(ins_outer)
+
+  // The run rs..re is found. The first is kept as the pending run; a
+  // later one's boundary with the pending run gets its power
+  // (powerloop: the bits of the two midpoints over n, until they differ).
+  b.at(found)
+  lw.sort_if(mop_eq(), b.copy_local(pe), b.c_i32(0), first_run, later_run)
+  b.at(first_run)
+  b.assign(b.pl(ps), b.rv_use(b.copy_local(rs)))
+  b.assign(b.pl(pe), b.rv_use(b.copy_local(re)))
+  b.assign(b.pl(nxt), b.rv_use(b.copy_local(re)))
+  b.goto(next_run)
+  b.at(later_run)
+  b.assign(b.pl(pa), b.rv_cast(b.copy_local(ps), mt_i64()))
+  pe64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(pe), mt_i64()))
+  b.assign(b.pl(pa), b.rv_bin(mop_add(), b.copy_local(pa), pe64))
+  b.assign(b.pl(pb), b.rv_cast(b.copy_local(pe), mt_i64()))
+  re64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(re), mt_i64()))
+  b.assign(b.pl(pb), b.rv_bin(mop_add(), b.copy_local(pb), re64))
+  b.assign(b.pl(n64), b.rv_cast(b.copy_local(n), mt_i64()))
+  b.assign(b.pl(power), b.rv_use(b.c_i32(0)))
+  b.goto(pl_head)
+  b.at(pl_head)
+  lw.sort_bump(power, 1)
+  lw.sort_if(mop_ge(), b.copy_local(pa), b.copy_local(n64), pl_both, pl_low)
+  b.at(pl_both)
+  b.assign(b.pl(pa), b.rv_bin(mop_sub(), b.copy_local(pa), b.copy_local(n64)))
+  b.assign(b.pl(pb), b.rv_bin(mop_sub(), b.copy_local(pb), b.copy_local(n64)))
+  b.goto(pl_shift)
+  b.at(pl_low)
+  lw.sort_if(mop_ge(), b.copy_local(pb), b.copy_local(n64), collapse, pl_shift)
+  b.at(pl_shift)
+  b.assign(b.pl(pa), b.rv_bin(mop_add(), b.copy_local(pa), b.copy_local(pa)))
+  b.assign(b.pl(pb), b.rv_bin(mop_add(), b.copy_local(pb), b.copy_local(pb)))
+  b.goto(pl_head)
+
+  // The runs on the stack with a higher power merge into the pending
+  // run first; then the pending run goes on the stack and the new one is
+  // pending.
+  b.at(collapse)
+  lw.sort_if(mop_gt(), b.copy_local(top), b.c_i32(0), collapse_top, push)
+  b.at(collapse_top)
+  tpi = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(top), b.copy_local(top)))
+  tpw_at = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(tpi), b.c_i32(1)))
+  tpw = lw.tmp(mt_i32(), b.rv_use(b.copy(b.index(b.pl(stk), b.copy_local(tpw_at)))))
+  lw.sort_if(mop_gt(), tpw, b.copy_local(power), ctop, push)
+  b.at(ctop)
+  tps_at = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(tpi), b.c_i32(2)))
+  b.assign(b.pl(m_lo), b.rv_use(b.copy(b.index(b.pl(stk), b.copy_local(tps_at)))))
+  b.assign(b.pl(m_mid), b.rv_use(b.copy_local(ps)))
+  b.assign(b.pl(m_hi), b.rv_use(b.copy_local(pe)))
+  lw.sort_bump(top, -1)
+  b.assign(b.pl(m_final), b.rv_use(b.c_bool(false)))
+  b.goto(merge)
+  b.at(merged_c)
+  b.assign(b.pl(ps), b.rv_use(b.copy_local(m_lo)))
+  b.goto(collapse)
+  b.at(push)
+  si = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(top), b.copy_local(top)))
+  b.assign(b.index(b.pl(stk), b.copy_local(si)), b.rv_use(b.copy_local(ps)))
+  si1 = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(si), b.c_i32(1)))
+  b.assign(b.index(b.pl(stk), b.copy_local(si1)), b.rv_use(b.copy_local(power)))
+  lw.sort_bump(top, 1)
+  b.assign(b.pl(ps), b.rv_use(b.copy_local(rs)))
+  b.assign(b.pl(pe), b.rv_use(b.copy_local(re)))
+  b.assign(b.pl(nxt), b.rv_use(b.copy_local(re)))
+  b.goto(next_run)
+
+  // At the end the stack merges into the pending run from its top.
+  b.at(fin)
+  lw.sort_if(mop_gt(), b.copy_local(top), b.c_i32(0), fin_top, done)
+  b.at(fin_top)
+  fpi = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(top), b.copy_local(top)))
+  fps_at = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(fpi), b.c_i32(2)))
+  b.assign(b.pl(m_lo), b.rv_use(b.copy(b.index(b.pl(stk), b.copy_local(fps_at)))))
+  b.assign(b.pl(m_mid), b.rv_use(b.copy_local(ps)))
+  b.assign(b.pl(m_hi), b.rv_use(b.copy_local(pe)))
+  lw.sort_bump(top, -1)
+  b.assign(b.pl(m_final), b.rv_use(b.c_bool(true)))
+  b.goto(merge)
+  b.at(merged_f)
+  b.assign(b.pl(ps), b.rv_use(b.copy_local(m_lo)))
+  b.goto(fin)
+
+  // The merge of m_lo..m_mid and m_mid..m_hi: nothing when the two
+  // elements at the boundary are in order.
+  b.at(merge)
+  bm = lw.sort_int(b.rv_bin(mop_sub(), b.copy_local(m_mid), b.c_i32(1)))
+  rp = lw.sort_cmp(bl, want, et, lw.block_elem(arr, aty, m_mid), lw.block_elem(arr, aty, bm), e.loc, arr, in_place)
+  if rp < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(rp), alloc, merge_done)
+  // The scratch, at the first merge: half the array's size (the shorter
+  // run of a merge is copied), of its type, zeroed (the collector reads
+  // its every word).
+  b.at(alloc)
+  b.branch(b.copy_local(has_s), copy_in, alloc_do)
+  b.at(alloc_do)
+  half = lw.sort_int(b.rv_bin(mop_div(), b.copy_local(n), b.c_i32(2)))
+  sn = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(half), mt_u64()))
+  bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), sn, lw.elem_size(aty)))
+  b.call(s, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
+  b.assign(b.pl(has_s), b.rv_use(b.c_bool(true)))
+  b.goto(copy_in)
+  // The shorter run into the scratch: the left one merges up from the
+  // front, the right one down from the back.
+  b.at(copy_in)
+  lw.at(e.loc)
+  b.assign(b.pl(m_len), b.rv_bin(mop_sub(), b.copy_local(m_mid), b.copy_local(m_lo)))
+  b.assign(b.pl(r_len), b.rv_bin(mop_sub(), b.copy_local(m_hi), b.copy_local(m_mid)))
+  b.assign(b.pl(mi), b.rv_use(b.c_i32(0)))
+  lw.sort_if(mop_lt(), b.copy_local(r_len), b.copy_local(m_len), dn_head, cin_head)
+  b.at(cin_head)
+  lw.sort_if(mop_lt(), b.copy_local(mi), b.copy_local(m_len), cin_body, mstart)
+  b.at(cin_body)
+  src = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(m_lo), b.copy_local(mi)))
+  lw.sort_scratch_set(s, rc, mi, lw.block_elem(arr, aty, src))
+  lw.sort_bump(mi, 1)
+  b.goto(cin_head)
+  // Then the two merged back: mi in the scratch, mj in the right run, mk
+  // the next place; the right element goes first only when it is before
+  // the left one. Each step's choice is a select, no branch (as Rust's
+  // merge steps).
+  b.at(mstart)
+  b.assign(b.pl(mi), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(mj), b.rv_use(b.copy_local(m_mid)))
+  b.assign(b.pl(mk), b.rv_use(b.copy_local(m_lo)))
+  b.goto(mloop)
+  b.at(mloop)
+  b.assign(b.pl(x), b.rv_use(lw.block_elem(arr, aty, mj)))
+  b.assign(b.pl(y), b.rv_use(lw.sort_scratch_get(s, et, mi)))
+  rm = lw.sort_cmp(bl, want, et, b.copy_local(x), b.copy_local(y), e.loc, arr, in_place)
+  if rm < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(rm), take_right, take_left)
+  b.at(take_right)
+  b.assign(b.pl(t), b.rv_use(b.copy_local(x)))
+  b.assign(b.pl(dmj), b.rv_use(b.c_i32(1)))
+  b.assign(b.pl(dmi), b.rv_use(b.c_i32(0)))
+  b.goto(mjoin)
+  b.at(take_left)
+  b.assign(b.pl(t), b.rv_use(b.copy_local(y)))
+  b.assign(b.pl(dmj), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(dmi), b.rv_use(b.c_i32(1)))
+  b.goto(mjoin)
+  b.at(mjoin)
+  lw.block_store(arr, aty, mk, b.copy_local(t))
+  lw.sort_bump(mk, 1)
+  b.assign(b.pl(mj), b.rv_bin(mop_add(), b.copy_local(mj), b.copy_local(dmj)))
+  b.assign(b.pl(mi), b.rv_bin(mop_add(), b.copy_local(mi), b.copy_local(dmi)))
+  lw.sort_if(mop_lt(), b.copy_local(mi), b.copy_local(m_len), mtest, merge_done)
+  b.at(mtest)
+  lw.sort_if(mop_lt(), b.copy_local(mj), b.copy_local(m_hi), mloop, tail_head)
+  // The right run ended: the rest of the left one goes after it.
+  b.at(tail_head)
+  lw.sort_if(mop_lt(), b.copy_local(mi), b.copy_local(m_len), tail_body, merge_done)
+  b.at(tail_body)
+  lw.block_store(arr, aty, mk, lw.sort_scratch_get(s, et, mi))
+  lw.sort_bump(mk, 1)
+  lw.sort_bump(mi, 1)
+  b.goto(tail_head)
+  // Down: the right run in the scratch, mi its next element from the
+  // back, mj the left run's, mk the next place from the back; the left
+  // element goes last only when the right one is before it.
+  b.at(dn_head)
+  lw.sort_if(mop_lt(), b.copy_local(mi), b.copy_local(r_len), dn_body, dn_start)
+  b.at(dn_body)
+  dsrc = lw.sort_int(b.rv_bin(mop_add(), b.copy_local(m_mid), b.copy_local(mi)))
+  lw.sort_scratch_set(s, rc, mi, lw.block_elem(arr, aty, dsrc))
+  lw.sort_bump(mi, 1)
+  b.goto(dn_head)
+  b.at(dn_start)
+  b.assign(b.pl(mi), b.rv_bin(mop_sub(), b.copy_local(r_len), b.c_i32(1)))
+  b.assign(b.pl(mj), b.rv_bin(mop_sub(), b.copy_local(m_mid), b.c_i32(1)))
+  b.assign(b.pl(mk), b.rv_bin(mop_sub(), b.copy_local(m_hi), b.c_i32(1)))
+  b.goto(dn_loop)
+  b.at(dn_loop)
+  b.assign(b.pl(x), b.rv_use(lw.block_elem(arr, aty, mj)))
+  b.assign(b.pl(y), b.rv_use(lw.sort_scratch_get(s, et, mi)))
+  rn = lw.sort_cmp(bl, want, et, b.copy_local(y), b.copy_local(x), e.loc, arr, in_place)
+  if rn < 0 {
+    return zero
+  }
+  b.branch(b.copy_local(rn), dn_left, dn_right)
+  b.at(dn_left)
+  b.assign(b.pl(t), b.rv_use(b.copy_local(x)))
+  b.assign(b.pl(dmj), b.rv_use(b.c_i32(1)))
+  b.assign(b.pl(dmi), b.rv_use(b.c_i32(0)))
+  b.goto(dn_join)
+  b.at(dn_right)
+  b.assign(b.pl(t), b.rv_use(b.copy_local(y)))
+  b.assign(b.pl(dmj), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(dmi), b.rv_use(b.c_i32(1)))
+  b.goto(dn_join)
+  b.at(dn_join)
+  lw.block_store(arr, aty, mk, b.copy_local(t))
+  lw.sort_bump(mk, -1)
+  b.assign(b.pl(mj), b.rv_bin(mop_sub(), b.copy_local(mj), b.copy_local(dmj)))
+  b.assign(b.pl(mi), b.rv_bin(mop_sub(), b.copy_local(mi), b.copy_local(dmi)))
+  lw.sort_if(mop_ge(), b.copy_local(mi), b.c_i32(0), dn_test, merge_done)
+  b.at(dn_test)
+  lw.sort_if(mop_ge(), b.copy_local(mj), b.copy_local(m_lo), dn_loop, dn_tail)
+  // The left run ended: the rest of the right one goes before it.
+  b.at(dn_tail)
+  lw.sort_if(mop_ge(), b.copy_local(mi), b.c_i32(0), dn_tail_body, merge_done)
+  b.at(dn_tail_body)
+  lw.block_store(arr, aty, mk, lw.sort_scratch_get(s, et, mi))
+  lw.sort_bump(mk, -1)
+  lw.sort_bump(mi, -1)
+  b.goto(dn_tail)
+  b.at(merge_done)
+  b.branch(b.copy_local(m_final), merged_f, merged_c)
+
+  b.at(done)
+  lw.at(e.loc)
+  if do_copy {
+    return b.copy_local(arr)
+  }
+  zero
+}

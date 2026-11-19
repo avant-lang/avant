@@ -1736,6 +1736,7 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 - `xs.join(sep)` joins an `Array(String)` ([String operations](#string-operations)).
 - No `map`, `select` or `reduce` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
 - `sort` and `sorted` are stable: elements neither of which comes before the other keep their order (with a lambda, one that says whether `a` comes strictly first, `a.x < b.x`, never `<=`).
+- A sort with a lambda (and `sort_by`) is a merge sort that takes the runs already in order as they are, a strictly descending run reversed: at most about n log2 n comparisons, n - 1 on input already in order or strictly descending, and a scratch of half the array, allocated only when two runs merge. A lambda that is no order (`a <= b`, an answer at random) leaves the elements in some order and never loses one.
 - Those builtins (but `parallel`) take a function too, by its name or as a variable holding one: `xs.each(show)`, `xs.any(is_big)`, `xs.sort(by_age)` run the same loop with one call of it per element; a lambda written there is inlined instead.
 - One spelling each: `delete_if` (no `retain`), `unique` (no in-place twin), `delete_at` (no `remove`).
 - The lambdas given to `each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).

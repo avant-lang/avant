@@ -1,5 +1,5 @@
 // The lowering of the builtins that take a block: `Array.each`, `any`, `all`,
-// `sort { }`, `sorted { }`, and `Hash.each` are inlined loops in the calling function,
+// `sort { }`, `sorted { }` (lower_sort.av), and `Hash.each` are inlined loops in the calling function,
 // as the old back end emitted them: the receiver once into a local, an `i32` counter,
 // the size and the element buffer read again on every iteration, the block's
 // parameters bound as the function's own named locals (or through their boxes when a
@@ -408,92 +408,6 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   lw.block_step(i, head)
   b.at(exit)
   b.copy_local(res)
-}
-
-// `xs.sort (a, b) { c }` and `xs.sorted (a, b) { c }` (emit_comparator_sort,
-// builtins.av:864-947; `sorted` first copies the array, :949-974): an
-// insertion sort that moves the element at i left while the comparator
-// of (it, the element before) is true. `break` and `next` in the
-// comparator end the inner loop, as its false does.
-pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bool): MOperand {
-  b = lw.lw_b
-  zero = b.c_i32(0)
-  aty = lw.ety(recv)
-  if lw.failed() {
-    return zero
-  }
-  arr = lw.block_recv(recv, aty)
-  if lw.failed() {
-    return zero
-  }
-  lw.at(e.loc)
-  if do_copy {
-    c = b.temp(aty)
-    b.call(c, "avant_array_copy", lw.three(b.copy_local(arr), lw.elem_size(aty), lw.buf_tid(aty)))
-    arr = c
-  }
-  et = lw.elem_of(aty)
-  want = lw.elem_ty_of(recv)
-  n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(arr)), 1))))
-  nl = mir_bare_copy(n)
-  i = b.temp(mt_i32())
-  b.assign(b.pl(i), b.rv_use(b.c_i32(1)))
-  head = b.block()
-  body = b.block()
-  exit = b.block()
-  b.goto(head)
-  b.at(head)
-  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
-  b.branch(c1, body, exit)
-  b.at(body)
-  v = lw.block_elem(arr, aty, i)
-  vl = mir_bare_copy(v)
-  j = b.temp(mt_i32())
-  b.assign(b.pl(j), b.rv_use(b.copy_local(i)))
-  ihead = b.block()
-  ibody = b.block()
-  iexit = b.block()
-  b.goto(ihead)
-  b.at(ihead)
-  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(j), b.c_i32(0)))
-  b.branch(c2, ibody, iexit)
-  b.at(ibody)
-  jm = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), b.copy_local(j), b.c_i32(1)))
-  jml = mir_bare_copy(jm)
-  prev = lw.block_elem(arr, aty, jml)
-  pl = mir_bare_copy(prev)
-  lw.bind_name(bl.params[0], want, et, b.copy_local(vl), bl.loc, true)
-  lw.bind_name(bl.params[1], want, et, b.copy_local(pl), bl.loc, true)
-  cmp = lw.block_value(bl, iexit, iexit)
-  if lw.failed() {
-    return zero
-  }
-  if lw.open_now() {
-    lw.at(e.loc)
-    moved = b.block()
-    b.branch(cmp, moved, iexit)
-    b.at(moved)
-    if !do_copy {
-      // A store of the sort in place checks the freeze (the comparator
-      // may have started a task that reads it).
-      lw.frozen_check(arr, mir_frozen_sort(), e.loc)
-    }
-    lw.block_store(arr, aty, j, b.copy_local(pl))
-    b.assign(b.pl(j), b.rv_use(b.copy_local(jml)))
-    b.goto(ihead)
-  }
-  b.at(iexit)
-  lw.at(e.loc)
-  if !do_copy {
-    lw.frozen_check(arr, mir_frozen_sort(), e.loc)
-  }
-  lw.block_store(arr, aty, j, b.copy_local(vl))
-  lw.block_step(i, head)
-  b.at(exit)
-  if do_copy {
-    return b.copy_local(arr)
-  }
-  zero
 }
 
 // A walk of a hash or a set in place (`for k, v in h`, `for k in
