@@ -5140,6 +5140,14 @@ fn main: Int {
 }
 ```
 
+<!-- check: output -->
+```text
+PASS greet Ada
+PASS greet Bo
+PASS greet Cy
+0 failed, 3 passed
+```
+
 `t.temp_dir` returns a new directory at each call, inside the test's private temporary directory, removed at exit: a test never cleans up.
 
 ```avant
@@ -5152,6 +5160,12 @@ fn main: Int {
   t.check((fs.write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
   t.finish()
 }
+```
+
+<!-- check: output -->
+```text
+PASS write in temp_dir
+0 failed, 1 passed
 ```
 
 ### Golden files

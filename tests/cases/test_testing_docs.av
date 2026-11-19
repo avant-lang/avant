@@ -85,40 +85,13 @@ fn test_testing_docs(c: Checks) {
     dir = "${scratch()}/testing_docs-docs-${stamp}"
     mkdir_p(dir)
 
-    // The README's first test (test_greet.av) and its output are no
-    // longer written here: tools/readme-check.sh compiles and runs the
-    // README's block and compares its stdout with the README's output
-    // block, and the gate runs it. What stays
-    // is what the checker does not do: the outputs the README does not
-    // print (the table, temp_dir), `avant test` running a file's parallel
-    // bodies after its serial work, the golden checks beside their files
-    // (the README's block is marked skip), and `avant run FILE -- ARGS`.
-    table_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = testing.Test.new()\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  for i in 0..names.size {\n    t.check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n  }\n  t.finish()\n}\n"
-    _ = fs.write("${dir}/test_table.av", table_body)
-    table_log = "${dir}/table.log"
-    table_rc = "${dir}/table.rc"
-    table_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_table.av -- > ${td_quote(table_log)} 2>${td_quote(dir)}/table.err; echo $? > ${td_quote(table_rc)}\n"
-    table_code = td_sh(table_sh, table_rc)
-    c.eq_int(table_code, 0, "README table test runs")
-    if text = fs.read(table_log) {
-      c.eq_str(text, "PASS greet Ada\nPASS greet Bo\nPASS greet Cy\n0 failed, 3 passed\n", "README table test output")
-    } else {
-      c.expect(false, "README table test output")
-    }
-
-    tmp_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  dir = t.temp_dir()\n  t.check((fs.write(\"\${dir}/notes.txt\", \"hi\") ?? -1) == 2, \"write in temp_dir\")\n  t.finish()\n}\nimport std.fs\n"
-    _ = fs.write("${dir}/test_tmp.av", tmp_body)
-    tmp_log = "${dir}/tmp.log"
-    tmp_rc = "${dir}/tmp.rc"
-    tmp_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_tmp.av -- > ${td_quote(tmp_log)} 2>${td_quote(dir)}/tmp.err; echo $? > ${td_quote(tmp_rc)}\n"
-    tmp_code = td_sh(tmp_sh, tmp_rc)
-    c.eq_int(tmp_code, 0, "README temp_dir test runs")
-    if text = fs.read(tmp_log) {
-      c.eq_str(text, "PASS write in temp_dir\n0 failed, 1 passed\n", "README temp_dir test output")
-    } else {
-      c.expect(false, "README temp_dir test output")
-    }
-
+    // The README's tests whose output it shows (the first, test_greet.av,
+    // the table and temp_dir) are not written here: tools/readme-check.sh
+    // compiles and runs each README block and compares its stdout with the
+    // README's output block, and the gate runs it. What stays is what the
+    // checker does not do: `avant test` running a file's parallel bodies
+    // after its serial work, the golden checks beside their files (the
+    // README's block is marked skip), and `avant run FILE -- ARGS`.
     par_body = "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish()\n}\n"
     _ = fs.write("${dir}/test_parallel.av", par_body)
     par_log = "${dir}/parallel.log"
