@@ -86,6 +86,10 @@
 # `skip: NAME: why` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/change-check.sh WORK" >&2; exit 2; }
+# The caller's change-check settings never reach the fake's runs: a
+# runner would take the real machine lock and log into the caller's run
+# log, a map or a harness would change what the checks select.
+unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 w=$(realpath -m "$1")
 mkdir -p "$w"
