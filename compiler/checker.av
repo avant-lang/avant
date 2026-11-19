@@ -2403,6 +2403,12 @@ pub class Checker {
       fail(guard.loc, "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`")
       return left
     }
+    if guard.ident != "_" && !guard.ident.starts_with("__") {
+      if old = lookup(guard.ident) {
+        fail(guard.loc, "else ${guard.ident}: ${guard.ident} already names a variable here; the name an else guard binds is its block's own and ends with it (it would hide ${guard.ident} there): give the failure a new name")
+        return left
+      }
+    }
     payload = left
     if fty = else_failure(left, guard.loc, "else ${guard.ident}") {
       if s = ty_success_part(left) {
