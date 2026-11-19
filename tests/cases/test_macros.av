@@ -107,6 +107,31 @@ fn test_macros(c: Checks) {
     } else {
       c.expect(false, "nested quote")
     }
+
+    // A member the splice names is held to the rule for a written one: a
+    // method takes parentheses, a field is read without them.
+    write_av(dir, "splice_bare", "struct P {\n  n: Int\n\n  fn twice: Int {\n    self.n * 2\n  }\n}\n\nquote {\n  fn via(p: P): Int {\n    p.#(\"twice\")\n  }\n}\n\nfn main {\n  puts(via(P { n: 2 }))\n}\n")
+    bare_bin = "${dir}/splice_bare.bin"
+    bare_log = "${dir}/splice_bare.log"
+    c.expect(compile_av(compiler, "${dir}/splice_bare.av", bare_bin, bare_log) != 0, "spliced method without parentheses exits non-zero")
+    if err = fs.read(bare_log) {
+      c.expect(err.contains("a method call takes parentheses: write twice()"), "spliced method without parentheses")
+      c.expect(err.contains("splice_bare.av:11:7"), "spliced method without parentheses: at the splice")
+    } else {
+      c.expect(false, "spliced method without parentheses")
+    }
+    write_av(dir, "splice_call", "struct P {\n  n: Int\n\n  fn twice: Int {\n    self.n * 2\n  }\n}\n\nquote {\n  fn via(p: P): Int {\n    p.#(\"twice\")() + p.#(\"n\")\n  }\n}\n\nfn main {\n  puts(via(P { n: 2 }))\n}\n")
+    call_bin = "${dir}/splice_call.bin"
+    call_log = "${dir}/splice_call.log"
+    call_out = "${dir}/splice_call.out"
+    c.eq_int(compile_av(compiler, "${dir}/splice_call.av", call_bin, call_log), 0, "spliced method with parentheses and spliced field compile")
+    chmod_x(call_bin)
+    run_av_bin(call_bin, call_out)
+    if got = fs.read(call_out) {
+      c.eq_str(got, "6\n", "spliced method with parentheses and spliced field")
+    } else {
+      c.expect(false, "spliced method with parentheses and spliced field")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
