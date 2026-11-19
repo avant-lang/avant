@@ -1,21 +1,21 @@
 // std.sync: what tasks share.
 //
-//   Channel(T)   passes values from task to task. Channel(T).new is a
-//                rendezvous channel (a send waits for its receive);
+//   Channel(T)   passes values from task to task. Channel(T).new() is
+//                a rendezvous channel (a send waits for its receive);
 //                Channel(T).new(n) holds up to n values. send(value)
-//                sends, recv returns T? (nil once the channel is closed
-//                and empty, so `while v = ch.recv { ... }` drains it),
-//                close closes it. send returns whether the value went
+//                sends, recv() returns T? (nil once the channel is closed
+//                and empty, so `while v = ch.recv() { ... }` drains it),
+//                close() closes it. send returns whether the value went
 //                into the channel: on a closed channel it returns false
 //                at once, buffered or not, full or not, and a send
 //                waiting for room or for its receiver returns false when
 //                the channel closes. The values sent before
 //                the close stay for the receivers to drain.
-//   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
-//                for the block, x naming the guarded value; the form is
+//   Mutex(T)     guards one value. `m.with((x) { ... })` holds the lock
+//                for the lambda, x naming the guarded value; the form is
 //                the compiler's (checker.av check_mutex_with, the
 //                lowering in mir/lower_task.av), on this class's two
-//                fields, and its rules (what may leave the block, as
+//                fields, and its rules (what may leave the lambda, as
 //                its value or by a statement) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
@@ -169,7 +169,7 @@ pub class Mutex(T) {
 
   // A `with` or `try_with` that finds the mutex poisoned calls this under
   // the lock (the lowering, mir/lower_task.av): with a recover function
-  // the value is rebuilt and the poison cleared, and the block runs;
+  // the value is rebuilt and the poison cleared, and the lambda runs;
   // without one it returns false, and the lock traps or gives the error.
   // A trap inside the recover function leaves the mutex poisoned.
   pub fn __avant_heal: Bool {
@@ -196,7 +196,7 @@ class MutexHeal(T) {
   }
 }
 
-// What `m.try_with { }` gives on a poisoned mutex without a recover function.
+// What `m.try_with((x) { ... })` gives on a poisoned mutex without a recover function.
 pub enum MutexError: Error {
   poisoned
   pub fn message: String {
