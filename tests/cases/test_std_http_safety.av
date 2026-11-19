@@ -353,6 +353,45 @@ fn ws_route_cases(c: Checks) {
   }
 }
 
+// A received request's headers and peer are read while its handler
+// runs; a request kept past its handler (in a Mutex, by a later
+// handler on the same loop thread or by a task) traps at its read,
+// naming the program's call, and the handler's own reads, the header
+// set it took and a built request read as before
+// (tests/fixtures/http/header_after_handler.av).
+fn header_after_cases(c: Checks, root: String) {
+  if compiler = process.env("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/http-header-after-${stamp}.bin"
+    clog = "${scratch()}/http-header-after-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/header_after_handler.av", bin, clog)
+    c.eq_int(code, 0, "the header-after-handler fixture compiles")
+    kinds = ["header", "headers", "peer", "task"]
+    calls = ["header(name)", "headers()", "peer()", "header(name)"]
+    sites = ["49:30", "45:39", "47:39", "66:31"]
+    rule = "after the request's handler returned: a received request's headers and peer are read while its handler runs (the connection's buffer then holds the next requests); a request handed to a task takes them first (req.headers(), req.peer())"
+    for i in 0..kinds.size {
+      log = "${scratch()}/http-header-after-${stamp}-${kinds[i]}.log"
+      args: Array(String) = []
+      args.push(kinds[i])
+      status = run_out(bin, args, log) ?? -1
+      text = fs.read(log) ?? ""
+      c.eq_int(status, 0, "a kept request read after its handler (${kinds[i]}): the server goes on, status 0")
+      trap = "avant runtime: http.Request.${calls[i]} ${rule} at header_after_handler.av:${sites[i]}\n"
+      c.expect(text.contains(trap), "a kept request read after its handler (${kinds[i]}): the trap names the rule and the program's call (${text})")
+      c.expect(text.starts_with("built: built 1 ''\n/keep: 200 kept t5 t5 t5 127.0.0.1\n"), "a built request keeps its headers; the handler reads its own headers twice, takes the set and its peer (${kinds[i]}: ${text})")
+      c.expect(text.contains("/taken: 200 taken t5 t6\n"), "the header set a handler took reads after it; the next request reads its own (${kinds[i]})")
+      if kinds[i] == "task" {
+        c.expect(text.contains("/late: 200 went\n") && text.contains("keeper joined: -1\n") && !text.contains("task read"), "a task's read of a kept request traps the task (${text})")
+      } else {
+        c.expect(text.contains("/late: 500 Internal Server Error\n") && text.contains("keeper joined: 0\n"), "a later handler's read of a kept request fails that request, answered 500 (${kinds[i]})")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the header-after-handler test")
+  }
+}
+
 // A route registered while the server serves:
 // the route tables are read by the loop threads with no lock, so every
 // route method traps once `serve` runs. The fixture registers the route
@@ -1738,6 +1777,7 @@ fn main: Int {
   client_cases(c)
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
+  header_after_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
   handler_trap_cases(c, avant_test_root())
   response_literal_cases(c)

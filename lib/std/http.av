@@ -11,7 +11,7 @@ lib httpc {
   fun avant_http_req_route(req: Ptr(Void)): Int
   fun avant_http_route_add(srv: Ptr(Void), method: String, path: String)
   fun avant_http_req_body(req: Ptr(Void)): Bytes
-  fun avant_http_req_headers(req: Ptr(Void)): Bytes
+  fun avant_http_req_headers_now(seq: Int): Bytes
   fun avant_http_headers_peer(data: Bytes): String
   fun avant_http_headers_pack(block: String): Bytes
   fun avant_http_params_pack(text: String): Bytes
@@ -224,13 +224,20 @@ fn split_target(target: String): TargetParts {
 }
 
 // A received request. `method` and `path` are fields, read by every
-// route match; the rest is read through methods, so that what is read
-// lazily later changes no handler: `query()` is the raw query string
-// without the `?` (nil when the target has none), `header(name)` the
-// first value of a header, `headers()` all of them, `body()` the body,
-// `peer()` the peer's address. Each is a value copied out of the socket
-// buffer before the handler runs; the peer's address travels in the
-// header set's block, and `peer()` makes its text.
+// route match; the rest is read through methods: `query()` is the raw
+// query string without the `?` (nil when the target has none),
+// `header(name)` the first value of a header, `headers()` all of them,
+// `body()` the body, `peer()` the peer's address. The query and the
+// body are copied out of the socket buffer before the handler runs. The
+// headers are not: a received request carries no header set (`hs` is
+// empty, `seq` names its dispatch), and its first header read while its
+// handler runs builds the set from the connection's buffer (the runtime
+// keeps it for the handler's next reads), so a handler that reads none
+// allocates nothing for them. Once the handler has returned, that buffer
+// holds the next requests, so a read then traps: a request handed to a
+// task takes its headers first (`req.headers()`, and `req.peer()`,
+// whose address travels in the header set's block). A request built in
+// memory (`Request.build`, `seq` 0) keeps its own set in `hs`.
 pub struct Request {
   pub method: String
   pub path: String
@@ -246,11 +253,24 @@ pub struct Request {
   // The first value of the header `name` (in any case), nil when the
   // request has none.
   pub fn header(name: String): String? {
-    self.hs.get(name)
+    self.header_set("header(name)").get(name)
   }
 
   pub fn headers: Headers {
-    self.hs
+    self.header_set("headers()")
+  }
+
+  // The header set: a built request's own, a received one's from its
+  // dispatch while its handler runs; `call` names the read for the trap.
+  fn header_set(call: String): Headers {
+    if self.seq == 0 {
+      return self.hs
+    }
+    packed = httpc.avant_http_req_headers_now(self.seq)
+    if packed.size == 0 {
+      panic("http.Request.${call} after the request's handler returned: a received request's headers and peer are read while its handler runs (the connection's buffer then holds the next requests); a request handed to a task takes them first (req.headers(), req.peer())")
+    }
+    Headers { data: packed }
   }
 
   // The query's parameters, decoded (Params); none without a query. The
@@ -279,7 +299,7 @@ pub struct Request {
   // it as an IPv4-mapped IPv6 address) or an IPv6 address ("::1"). The
   // port is not kept.
   pub fn peer: String {
-    httpc.avant_http_headers_peer(self.hs.data)
+    httpc.avant_http_headers_peer(self.header_set("peer()").data)
   }
 
   // The reply of this request, for answering it later: the handler
@@ -743,13 +763,12 @@ class HttpState {
 // from the request's bytes (a routed request's are its route's).
 fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
   method = httpc.avant_http_req_method(raw)
-  raw_headers = httpc.avant_http_req_headers(raw)
   req_body = httpc.avant_http_req_body(raw)
   Request {
     method: method,
     path: path,
     raw_query: query,
-    hs: Headers { data: raw_headers },
+    hs: empty_headers(),
     data: req_body,
     seq: httpc.avant_http_req_seq(raw)
   }
@@ -797,7 +816,7 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
       method: r.method,
       path: r.path,
       raw_query: query,
-      hs: Headers { data: httpc.avant_http_req_headers(raw) },
+      hs: empty_headers(),
       data: httpc.avant_http_req_body(raw),
       seq: httpc.avant_http_req_seq(raw)
     }

@@ -1340,6 +1340,17 @@ static int64_t g_reply_next;
  * thread's count of dispatches (AvantHttpReq.seq). */
 static __thread AvantHttpReq *t_dispatch;
 static __thread int64_t t_dispatch_seq;
+/* Each loop thread's dispatches are numbered from its own base (a
+ * thread's first dispatch takes the next of g_seq_base, shifted past
+ * any count one thread reaches), so a request's seq names one dispatch
+ * of the whole process: a request kept by a task that runs on another
+ * thread never matches that thread's own dispatch. */
+static atomic_int_fast64_t g_seq_base;
+/* The header set of the request whose handler runs now (t_dispatch),
+ * built at its first read and kept for the next one: a runtime root of
+ * this thread, cleared when the dispatch ends. */
+static __thread char *t_dispatch_hs;
+static __thread int t_dispatch_hs_rooted;
 
 char *avant_http_req_method(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
@@ -1453,6 +1464,32 @@ char *avant_http_req_headers(void *reqp) {
   }
   return build_packed_headers(req->headers, req->num_headers, req->base,
                               raw_len, ((ConnNode *)req->conn)->peer);
+}
+
+/* Request.headers() of a received request (its seq): the header set
+ * of the request whose handler runs now on this thread, built from the
+ * connection's buffer at its first read and the same set after; ""
+ * (no header set has fewer than 4 bytes) when that request's handler no
+ * longer runs here, since its bytes in the connection's buffer are
+ * reused for the next requests (std.http raises the trap, naming the
+ * program's call). */
+/* gc-lint: holds nothing (the request is C memory on the dispatch's
+ * stack; the set built is stored in a runtime root after the one
+ * allocating call, and nothing is held across it). */
+char *avant_http_req_headers_now(avant_int seq) {
+  AvantHttpReq *req = t_dispatch;
+  if (!req || req->seq != seq) {
+    return avant_str_empty();
+  }
+  if (!t_dispatch_hs) {
+    char *hs = avant_http_req_headers(req);
+    if (!t_dispatch_hs_rooted) {
+      t_dispatch_hs_rooted = 1;
+      avant_gc_add_root((void **)&t_dispatch_hs);
+    }
+    t_dispatch_hs = hs;
+  }
+  return t_dispatch_hs;
 }
 
 /* The text of a received request's peer (the address after its packed
@@ -3214,6 +3251,9 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s, const char 
      * connection kept or closed as an answer's would be; the server
      * goes on. A trap after the upgrade, in a websocket_open handler,
      * closes the new WebSocket with 1011. */
+    if (__builtin_expect(t_dispatch_seq == 0, 0)) {
+      t_dispatch_seq = (int64_t)atomic_fetch_add(&g_seq_base, 1) << 40;
+    }
     req.seq = ++t_dispatch_seq;
     t_dispatch = &req;
     if (!in_avant) {
@@ -3222,6 +3262,7 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s, const char 
     }
     trapped = avant_task_recover_call(srv->dispatch, srv->state, &req);
     t_dispatch = NULL;
+    t_dispatch_hs = NULL;
     if (__builtin_expect(req.reply != NULL, 0)) {
       if (req.later && !trapped && !us_socket_is_closed(0, s)) {
         /* Answered later: the connection waits for the reply (its idle
