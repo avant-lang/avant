@@ -1,5 +1,39 @@
 # Avant Language changelog
 
+## 0.48.0 - 2026-11-19
+
+### Added
+
+* `defer { ... }`; `panic(message)`; `?? exit(status)`; an error's `cause` may be a union of error types.
+* `json.decode(text, T)` and `json.encode(value)`, generated at compile time, with depth and size limits; `JsonBuilder` takes any value `json.encode` writes.
+* `std.fs`, `std.process` (with `process.notify` for signals), `std.bits`, `std.digest` (CRC-32 and SHA-256 on the CPU's instructions where it has them), `std.ws`; a module's last name qualifies its names (`time.now()`).
+* `Hash(K, V).new(capacity)`, `Buf.new(n, byte)`, `xs.sort_by`, `xs.binary_search`, `n.to_s(base)`, `min`/`max`/`clamp`, `Bytes` hex, `split` and `strip`; a `Hash` value may be optional; `for k, v in h` walks a hash in place; `==` and `delete_if` on `Hash` and `Set`.
+* An alias of a generic type, an alias used as a value, a module `const` of any value, `:name` for an enum member, `for i in a..b by -k`.
+* More values cross to a task: a class instance moved into `spawn`, a class of only `Mutex` and `Channel` fields, a struct of those, `Bytes`, a C pointer inside its module.
+* `std.http`: query and form parameters, `Request.build`, `Server.fallback`, `every`, `on_close`, idle timeouts, answers sent later from any task (`req.reply()`), `server.closer()`.
+* `DESIGN.md`, the design contract: the numeric rules, what safe code cannot do, and each choice with its reason.
+
+### Changed
+
+* A block in pipes (`{ |x| ... }`) and a block after a call's parentheses are compile errors whose hint names the lambda, `(x) { ... }`; `avant format --lambdas` and `--calls` are removed.
+* `std` types take their module's name (`sync.Mutex(Int)`, `json.Json`, `http.listen`); `Request`'s fields are methods; WebSocket sends return `Void | WsSendError`; `ZlibError`, `Base64Error` and `MutexError` are enums.
+* Removed, each call saying the new spelling: the prelude's file, directory, argument and process functions (now `std.fs` and `std.process`), `sqrt`, `exp`, `str_slice`, `buf_new`, `has_key`, `Array.contains`, `puts_u`, `sha256`, `h.inc_slice` (write `h.inc(s[a..b])`) and the benchmark helpers.
+* Refused: a function named like a builtin, `if v = x` or `else e` over an existing name, `break 2`.
+* `Hash` and `Set` keep insertion order; their hashing takes a per-process seed (`AVANT_HASH_SEED`), `String` keys a keyed multiply-mix.
+* A lookup written with a slice (`h[s[a..b]]`, `h.inc(s[a..b])`) reads the bytes in place and builds the key only on an insert.
+* Sorting with a comparator, `sort_by` and `fn compare` is a stable run-adaptive merge sort, O(n log n) (it was quadratic).
+* Memory: a local whose value is dead no longer keeps it alive; storage written at once is not zeroed first; a large array or `Buf` grows in place; `push` runs in line; the collector keeps the memory a cycle uses; module constants live outside the collector.
+* Faster: float and integer printing, `std.json`, the HTTP request path (pipelined answers written in one call per batch; 23% more pipelined requests a second).
+* Traps name more: a fault in C code, an integer overflow's own line, a library precondition's calling line, a change to an array or hash a running task or walk reads.
+* A program built from one commit in two checkouts is the same bytes.
+* The compiler is built from v0.47.0.
+
+### Fixed
+
+* A large array of references grown in place could keep stale words and crash the collector.
+* `std.http`: a redirect to another host sent the caller's credentials and cookies; a half-sent WebSocket frame, an `accept` loop that spun a core, a silent WebSocket with no deadline, a duplicate `Content-Type`, query decoding of invalid UTF-8.
+* A program ended by SIGTERM or SIGINT lost its buffered output; a stack overflow in a C thread's callback, two modules' C layouts or opaque types of one name, zlib out of memory, a module's enum as a type argument, and a rare collector race with a just-shared buffer.
+
 ## 0.47.0 - 2026-11-18
 
 ### Added
