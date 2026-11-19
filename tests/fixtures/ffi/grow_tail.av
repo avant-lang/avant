@@ -1,0 +1,91 @@
+// A large pointer buffer grown in place keeps no stale word. A large
+// object's run is whole pages, and its payload need not end at a page's
+// end: the bytes after the payload in its last page belong to the run
+// but not to the object. A run reused at once for an allocation of the
+// same size (the spare: a young byte buffer freed by a young collection)
+// is zeroed only over its payload, so those bytes keep what the pages
+// held before. A pointer buffer that grows in place takes them into its
+// payload. If they were not zeroed there, the collector would read them
+// as references: a stale word naming a freed object reads freed memory
+// (the formatter over the corpus crashed so under AVANT_YOUNG_MB=1), and
+// one naming a live object keeps it alive after the program dropped it.
+//
+// The steps, each in its own function so that no local outlives them:
+//   poison   a 16 KiB pointer buffer whose every word names the victim,
+//            then dropped (its pages keep the victim's address);
+//   spare    a Buf of 8 KiB over those pages, as they were (a byte
+//            buffer is not zeroed), then dropped: a young collection
+//            keeps its run as the spare;
+//   grow     an array reserves 1,024 elements (8 KiB, the spare's size:
+//            the spare is its buffer, zeroed over 8 KiB only), fills
+//            them, and its next push grows the buffer to 2,048 elements
+//            in place, over the spare's last page and the pages after it.
+// The victim is then dropped and a complete collection must free it:
+// the live bytes fall by its size. Built with `--cc tests/fixtures/ffi/ffi.c`
+// (the collector's counters). In the check modes a buffer never grows
+// in place, and the program prints the same.
+import std.gc
+
+class Keep {
+  v: String?
+  a: Array(String)?
+}
+
+lib cc {
+  fun ffi_gc_count(which: Int): Int
+}
+
+// A string of at least 131,072 bytes (a large object).
+fn big: String {
+  s = "victim-abcdefgh"
+  while s.size < 131072 {
+    s = s + s
+  }
+  s
+}
+
+fn poison(k: Keep) {
+  if v = k.v {
+    r: Array(String) = []
+    r.reserve(2048)
+    for i in 0..2048 {
+      r.push(v)
+    }
+  }
+}
+
+fn spare {
+  b = Buf.new(8192)
+  b.push_byte(1)
+}
+
+fn grow(k: Keep) {
+  a: Array(String) = []
+  a.reserve(1024)
+  for i in 0..1025 {
+    a.push("x")
+  }
+  k.a = a
+}
+
+fn main {
+  k = Keep.new()
+  k.v = big()
+  gc.collect()
+  poison(k)
+  gc.collect()
+  spare()
+  gc.collect()
+  grow(k)
+  gc.collect()
+  before = cc.ffi_gc_count(2)
+  k.v = nil
+  gc.collect()
+  after = cc.ffi_gc_count(2)
+  freed = before - after >= 131072
+  size = 0
+  if a = k.a {
+    size = a.size
+  }
+  puts("victim freed: ${freed}, array of ${size}")
+}

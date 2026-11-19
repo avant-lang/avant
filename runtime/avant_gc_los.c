@@ -711,6 +711,23 @@ static int extend_run(AvantHeader *h, size_t new_size, int nozero) {
   } else {
     return 0;
   }
+  /* The old run's bytes past its payload become payload too, and nothing
+   * zeroed them: a run is zeroed over its payload only when it is reused
+   * at once for an object of its size (the spare, gc_los_alloc), and a
+   * byte buffer's run not at all, so they hold what the pages held
+   * before, such as a freed pointer buffer's words. In a buffer of
+   * references the collector would read them as references (a stale
+   * one names freed memory, or keeps a dead object alive). */
+  if (!nozero) {
+    size_t from = sizeof(AvantHeader) + 8 + (size_t)h->size;
+    size_t to = (size_t)(n_old << PAGE_SHIFT);
+    if (sizeof(AvantHeader) + 8 + new_size < to) {
+      to = sizeof(AvantHeader) + 8 + new_size;
+    }
+    if (to > from) {
+      memset(run + from, 0, to - from);
+    }
+  }
   h->size = (uint32_t)new_size;
   gc_heap.heap_bytes += added;
   gc_note_cycle_peak();

@@ -291,6 +291,43 @@ fn test_sticky_reuse(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(stat_value(reuse, "full_sticky") >= 1, "sticky_reuse.av reuse: a sticky collection followed (full_sticky ${stat_value(reuse, "full_sticky")})")
 }
 
+// ffi/grow_tail.av: a large pointer buffer grown in place keeps no stale
+// word. Its run is reused at once for the buffer (the spare, zeroed over
+// its payload only) after pages that held a dropped pointer buffer's
+// words naming a victim, and grows in place over its last page's rest
+// (its comment has the steps). In every environment the victim, once
+// dropped, is freed; before the growth zeroed that rest, the stale words
+// kept it alive (and, naming freed memory, crashed the formatter over
+// the corpus). In the default environment the statistics show the path
+// the program means to take: the spare reused and no buffer dropped
+// (the growth was in place).
+fn test_grow_tail(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/grow_tail.av", "${dir}/grow_tail", "${dir}/grow_tail.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "grow_tail.av: compiles")
+  want = "victim freed: true, array of 1025\n"
+  c.eq_str(log_text("${root}/tests/goldens/runs/fixtures/ffi/grow_tail.out"), want, "grow_tail.av: its run golden frees the victim")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "grow_tail", "grow_tail.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "grow_tail", "grow_tail.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "grow_tail.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/grow_tail.g${e}.out"), want, "grow_tail.av ${what}: the victim is freed")
+    c.eq_str(log_text("${dir}/grow_tail.g${e}.err"), "", "grow_tail.av ${what}: no stderr")
+  }
+  err = log_text("${dir}/grow_tail.stats.err")
+  c.expect(stat_value(err, "los_hits") >= 1 && stat_value(err, "los_drops") == 0, "grow_tail.av: the spare was reused and the buffer grew in place (los_hits ${stat_value(err, "los_hits")}, los_drops ${stat_value(err, "los_drops")})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
@@ -311,6 +348,7 @@ fn test_main(c: Checks) {
     test_keep_young(c, compiler, avant_test_root(), scratch_dir())
     test_sticky_full(c, compiler, avant_test_root(), scratch_dir())
     test_sticky_reuse(c, compiler, avant_test_root(), scratch_dir())
+    test_grow_tail(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
