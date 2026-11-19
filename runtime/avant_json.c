@@ -534,3 +534,125 @@ int64_t avant_json_error_limit(void) {
   return g_json_limit;
 }
 
+
+/* ---- The typed encode's writers ----
+ *
+ * json.encode and a JsonBuilder write a string and a float straight into
+ * the Buf: a string is scanned once for the bytes that need an escape
+ * and its runs copied whole (the Avant loop it replaced pushed byte by
+ * byte), a float's text is formed on the stack, with no String made for
+ * it. */
+
+/* The bytes a string's byte takes in JSON text: 1, 2 for ", \ and the
+ * escapes \n, \r, \t, 6 for any other byte below 0x20 (\u00XX). */
+static const uint8_t json_esc_len[256] = {
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 2, 2, 6, 6, 2, 6, 6,
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+  1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+/* s as a JSON string, quoted, appended to buf: " and \ escaped, \n, \r
+ * and \t by their short escapes, any other byte below 0x20 as \u00XX in
+ * lower case, every other byte (UTF-8 included) as it is. The escaped
+ * size is counted first, so the Buf grows at most once. */
+void avant_json_write_str(void *buf, const char *s) {
+  static const char hex[] = "0123456789abcdef";
+  size_t n;
+  size_t i;
+  size_t out_n = 2;
+  const uint8_t *p;
+  int32_t at;
+  uint8_t *dst;
+  uint8_t *o;
+  if (!buf) {
+    return;
+  }
+  p = (const uint8_t *)avant_str_bytes(s ? s : AVANT_STR_EMPTY, &n);
+  for (i = 0; i < n; i++) {
+    out_n += json_esc_len[p[i]];
+  }
+  at = (int32_t)avant_buf_size(buf);
+  if (out_n > (size_t)INT32_MAX - (size_t)at) {
+    avant_size_check((uint64_t)at + (uint64_t)out_n, AVANT_SIZE_BUF);
+  }
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
+  avant_buf_ensure(buf, (avant_int)at + (avant_int)out_n);
+  p = (const uint8_t *)avant_str_bytes(s ? s : AVANT_STR_EMPTY, &n);
+  dst = avant_buf_bytes(buf);
+  if (!dst) {
+    return;
+  }
+  o = dst + at;
+  *o++ = '"';
+  if (out_n == n + 2) {
+    memcpy(o, p, n);
+    o += n;
+  } else {
+    size_t run = 0;
+    for (i = 0; i < n; i++) {
+      uint8_t c = p[i];
+      if (json_esc_len[c] == 1) {
+        continue;
+      }
+      if (i > run) {
+        memcpy(o, p + run, i - run);
+        o += i - run;
+      }
+      run = i + 1;
+      *o++ = '\\';
+      if (c == '"' || c == '\\') {
+        *o++ = c;
+      } else if (c == '\n') {
+        *o++ = 'n';
+      } else if (c == '\r') {
+        *o++ = 'r';
+      } else if (c == '\t') {
+        *o++ = 't';
+      } else {
+        *o++ = 'u';
+        *o++ = '0';
+        *o++ = '0';
+        *o++ = (uint8_t)hex[c >> 4];
+        *o++ = (uint8_t)hex[c & 15];
+      }
+    }
+    if (n > run) {
+      memcpy(o, p + run, n - run);
+      o += n - run;
+    }
+  }
+  *o++ = '"';
+  avant_buf_set_size(buf, (avant_int)(o - dst));
+}
+
+/* v's text (the language's one float text) appended to buf; 1 without
+ * writing anything for NaN and the infinities, which JSON has no text
+ * for, else 0. */
+/* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
+avant_int avant_json_write_f64(void *buf, double v) {
+  char tmp[48];
+  int k;
+  if (v - v != 0.0) {
+    return 1;
+  }
+  k = avant_fmt_float_text(tmp, v);
+  avant_buf_append(buf, tmp, (int32_t)k);
+  return 0;
+}

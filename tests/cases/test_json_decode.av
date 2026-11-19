@@ -214,6 +214,68 @@ fn test_encode(c: Checks) {
   buf.push_str("data: ")
   json.encode_into(buf, Point { x: 1.0, y: -2.5 })
   c.eq_str(buf.to_s(), "data: {\"x\":1.0,\"y\":-2.5}", "encode_into appends to a Buf")
+  test_encode_text(c)
+}
+
+// A String's JSON text by the rule, byte by byte: what the runtime's
+// writer (one scan, runs copied whole) must give.
+fn escaped_by_rule(s: String): String {
+  hex = "0123456789abcdef"
+  b = Buf.new()
+  b.push_byte(34)
+  for ch in s.bytes {
+    if ch == 34 || ch == 92 {
+      b.push_byte(92)
+      b.push_byte(ch)
+    } else if ch == 10 {
+      b.push_str("\\n")
+    } else if ch == 13 {
+      b.push_str("\\r")
+    } else if ch == 9 {
+      b.push_str("\\t")
+    } else if ch < 32 {
+      b.push_str("\\u00")
+      b.push_byte(hex[ch / 16])
+      b.push_byte(hex[ch % 16])
+    } else {
+      b.push_byte(ch)
+    }
+  }
+  b.push_byte(34)
+  b.to_s()
+}
+
+fn test_encode_text(c: Checks) {
+  every = Buf.new()
+  for ch in 1..128 {
+    every.push_byte(ch)
+  }
+  every.push_str("é 日本 /")
+  s = every.to_s()
+  c.eq_str(json.encode(s), escaped_by_rule(s), "every ASCII byte escaped by the rule, UTF-8 as it is")
+  c.eq_str(json.encode(""), "\"\"", "the empty String")
+  c.eq_str(json.encode("\"\\"), "\"\\\"\\\\\"", "only escapes")
+  long = Buf.new()
+  for i in 0..20000 {
+    long.push_str("ab")
+    if i % 7 == 0 {
+      long.push_str("\"\n")
+    }
+    if i % 11 == 0 {
+      long.push_byte(1)
+    }
+  }
+  ls = long.to_s()
+  small = Buf.new(4)
+  small.push_str("x=")
+  json.encode_into(small, [ls, "tail"])
+  c.eq_str(small.to_s(), "x=[" + escaped_by_rule(ls) + ",\"tail\"]", "a long String with escapes grows the Buf once and keeps what it held")
+  xs = [0.1, 2.0, -0.0, 1.0e21, 1.5e-7, 5.0e-324, 123456789.125, 1.0e300, 0.30000000000000004, 19.99, -7.25, 0.12345678]
+  texts: Array(String) = []
+  for x in xs {
+    texts.push("${x}")
+  }
+  c.eq_str(json.encode(xs), "[" + texts.join(",") + "]", "a Float64 written with the language's float text")
 }
 
 // Many documents, each a fresh parse: what a decode keeps of a document

@@ -26,6 +26,8 @@ lib jsonc {
   fun avant_json_error_offset: Int
   fun avant_json_error_count: Int
   fun avant_json_error_limit: Int
+  fun avant_json_write_str(buf: Buf, s: String)
+  fun avant_json_write_f64(buf: Buf, v: Float64): Int
 }
 
 // What a JSON value is: Json.kind and JsonValue.kind. The values are
@@ -336,29 +338,11 @@ pub class JsonIter {
   }
 }
 
+// s as a JSON string, quoted: " and \ escaped, \n, \r and \t by their
+// short escapes, any other byte below 0x20 as \u00XX, every other byte
+// as it is. The runtime scans s once and copies its runs whole.
 fn builder_escape(buf: Buf, s: String) {
-  hex = "0123456789abcdef"
-  buf.push_str("\"")
-  for c in s.bytes {
-    if c == 34 {
-      buf.push_str("\\\"")
-    } else if c == 92 {
-      buf.push_str("\\\\")
-    } else if c == 10 {
-      buf.push_str("\\n")
-    } else if c == 13 {
-      buf.push_str("\\r")
-    } else if c == 9 {
-      buf.push_str("\\t")
-    } else if c < 32 {
-      buf.push_str("\\u00")
-      buf.push_byte(hex[c / 16])
-      buf.push_byte(hex[c % 16])
-    } else {
-      buf.push_byte(c)
-    }
-  }
-  buf.push_str("\"")
+  jsonc.avant_json_write_str(buf, s)
 }
 
 pub class JsonBuilder {
@@ -639,13 +623,12 @@ fn codec_dec_value(j: Json): JsonValue | JsonError {
   j.to_value()
 }
 
+// The float's text written into b by the runtime, with no String made
+// for it; NaN and the infinities have no JSON text, as for a JsonBuilder.
 fn codec_enc_f64(b: Buf, v: Float64) {
-  d = v - v
-  if d != 0.0 {
-    // NaN and the infinities have no JSON text, as for a JsonBuilder.
+  if jsonc.avant_json_write_f64(b, v) != 0 {
     panic("json.encode: ${v} is not a JSON number; write null or a string for it")
   }
-  b.push_str("${v}")
 }
 
 fn codec_enc_bool(b: Buf, v: Bool) {
