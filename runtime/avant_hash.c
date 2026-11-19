@@ -178,16 +178,35 @@ static inline AvantHashX *hx(const AvantHash *h) {
  * the system's entropy; AVANT_HASH_SEED (a decimal number) fixes it, for
  * a measurement that must repeat its probes exactly. Every hash takes
  * it at its creation, so a race between two threads' first hashes only
- * gives each its own seed. */
+ * gives each its own seed. With it, the secret String keys are hashed
+ * under (hash_bytes): four 64-bit words, drawn from the system's entropy
+ * as well, or derived from the fixed seed (AVANT_HASH_SEED=0 gives the
+ * same secret in every run). The secret is written before the seed is
+ * marked set, so a hash that read the seed reads the secret it goes
+ * with. */
 static uint32_t g_hash_seed;
 static int g_hash_seed_set;
+static uint64_t g_hash_secret[4];
+
+static uint64_t splitmix64(uint64_t *x) {
+  uint64_t z = (*x += 0x9e3779b97f4a7c15ull);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+  return z ^ (z >> 31);
+}
 
 static __attribute__((noinline, cold)) uint32_t hash_seed_draw(void) {
   uint32_t v = 0;
+  uint64_t k[4];
+  int i;
   const char *fixed = getenv("AVANT_HASH_SEED");
+  int drawn = 0;
   if (fixed && *fixed) {
     v = (uint32_t)strtoul(fixed, NULL, 10);
-  } else if (getrandom(&v, sizeof v, GRND_NONBLOCK) != (ssize_t)sizeof v) {
+  } else if (getrandom(&v, sizeof v, GRND_NONBLOCK) == (ssize_t)sizeof v &&
+             getrandom(k, sizeof k, GRND_NONBLOCK) == (ssize_t)sizeof k) {
+    drawn = 1;
+  } else {
     /* No entropy yet (early boot) or no getrandom: the clock, the
      * process id and an address, mixed. */
     struct timespec ts;
@@ -197,6 +216,21 @@ static __attribute__((noinline, cold)) uint32_t hash_seed_draw(void) {
     m *= 0xff51afd7ed558ccdull;
     m ^= m >> 33;
     v = (uint32_t)m;
+    uint64_t x = m ^ ((uint64_t)ts.tv_nsec << 32);
+    for (i = 0; i < 4; i++) {
+      k[i] = splitmix64(&x);
+    }
+    drawn = 1;
+  }
+  if (!drawn) {
+    /* The fixed seed: the secret is a function of it alone. */
+    uint64_t x = (uint64_t)v ^ 0x6a09e667f3bcc909ull;
+    for (i = 0; i < 4; i++) {
+      k[i] = splitmix64(&x);
+    }
+  }
+  for (i = 0; i < 4; i++) {
+    __atomic_store_n(&g_hash_secret[i], k[i], __ATOMIC_RELAXED);
   }
   __atomic_store_n(&g_hash_seed, v, __ATOMIC_RELAXED);
   __atomic_store_n(&g_hash_seed_set, 1, __ATOMIC_RELEASE);
@@ -280,17 +314,101 @@ static inline int val_refs(const AvantHash *h) {
   return (h->desc & (AVANT_HASH_V_REF | AVANT_HASH_V_WORDS)) != 0;
 }
 
+/* A String key's hash: a keyed multiply-mix, of the kind of wyhash,
+ * rapidhash and foldhash. Its step is the folded multiply: the 128-bit
+ * product of two 64-bit words, its halves xored, which spreads every
+ * input bit over the result in one multiplication. A key of 16 bytes or
+ * fewer is read as two words in a fixed number of loads: 4 to 16 bytes
+ * by four 4-byte loads at both ends that overlap as needed, 1 to 3 bytes
+ * by its first, middle and last byte; a longer key folds each 16 bytes
+ * into the state, then its last 16 (which may overlap the ones before).
+ * No load reads outside the key's bytes. The two words are xored with
+ * secret words before they meet in the final fold, and the state starts
+ * from a secret word with the hash's seed, rotated by the length (a
+ * length change moves secret bits, which the key's bytes cannot undo).
+ * The secret is the process's (hash_seed_draw): someone who knows the
+ * function but not the secret cannot choose keys that collide, where
+ * FNV-1a with the seed in its start value kept the low bits of every
+ * key's hash a function of the low bits of its bytes alone, whatever
+ * the seed. The table takes the 64-bit result folded to 32 bits.
+ *
+ * The key is read through RD8 and RD4, which load a word at an offset:
+ * hash_bytes reads one buffer, hash_concat_bytes two pieces as one key,
+ * and both give the same hash for the same bytes. */
+static inline uint64_t hash_fold(uint64_t a, uint64_t b) {
+  __uint128_t r = (__uint128_t)a * b;
+  return (uint64_t)r ^ (uint64_t)(r >> 64);
+}
+
+#define HASH_KEYED_BODY(RD8, RD4, RD1, n, seed, out) \
+  do { \
+    uint64_t k0_ = __atomic_load_n(&g_hash_secret[0], __ATOMIC_RELAXED); \
+    uint64_t k1_ = __atomic_load_n(&g_hash_secret[1], __ATOMIC_RELAXED); \
+    uint64_t st_ = k0_ ^ (uint64_t)(seed); \
+    uint64_t a_, b_; \
+    size_t n_ = (n); \
+    unsigned r_ = (unsigned)(n_ & 63); \
+    st_ = (st_ >> r_) | (st_ << ((64 - r_) & 63)); \
+    if (__builtin_expect(n_ <= 16, 1)) { \
+      if (n_ >= 4) { \
+        size_t m_ = (n_ >> 3) << 2; \
+        a_ = (RD4(0) << 32) | RD4(m_); \
+        b_ = (RD4(n_ - 4) << 32) | RD4(n_ - 4 - m_); \
+      } else if (n_ > 0) { \
+        a_ = (RD1(0) << 16) | (RD1(n_ >> 1) << 8) | RD1(n_ - 1); \
+        b_ = 0; \
+      } else { \
+        a_ = 0; \
+        b_ = 0; \
+      } \
+    } else { \
+      size_t o_ = 0; \
+      while (n_ - o_ > 16) { \
+        st_ = hash_fold(RD8(o_) ^ k1_, RD8(o_ + 8) ^ st_); \
+        o_ += 16; \
+      } \
+      a_ = RD8(n_ - 16); \
+      b_ = RD8(n_ - 8); \
+    } \
+    uint64_t h_ = hash_fold(a_ ^ k1_, b_ ^ st_); \
+    (out) = (uint32_t)(h_ ^ (h_ >> 32)); \
+  } while (0)
+
+static inline uint64_t hb_rd8(const unsigned char *p) {
+  uint64_t v;
+  memcpy(&v, p, 8);
+  return v;
+}
+
+static inline uint64_t hb_rd4(const unsigned char *p) {
+  uint32_t v;
+  memcpy(&v, p, 4);
+  return v;
+}
+
 static uint32_t hash_bytes(const char *s, size_t n, uint32_t seed) {
-  uint32_t h = 2166136261u ^ seed;
-  size_t i;
-  if (!s) {
-    return h;
+  const unsigned char *p = (const unsigned char *)s;
+  uint32_t out;
+  if (!p) {
+    n = 0;
   }
-  for (i = 0; i < n; i++) {
-    h ^= (uint8_t)s[i];
-    h *= 16777619u;
-  }
-  return h;
+#define HB_RD8(o) hb_rd8(p + (o))
+#define HB_RD4(o) hb_rd4(p + (o))
+#define HB_RD1(o) ((uint64_t)p[o])
+  HASH_KEYED_BODY(HB_RD8, HB_RD4, HB_RD1, n, seed, out);
+#undef HB_RD8
+#undef HB_RD4
+#undef HB_RD1
+  return out;
+}
+
+/* The hash a String key of STR's bytes takes in every Hash and Set of
+ * this process: for tests (the hash's known answers under a fixed seed,
+ * and its spread) and diagnostics. */
+avant_int avant_hash_str_hash(const char *str) {
+  size_t n;
+  const char *d = avant_str_bytes(str, &n);
+  return (avant_int)hash_bytes(d, n, hash_seed());
 }
 
 static uint32_t hash_i32(int32_t k) {
@@ -2419,24 +2537,53 @@ const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, a
   return *(const char **)val_at(h, h->vals, e);
 }
 
+/* W bytes at offset O of the key A followed by B (W at most 8), read as
+ * hash_bytes reads them from one buffer, little-endian. */
+static inline uint64_t hc_rd(const unsigned char *a, size_t na, const unsigned char *b, size_t o, size_t w) {
+  unsigned char t[8];
+  if (o + w <= na) {
+    memcpy(t, a + o, w);
+  } else if (o >= na) {
+    memcpy(t, b + (o - na), w);
+  } else {
+    memcpy(t, a + o, na - o);
+    memcpy(t + (na - o), b, w - (na - o));
+  }
+  if (w == 8) {
+    return hb_rd8(t);
+  }
+  if (w == 4) {
+    return hb_rd4(t);
+  }
+  return t[0];
+}
+
+/* The hash of the key A followed by B: hash_bytes's of their bytes as
+ * one buffer. */
 static uint32_t hash_concat_bytes(const char *a, size_t na, const char *b, size_t nb, uint32_t seed) {
-  uint32_t h = 2166136261u ^ seed;
-  size_t i;
-  if (!a) {
+  const unsigned char *pa = (const unsigned char *)a;
+  const unsigned char *pb = (const unsigned char *)b;
+  uint32_t out;
+  if (!pa) {
     na = 0;
   }
-  if (!b) {
+  if (!pb) {
     nb = 0;
   }
-  for (i = 0; i < na; i++) {
-    h ^= (uint8_t)a[i];
-    h *= 16777619u;
+  if (!na) {
+    return hash_bytes(b, nb, seed);
   }
-  for (i = 0; i < nb; i++) {
-    h ^= (uint8_t)b[i];
-    h *= 16777619u;
+  if (!nb) {
+    return hash_bytes(a, na, seed);
   }
-  return h;
+#define HC_RD8(o) hc_rd(pa, na, pb, (o), 8)
+#define HC_RD4(o) hc_rd(pa, na, pb, (o), 4)
+#define HC_RD1(o) hc_rd(pa, na, pb, (o), 1)
+  HASH_KEYED_BODY(HC_RD8, HC_RD4, HC_RD1, na + nb, seed, out);
+#undef HC_RD8
+#undef HC_RD4
+#undef HC_RD1
+  return out;
 }
 
 static int bytes_eq_concat(const char *slot, size_t ns, const char *a, size_t na, const char *b, size_t nb) {
