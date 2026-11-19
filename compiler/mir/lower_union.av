@@ -1195,7 +1195,8 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
 }
 
 // Hash reads (as the old back end did): `h[k]` and
-// `h.get(k)` (the key, then the hash), `h.delete(k)` (the same, removing
+// `h.get(k)` (the key, then the hash; a key written as a slice is read in
+// place, lower_hash.av key_part), `h.delete(k)` (the same, removing
 // the key), `h.get_slice(s, a, b)` (b, a, s,
 // then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
 // read reports through a found flag. `get` and `delete` load the value
@@ -1221,6 +1222,18 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
     if f.size == 0 {
       lw.refuse(e.loc, "Hash.${name} here")
       return b.c_i32(0)
+    }
+    if f == "get" {
+      if kp = mir_key_part(ht, args[0], recv) {
+        kops = lw.key_part_ops(kp)
+        h = lw.lower_expr(recv)
+        if lw.failed() {
+          return b.c_i32(0)
+        }
+        lw.at(e.loc)
+        v1 = lw.part_find_load(kp, h, kops, fl, vty)
+        return lw.opt_of(t, lw.found_is(fl), v1, vt, e.loc)
+      }
     }
     ops = lw.args_then_recv(args, recv)
     if lw.failed() {

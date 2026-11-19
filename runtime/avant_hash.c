@@ -1552,7 +1552,12 @@ static void *put_ik(AvantHash *h, avant_int key, int32_t *found, int grow_first)
   return put_ik_slow(h, key, hv, found, grow_first);
 }
 
-static void *put_sk_slow(AvantHash *h, const char *key, size_t n, uint32_t hv, int32_t *found, int grow_first) {
+/* Inlined into each caller (put_sk, and insert_part's miss): as a call,
+ * which the compiler chose once it had two, the stores that grow small
+ * hashes cost more (the pure JSON parses of LangArena, whose objects are
+ * such hashes, 0.2% more instructions). */
+static inline __attribute__((always_inline)) void *put_sk_slow(AvantHash *h, const char *key, size_t n, uint32_t hv,
+                                                               int32_t *found, int grow_first) {
   int32_t e = 0;
   int32_t pos = 0;
   AVANT_GC_SCOPE(2);
@@ -1849,7 +1854,9 @@ static void *slot_after(AvantHash *h, void *slot) {
   return slot;
 }
 
-static void slot_hash(const AvantHash *h) {
+/* Inlined into each caller, as it was when the slot entries were its
+ * only ones. */
+static inline __attribute__((always_inline)) void slot_hash(const AvantHash *h) {
   if (!h) {
     avant_trap_text("a Hash was used before it was created");
   }
@@ -2645,6 +2652,150 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
     i = (i + 1) & mask;
   }
   return 0;
+}
+
+/* ---- a String key given as a slice, read in place ----
+ *
+ * `h[s[a..b]]`, `h.get(s.slice(a))`, `h.has(buf.to_s())`,
+ * `h[buf[a..b].to_s()] = v` (compiler/mir/lower_hash.av, key_part): the
+ * key is the bytes start up to stop of a String (the _sk_part entries)
+ * or of a Buf (the _bk_part ones), checked as the slice is
+ * (avant_trap_slice), hashed and compared where they lie. The hash of a
+ * key is a function of its bytes alone (hash_bytes), so the bytes in
+ * place take the hash the String built from them would, whatever the
+ * String's form (flat, a literal, a view). A lookup allocates nothing;
+ * an insert builds the key once, at a miss, as a flat heap string. */
+
+/* A Buf's fields (avant_buf.c). */
+typedef struct {
+  uint8_t *data;
+  int32_t size;
+  int32_t cap;
+} HashPartBuf;
+
+/* The bytes start up to stop of SRC, a String (IS_BUF 0) or a Buf, and
+ * their count in *N; a slice outside 0 <= start <= stop <= size traps.
+ * The address lies inside an object that may move: form it again after
+ * any call that may collect. */
+static const char *part_bytes(const void *src, int is_buf, avant_int start, avant_int stop, size_t *n) {
+  const char *d;
+  size_t len;
+  if (is_buf) {
+    const HashPartBuf *b = (const HashPartBuf *)src;
+    len = b && b->data && b->size > 0 ? (size_t)b->size : 0;
+    d = len ? (const char *)b->data : AVANT_STR_EMPTY;
+  } else {
+    d = avant_str_bytes((const char *)src, &len);
+  }
+  if (start < 0 || stop < start || (size_t)stop > len) {
+    avant_trap_slice(start, stop, (avant_int)len);
+  }
+  *n = (size_t)(stop - start);
+  return d + start;
+}
+
+static void *find_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found) {
+  size_t n;
+  const char *p = part_bytes(src, is_buf, start, stop, &n);
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h || !find_bytes(h, p, n, hash_bytes(p, n, h->seed), &e, &pos)) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  *found = 1;
+  return val_at(h, h->vals, e);
+}
+
+void *avant_hash_find_sk_part(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
+  return find_part((AvantHash *)hp, s, 0, start, stop, found);
+}
+
+void *avant_hash_find_bk_part(void *hp, void *buf, avant_int start, avant_int stop, int32_t *found) {
+  return find_part((AvantHash *)hp, buf, 1, start, stop, found);
+}
+
+/* How an insert by a slice gives the value's address: as it is (a
+ * scalar value, stored by the generated code), after its barrier for a
+ * struct value (the form of avant_hash_slot_sk: a hash not created
+ * traps), or after its barrier for a reference value (the form of
+ * avant_hash_set_ref_sk: a hash not created takes the store in its
+ * scratch words). */
+#define PART_PLAIN 0
+#define PART_SLOT 1
+#define PART_REF 2
+
+/* The miss of an insert by a slice: the key built from the bytes (the
+ * allocation may collect: the hash and the source are handles, and the
+ * bytes are formed again after it), then entered as put_sk_slow enters
+ * a key it did not find. */
+static __attribute__((noinline)) void *insert_part(AvantHash *h, const void *src, int is_buf, avant_int start,
+                                                   size_t n, uint32_t hv, int how) {
+  size_t m;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &src);
+  char *key = avant_str_alloc((uint64_t)n);
+  if (n) {
+    memcpy(key, part_bytes(src, is_buf, start, start + (avant_int)n, &m), n);
+  }
+  key[n] = 0;
+  avant_str_tag(key);
+  void *v = put_sk_slow(h, key, n, hv, NULL, 0);
+  return how != PART_PLAIN ? slot_after(h, v) : v;
+}
+
+/* `inc`, a Set's `add` and the store of a scalar value: the value's
+ * address, an absent key entered holding zero (*found 0). */
+static void *upsert_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found,
+                         int how) {
+  size_t n;
+  const char *p = part_bytes(src, is_buf, start, stop, &n);
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (how == PART_SLOT) {
+    slot_hash(h);
+  }
+  if (!h) {
+    if (found) {
+      *found = 0;
+    }
+    g_hash_scratch[0] = 0;
+    g_hash_scratch[1] = 0;
+    return g_hash_scratch;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
+  uint32_t hv = hash_bytes(p, n, h->seed);
+  if (find_bytes(h, p, n, hv, &e, &pos)) {
+    if (found) {
+      *found = 1;
+    }
+    void *v = val_at(h, h->vals, e);
+    return how != PART_PLAIN ? slot_after(h, v) : v;
+  }
+  if (found) {
+    *found = 0;
+  }
+  return insert_part(h, src, is_buf, start, n, hv, how);
+}
+
+void *avant_hash_upsert_sk_part(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
+  return upsert_part((AvantHash *)hp, s, 0, start, stop, found, PART_PLAIN);
+}
+
+void *avant_hash_upsert_bk_part(void *hp, void *buf, avant_int start, avant_int stop, int32_t *found) {
+  return upsert_part((AvantHash *)hp, buf, 1, start, stop, found, PART_PLAIN);
+}
+
+/* The store of a struct value (SLOT 1) or of a reference value (0): the
+ * value's address after its barrier, the generated code's store after
+ * it (PART_SLOT, PART_REF). */
+void *avant_hash_slot_sk_part(void *hp, const char *s, avant_int start, avant_int stop, int32_t slot) {
+  return upsert_part((AvantHash *)hp, s, 0, start, stop, NULL, slot ? PART_SLOT : PART_REF);
+}
+
+void *avant_hash_slot_bk_part(void *hp, void *buf, avant_int start, avant_int stop, int32_t slot) {
+  return upsert_part((AvantHash *)hp, buf, 1, start, stop, NULL, slot ? PART_SLOT : PART_REF);
 }
 
 /* ---- the freeze of a value holding a hash (avant_rt.h) ---- */

@@ -1,0 +1,318 @@
+import harness
+import std.fs
+import std.process
+
+// A String key written as a slice of a String (`s[a..b]`, `s[a..]`,
+// `s[..b]`, `s[a..=b]`, `s.slice(a, b)`, `s.slice(a)`) or of a Buf
+// (`buf.to_s()`, `buf[a..b].to_s()`, `buf.slice(a).to_s()`) is looked up
+// in place: its bytes are hashed and compared where they lie, and an
+// insert builds the key once, at a miss. The hash of a key is a function
+// of its bytes alone, so a slice in place, in every form a String takes
+// (a literal, a heap string, a view of a longer one, a one-byte string,
+// the empty string) or in a Buf, finds the key built from the same bytes,
+// and a key inserted by a slice is found by the built String: a probe
+// finds an entry only when the entry's stored hash is the probe's and the
+// bytes are equal, so each lookup below that finds its key is a proof
+// that the hash in place is the built key's.
+
+struct Pt {
+  x: Int
+  name: String
+}
+
+// 120 bytes: the source every form is sliced from.
+fn text_lit: String {
+  "The quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs! 0123456789 ABCDEFGHIJKLMNOPQRSTUVW"
+}
+
+// The same bytes in each form: the literal, a heap string, a view (the
+// bytes 100 up to 220 of a heap string of 340: a slice of 64 bytes or
+// more that is a quarter of its string or more shares its bytes), and a
+// Buf's bytes. A C function is given a view as a copy, so the forms are
+// told apart by the rule, not asked.
+fn text_heap: String {
+  b = Buf.new()
+  b.push_str(text_lit())
+  b.to_s()
+}
+
+fn text_view: String {
+  b = Buf.new()
+  for i in 0..100 {
+    b.push_byte(97 + i % 26)
+  }
+  b.push_str(text_lit())
+  for i in 0..120 {
+    b.push_byte(65 + i % 26)
+  }
+  big = b.to_s()
+  big[100..220]
+}
+
+fn text_buf: Buf {
+  b = Buf.new()
+  b.push_str(text_lit())
+  b
+}
+
+// Every key built from the heap form, keyed to itself: the reference.
+fn built_keys(step: Int): Hash(String, String) {
+  s = text_heap()
+  h = Hash(String, String).new()
+  a = 0
+  while a <= s.size {
+    b = a
+    while b <= s.size {
+      h[s.slice(a, b) + ""] = s.slice(a, b) + ""
+      b += step
+    }
+    a += step
+  }
+  h
+}
+
+fn test_forms_of_string(c: Checks) {
+  srcs = [text_lit(), text_heap(), text_view()]
+  names = ["literal", "heap", "view"]
+  h = built_keys(3)
+  for k in 0..3 {
+    s = srcs[k]
+    c.eq_str(s, text_lit(), "the ${names[k]} form holds the text")
+    bad = 0
+    a = 0
+    while a <= s.size {
+      b = a
+      while b <= s.size {
+        want = text_lit().slice(a, b) + ""
+        if (h[s[a..b]] ?? "-") != want {
+          bad += 1
+        }
+        if (h.get(s.slice(a, b)) ?? "-") != want {
+          bad += 1
+        }
+        if !h.has(s[a..b]) {
+          bad += 1
+        }
+        b += 3
+      }
+      if (h[s[a..]] ?? "-") != text_lit()[a..] + "" {
+        bad += 1
+      }
+      a += 3
+    }
+    c.eq_int(bad, 0, "every slice of the ${names[k]} form finds its built key (index, get, has)")
+    // A slice that is no key: the same bytes plus one, and an empty hash.
+    c.expect(!h.has(s[1..2]), "a slice of one byte off the grid is absent")
+    empty = Hash(String, String).new()
+    c.expect(!empty.has(s[0..5]), "an empty hash has no slice")
+    c.eq_str(empty[s[0..0]] ?? "-", "-", "nor the empty slice")
+  }
+  // The other forms of a String key: one byte, the empty string, a
+  // literal key, a view key (stored flat by the store).
+  one = Hash(String, Int).new()
+  for i in 0..256 {
+    one[chr(i)] = i
+  }
+  raw = Buf.new()
+  for i in 0..256 {
+    raw.push_byte(255 - i)
+  }
+  rs = raw.to_s()
+  miss = 0
+  for i in 0..256 {
+    if (one[rs[i..i + 1]] ?? -1) != 255 - i {
+      miss += 1
+    }
+    if (one[raw[i..i + 1].to_s()] ?? -1) != 255 - i {
+      miss += 1
+    }
+  }
+  c.eq_int(miss, 0, "each one-byte slice of a String and a Buf finds the one-byte key chr made")
+  lit = ["": 0, "fox": 1]
+  lit[text_view()[0..120]] = 2
+  c.eq_int(lit[text_heap()[3..3]] ?? -1, 0, "the empty slice finds the empty key")
+  c.eq_int(lit[text_view()[16..19]] ?? -1, 1, "a slice finds a literal key")
+  c.eq_int(lit[text_lit()[0..120]] ?? -1, 2, "a whole slice finds a key stored from a view")
+}
+
+fn test_forms_of_buf(c: Checks) {
+  buf = text_buf()
+  h = built_keys(4)
+  bad = 0
+  a = 0
+  while a <= buf.size {
+    b = a
+    while b <= buf.size {
+      want = text_lit()[a..b] + ""
+      if (h[buf[a..b].to_s()] ?? "-") != want {
+        bad += 1
+      }
+      if (h.get(buf.slice(a, b).to_s()) ?? "-") != want {
+        bad += 1
+      }
+      if !h.has(buf[a..b].to_s()) {
+        bad += 1
+      }
+      b += 4
+    }
+    if (h[buf.slice(a).to_s()] ?? "-") != text_lit()[a..] + "" {
+      bad += 1
+    }
+    a += 4
+  }
+  c.eq_int(bad, 0, "every slice of a Buf finds its built key")
+  c.eq_str(h[buf.to_s()] ?? "-", text_lit(), "the whole Buf finds the whole key")
+  grow = Buf.new()
+  hits = 0
+  for i in 0..buf.size {
+    grow.push_byte(buf[i])
+    if i % 4 == 3 && h.has(grow.to_s()) {
+      hits += 1
+    }
+  }
+  c.eq_int(hits, 30, "a growing Buf finds each prefix that is a key")
+  empty = Buf.new()
+  c.expect(h.has(empty.to_s()), "an empty Buf finds the empty key")
+}
+
+// Inserts by a slice build the key at a miss and only then: the keys are
+// the built ones, in the same order, flat, and a hit keeps the value's
+// entry.
+fn test_inserts(c: Checks) {
+  ref = built_keys(5)
+  for k in 0..3 {
+    s = [text_lit(), text_heap(), text_view()][k]
+    h = Hash(String, String).new()
+    n = Hash(String, Int).new()
+    p = Hash(String, Pt).new()
+    u = Hash(String, Int | String).new()
+    set = Set(String).new()
+    added = 0
+    a = 0
+    while a <= s.size {
+      b = a
+      while b <= s.size {
+        h[s[a..b]] = s[a..b] + ""
+        n[s.slice(a, b)] = a * 1000 + b
+        p[s[a..b]] = Pt { x: b - a, name: s[a..b] }
+        if (b - a) % 2 == 0 {
+          u[s[a..b]] = b - a
+        } else {
+          u[s[a..b]] = "odd"
+        }
+        if set.add(s[a..b]) {
+          added += 1
+        }
+        b += 5
+      }
+      a += 5
+    }
+    c.eq_int(h.size, ref.size, "a String value: one key per distinct slice")
+    c.expect(h.keys() == ref.keys(), "in the order the built keys take")
+    c.expect(h == ref, "with the values the built keys hold")
+    c.eq_int(added, ref.size, "a Set's add by a slice is true once per key")
+    c.eq_int(set.size, ref.size, "and the Set holds each key once")
+    c.eq_int(n.size, ref.size, "an Int value")
+    c.eq_int(p.size, ref.size, "a struct value")
+    c.eq_int(u.size, ref.size, "a union value")
+    bad = 0
+    for key, v in ref {
+      if !set.has(key) || (p[key] ?? Pt { x: -1, name: "" }).name != key || (p[key] ?? Pt { x: -1, name: "" }).x != key.size {
+        bad += 1
+      }
+    }
+    c.eq_int(bad, 0, "the built keys find the inserted ones")
+    c.eq_int(n[text_lit()[10..15]] ?? -1, 10015, "an Int value stored by a slice")
+    c.eq_str("${u[text_lit()[10..15]] ?? 0}", "odd", "a union value stored by a slice")
+    c.eq_str("${u[text_lit()[10..20]] ?? 0}", "10", "and its other member")
+    // A second store by a slice keeps the entry and its place.
+    n[s[0..5]] = -1
+    c.eq_int(n[text_lit()[0..5]] ?? 0, -1, "a store at a hit replaces the value")
+    c.eq_str(n.keys()[1], text_lit()[0..5], "and keeps the key's place")
+  }
+}
+
+fn test_inc(c: Checks) {
+  words = "one two three two three three"
+  h = Hash(String, Int).new()
+  buf = Buf.new()
+  i = 0
+  while i < words.size {
+    j = words.index_of(' ', i) ?? words.size
+    _ = h.inc(words[i..j])
+    buf.clear()
+    buf.push_slice(words, i, j)
+    _ = h.inc(buf.to_s(), 10)
+    i = j + 1
+  }
+  c.eq_int(h["one"] ?? 0, 11, "inc by a slice and by a Buf: one")
+  c.eq_int(h["two"] ?? 0, 22, "two")
+  c.eq_int(h["three"] ?? 0, 33, "three")
+  c.eq_int(h.size, 3, "three keys")
+  c.eq_int(h.inc(words[4..7], 100), 122, "inc gives the new count")
+}
+
+// The order and the traps: a slice out of range traps with the slice's
+// message, as the built key's slice did; a lookup by a slice allocates
+// nothing (the collector's count of allocated bytes is the same for 0
+// and for 20,000 lookups of each form).
+fn test_programs(c: Checks) {
+  if compiler = process.env("AVANT_COMPILER") {
+    stamp = now_ms()
+    progs = ["fn main {\n  h = [\"ab\": 1]\n  s = \"abc\"\n  puts(h[s[2..9]] ?? 0)\n}\n", "fn main {\n  h = [\"ab\": 1]\n  b = Buf.new()\n  b.push_str(\"abc\")\n  puts(h.has(b[1..5].to_s()))\n}\n", "fn main {\n  h = [\"ab\": 1]\n  s = \"abc\"\n  h[s[3..2]] = 5\n}\n"]
+    wants = ["slice 2..9 out of range (size 3)", "slice 1..5 out of range (size 3)", "slice 3..2 out of range (size 3)"]
+    for k in 0..progs.size {
+      src = "${scratch()}/hash-slice-trap-${stamp}-${k}.av"
+      bin = "${scratch()}/hash-slice-trap-${stamp}-${k}"
+      clog = "${scratch()}/hash-slice-trap-${stamp}-${k}-cc.log"
+      log = "${scratch()}/hash-slice-trap-${stamp}-${k}.log"
+      c.wrote(fs.write(src, progs[k]), "write trap program ${k}")
+      c.eq_int(compile_av(compiler, src, bin, clog), 0, "compile trap program ${k}")
+      if fs.exists(bin) {
+        chmod_x(bin)
+        code = run_out(bin, empty_strs(), log) ?? 0
+        c.expect(code != 0, "trap program ${k} fails")
+        c.expect((fs.read(log) ?? "").contains(wants[k]), "trap program ${k} says ${wants[k]}")
+      }
+    }
+    src = "${scratch()}/hash-slice-alloc-${stamp}.av"
+    bin = "${scratch()}/hash-slice-alloc-${stamp}"
+    clog = "${scratch()}/hash-slice-alloc-${stamp}-cc.log"
+    body = "import std.process\n\nfn main {\n  n = process.args()[1].to_i() ?? 0\n  s = \"key-0 key-1 key-2 key-3 key-4 key-5 key-6 key-7\"\n  h = Hash(String, Int).new()\n  set = Set(String).new()\n  for i in 0..8 {\n    h[\"key-\${i}\"] = i\n    _ = set.add(\"key-\${i}\")\n  }\n  b = Buf.new()\n  b.push_str(s)\n  sum = 0\n  for i in 0..n {\n    a = (i % 8) * 6\n    sum += h[s[a..a + 5]] ?? 0\n    sum += h.get(s.slice(a, a + 5)) ?? 0\n    if h.has(s[a..a + 5]) && set.has(s[a..a + 5]) && h.has(b[a..a + 5].to_s()) {\n      sum += 1\n    }\n    sum += h.inc(s[a..a + 5]) - h.inc(b.slice(a, a + 5).to_s(), 0)\n    h[s[a..a + 5]] = i % 8\n  }\n  puts(sum)\n}\n"
+    c.wrote(fs.write(src, body), "write the allocation probe")
+    c.eq_int(compile_av(compiler, src, bin, clog), 0, "compile the allocation probe")
+    // The count is the default collector's: a collector setting of the
+    // suite's own (the gate's GC passes) leaves it to the default pass.
+    if fs.exists(bin) && gc_env_outer("AVANT_GC_STATS").size == 0 {
+      chmod_x(bin)
+      allocs: Array(String) = []
+      for n in ["0", "20000"] {
+        log = "${scratch()}/hash-slice-alloc-${stamp}-${n}.log"
+        code = run_out("/usr/bin/env", ["AVANT_GC_STATS=1", bin, n], log) ?? -1
+        c.eq_int(code, 0, "run the allocation probe (${n} rounds)")
+        text = fs.read(log) ?? ""
+        at = text.index_of(" alloc=") ?? 0
+        stop = text.index_of(" ", at + 1) ?? text.size
+        allocs.push(text[at..stop])
+      }
+      c.eq_str(allocs[1], allocs[0], "lookups, incs and stores by a slice allocate nothing")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  c.suite("tests/cases/test_hash_slice_key.av")
+  test_forms_of_string(c)
+  test_forms_of_buf(c)
+  test_inserts(c)
+  test_inc(c)
+  test_programs(c)
+  c.finish()
+}

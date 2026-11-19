@@ -449,6 +449,16 @@ void avant_hash_del_ik(void *h, avant_int key);
 avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_int stop);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
+/* A String key given as the bytes start up to stop of a String (_sk_part)
+ * or a Buf (_bk_part), read in place (avant_hash.c): the find, the upsert
+ * (an absent key built once, holding zero) and the slot of a struct
+ * value (SLOT 1) or a reference value (SLOT 0), after its barrier. */
+void *avant_hash_find_sk_part(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
+void *avant_hash_find_bk_part(void *h, void *buf, avant_int start, avant_int stop, int32_t *found);
+void *avant_hash_upsert_sk_part(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
+void *avant_hash_upsert_bk_part(void *h, void *buf, avant_int start, avant_int stop, int32_t *found);
+void *avant_hash_slot_sk_part(void *h, const char *s, avant_int start, avant_int stop, int32_t slot);
+void *avant_hash_slot_bk_part(void *h, void *buf, avant_int start, avant_int stop, int32_t slot);
 
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
 void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id);

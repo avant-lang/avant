@@ -377,6 +377,178 @@ pub fn (lw: MirLower) hash_find_load(ht: Ty, op: String, h: MOperand, k: MOperan
   ops.push(k)
   ops.push(lw.found_ptr(fl))
   p = lw.call_to(mt_ptr(), lw.hash_op(ht, op, loc), ops)
+  lw.hash_found_load(p, fl, vty)
+}
+
+// ---- a String key written as a slice, read in place
+//
+// A key of a String-keyed Hash or Set written as a slice of a String
+// (`s[a..b]`, `s[a..]`, `s[..b]`, `s[a..=b]`, the parser's `s.slice(a, b)`
+// and `s.slice(a)`, written so too) or of a Buf (`buf.to_s()`,
+// `buf[a..b].to_s()`, `buf.slice(a).to_s()`) is not built for a lookup:
+// the runtime's _part entries hash and compare its bytes where they lie,
+// and an insert builds the key once, at a miss (runtime/avant_hash.c).
+// The slice is evaluated in its own order (its stop, its start, then the
+// String or Buf) and its bounds are checked by the entry, after the hash
+// is read; so the form is taken only when the hash is a local or a field
+// of one, whose read can neither trap nor do anything a program sees.
+pub class MirKeyPart {
+  pub src: Expr
+  pub buf: Bool
+  pub args: Array(Expr)
+
+  fn initialize(src: Expr, buf: Bool, args: Array(Expr)) {
+    self.src = src
+    self.buf = buf
+    self.args = args
+  }
+}
+
+// A local, or a field of one, read in place.
+pub fn mir_plain_place(e: Expr): Bool {
+  if e.kind == ex_name() {
+    return !e.fn_ref
+  }
+  if e.kind == ex_field() && !e.method_call && !e.type_call {
+    if o = e.object, ot = o.ty, ot.is_class() || ot.is_struct() {
+      return mir_plain_place(o)
+    }
+  }
+  false
+}
+
+// A builtin method call `.name` with no block (the slice and to_s forms).
+fn mir_plain_method(e: Expr, name: String): Bool {
+  if e.kind != ex_call() || e.callee != name || e.resolved.size > 0 || e.indirect {
+    return false
+  }
+  if bl = e.block {
+    return false
+  }
+  true
+}
+
+// The key k of the hash ht read through h as a slice in place, or nil.
+pub fn mir_key_part(ht: Ty, k: Expr, h: Expr): MirKeyPart? {
+  if !mir_hash_key_str(ht) || !mir_plain_place(h) {
+    return nil
+  }
+  if kt = k.ty, !kt.is_string() {
+    return nil
+  }
+  if mir_plain_method(k, "slice") && (k.args.size == 1 || k.args.size == 2) {
+    if r = k.receiver, rt = r.ty, rt.is_string() {
+      return MirKeyPart.new(r, false, k.args)
+    }
+    return nil
+  }
+  if mir_plain_method(k, "to_s") && k.args.size == 0 {
+    if r = k.receiver, rt = r.ty, rt.is_buf() {
+      if mir_plain_method(r, "slice") && (r.args.size == 1 || r.args.size == 2) {
+        if r2 = r.receiver, rt2 = r2.ty, rt2.is_buf() {
+          return MirKeyPart.new(r2, true, r.args)
+        }
+        return nil
+      }
+      none: Array(Expr) = []
+      return MirKeyPart.new(r, true, none)
+    }
+  }
+  nil
+}
+
+// The operands of a key part's entry after the hash: the String or Buf,
+// the start and the stop, evaluated as the slice is (the stop, the start,
+// then the source; a missing stop is the source's size, a missing start
+// 0).
+pub fn (lw: MirLower) key_part_ops(kp: MirKeyPart): Array(MOperand) {
+  b = lw.lw_b
+  ops = lw.lower_args_rev(kp.args)
+  i = 0
+  while i < ops.size {
+    ops[i] = lw.snap(ops[i], kp.src)
+    i += 1
+  }
+  s = lw.lower_expr(kp.src)
+  out: Array(MOperand) = []
+  if lw.failed() {
+    return out
+  }
+  sty = mt_str()
+  if kp.buf {
+    sty = lw.ety(kp.src)
+  }
+  hs = lw.hold(s, sty)
+  out.push(b.copy_local(hs))
+  if ops.size == 0 {
+    out.push(b.c_int(mt_int(), 0))
+  } else {
+    out.push(ops[0])
+  }
+  if ops.size == 2 {
+    out.push(ops[1])
+  } else if kp.buf {
+    out.push(lw.seq_size(hs))
+  } else {
+    out.push(lw.int_call1("avant_str_size", b.copy_local(hs)))
+  }
+  out
+}
+
+// The part entry of op (find, upsert, slot) for a key part.
+pub fn mir_part_fn(kp: MirKeyPart, op: String): String {
+  if kp.buf {
+    return "avant_hash_${op}_bk_part"
+  }
+  "avant_hash_${op}_sk_part"
+}
+
+// `find` of a key part through the found local fl: the hash h, then the
+// part's operands kops; the value loaded as hash_find_load loads it.
+pub fn (lw: MirLower) part_find_load(kp: MirKeyPart, h: MOperand, kops: Array(MOperand), fl: Int, vty: Int): MOperand {
+  p = lw.part_call(kp, "find", h, kops, lw.found_ptr(fl))
+  lw.hash_found_load(p, fl, vty)
+}
+
+// The entry op (find, upsert) of a key part called with the hash, the
+// part's operands and a found pointer (null: not asked).
+pub fn (lw: MirLower) part_call(kp: MirKeyPart, op: String, h: MOperand, kops: Array(MOperand), last: MOperand): MOperand {
+  ops: Array(MOperand) = []
+  ops.push(h)
+  ops.concat(kops)
+  ops.push(last)
+  lw.call_to(mt_ptr(), mir_part_fn(kp, op), ops)
+}
+
+// `h[k] = v` of a key part with its operands lowered (hash_set's three
+// kinds of value): a reference value or a struct value stored at the
+// address `slot` gives after its barrier, any other value at the address
+// `upsert` gives.
+pub fn (lw: MirLower) part_set(kp: MirKeyPart, ht: Ty, h: MOperand, kops: Array(MOperand), val: MOperand, vty: Int, loc: Location) {
+  b = lw.lw_b
+  is_ref = lw.hash_val_ref(ht, loc)
+  if is_ref || lw.hash_val_agg(ht, loc) {
+    flag = 1
+    if is_ref {
+      flag = 0
+    }
+    s = b.temp(b.types.addr_of(vty))
+    ops: Array(MOperand) = []
+    ops.push(h)
+    ops.concat(kops)
+    ops.push(b.c_i32(flag))
+    b.call(s, mir_part_fn(kp, "slot"), ops)
+    b.assign(b.deref(b.pl(s)), b.rv_use(val))
+    return
+  }
+  p = lw.part_call(kp, "upsert", h, kops, b.c_null(mt_ptr()))
+  q = lw.hash_slot(p, vty)
+  b.assign(b.deref(b.pl(q)), b.rv_use(val))
+}
+
+// The value at the address p a find or take gave, through the found local
+// fl.
+pub fn (lw: MirLower) hash_found_load(p: MOperand, fl: Int, vty: Int): MOperand {
   b = lw.lw_b
   if mir_hash_slot_bytes(b.types.size_of(vty)) <= 256 {
     return lw.hash_load(lw.hash_slot(p, vty), vty)
@@ -592,6 +764,16 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
   if v = st.value {
     vty = lw.ty_at(mir_hash_val(ht), st.loc, "a hash value")
     val = lw.snap(lw.snap(lw.hash_val_lowered(v, vty, ht), ix), arr)
+    if kp = mir_key_part(ht, ix, arr) {
+      kops = lw.key_part_ops(kp)
+      h1 = lw.lower_expr(arr)
+      if lw.failed() {
+        return
+      }
+      lw.at(st.loc)
+      lw.part_set(kp, ht, h1, kops, val, vty, st.loc)
+      return
+    }
     key = lw.snap(lw.lower_expr(ix), arr)
     h = lw.lower_expr(arr)
     if lw.failed() {
@@ -788,6 +970,22 @@ pub fn (lw: MirLower) set_member(e: Expr, recv: Expr, ht: Ty, name: String, args
     lw.refuse(e.loc, "the member .${name} of ${ht.show()}")
     return zero
   }
+  if op != "take" {
+    if kp = mir_key_part(ht, args[0], recv) {
+      kops = lw.key_part_ops(kp)
+      h1 = lw.lower_expr(recv)
+      if lw.failed() {
+        return zero
+      }
+      lw.at(e.loc)
+      fl1 = lw.found_local()
+      dummy1 = lw.part_call(kp, op, h1, kops, lw.found_ptr(fl1))
+      if name == "add" {
+        return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(fl1), b.c_i32(0)))
+      }
+      return lw.found_is(fl1)
+    }
+  }
   ops = lw.args_then_recv(args, recv)
   if lw.failed() {
     return zero
@@ -849,6 +1047,11 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     lw.refuse(e.loc, "the member .${name} of ${ht.show()}")
     return zero
   }
+  if name == "has" || name == "inc" {
+    if kp = mir_key_part(ht, args[0], recv) {
+      return lw.hash_part_member(e, recv, name, args, kp, vty)
+    }
+  }
   ops = lw.args_then_recv(args, recv)
   if lw.failed() {
     return zero
@@ -867,6 +1070,35 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     return lw.hash_inc(e, ht, ops, vty)
   }
   lw.call_to(ty, f, ops)
+}
+
+// `h.has(k)` and `h.inc(k, by)` of a key part: the amount, the part,
+// then the hash (args_then_recv's order); `has` the find's found flag,
+// `inc` the checked sum stored at the address the upsert gives, as
+// hash_inc does.
+pub fn (lw: MirLower) hash_part_member(e: Expr, recv: Expr, name: String, args: Array(Expr), kp: MirKeyPart, vty: Int): MOperand {
+  b = lw.lw_b
+  by = b.c_int(vty, 1)
+  if args.size > 1 {
+    by = lw.snap(lw.lower_expr(args[1]), args[0])
+  }
+  kops = lw.key_part_ops(kp)
+  h = lw.lower_expr(recv)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if name == "has" {
+    fl = lw.found_local()
+    dummy = lw.part_call(kp, "find", h, kops, lw.found_ptr(fl))
+    return lw.found_is(fl)
+  }
+  p = lw.part_call(kp, "upsert", h, kops, b.c_null(mt_ptr()))
+  q = lw.hash_slot(p, vty)
+  old = lw.hash_load(q, vty)
+  n = lw.tmp(vty, b.rv_chk(mop_add(), old, by))
+  b.assign(b.deref(b.pl(q)), b.rv_use(n))
+  n
 }
 
 // The members of Buf (the old back end): one
