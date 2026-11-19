@@ -290,7 +290,8 @@ fn test_errors(c: Checks) {
     // parameter; a value it cannot take, and a class key with its own ==.
     expect_err(c, compiler, stamp, "hasher-new", "fn main {\n  h = Hasher.new()\n  puts(1)\n}\n", "a Hasher cannot be made: the runtime gives one to a type's hash method (fn hash(h: Hasher))")
     expect_err(c, compiler, stamp, "hasher-literal", "fn main {\n  h = Hasher { }\n  puts(1)\n}\n", "a Hasher cannot be made")
-    expect_err(c, compiler, stamp, "hasher-field", "struct P {\n  h: Hasher\n}\nfn main {\n  puts(1)\n}\n", "a field cannot hold a Hasher: the runtime gives one to a hash method for the call only")
+    expect_err(c, compiler, stamp, "hasher-field", "struct P {\n  h: Hasher\n}\nfn main {\n  puts(1)\n}\n", "a field cannot hold a Hasher: the runtime gives one to a hash method for the call only (fn hash(h: Hasher)), so it is never stored, returned or captured; a parameter or a local may name it during the call, and a helper may take it, to add values to it")
+    expect_err(c, compiler, stamp, "hasher-optional-field", "class Keep {\n  h: Hasher? = nil\n}\nfn main {\n  puts(1)\n}\n", "cannot hold a Hasher: the runtime gives one to a hash method for the call only (fn hash(h: Hasher)), so it is never stored, returned or captured")
     expect_err(c, compiler, stamp, "hasher-array", "fn f(hs: Array(Hasher)): Int {\n  hs.size\n}\nfn main {\n  puts(1)\n}\n", "an Array cannot hold a Hasher")
     expect_err(c, compiler, stamp, "hasher-hash-value", "fn f(hs: Hash(Int, Hasher)): Int {\n  hs.size\n}\nfn main {\n  puts(1)\n}\n", "a Hash cannot hold a Hasher")
     expect_err(c, compiler, stamp, "hasher-optional", "fn f(h: Hasher?) {\n}\nfn main {\n  puts(1)\n}\n", "an optional cannot hold a Hasher")
