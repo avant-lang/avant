@@ -692,6 +692,124 @@ pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
   ""
 }
 
+// call avant_array_push_i32 / _i64 / _ptr (_a, _v[, _t]) and
+// _s = call avant_array_push_slot(_a, size, _t): the runtime's fast path in
+// place (runtime/avant_array.c), as a Buf's push_byte: an array (its
+// buffer, its size, its capacity word) with room puts the element at its
+// size and counts it; one that is full, has no buffer yet or is null calls
+// the runtime, which grows it (and may collect: the MIR's call is a
+// collecting one, so what is live across it is in a slot either way). A
+// frozen array's capacity word is negative, so its push always takes the
+// call, which traps. The word is read as the runtime reads it, a relaxed
+// atomic load (a task's end may swap it from its thread). A store of a
+// reference, and a slot that may hold one, first passes the buffer's
+// barrier as the runtime's does (avant_barrier_slot_young: nothing while
+// the buffer is young, else avant_barrier_slot with the slot), before the
+// store. push_slot returns the slot, which the MIR then stores through.
+// The call form when inline fast paths are off.
+pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  a = e.value(args[0])
+  v = e.value(args[1])
+  et = "ptr"
+  esz = "8"
+  if name == "avant_array_push_i32" {
+    et = "i32"
+    esz = "4"
+  } else if name == "avant_array_push_i64" {
+    et = "i64"
+  } else if name == "avant_array_push_slot" {
+    esz = v
+  }
+  slot_form = name == "avant_array_push_slot"
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${a}, null")
+  test = e.part("arrroom")
+  fast = e.part("arrput")
+  slow = e.part("arrgrow")
+  done = e.part("arrpushed")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${a}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${a}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${a}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load atomic i32, ptr ${cp} monotonic, align 4")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  room = e.tmp()
+  e.line("${room} = icmp slt i32 ${sz}, ${cap}")
+  both = e.tmp()
+  e.line("${both} = and i1 ${hasd}, ${room}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${both}, i1 true)")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  off = e.tmp()
+  e.line("${off} = mul nuw nsw i64 ${w}, ${esz}")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off}")
+  if name == "avant_array_push_ptr" || slot_form {
+    // The barrier before the store: the buffer's header flags (the 16
+    // bits at its payload - 2), young (32) or the call.
+    fp = e.tmp()
+    e.line("${fp} = getelementptr inbounds i8, ptr ${dp}, i64 -2")
+    fl = e.tmp()
+    e.line("${fl} = load i16, ptr ${fp}, align 2")
+    yb = e.tmp()
+    e.line("${yb} = and i16 ${fl}, 32")
+    old = e.tmp()
+    e.line("${old} = icmp eq i16 ${yb}, 0")
+    bar = e.part("arrbar")
+    put = e.part("arrstore")
+    e.line("br i1 ${old}, label %${bar}, label %${put}")
+    e.block(bar)
+    e.need("avant_barrier_slot")
+    e.line("call void @avant_barrier_slot(ptr ${dp}, ptr ${ep})")
+    e.line("br label %${put}")
+    e.block(put)
+  }
+  if !slot_form {
+    e.line("store ${et} ${v}, ptr ${ep}, align ${esz}, !tbaa !3")
+  }
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, 1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  fend = e.part("arrfast")
+  e.line("br label %${fend}")
+  e.block(fend)
+  e.line("br label %${done}")
+  e.block(slow)
+  r = ""
+  if slot_form {
+    t = e.value(args[2])
+    r = e.tmp()
+    e.line("${r} = call ptr @${name}(ptr ${a}, i64 ${v}, i32 ${t})")
+  } else if name == "avant_array_push_ptr" {
+    t = e.value(args[2])
+    e.line("call void @${name}(ptr ${a}, ptr ${v}, i32 ${t})")
+  } else {
+    e.line("call void @${name}(ptr ${a}, ${et} ${v})")
+  }
+  e.line("br label %${done}")
+  e.block(done)
+  if !slot_form {
+    return ""
+  }
+  res = e.tmp()
+  e.line("${res} = phi ptr [ ${ep}, %${fend} ], [ ${r}, %${slow} ]")
+  res
+}
+
 // Whether the string object at Q (not null) is a view: its header's type
 // id (the 16 bits at Q - 4) is 1020; expected false.
 fn ll_str_is_view(e: LlEmit, q: String): String {
