@@ -23,6 +23,35 @@ static char *g_empty;
 
 static char *empty_str(void);
 
+/* memcpy of N bytes for the short strings most copies are: up to 16
+ * bytes in two overlapping loads and stores of each width, inline, where
+ * the libc call cost more than the copy (a tokenizer's names, a key's
+ * prefix and digits); a longer one is memcpy's. */
+static inline __attribute__((always_inline)) void copy_short(char *d, const char *s, size_t n) {
+  if (n <= 16) {
+    if (n >= 8) {
+      uint64_t a, b;
+      memcpy(&a, s, 8);
+      memcpy(&b, s + n - 8, 8);
+      memcpy(d, &a, 8);
+      memcpy(d + n - 8, &b, 8);
+    } else if (n >= 4) {
+      uint32_t a, b;
+      memcpy(&a, s, 4);
+      memcpy(&b, s + n - 4, 4);
+      memcpy(d, &a, 4);
+      memcpy(d + n - 4, &b, 4);
+    } else if (n > 0) {
+      char a = s[0], b = s[n >> 1], c = s[n - 1];
+      d[0] = a;
+      d[n >> 1] = b;
+      d[n - 1] = c;
+    }
+    return;
+  }
+  memcpy(d, s, n);
+}
+
 /* A string's length is its header's: every String and Bytes value a
  * program holds is a string object (a heap one, or a literal the
  * compiler emitted with the same header), whose header size is the bytes
@@ -62,7 +91,7 @@ static char *dup_raw_at(const char *s, size_t off, size_t n) {
     p = avant_str_alloc((uint64_t)(n));
   }
   if (n) {
-    memcpy(p, s + off, n);
+    copy_short(p, s + off, n);
   }
   p[n] = 0;
   avant_str_tag(p);
@@ -88,7 +117,7 @@ static char *dup_bytes_at(const char *s, size_t off, size_t n) {
     p = avant_str_alloc((uint64_t)(n));
   }
   if (n) {
-    memcpy(p, avant_str_bytes(s, &sn) + off, n);
+    copy_short(p, avant_str_bytes(s, &sn) + off, n);
   }
   p[n] = 0;
   avant_str_tag(p);
@@ -238,8 +267,8 @@ char *avant_str_concat(const char *a, const char *b) {
     p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
   }
   /* RC2: the bytes are formed after the allocation (a view's too). */
-  memcpy(p, avant_str_bytes(a, &na), na);
-  memcpy(p + na, avant_str_bytes(b, &nb), nb);
+  copy_short(p, avant_str_bytes(a, &na), na);
+  copy_short(p + na, avant_str_bytes(b, &nb), nb);
   p[na + nb] = 0;
   avant_str_tag(p);
   return p;
@@ -558,9 +587,9 @@ char *avant_str_cat_int(const char *prefix, avant_int n) {
     p = avant_str_alloc((uint64_t)(np + nd));
   }
   if (np) {
-    memcpy(p, avant_str_bytes(prefix, &np), np);
+    copy_short(p, avant_str_bytes(prefix, &np), np);
   }
-  memcpy(p + np, o, nd);
+  copy_short(p + np, o, nd);
   p[np + nd] = 0;
   avant_str_tag(p);
   return p;

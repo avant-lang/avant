@@ -612,7 +612,8 @@ static size_t skey_n(const char *s, uint8_t st) {
  * agrees: it reads the key's header and bytes, one cache line for a
  * short key, and not the entry's state (the header is the length for
  * every flat key). A key of 16 bytes or fewer is compared in two loads
- * of each side, overlapping, as the hash reads it. */
+ * of each side, overlapping, as the hash reads it; one of 64 or fewer a
+ * word at a time. */
 static inline __attribute__((always_inline)) int skey_eq(const char *slot, const char *s, size_t n) {
   size_t m;
   if (!slot) {
@@ -635,6 +636,18 @@ static inline __attribute__((always_inline)) int skey_eq(const char *slot, const
       return 1;
     }
     return a[0] == b[0] && a[n >> 1] == b[n >> 1] && a[n - 1] == b[n - 1];
+  }
+  if (n <= 64) {
+    /* A word at a time, the last word overlapping: a growing key (an LZW
+     * encoder's sequences) is compared inline, where the libc call cost
+     * more than the bytes. */
+    size_t o;
+    for (o = 0; o + 8 < n; o += 8) {
+      if (hb_rd8(a + o) != hb_rd8(b + o)) {
+        return 0;
+      }
+    }
+    return hb_rd8(a + n - 8) == hb_rd8(b + n - 8);
   }
   return memcmp(a, b, n) == 0;
 }
