@@ -435,7 +435,7 @@ fn main {
 `fn name(params): Result { body }`; no result type means `Void`, and result types are never inferred.
 
 - A function without parameters is declared without parentheses (`fn answer: Int`; `fn answer(): Int` is refused with that hint), a `lib` block's C function too (`fun avant_gc_collect`), and called with them (`answer()`); a bare `answer` is the function as a value.
-- **Every method call takes parentheses**, argumentless and builtin ones included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`), so a mutation never reads as a field. After a dot, a name without them is a field or one of the builtin read-only properties: `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`), `bytes` (a `String`'s bytes as `Bytes`) and `message` (of every [error](#declaring-an-error), a field or a method). `xs.sort` says `a method call takes parentheses: write sort()`; `s.size()` says `size is read without parentheses: write .size`. `avant format --calls FILE...` adds missing parentheses ([Formatter](#formatter)).
+- **Every method call takes parentheses**, argumentless and builtin ones included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`), so a mutation never reads as a field. After a dot, a name without them is a field or one of the builtin read-only properties: `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`), `bytes` (a `String`'s bytes as `Bytes`) and `message` (of every [error](#declaring-an-error), a field or a method). `xs.sort` says `a method call takes parentheses: write sort()`; `s.size()` says `size is read without parentheses: write .size`.
 
 ```avant
 fn area(w: Int, h: Int): Int {
@@ -5281,7 +5281,6 @@ avant format . --check          # CI: list files that would change, exit 1 if an
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
 - The formatter works on tokens (no parsing, typechecking or imports), so it formats a file that does not compile yet; it is never part of a build.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
-- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1. It writes the files itself, so `--write` beside it changes nothing; `--check` is refused.
 
 ## Command line
 

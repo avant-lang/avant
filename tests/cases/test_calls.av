@@ -7,8 +7,7 @@ import std.process
 // takes parentheses, a builtin's without arguments too; a name without
 // them is a field or a builtin read-only property (`size` of a String,
 // Bytes, Buf, Array or Hash; `bytes` of a String), which takes none.
-// `avant format --calls` writes the parentheses into a program that
-// lacks them. Each program is compiled in parallel; a refused one must
+// Each program is compiled in parallel; a refused one must
 // leave no binary, say the expected words and point at the expected line
 // and column; an accepted one must print what it should; a trapped one
 // must end with status 1 and print the expected words on stderr.
@@ -172,66 +171,10 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
   }
 }
 
-// `avant format --calls`: the parentheses written into a program that
-// lacks them (a bare method, a builtin, a constructor, a type-level
-// function), the properties and fields kept, and a second run changing
-// nothing; the program then compiles.
-fn check_format_calls(c: Checks, compiler: String, dir: String) {
-  src = "${dir}/calls-format.av"
-  before = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice + 1\n  }\n}\nfn main {\n  b = Box.new\n  xs = [3, 1, 2]\n  xs.sort\n  s = \"a b\"\n  h = Hash(String, Int).new\n  puts(b.more + b.n + s.size + s.bytes.size + s.strip.size + xs.size + h.keys.size)\n}\n"
-  after = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice() + 1\n  }\n}\nfn main {\n  b = Box.new()\n  xs = [3, 1, 2]\n  xs.sort()\n  s = \"a b\"\n  h = Hash(String, Int).new()\n  puts(b.more() + b.n + s.size + s.bytes.size + s.strip().size + xs.size + h.keys().size)\n}\n"
-  _ = fs.write(src, before)
-  args: Array(String) = []
-  args.push("format")
-  args.push("--calls")
-  args.push(src)
-  code = run_out(compiler, args, "${dir}/calls-format.log") ?? -1
-  c.eq_int(code, 0, "format --calls: exits 0")
-  c.eq_str(log_text(src), after, "format --calls: the parentheses written")
-  c.eq_str(log_text("${dir}/calls-format.log"), "${src}: 7\n", "format --calls: names the file and the count")
-  code2 = run_out(compiler, args, "${dir}/calls-format2.log") ?? -1
-  c.eq_int(code2, 0, "format --calls again: exits 0")
-  c.eq_str(log_text(src), after, "format --calls again: changes nothing")
-  c.eq_int(compile_av(compiler, src, "${dir}/calls-format.bin", "${dir}/calls-format.clog"), 0, "format --calls: the result compiles")
-  // --write beside --calls (either side) asks for what --calls does: the
-  // file is rewritten and nothing reads the flag as a file
-  _ = fs.write(src, before)
-  wargs: Array(String) = []
-  wargs.push("format")
-  wargs.push("--calls")
-  wargs.push("--write")
-  wargs.push(src)
-  code3 = run_out(compiler, wargs, "${dir}/calls-format3.log") ?? -1
-  c.eq_int(code3, 0, "format --calls --write: exits 0")
-  c.eq_str(log_text(src), after, "format --calls --write: the parentheses written")
-  c.eq_str(log_text("${dir}/calls-format3.log"), "${src}: 7\n", "format --calls --write: names the file and the count, no error")
-  _ = fs.write(src, before)
-  vargs: Array(String) = []
-  vargs.push("format")
-  vargs.push("--write")
-  vargs.push("--calls")
-  vargs.push(src)
-  c.eq_int(run_out(compiler, vargs, "${dir}/calls-format4.log") ?? -1, 0, "format --write --calls: exits 0")
-  c.eq_str(log_text(src), after, "format --write --calls: the parentheses written")
-  // --check and an unknown flag are refused before any file is written
-  _ = fs.write(src, before)
-  for bad in ["--check", "--quiet"] {
-    bargs: Array(String) = []
-    bargs.push("format")
-    bargs.push("--calls")
-    bargs.push(bad)
-    bargs.push(src)
-    c.eq_int(run_out(compiler, bargs, "${dir}/calls-format-bad.log") ?? -1, 1, "format --calls ${bad}: exits 1")
-    c.expect(log_text("${dir}/calls-format-bad.log").contains(bad), "format --calls ${bad}: the message names the flag")
-    c.eq_str(log_text(src), before, "format --calls ${bad}: the file is left as it was")
-  }
-}
-
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_calls.av")
   if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
-    check_format_calls(c, compiler, scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
