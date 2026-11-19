@@ -20,6 +20,8 @@
 //   release `release` of a C-layout field (the store pinned the value)
 //   pin a pin given back (C pinned the value and unpins it)
 //   defrag a field store after a full collection that moved objects
+//   dead a local past its last read (its frame slot cleared)
+//   reassign a local assigned from a call (its old value dead in it)
 //   task a task's end (its capture record)
 // and two that remove no reference and must lose none:
 //   sort Array.sort (the strings change places in their buffer)
@@ -54,6 +56,7 @@ class Keep {
   before: Int
   held: Int
   traced: Int
+  dead: Int
   show: Bool
 }
 
@@ -374,11 +377,42 @@ fn way_rehash(k: Keep) {
   puts("rehash: the hash keeps ${h.size} and finds ${found}${kinds(k)}")
 }
 
+// A local whose value is dead names nothing: its frame slot is cleared
+// where the value dies when a collection can come before the slot is
+// written again (after the local's last read, and before a call that
+// assigns it), so the victim, old and named by the slot alone, is freed
+// by the collection that follows.
+fn way_dead(k: Keep) {
+  v = big(120)
+  before(k)
+  n = v.size
+  puts("dead: freed ${freed(k, 131072)}, the local read ${n >= 131072}${kinds(k)}")
+}
+
+fn reassigned(k: Keep, n: Int): String {
+  k.dead = freed(k, 131072)
+  small(n)
+}
+
+fn way_reassign(k: Keep) {
+  v = big(121)
+  before(k)
+  v = reassigned(k, v.size)
+  puts("reassign: freed ${k.dead}, the local reads ${v.size > 6}${kinds(k)}")
+}
+
+// The local reads the string after the collection before the removal: at
+// that collection the task has ended and the string is named by the local
+// alone (a finished task's capture record keeps nothing), and the
+// function's return removes that last reference.
 fn task_inner(k: Keep): Int {
   s = big(11)
   h = spawn { s.size }
   n = h.join() ?? -1
   before(k)
+  if s.size != n {
+    return -1
+  }
   n
 }
 
@@ -408,6 +442,8 @@ fn main {
   way_defrag(k)
   way_sort(k)
   way_rehash(k)
+  way_dead(k)
+  way_reassign(k)
   way_task(k)
 }
 

@@ -298,6 +298,237 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   }
 }
 
+// The stale-slot sets: for each block, the slots (of cand) that a
+// collecting call can find still holding the value they had on entry to
+// the block, that is, a collecting call is reachable from there before
+// the slot is defined again (a call that defines the slot counts: the
+// old value is the slot's while the call runs). The backward transfer of
+// a block is (out & ~kill) | gen, from its statements: a definition
+// leaves, a collecting call makes every slot stale. The least solution,
+// from empty sets, as the liveness's.
+fn mir_stale_in(f: MFunc, lv: MLive, cand: Array(UInt64)): Array(UInt64) {
+  nb = f.blocks.size
+  nw = lv.nw
+  n = lv.n
+  gen = mir_zero_words(nb * nw)
+  kill = mir_zero_words(nb * nw)
+  for b in 0..nb {
+    stmts = f.blocks[b].stmts
+    j = stmts.size - 1
+    while j >= 0 {
+      st = stmts[j]
+      if st.kind == msk_call() && st.collects {
+        for w in 0..nw {
+          gen[b * nw + w] = cand[w]
+          kill[b * nw + w] = ~0u64
+        }
+      } else {
+        d = mir_stmt_def(st)
+        if d >= 0 && d < n {
+          mir_bit_on(kill, b * nw, d)
+          mir_bit_off(gen, b * nw, d)
+        }
+      }
+      j -= 1
+    }
+  }
+  ins = mir_zero_words(nb * nw)
+  changed = true
+  while changed {
+    changed = false
+    b = nb - 1
+    while b >= 0 {
+      at = b * nw
+      for w in 0..nw {
+        x = 0u64
+        for i in lv.succ_at[b]..lv.succ_at[b + 1] {
+          x = x | ins[lv.succ[i] * nw + w]
+        }
+        y = gen[at + w] | (x & ~kill[at + w])
+        if y != ins[at + w] {
+          ins[at + w] = y
+          changed = true
+        }
+      }
+      b -= 1
+    }
+  }
+  ins
+}
+
+// Where a clear that follows stmts[j] goes: after the heap stores that
+// follow it, since a store must come right after its barrier, or after
+// the call that gave the slot it stores through (V13).
+fn mir_clear_at(blk: MBlock, j: Int): Int {
+  at = j
+  while at + 1 < blk.stmts.size && blk.stmts[at + 1].kind == msk_assign() {
+    if p = blk.stmts[at + 1].place, !p.frame_local() {
+      at += 1
+    } else {
+      return at
+    }
+  }
+  at
+}
+
+fn mir_clear_stmt(k: Int, loc: MLoc): MStmt {
+  z = MStmt.new(msk_assign(), loc)
+  z.place = MPlace.new(k)
+  z.rv = MRvalue.new(mrk_zero())
+  z
+}
+
+// A slot whose value is dead is cleared where it dies, when a collecting
+// call can come before the slot is written again: otherwise the frame
+// keeps naming the dead object, and that collection keeps it (and
+// everything it reaches) alive. The common case is a reassignment from a
+// call in a loop, `w = make_work(...)`: the old value dies before the
+// call, and without the clear the slot holds it while the call allocates
+// the new one. A slot dies after a statement that reads or defines it
+// when it is not live after it, and on entry to a block it is not live
+// into from a predecessor where it is live (or that its terminator
+// reads). A path on which no collecting call comes before the slot's
+// next definition (a loop whose only call is on another branch) gets no
+// clear. A slot whose address is taken is never cleared (a pointer to it
+// may be read where the liveness does not see it). A clear defines a
+// local where it is dead, so it changes no block's liveness, only the
+// transfer of the blocks it is added to, which is computed again.
+fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
+  n = f.locals.size
+  nw = lv.nw
+  nb = f.blocks.size
+  if nb == 0 {
+    return
+  }
+  cand = mir_zero_words(nw)
+  any = false
+  for k in 0..n {
+    if need[k] {
+      mir_bit_on(cand, 0, k)
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() && p.local >= 0 && p.local < n {
+        mir_bit_off(cand, 0, p.local)
+      }
+    }
+  }
+  stale_in = mir_stale_in(f, lv, cand)
+  // the live set before each block's terminator
+  before_term = mir_zero_words(nb * nw)
+  reads: Array(Int) = []
+  for b in 0..nb {
+    for w in 0..nw {
+      before_term[b * nw + w] = lv.outs[b * nw + w]
+    }
+    if t = f.blocks[b].term {
+      reads.clear()
+      mir_term_reads(f, t, reads)
+      mir_bits_mark(before_term, b * nw, n, reads)
+    }
+  }
+  live = mir_zero_words(nw)
+  stale = mir_zero_words(nw)
+  touched: Array(Int) = []
+  for b in 0..nb {
+    blk = f.blocks[b]
+    // entry clears: dead into b, live out of a predecessor, stale in b
+    head: Array(MStmt) = []
+    if b > 0 {
+      lin = mir_live_in_bits(lv, b)
+      dead_from = mir_zero_words(nw)
+      for p in 0..nb {
+        for i in lv.succ_at[p]..lv.succ_at[p + 1] {
+          if lv.succ[i] == b {
+            for w in 0..nw {
+              dead_from[w] = dead_from[w] | (before_term[p * nw + w] & ~lin[w] & cand[w] & stale_in[b * nw + w])
+            }
+          }
+        }
+      }
+      loc = f.loc
+      if blk.stmts.size > 0 {
+        loc = blk.stmts[0].loc
+      } else if t = blk.term {
+        loc = t.loc
+      }
+      for k in 0..n {
+        if mir_bit(dead_from, 0, k) {
+          head.push(mir_clear_stmt(k, loc))
+        }
+      }
+    }
+    // clears after the statement where a slot dies, walking back from
+    // the block's end with the live and stale sets after each statement
+    after: Array(Array(MStmt)) = []
+    for j in 0..blk.stmts.size {
+      e: Array(MStmt) = []
+      after.push(e)
+    }
+    found = head.size > 0
+    for w in 0..nw {
+      x = 0u64
+      for i in lv.succ_at[b]..lv.succ_at[b + 1] {
+        x = x | stale_in[lv.succ[i] * nw + w]
+      }
+      stale[w] = x
+    }
+    mir_words_load(live, before_term, b * nw, nw)
+    j = blk.stmts.size - 1
+    while j >= 0 {
+      st = blk.stmts[j]
+      reads.clear()
+      mir_stmt_reads(st, reads)
+      d = mir_stmt_def(st)
+      if d >= 0 {
+        reads.push(d)
+      }
+      for k in reads {
+        if k >= 0 && k < n && mir_bit(cand, 0, k) && mir_bit(stale, 0, k) && !mir_bit(live, 0, k) {
+          at = mir_clear_at(blk, j)
+          dup = false
+          for z in after[at] {
+            if zp = z.place, zp.local == k {
+              dup = true
+            }
+          }
+          if !dup {
+            after[at].push(mir_clear_stmt(k, st.loc))
+            found = true
+          }
+        }
+      }
+      if st.kind == msk_call() && st.collects {
+        for w in 0..nw {
+          stale[w] = cand[w]
+        }
+      } else if d >= 0 && d < n {
+        mir_bit_off(stale, 0, d)
+      }
+      mir_live_step_bits(st, live, n, reads)
+      j -= 1
+    }
+    if found {
+      xs: Array(MStmt) = []
+      xs.concat(head)
+      for j2 in 0..blk.stmts.size {
+        xs.push(blk.stmts[j2])
+        xs.concat(after[j2])
+      }
+      blk.stmts = xs
+      touched.push(b)
+    }
+  }
+  for b in touched {
+    mir_live_block(f, lv, b, reads)
+  }
+}
+
 // The function's liveness is computed once: the polls read and define
 // nothing, so they leave every block's transfer and live-out as they were;
 // so do gc.enter, gc.roots and gc.leave; the prologue's zeroing changes
@@ -320,6 +551,9 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       slots.push(k)
     }
     k += 1
+  }
+  if slots.size > 0 {
+    mir_clear_dead_slots(f, lv, need)
   }
   if slots.size == 0 && !f.first_frame() {
     // No record (rule 2 above): nothing is added, so the liveness is

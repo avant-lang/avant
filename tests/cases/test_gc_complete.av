@@ -61,7 +61,7 @@ fn test_proof_oracle(c: Checks, compiler: String, root: String, dir: String) {
 
 // ffi/complete.av: every way a program can remove the last reference to
 // an old object (a field store, an element store, a shift, Hash.delete
-// in the hash's two layouts, Hash.clear, a local out of scope, `release`, a pin given back, a store
+// in the hash's two layouts, Hash.clear, a local out of scope, a local past its last read or assigned from a call, `release`, a pin given back, a store
 // after a defragmenting collection, a task's end), and two that remove
 // none (Array.sort, a Hash's growth). In every environment the collection
 // after the removal frees the victim (the live bytes fall by its size)
@@ -93,7 +93,7 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/complete.g${e}.err"), "", "complete.av ${what}: no stderr (the oracle is silent)")
   }
   show = log_text("${dir}/complete.show.out")
-  ways = ["field", "element", "shift", "delete", "delete int", "clear", "pop", "array-clear", "root", "release", "pin", "defrag"]
+  ways = ["field", "element", "shift", "delete", "delete int", "clear", "pop", "array-clear", "root", "release", "pin", "defrag", "dead", "reassign"]
   for w in ways {
     line = ""
     for l in show.split("\n") {
@@ -121,7 +121,8 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
 // ffi/scope_binding.av: whether a binding whose scope has ended keeps what
 // it named alive (its comment has the probes). The answer is its run
 // golden's, the same in every environment, with the oracle silent: a
-// binding does not; in every probe the string is freed once the function
+// binding does not, nor does a call's argument once its value is dead; in
+// every probe the string is freed while the function runs, and once it
 // has returned.
 fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
@@ -138,8 +139,8 @@ fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
   for w in ["if binding", "block local", "no binding", "call argument"] {
     c.expect(want.contains("${w}: freed after the function returned 1\n"), "scope_binding.av, ${w}: the string is freed once its function has returned")
   }
-  for w in ["if binding", "block local", "no binding"] {
-    c.expect(want.contains("${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended keeps nothing alive")
+  for w in ["if binding", "block local", "no binding", "call argument"] {
+    c.expect(want.contains("${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended, or a dead argument's value, keeps nothing alive")
   }
   for e in 0..envs.size {
     what = "plain"

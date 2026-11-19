@@ -12,12 +12,12 @@
 // it returned. Built with `--cc tests/fixtures/ffi/ffi.c` (the
 // collector's counters).
 //
-// The three bindings do not keep it: the string is freed while the
-// function runs. The fourth probe is what does: the value of an
-// expression that was passed to a call (here the constructor's argument)
-// stays named by the function's frame after the statement, so the string
-// outlives the last reference the program can name until the function
-// returns.
+// None of the four keeps it: the string is freed while the function
+// runs. The fourth probe is the value of an expression that was passed to
+// a call (here the constructor's argument): the frame's slot that held it
+// is cleared after the statement, since the value is dead there and a
+// collection can follow, so the string does not outlive the last
+// reference the program can name.
 import std.gc
 
 lib sb {
