@@ -213,7 +213,40 @@ pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, 
   if n == 1 {
     return found
   }
+  if n > 1 && checker_self.own_alias_same(name, from_mod) {
+    return from_mod
+  }
   ""
+}
+
+// Whether from_mod's own alias of the bare type name names the same type
+// as every import's pub type or alias of that name it also sees: the
+// module's own alias is then the name, and the import's is the same type
+// (`type Data = data.Data` beside data's `pub type Data`). Two different
+// types stay a clash that names both.
+pub fn (checker_self: Checker) own_alias_same(name: String, from_mod: String): Bool {
+  own = checker_self.t_int()
+  if a = checker_self.alias_tys.get(type_slot(from_mod, name)) {
+    own = a
+  } else {
+    return false
+  }
+  for m in checker_self.mods_of_type(name) {
+    if m != from_mod && checker_self.type_slot_visible(name, m, from_mod) {
+      other = checker_self.t_int()
+      if b = checker_self.alias_tys.get(type_slot(m, name)) {
+        other = b
+      } else if c = checker_self.resolver.get_named_in(m, name) {
+        other = c
+      } else {
+        return false
+      }
+      if !own.same_as(other) {
+        return false
+      }
+    }
+  }
+  true
 }
 
 pub fn (checker_self: Checker) type_is_visible(name: String, from_mod: String, qual: String): Bool {
@@ -758,6 +791,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
   owner_count = 0
   has_type = false
   has_fn = false
+  has_lib = false
   for o in origins {
     if o.size >= 5 {
       if o.starts_with("type:") {
@@ -766,10 +800,14 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
       } else if o.starts_with("lib:") {
         owner_count += 1
         has_type = true
+        has_lib = true
       } else if o.starts_with("fn:") {
         has_fn = true
       }
     }
+  }
+  if owner_count > 1 && !has_fn && !has_lib && checker_self.own_alias_same(name, from_mod) {
+    return false
   }
   if owner_count > 1 {
     return true

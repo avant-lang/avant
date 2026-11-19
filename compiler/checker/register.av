@@ -442,8 +442,12 @@ pub fn (checker_self: Checker) check_aliases {
       // use's type arguments.
       continue
     }
-    _ = checker_self.resolve_in_module(clone_type_name(al2.target))
+    mark = checker_self.err_count()
+    aty = checker_self.resolve_in_module(clone_type_name(al2.target))
     checker_self.pull_resolve()
+    if !checker_self.new_err_since(mark) {
+      checker_self.alias_tys[type_slot(al2.mod_name, al2.name)] = aty
+    }
   }
   checker_self.current_module = saved
 }

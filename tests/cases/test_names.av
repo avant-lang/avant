@@ -126,6 +126,15 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("clash-three", "import lexa\nimport lexb\nimport lexc\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Token is a type of lexa, lexb and lexc: write lexa.Token, lexb.Token or lexc.Token", "4:9"), three))
   fnty: Array(String) = ["alpha", "pub struct Value {\n  pub v: Int\n}\n", "beta", "pub fn Value: Int {\n  1\n}\n"]
   xs.push(with_mods(only("clash-type-and-fn", "import alpha\nimport beta\nfn f(v: Value): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Value is a type of alpha and a function of beta: write alpha.Value or beta.Value", "3:9"), fnty))
+  // A module's own alias beside an import's pub type or alias of the same
+  // name: one type, so the name is the module's own alias; two different
+  // types stay a clash that names both modules.
+  adata = "pub type Data = Int | String\npub type Other = Int | Bool\npub struct Pt {\n  pub x: Int\n}\npub fn mk: Data {\n  3\n}\n"
+  amods: Array(String) = ["adata", adata]
+  xs.push(with_mods(accepted("alias-own-same", "import adata\n\ntype Data = adata.Data\ntype Pt = adata.Pt\n\nfn twice(d: Data): Array(Data) {\n  [d, d]\n}\n\nfn px(p: Pt): Int {\n  p.x\n}\n\nfn main {\n  ds = twice(adata.mk())\n  ds.push(\"x\")\n  puts(ds.size)\n  p = Pt { x: 4 }\n  puts(px(p) + px(adata.Pt { x: 1 }))\n}\n", "3\n5\n"), amods))
+  xs.push(with_mods(accepted("alias-own-same-members", "import adata\n\ntype Data = Int | String\n\nfn main {\n  ds: Array(Data) = [adata.mk(), \"y\"]\n  puts(ds.size)\n}\n", "2\n"), amods))
+  xs.push(with_mods(only("alias-own-differs", "import adata\n\ntype Data = adata.Other\n\nfn main {\n  d: Data = 3\n  puts(1)\n}\n", "Data is a type of both adata and main: write adata.Data or main.Data", "6:6"), amods))
+  xs.push(with_mods(only("alias-own-struct-twice", "import adata\n\nstruct Pt {\n  x: Int\n}\n\nfn main {\n  p = Pt { x: 4 }\n  puts(p.x)\n}\n", "Pt is a type of both adata and main: write adata.Pt or main.Pt", "8:7"), amods))
   // A call whose arguments fit no signature says what it takes.
   add = "fn add(a: Int, b: Int): Int {\n  a + b\n}\n"
   xs.push(only("count-few", add + "fn main {\n  puts(add(1))\n}\n", "add takes 2 arguments, given 1: add(a: Int, b: Int): Int", "5:8"))
