@@ -394,6 +394,11 @@ __attribute__((visibility("hidden"))) int avant_gc_interior(const void *p);
  * large Bytes object starts at (6 KiB). Not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size);
+/* A large young object PAYLOAD, which the caller alone names, grown in
+ * place to NEW_SIZE bytes when the pages after it are free (the added
+ * bytes zeroed unless NOZERO); 1 when it was, 0 otherwise (nothing
+ * changed). Takes the world lock; not a collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_extend(void *payload, uint64_t new_size, int nozero);
 /* A growth replaced the large buffer PAYLOAD and no longer names it: it is
  * freed now unless a root of this thread names it, it is pinned, mature
  * with reference fields, or the program is shared (avant_gc_los.c). 1 when

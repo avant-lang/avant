@@ -31,6 +31,11 @@ static void buf_grow(AvantBuf *b, int64_t need) {
   /* AVANT_GC_VERIFY=1: storage C has seen (avant_buf_bytes moved it to
    * its own pages) keeps its own pages, so the growth after this one can
    * protect it too. */
+  /* Large storage grows in place when the pages after it are free. */
+  if (b->data && b->size > 0 && avant_gc_large_extend(b->data, (uint64_t)ncap, 1)) {
+    b->cap = ncap;
+    return;
+  }
   uint8_t *ndata = (uint8_t *)avant_gc_verify_paged(b->data, (uint64_t)ncap, 0);
   if (!ndata) {
     /* Not zeroed: the bytes below the size are copied in now, and the

@@ -303,6 +303,13 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
    * it (RC2). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &a);
+  /* A large buffer grows in place when the pages after it are free (the
+   * elements stay where they are; the room added is zeroed unless the
+   * elements are scalars). */
+  if (a->buf && a->size > 0 && avant_gc_large_extend(a->buf, bytes, buf_type_id == AVANT_TYPE_BYTES)) {
+    a->cap = ncap;
+    return;
+  }
   /* A buffer of scalars is not zeroed (a large one, as Go's growslice
    * leaves pointer-free storage): the elements below the size are copied
    * in now, and nothing reads one past the size before a push writes it.
@@ -316,9 +323,16 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
       avant_barrier(nbuf);
     }
   }
+  void *obuf = a->buf;
   avant_barrier(a);
   a->buf = nbuf;
   a->cap = ncap;
+  /* The array no longer names its old buffer: a large one goes back now
+   * unless a root still names it, or it is mature with references
+   * (avant_gc_large_drop), as a Buf's storage does. */
+  if (obuf) {
+    (void)avant_gc_large_drop(obuf, 2);
+  }
 }
 
 /* The push and reserve entries (RC1, avant_gc.h; they

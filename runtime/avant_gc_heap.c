@@ -273,6 +273,56 @@ static uint64_t commit_new_chunk(void) {
   return c;
 }
 
+/* The free chunk K below the high-water mark leaves the free chunks for
+ * its taker (gc_chunk_take, gc_chunk_take_at). */
+static void take_free_chunk(uint64_t k) {
+  uint64_t b;
+  gc_heap.free_chunks--;
+  /* A taken chunk is in neither count until its taker gives it a
+   * kind (gc_chunk_account's comment). */
+  gc_chunk_account(k, -1);
+  /* A decommitted chunk's data is read-write again (zero); its
+   * side slices were madvised (zero) and its records keep their
+   * addresses. A reused chunk's mark bits may be stale: a full
+   * collection clears only the chunks in use when it starts. */
+  if (gc_heap.chunks[k].decommitted) {
+    if (!commit(chunk_base(k), CHUNK_SIZE)) {
+      gc_die("out of memory (a heap chunk could not be committed)");
+    }
+    gc_heap.chunks[k].decommitted = 0;
+  } else {
+    memset(&gc_heap.marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+  }
+  for (b = k * BLOCKS_PER_CHUNK; b < (k + 1) * BLOCKS_PER_CHUNK; b++) {
+    gc_heap.blocks[b].in_use = 0;
+    gc_heap.blocks[b].clean = 0;
+  }
+}
+
+/* The N chunks from FIRST exactly, when each is free or past the
+ * high-water mark (committed then), for a huge run that grows in place
+ * (avant_gc_large_extend); 0 and nothing taken otherwise. */
+int gc_chunk_take_at(uint64_t first, uint64_t n) {
+  uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
+  uint64_t k;
+  if (first > hw || (first + n) * (uint64_t)CHUNK_SIZE > gc_heap.reserved) {
+    return 0;
+  }
+  for (k = first; k < first + n && k < hw; k++) {
+    if (gc_heap.chunks[k].kind != CHUNK_FREE) {
+      return 0;
+    }
+  }
+  for (k = first; k < first + n; k++) {
+    if (k < hw) {
+      take_free_chunk(k);
+    } else {
+      commit_new_chunk();
+    }
+  }
+  return 1;
+}
+
 /* N contiguous chunks for the caller to give a kind (CHUNK_SMALL, a
  * large-object chunk, or a huge object's run): the first run of N free
  * chunks below the high-water mark, else N new chunks past it. Their
@@ -295,28 +345,8 @@ uint64_t gc_chunk_take(uint64_t n) {
       if (++run == n) {
         uint64_t first = c + 1 - n;
         uint64_t k;
-        gc_heap.free_chunks -= n;
         for (k = first; k <= c; k++) {
-          uint64_t b;
-          /* A taken chunk is in neither count until its taker gives it a
-           * kind (gc_chunk_account's comment). */
-          gc_chunk_account(k, -1);
-          /* A decommitted chunk's data is read-write again (zero); its
-           * side slices were madvised (zero) and its records keep their
-           * addresses. A reused chunk's mark bits may be stale: a full
-           * collection clears only the chunks in use when it starts. */
-          if (gc_heap.chunks[k].decommitted) {
-            if (!commit(chunk_base(k), CHUNK_SIZE)) {
-              gc_die("out of memory (a heap chunk could not be committed)");
-            }
-            gc_heap.chunks[k].decommitted = 0;
-          } else {
-            memset(&gc_heap.marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
-          }
-          for (b = k * BLOCKS_PER_CHUNK; b < (k + 1) * BLOCKS_PER_CHUNK; b++) {
-            gc_heap.blocks[b].in_use = 0;
-            gc_heap.blocks[b].clean = 0;
-          }
+          take_free_chunk(k);
         }
         return first;
       }

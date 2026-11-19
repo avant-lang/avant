@@ -551,8 +551,9 @@ fn test_late_starts(c: Checks, compiler: String, root: String, dir: String) {
 // class-field defaults, nested, and 20,000 of them kept across
 // collections and then filled: every environment prints what a compiler
 // that gave each empty array a buffer printed, with no stderr. And the
-// program allocates 1,280,144 bytes where it allocated 1,600,320: each of
-// its 20,011 empty arrays is 24 bytes, not 24 and 16.
+// program allocates 772,200 bytes where it allocated 1,600,320: each of
+// its 20,011 empty arrays is 24 bytes, not 24 and 16 (1,280,144), and the
+// array that keeps them grows its large buffer in place.
 fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/empty_arrays.av", "${dir}/empty_arrays", "${dir}/empty_arrays.log"))
@@ -576,7 +577,7 @@ fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/empty_arrays.g${e}.out"), want, "empty_arrays.av ${what}: every operation on an array with no buffer gives what it gave on an empty buffer")
     c.eq_str(log_text("${dir}/empty_arrays.g${e}.err"), "", "empty_arrays.av ${what}: no stderr")
   }
-  c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 1280144, "empty_arrays.av: an empty array is one object of 24 bytes (1,280,144 bytes allocated; 1,600,320 with a buffer each)")
+  c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 772200, "empty_arrays.av: an empty array is one object of 24 bytes, and the kept arrays' holder grows in place (772,200 bytes allocated; 1,280,144 with a growth by copy, 1,600,320 with a buffer each)")
 }
 
 // Under AVANT_GC_STRESS=1 a full

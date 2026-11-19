@@ -1897,6 +1897,7 @@ void gc_heap_reserve(void);
 Block *gc_block_take(void);
 void gc_block_give(Block *b);
 uint64_t gc_chunk_take(uint64_t n);
+int gc_chunk_take_at(uint64_t first, uint64_t n);
 void gc_chunk_give(uint64_t c);
 void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
