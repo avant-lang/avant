@@ -1438,10 +1438,10 @@ static void tmp_catch(int sig) {
 /* std.process.notify: the signals a program asked to see (SIGTERM and
  * SIGINT, so a server can close and drain, and the others it names). The
  * handler writes the signal's number to a pipe, the one thing a handler
- * may do with an Avant program's state (it cannot send on a Channel);
- * std.process's reader task waits on the pipe natively
- * (avant_sys_signal_wait), one pipe and one task for each notify call,
- * and sends each on that call's channel. Such
+ * may do with an Avant program's state (it cannot send on a Channel):
+ * one pipe for each notify call, and the process.Signals that call
+ * returns reads it in recv (avant_sys_signal_wait, waiting natively, on
+ * whichever task calls it), with no reader task and no channel. Such
  * a signal no longer ends the program: its default action is replaced,
  * the scratch directory's handler (tmp_catch) included, and the program
  * decides (the directory is still removed at exit). The crash signals
