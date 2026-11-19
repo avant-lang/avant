@@ -35,6 +35,14 @@
 #     rounds argument (a stub rounds.py records its arguments) asks for
 #     that many rounds and passes every task, the fourth one included;
 #     without the argument, one round per shift.
+#   check-build-subline: tools/layout-check.sh build in a fake checkout
+#     whose stub C' places main AVANT_CODE_SHIFT bytes into its line: the
+#     whole-line shifts are linked as before, each sub-line shift compiled
+#     with AVANT_CODE_SHIFT set, every layout's binary runs, and
+#     shifts.txt lists them all;
+#   check-build-subline-checked: a stub that ignores AVANT_CODE_SHIFT is
+#     caught (main not where the shift puts it), the build fails;
+#   check-build-subline-bad: a sub-line shift of 64 is refused.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -184,4 +192,33 @@ sh "$lc/root/tools/layout-check.sh" time "$lc/d" "$lc/run.js" < /dev/null >> "$l
 b=$(cat "$lc/root/tools/rounds.py.args" 2>/dev/null)
 [ $r1 -eq 0 ] && [ $rc2 -eq 0 ] && echo "$b" | grep -q -- '--rounds 2 ' && echo "$b" | grep -q ' A::One B::Two C::Three D::Four$'
 say check-rounds-many $? "rc=$rc/$rc2 args: $a / $b; $(tail -2 "$lc/log" | tr '\n' ';')"
+
+# 8. layout-check.sh build with sub-line shifts, in a fake checkout whose
+# stub C' links a program whose main sits AVANT_CODE_SHIFT bytes into its
+# 64-byte line (what the real C' does to every function), through $CC
+# (tools/layout-cc.sh for the whole-line shifts).
+lb=$w/lb; mkdir -p "$lb/root/tools" "$lb/root/bin" "$lb/la/avant/langarena/tmp" "$lb/la/args"
+cp "$root/tools/layout-check.sh" "$root/tools/layout-cc.sh" "$lb/root/tools/"
+cat > "$lb/root/bin/avant-c-llvm" <<'STUB'
+#!/bin/sh
+out=$3
+k=${AVANT_CODE_SHIFT:-0}; [ -n "${STUB_IGNORE_SHIFT:-}" ] && k=0
+printf '.text\n.p2align 6\n.skip %d, 0x90\n.globl main\nmain:\n xorl %%eax, %%eax\n ret\n.section .note.GNU-stack,"",@progbits\n' "$k" > "$out.s"
+${CC:-cc} -o "$out" "$out.s"; rc=$?
+rm -f "$out.s"; exit $rc
+STUB
+chmod +x "$lb/root/bin/avant-c-llvm"
+echo 'fn main {}' > "$lb/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lb/la/args/x_one"
+LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
+ok=0
+for k in 0 64 16 32; do "$lb/d/layouts/$k/x_one" < /dev/null || ok=1; done
+m16=$(nm "$lb/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
+[ $rc -eq 0 ] && [ $ok -eq 0 ] && [ "$(cat "$lb/d/shifts.txt")" = "0 64 16 32" ] && [ -n "$m16" ] && [ $((0x$m16 % 64)) -eq 16 ]
+say check-build-subline $? "rc=$rc runs=$ok main@16=$m16 shifts=$(cat "$lb/d/shifts.txt" 2>/dev/null); $(tail -2 "$lb/log" | tr '\n' ';')"
+STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
+[ $rc -eq 1 ] && grep -q 'at sub-line shift 16: main is at .*, not 16 bytes into its line' "$lb/log2"
+say check-build-subline-checked $? "rc=$rc $(tr '\n' ';' < "$lb/log2")"
+LAYOUT_CHECK_SUBLINE="64" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d3" x_one < /dev/null > "$lb/log3" 2>&1; rc=$?
+[ $rc -eq 2 ] && grep -q 'sub-line shift 64 is not below 64' "$lb/log3"
+say check-build-subline-bad $? "rc=$rc $(tr '\n' ';' < "$lb/log3")"
 echo done

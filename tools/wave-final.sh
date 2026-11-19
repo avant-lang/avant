@@ -101,7 +101,8 @@
 #      cache's stitched programs (tools/la-count.sh, shared), and the tasks
 #      whose time moved beyond 3% and 0.02 s at counts within 0.1% named
 #      (tools/layout-flag.py), each then timed again with its code at four
-#      shifts (tools/layout-check.sh: the build shared, the timing --timed,
+#      whole-line shifts and three within its lines (tools/layout-check.sh:
+#      the build shared, the timing --timed,
 #      la/layout-check/): it stays "layout?" only when the base's time lies
 #      within the head's range across its layouts, else "beyond"; a
 #      `layout:` line, la/layout.tsv and a "Layout?" section in floor.md
