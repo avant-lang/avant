@@ -47,7 +47,7 @@ sh runtime/build.sh
 | Command | What it proves |
 | --- | --- |
 | `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B); `b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, which `avant version` prints (the compiler carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the `lib/` the compiler reads ([Building the compiler](#building-the-compiler)) |
-| `sh tools/gate.sh` | the full gate: the runtime-C rooting lint (`tools/gc-lint.sh`) and the check that no tracked file names a planning-note identifier (`tools/no-ledger-refs.sh`) before the builds; B, C′, the suite on both; the README checks on `README.md` and `CONTRIBUTING.md` (`tools/readme-check.sh`, `tools/readme-links.sh`) and `avant format --check` over every tracked source (`tools/format-check.sh`); D′ and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
+| `sh tools/gate.sh` | the full gate: the runtime-C rooting lint (`tools/gc-lint.sh`) and the check that no tracked file names a planning-note identifier (`tools/no-ledger-refs.sh`) before the builds; B, C′, the suite on both; the README checks on `README.md`, `CONTRIBUTING.md` and `DESIGN.md` (`tools/readme-check.sh`, `tools/readme-links.sh`) and `avant format --check` over every tracked source (`tools/format-check.sh`); D′ and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 
 The suite is the native test runner on the compiler's own tests:
@@ -84,7 +84,7 @@ These tools compare a change with its base on a machine shared by several checko
 
 ## Checking the documentation
 
-`sh tools/readme-check.sh` compiles and runs every `avant` block in `README.md` and compares what it prints with what the file says; `sh tools/readme-links.sh` checks every anchor and link, a link to a heading of another Markdown file included. Given a file (`sh tools/readme-check.sh CONTRIBUTING.md`), each checks that one instead. Run both, on the file you changed, after any change to `README.md` or this file; the gate runs them on both.
+`sh tools/readme-check.sh` compiles and runs every `avant` block in `README.md` and compares what it prints with what the file says; `sh tools/readme-links.sh` checks every anchor and link, a link to a heading of another Markdown file included. Given a file (`sh tools/readme-check.sh CONTRIBUTING.md`), each checks that one instead. Run both, on the file you changed, after any change to `README.md`, `DESIGN.md` or this file; the gate runs them on all three (`readme-check.sh` on `DESIGN.md` once it holds a code block).
 
 - A block with `fn main` is a complete program: compiled, run, and expected to exit 0.
 - A trailing `// => text` says the program prints that line there; a `text` block marked `output` or `stderr` states a whole output or a diagnostic.

@@ -3,7 +3,7 @@
 #
 #   sh tools/readme-links.sh [FILE.md]        (default: README.md)
 #
-# The gate runs it on README.md and on CONTRIBUTING.md.
+# The gate runs it on README.md, on CONTRIBUTING.md and on DESIGN.md.
 #
 # 1. Every heading's anchor is unique (GitHub's rule: lower case, every
 #    character but letters, digits, `-`, `_` and spaces removed, spaces
