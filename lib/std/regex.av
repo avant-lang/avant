@@ -12,7 +12,6 @@ lib rec {
   fun avant_re2c_handle(id: Int): Ptr(Void)
   fun avant_regex_error_text: String
   fun avant_regex_error_offset: Int
-  fun avant_regex_closed
   fun avant_regex_failed(op: Int)
   fun avant_regex_failure_kind: Int
   fun avant_regex_failure_text(op: Int): String
@@ -68,7 +67,7 @@ fn match_error(op: Int): RegexError {
 // Every operation on a closed Regex traps: a use after close is a
 // program error, not an honest "no match".
 fn regex_closed {
-  rec.avant_regex_closed()
+  panic("regex.Regex used after close")
 }
 
 pub struct Span {
@@ -280,6 +279,7 @@ pub struct Regex {
     if caseless {
       flags = 1
     }
+    check_limits(match_limit, depth_limit, heap_limit)
     code = rec.avant_regex_compile(pattern, flags, match_limit, depth_limit, heap_limit)
     status = rec.avant_regex_take_status()
     if status != 0 {
@@ -680,11 +680,26 @@ pub class TryMatchIter {
   }
 }
 
+// A limit below 1 is the program's error: a trap naming the parameter
+// and the program's call.
+fn check_limits(match_limit: Int, depth_limit: Int, heap_limit: Int) {
+  if match_limit < 1 {
+    panic("regex.Regex.compile: match_limit must be at least 1 (got ${match_limit})")
+  }
+  if depth_limit < 1 {
+    panic("regex.Regex.compile: depth_limit must be at least 1 (got ${depth_limit})")
+  }
+  if heap_limit < 1 {
+    panic("regex.Regex.compile: heap_limit must be at least 1 (got ${heap_limit})")
+  }
+}
+
 fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool, match_limit: Int, depth_limit: Int, heap_limit: Int): Regex | RegexError {
   flags = 0
   if caseless {
     flags = 1
   }
+  check_limits(match_limit, depth_limit, heap_limit)
   code = rec.avant_regex_compile(pattern, flags, match_limit, depth_limit, heap_limit)
   status = rec.avant_regex_take_status()
   if status != 0 {

@@ -271,6 +271,8 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
   kinds = ["json", "regex-limit", "regex-closed", "main"]
   statuses = [0, 0, 0, 1]
   texts = ["json.JsonBuilder.end: nothing open", "regex.Regex.compile: match_limit must be at least 1 (got 0)", "regex.Regex used after close", "json.JsonBuilder.key: not inside an object"]
+  // The printed trap names the program's call into the library.
+  sites = ["29:12", "35:26", "45:15", "52:10"]
   for i, kind in kinds {
     log = "${scratch()}/tasks-libtrap-${stamp}-${kind}.log"
     elog = "${scratch()}/tasks-libtrap-${stamp}-${kind}.err"
@@ -286,7 +288,7 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       c.eq_str(out, "before\n", "lib trap ${kind}: the output before the trap")
     }
-    c.eq_str(err, "avant runtime: ${texts[i]}\n", "lib trap ${kind}: the trap is printed")
+    c.eq_str(err, "avant runtime: ${texts[i]} at lib_trap.av:${sites[i]}\n", "lib trap ${kind}: the trap is printed")
   }
 }
 

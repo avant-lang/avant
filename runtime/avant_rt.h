@@ -665,7 +665,7 @@ void avant_set_flag_threads(long n);
 /* The thread pool's size: --avant-threads=N and std.sync's set_pool_size
  * take 1 to this many. */
 #define AVANT_POOL_SIZE_MAX 1024
-void avant_set_pool_size(avant_int n);
+avant_int avant_set_pool_size(avant_int n);
 avant_int avant_pool_size_fix(void);
 void *avant_spawn(void *fn, void *arg);
 /* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
@@ -830,7 +830,6 @@ avant_int avant_http_port(void *srv);
 avant_int avant_http_serve(void *srv, void *state, void *cb, void *ws_cb,
                            void *timer_cb);
 avant_int avant_http_add_timer(void *srv, avant_int ms);
-void avant_http_trap(const char *message);
 avant_int avant_http_timer_index(void *ev);
 avant_int avant_http_close(void *srv);
 avant_int avant_http_req_is_ws(void *req);

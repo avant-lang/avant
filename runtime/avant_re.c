@@ -355,7 +355,8 @@ avant_int avant_regex_cache_holds(const char *pat, avant_int flags) {
 }
 
 /* A limit as PCRE2 takes it: below 1 is a program error (a trap naming
- * the parameter); past PCRE2's 32-bit field it is the largest it holds. */
+ * the parameter; std.regex checks it first, at the program's call); past
+ * PCRE2's 32-bit field it is the largest it holds. */
 static uint32_t re_limit(const char *name, avant_int v) {
   if (v < 1) {
     char text[160];
@@ -938,8 +939,3 @@ avant_int avant_regex_error_offset(void) {
   return g_re_off;
 }
 
-/* A Regex used after close: a program error, not an honest "no match".
- * A trap (re_trap's path). */
-void avant_regex_closed(void) {
-  avant_trap_text("regex.Regex used after close");
-}

@@ -220,7 +220,7 @@ pub fn __avant_mutex_poisoned: MutexError {
 // it did not get (runtime/avant_task.c, avant_set_pool_size).
 lib pool_rt {
   fun avant_chosen_threads: Int
-  fun avant_set_pool_size(n: Int)
+  fun avant_set_pool_size(n: Int): Int
 }
 
 pub fn pool_size: Int {
@@ -228,5 +228,10 @@ pub fn pool_size: Int {
 }
 
 pub fn set_pool_size(n: Int) {
-  pool_rt.avant_set_pool_size(n)
+  if n < 1 || n > 1024 {
+    panic("sync.set_pool_size(${n}): the thread pool's size is from 1 to 1024")
+  }
+  if pool_rt.avant_set_pool_size(n) != 0 {
+    panic("sync.set_pool_size(${n}) after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when http.listen without loops: takes its loop count from it")
+  }
 }

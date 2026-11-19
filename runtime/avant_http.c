@@ -1518,15 +1518,17 @@ avant_int avant_http_req_seq(void *reqp) {
 }
 
 /* req.reply(): the reply of the request whose handler runs now on this
- * thread (its seq), made on the first call. */
+ * thread (its seq), made on the first call; -1 when no handler of that
+ * request runs here, -2 for a WebSocket upgrade's request (std.http
+ * raises the trap, naming the program's call). */
 avant_int avant_http_req_reply(avant_int seq) {
   AvantHttpReq *req = t_dispatch;
   HttpReply *r;
   if (!req || seq == 0 || req->seq != seq) {
-    avant_trap_text("http.Request.reply() is called by the request's own handler while it runs: a request built in memory, or one kept past its handler, has no connection to answer");
+    return -1;
   }
   if (req->is_ws) {
-    avant_trap_text("http.Request.reply(): a WebSocket upgrade's request is answered by the upgrade, never later");
+    return -2;
   }
   if (req->reply) {
     return req->reply->id;
@@ -4513,56 +4515,31 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb,
   return 0;
 }
 
-/* A route method of std.http called while its server serves: the loop
- * threads read the route tables with no lock, so the route is refused.
- * A trap of the language (from a handler, the usual place, a trap that
- * fails its request). what names the route ("route GET /x",
- * "websocket route /x"). */
-__attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *what) {
-  char msg[400];
-  snprintf(msg, sizeof msg, "%s registered while the server is serving: register every route before serve", what);
-  avant_trap_text(msg);
-}
-
-/* A limit set while the server serves: the loops read the limits with
- * no lock, as they read the routes, so it is refused like a route. A
- * trap of the language. */
-/* A std.http call given a value it refuses (the message names the call
- * and the rule): a trap of the language, which fails a handler's
- * request. */
-__attribute__((noreturn, cold)) void avant_http_trap(const char *message) {
-  avant_trap_text(message);
-}
-
-__attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *name) {
-  char msg[160];
-  snprintf(msg, sizeof msg, "http.Server.%s called while the server is serving: set every limit before serve", name);
-  avant_trap_text(msg);
-}
 
 /* A limit of Server's setters (std.http), set before serve: which is
  * 1 head_timeout (a, ms), 2 min_rate (a bytes a second, b the grace in
  * ms), 3 body_budget (bytes), 4 memory_ceiling (bytes), 5
  * max_connections, 6 shutdown_timeout (ms). 0 turns a limit off. A
  * negative value or one past its range (a C int; 2^62 for the byte
- * limits) is the program's error: a trap of the language (in a handler,
- * a trap that fails its request). */
-void avant_http_set_limit(void *srvp, const char *name, avant_int which,
-                          avant_int a, avant_int b) {
+ * limits) is the program's error: the text of its trap is returned
+ * (this thread's buffer, read at once), and std.http raises it, naming
+ * the program's call; NULL when the limit is set. */
+const char *avant_http_set_limit(void *srvp, const char *name, avant_int which,
+                                 avant_int a, avant_int b) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   long long top = (which == 3 || which == 4) ? (1LL << 62) : (which == 7 || which == 8) ? HTTP_IDLE_MAX_MS : INT32_MAX;
   if (a < 0 || b < 0 || a > top || b > INT32_MAX) {
-    char msg[200];
+    static _Thread_local char msg[200];
     if (which == 2) {
       snprintf(msg, sizeof msg, "http.Server.%s(%lld, %lld): a limit is 0 (off) to %lld", name, (long long)a,
                (long long)b, top);
     } else {
       snprintf(msg, sizeof msg, "http.Server.%s(%lld): a limit is 0 (off) to %lld", name, (long long)a, top);
     }
-    avant_trap_text(msg);
+    return msg;
   }
   if (!srv) {
-    return;
+    return NULL;
   }
   switch (which) {
     case 1:
@@ -4596,6 +4573,7 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
     default:
       break;
   }
+  return NULL;
 }
 
 /* At most 64 bytes of p into out (room for 4 bytes each and "..."), a
@@ -4662,20 +4640,22 @@ static size_t http_value_end(const char *s, size_t n) {
  * follow: response splitting. A name must be a token (RFC 9110 5.1) and
  * a value may hold no control character but tab (5.5: CR, LF and NUL
  * are refused, and the other controls with them); anything else is the
- * program's error, and it is a trap of the language naming the rule (in
- * a handler, a trap that fails its request: answered 500). */
-void avant_http_header_check(const char *name, const char *value) {
+ * program's error: the text of its trap, naming the rule, is returned
+ * (this thread's buffer, read at once) and std.http raises it at the
+ * program's call (in a handler, a trap that fails its request: answered
+ * 500); NULL when both are good. */
+const char *avant_http_header_check(const char *name, const char *value) {
   size_t nn = avant_str_n(name);
   size_t vn = avant_str_n(value);
   size_t i;
   char esc[300];
-  char msg[600];
+  static _Thread_local char msg[600];
   if (nn == 0 || http_token_end(name, nn) < nn) {
     escape_into(esc, name, nn);
     snprintf(msg, sizeof msg,
              "http.Response.header name \"%s\" is not a token: a header name is letters, digits and !#$%%&'*+-.^_`|~ (RFC 9110)",
              esc);
-    avant_trap_text(msg);
+    return msg;
   }
   i = http_value_end(value, vn);
   if (i < vn) {
@@ -4683,8 +4663,9 @@ void avant_http_header_check(const char *name, const char *value) {
     snprintf(msg, sizeof msg,
              "http.Response.header value of %s holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)",
              esc, (unsigned)(unsigned char)value[i], i);
-    avant_trap_text(msg);
+    return msg;
   }
+  return NULL;
 }
 
 /* The client's request checks, the same rules

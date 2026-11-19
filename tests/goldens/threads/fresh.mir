@@ -25,15 +25,18 @@ layout %(Int|task.TaskError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %task.Ta
 layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i64) -> i64 }  size 16 align 8
 layout %fn():String = fnval { 0 env: ref, 1 code: code(ref) -> ref str }  size 16 align 8
 
-const str.0 = " "
-const str.1 = "a"
-const str.2 = "bb"
-const str.3 = "ccc"
-const str.4 = "the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed"
-const str.5 = "the task trapped: "
-const str.6 = " at "
-const str.7 = ""
-const str.8 = "t"
+const str.0 = "sync.set_pool_size("
+const str.1 = "): the thread pool's size is from 1 to 1024"
+const str.2 = ") after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when http.listen without loops: takes its loop count from it"
+const str.3 = " "
+const str.4 = "a"
+const str.5 = "bb"
+const str.6 = "ccc"
+const str.7 = "the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed"
+const str.8 = "the task trapped: "
+const str.9 = " at "
+const str.10 = ""
+const str.11 = "t"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -76,11 +79,12 @@ extern avant_parallel_for(i64, ptr, ref) -> i32 collects
 extern avant_parallel_trap() -> void never
 extern avant_puts_bool(i32) -> void never
 extern avant_puts_str(ref str) -> void never
-extern avant_set_pool_size(i64) -> void collects
+extern avant_set_pool_size(i64) -> i64 collects
 extern avant_spawn(ptr, ref) -> ref collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
+extern avant_trap_expect(ref str) -> void never noreturn
 extern avant_trap_frozen(i32) -> void never noreturn
 extern avant_trap_poisoned() -> void never noreturn
 
@@ -104,9 +108,58 @@ bb0:
 
 fn av.std.sync/set_pool_size(_1: i64) -> void frame @lib/std/sync.av:230:5 {
   let _1 (n): i64
+  let _2: bool
+  let _3: bool
+  let _4: bool
+  let _5: ref str slot
+  let _6: ref str slot
+  let _7: ref str
+  let _8: i64
+  let _9: bool
+  let _10: ref str slot
+  let _11: ref str slot
+  let _12: ref str
 
 bb0:
-  call avant_set_pool_size(copy _1) collects   @231:10
+  _5 = zero   @230:5
+  _6 = zero   @230:5
+  _10 = zero   @230:5
+  _11 = zero   @230:5
+  gc.enter   @230:5
+  gc.roots _5, _6, _10, _11   @230:5
+  _2 = lt copy _1, const i64 1   @231:8
+  _3 = copy _2   @231:12
+  branch copy _3, bb2, bb1   @231:12
+
+bb1:
+  _4 = gt copy _1, const i64 1024   @231:17
+  _3 = copy _4   @231:12
+  goto bb2   @231:12
+
+bb2:
+  branch copy _3, bb3, bb4   @231:3
+
+bb3:
+  _5 = call avant_str_from_int(copy _1) collects   @232:33
+  _6 = call avant_str_concat(const str.0, copy _5) collects   @232:11
+  _7 = call avant_str_concat(copy _6, const str.1) collects   @232:11
+  call avant_trap_expect(copy _7) nocollect   @232:5
+  unreachable   @232:5
+
+bb4:
+  _8 = call avant_set_pool_size(copy _1) collects   @234:13
+  _9 = ne copy _8, const i64 0   @234:37
+  branch copy _9, bb5, bb6   @234:3
+
+bb5:
+  _10 = call avant_str_from_int(copy _1) collects   @235:33
+  _11 = call avant_str_concat(const str.0, copy _10) collects   @235:11
+  _12 = call avant_str_concat(copy _11, const str.2) collects   @235:11
+  call avant_trap_expect(copy _12) nocollect   @235:5
+  unreachable   @235:5
+
+bb6:
+  gc.leave   @230:5
   return   @230:5
 }
 
@@ -362,17 +415,17 @@ bb2:
   _41 = copy (*_23).0   @32:44
   _42 = copy (*_41)[const i64 3]   @32:44
   _43 = call avant_str_from_int(copy _42) collects   @32:44
-  _44 = call avant_str_concat(copy _28, const str.0) collects   @32:8
+  _44 = call avant_str_concat(copy _28, const str.3) collects   @32:8
   _45 = call avant_str_concat(copy _44, copy _33) collects   @32:8
-  _46 = call avant_str_concat(copy _45, const str.0) collects   @32:8
+  _46 = call avant_str_concat(copy _45, const str.3) collects   @32:8
   _47 = call avant_str_concat(copy _46, copy _38) collects   @32:8
-  _48 = call avant_str_concat(copy _47, const str.0) collects   @32:8
+  _48 = call avant_str_concat(copy _47, const str.3) collects   @32:8
   _49 = call avant_str_concat(copy _48, copy _43) collects   @32:8
   call avant_puts_str(copy _49) nocollect   @32:3
   _50 = call avant_alloc(const u64 24, const u32 65535) collects fresh   @33:11
-  (*_50)[const i64 0] = const str.1 fresh   @33:12
-  (*_50)[const i64 1] = const str.2 fresh   @33:17
-  (*_50)[const i64 2] = const str.3 fresh   @33:23
+  (*_50)[const i64 0] = const str.4 fresh   @33:12
+  (*_50)[const i64 1] = const str.5 fresh   @33:17
+  (*_50)[const i64 2] = const str.6 fresh   @33:23
   _51 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @33:11
   (*_51).0 = copy _50 fresh   @33:11
   (*_51).1 = const i32 3   @33:11
@@ -421,9 +474,9 @@ bb4:
   check.bounds const i64 2, copy _76   @38:40
   _77 = copy (*_66).0   @38:40
   _78 = copy (*_77)[const i64 2]   @38:40
-  _79 = call avant_str_concat(copy _70, const str.0) collects   @38:8
+  _79 = call avant_str_concat(copy _70, const str.3) collects   @38:8
   _80 = call avant_str_concat(copy _79, copy _74) collects   @38:8
-  _81 = call avant_str_concat(copy _80, const str.0) collects   @38:8
+  _81 = call avant_str_concat(copy _80, const str.3) collects   @38:8
   _82 = call avant_str_concat(copy _81, copy _78) collects   @38:8
   call avant_puts_str(copy _82) nocollect   @38:3
   _83 = call av.fresh/Held.new(const i64 5) collects   @39:35
@@ -533,7 +586,7 @@ bb20:
   _129 = call avant_str_from_int(copy _128) collects   @55:28
   _130 = copy (*_123).0   @55:34
   _131 = copy (*_130).1   @55:35
-  _132 = call avant_str_concat(copy _129, const str.0) collects   @55:24
+  _132 = call avant_str_concat(copy _129, const str.3) collects   @55:24
   _133 = call avant_str_concat(copy _132, copy _131) collects   @55:24
   _134 = copy _133   @55:12
   call avant_gate_unlock(copy _123, const u64 8) nocollect   @55:12
@@ -611,7 +664,7 @@ fn av.std.sync/std.sync.MutexError.message(_1: u8) -> ref str frame @lib/std/syn
   let _1 (self): u8
 
 bb0:
-  _0 = const str.4   @203:5
+  _0 = const str.7   @203:5
   return   @203:5
 }
 
@@ -665,8 +718,8 @@ bb0:
 bb1:
   _5 = copy (*_1).0   @14:35
   _6 = copy (*_1).1   @14:46
-  _7 = call avant_str_concat(const str.5, copy _5) collects   @14:14
-  _8 = call avant_str_concat(copy _7, const str.6) collects   @14:14
+  _7 = call avant_str_concat(const str.8, copy _5) collects   @14:14
+  _8 = call avant_str_concat(copy _7, const str.9) collects   @14:14
   _9 = call avant_str_concat(copy _8, copy _6) collects   @14:14
   _0 = copy _9   @14:7
   gc.leave   @14:7
@@ -674,7 +727,7 @@ bb1:
 
 bb2:
   _10 = copy (*_1).0   @16:26
-  _11 = call avant_str_concat(const str.5, copy _10) collects   @16:5
+  _11 = call avant_str_concat(const str.8, copy _10) collects   @16:5
   _0 = copy _11   @16:5
   gc.leave   @16:5
   return   @16:5
@@ -835,7 +888,7 @@ bb0:
   gc.enter   @16:1
   gc.roots _2   @16:1
   _2 = call avant_alloc(const u64 16, const u32 1) collects fresh   @16:1
-  (*_2).1 = const str.7 fresh   @18:3
+  (*_2).1 = const str.10 fresh   @18:3
   call av.fresh/Held.initialize(copy _2, copy _1) collects   @16:1
   _0 = copy _2   @16:1
   gc.leave   @16:1
@@ -1078,7 +1131,7 @@ bb1:
   (*_12).0 = copy _11   @45:13
   _13 = copy (*_5).0   @46:20
   _14 = copy (*_13).1   @46:21
-  _15 = call avant_str_concat(copy _14, const str.8) collects   @46:17
+  _15 = call avant_str_concat(copy _14, const str.11) collects   @46:17
   _16 = copy (*_5).0   @46:9
   barrier copy _16   @46:15
   (*_16).1 = copy _15   @46:15

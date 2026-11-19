@@ -606,17 +606,18 @@ fn test_std_regex(c: Checks) {
     _ = fs.write(csrc, copies)
     c.eq_int(compile_av(compiler, csrc, cbin, "${scratch()}/regex-${stamp}-copies.log"), 0, "compile closed-copies")
     chmod_x(cbin)
-    trap = "avant runtime: regex.Regex used after close"
-    regex_trap_run(c, cbin, stamp, "copy-find", one_arg("copy-find"), "closed true\n", trap)
-    regex_trap_run(c, cbin, stamp, "uncached", one_arg("uncached"), "closed true\n", trap)
-    regex_trap_run(c, cbin, stamp, "copy-close", one_arg("copy-close"), "closed true\n", trap)
-    regex_trap_run(c, cbin, stamp, "param", one_arg("param"), "closed true\n", trap)
-    regex_trap_run(c, cbin, stamp, "array", one_arg("array"), "closed true\n", trap)
-    regex_trap_run(c, cbin, stamp, "iter", one_arg("iter"), "2\n", trap)
-    regex_trap_run(c, cbin, stamp, "names", one_arg("names"), "aa\nc\n", trap)
+    // The trap names the program's call of the closed Regex.
+    trap = "avant runtime: regex.Regex used after close at regex-${stamp}-copies.av:"
+    regex_trap_run(c, cbin, stamp, "copy-find", one_arg("copy-find"), "closed true\n", "${trap}30:18")
+    regex_trap_run(c, cbin, stamp, "uncached", one_arg("uncached"), "closed true\n", "${trap}30:18")
+    regex_trap_run(c, cbin, stamp, "copy-close", one_arg("copy-close"), "closed true\n", "${trap}37:14")
+    regex_trap_run(c, cbin, stamp, "param", one_arg("param"), "closed true\n", "${trap}42:14")
+    regex_trap_run(c, cbin, stamp, "array", one_arg("array"), "closed true\n", "${trap}49:17")
+    regex_trap_run(c, cbin, stamp, "iter", one_arg("iter"), "2\n", "${trap}57:16")
+    regex_trap_run(c, cbin, stamp, "names", one_arg("names"), "aa\nc\n", "${trap}69:17")
     fourth = one_arg("names")
     fourth.push("4")
-    regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", trap)
+    regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", "${trap}67:17")
 
     // A match that reaches PCRE2's match limit traps, naming the
     // operation: (a+)+$ on forty a's, a b and "aaa" has a match (the last
@@ -636,16 +637,17 @@ fn test_std_regex(c: Checks) {
     regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: regex.Regex.split: ${said}")
     regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: regex.Regex.matches: ${said}")
 
-    // A limit below 1 is a program error: compile traps, naming it.
+    // A limit below 1 is a program error: compile traps, naming it and
+    // the program's call.
     bad = "import std.regex\n\nfn main {\n  mode = process.args()[1]\n  puts(\"start\")\n  if mode == \"match\" {\n    _ = regex.Regex.compile(\"a+\", match_limit: 0)\n  }\n  if mode == \"depth\" {\n    _ = regex.Regex.compile(\"a+\", depth_limit: -3)\n  }\n  if mode == \"heap\" {\n    _ = regex.Regex.compile(\"a+\", false, 10, 10, 0)\n  }\n}\nimport std.process\n"
     bsrc = "${scratch()}/regex-${stamp}-badlimits.av"
     bbin = "${scratch()}/regex-${stamp}-badlimits.bin"
     _ = fs.write(bsrc, bad)
     c.eq_int(compile_av(compiler, bsrc, bbin, "${scratch()}/regex-${stamp}-badlimits.log"), 0, "compile bad limits")
     chmod_x(bbin)
-    regex_trap_run(c, bbin, stamp, "bad-match-limit", one_arg("match"), "start\n", "avant runtime: regex.Regex.compile: match_limit must be at least 1 (got 0)")
-    regex_trap_run(c, bbin, stamp, "bad-depth-limit", one_arg("depth"), "start\n", "avant runtime: regex.Regex.compile: depth_limit must be at least 1 (got -3)")
-    regex_trap_run(c, bbin, stamp, "bad-heap-limit", one_arg("heap"), "start\n", "avant runtime: regex.Regex.compile: heap_limit must be at least 1 (got 0)")
+    regex_trap_run(c, bbin, stamp, "bad-match-limit", one_arg("match"), "start\n", "avant runtime: regex.Regex.compile: match_limit must be at least 1 (got 0) at regex-${stamp}-badlimits.av:7:20")
+    regex_trap_run(c, bbin, stamp, "bad-depth-limit", one_arg("depth"), "start\n", "avant runtime: regex.Regex.compile: depth_limit must be at least 1 (got -3) at regex-${stamp}-badlimits.av:10:20")
+    regex_trap_run(c, bbin, stamp, "bad-heap-limit", one_arg("heap"), "start\n", "avant runtime: regex.Regex.compile: heap_limit must be at least 1 (got 0) at regex-${stamp}-badlimits.av:13:20")
 
     // A literal pattern with limits, named or not, is still re2c's
     // scanner (no note that it stays on PCRE2), and runs as without them.

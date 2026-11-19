@@ -480,9 +480,11 @@ void avant_set_flag_threads(long n) {
   __atomic_store_n(&g_pool_size, n, __ATOMIC_RELEASE);
 }
 
-/* std.sync's set_pool_size(n). */
-void avant_set_pool_size(avant_int n) {
-  char msg[320];
+/* std.sync's set_pool_size(n), n in 1..AVANT_POOL_SIZE_MAX (std.sync
+ * checks the range first, naming the program's call): 0 when set, 1
+ * when the size was already fixed (std.sync raises that trap). */
+avant_int avant_set_pool_size(avant_int n) {
+  char msg[160];
   long s;
   if (n < 1 || n > AVANT_POOL_SIZE_MAX) {
     snprintf(msg, sizeof msg, "sync.set_pool_size(%lld): the thread pool's size is from 1 to %d", (long long)n,
@@ -492,14 +494,10 @@ void avant_set_pool_size(avant_int n) {
   s = __atomic_load_n(&g_pool_size, __ATOMIC_ACQUIRE);
   for (;;) {
     if (s & POOL_SIZE_FIXED) {
-      snprintf(msg, sizeof msg,
-               "sync.set_pool_size(%lld) after the thread pool's size was fixed: it is fixed when the pool starts (the "
-               "first spawn or .parallel) or when http.listen without loops: takes its loop count from it",
-               (long long)n);
-      avant_trap_text(msg);
+      return 1;
     }
     if (__atomic_compare_exchange_n(&g_pool_size, &s, (long)n, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-      return;
+      return 0;
     }
   }
 }

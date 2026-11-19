@@ -2694,7 +2694,7 @@ fn main {
 avant runtime: to_s(base) needs base in 2..36, got 37 at main.av:2:10
 ```
 
-- A function of the standard library or the prelude that raises `panic` or `expect` takes its caller's site as a hidden argument, and passes it on when it calls another such function, so the line named is the program's own (Rust's `#[track_caller]`, decided at compile time: no unwinding).
+- A function of the standard library or the prelude that raises `panic` or `expect` takes its caller's site as a hidden argument, and passes it on when it calls another such function, so the line named is the program's own (Rust's `#[track_caller]`, decided at compile time: no unwinding). Every precondition the library checks (a negative sleep, a closed `Regex`, a route registered while serving, a header value with CR or LF, a limit out of range) is raised this way, with `panic`, so its trap names the program's call (`avant runtime: regex.Regex used after close at main.av:12:9`). A trap inside a library function that is not a precondition (an index out of range, an overflow) names the library's own line.
 - The cost is that argument at the calls of those few functions (a constant, folded away where the call is inlined); a program that calls none of them compiles to the same code as without it.
 - Called through a function value, such a function names its own line in the library.
 
@@ -4579,7 +4579,7 @@ fn main {
 | `set(name, v)` | `name: String`, `v` (below) | the builder | — | a member of the open object; `set(name, nil)` writes `null` |
 | `add(v)` | `v` (below) | the builder | — | an element of the open array; `add(nil)` writes `null` |
 | `key(name)`, then `obj`, `arr` or `value(v)` | `name: String`, `v` (below) | the builder | `key` outside an object traps | a member that is itself a container or a value |
-| `end` | — | the builder | `end` with nothing open traps (`avant runtime: json.JsonBuilder.end: nothing open`) | closes the innermost open object or array |
+| `end` | — | the builder | `end` with nothing open traps (`avant runtime: json.JsonBuilder.end: nothing open at main.av:4:5`, the program's call) | closes the innermost open object or array |
 | `to_s` | — | `String`: the text | `to_s` with containers open traps (`json.JsonBuilder.to_s: 2 containers still open`) | |
 
 `v` is any value `json.encode` writes, written as it writes it ([Typed decode and encode](#stdjson), above): an `Int`, `Float64`, `String` or `Bool`, `nil`, an optional, an `Array`, a `Hash(String, V)`, an enum, a struct or a class by its pub fields, a `Json`, a `JsonValue` (its object's members in their order) or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities have none in JSON, so writing one traps, naming it (`avant runtime: json.encode: nan is not a JSON number; write null or a string for it`). A builder used against its shape traps, saying how (the Errors column).

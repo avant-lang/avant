@@ -31,11 +31,8 @@ lib httpc {
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_closer_id(srv: Ptr(Void)): Int
   fun avant_http_close_by_id(id: Int): Int
-  fun avant_http_route_while_serving(what: String)
-  fun avant_http_limit_while_serving(name: String)
-  fun avant_http_trap(message: String)
-  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int)
-  fun avant_http_header_check(name: String, value: String)
+  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int): String?
+  fun avant_http_header_check(name: String, value: String): String?
   fun avant_http_token_bad(s: String): Int
   fun avant_http_value_bad(s: String): Int
   fun avant_http_url_bad(s: String): Int
@@ -291,7 +288,14 @@ pub struct Request {
   // request's own handler while it runs (anywhere else it traps); a
   // second call gives the same reply.
   pub fn reply: HttpReply {
-    HttpReply { id: httpc.avant_http_req_reply(self.seq) }
+    id = httpc.avant_http_req_reply(self.seq)
+    if id == -1 {
+      panic("http.Request.reply() is called by the request's own handler while it runs: a request built in memory, or one kept past its handler, has no connection to answer")
+    }
+    if id == -2 {
+      panic("http.Request.reply(): a WebSocket upgrade's request is answered by the upgrade, never later")
+    }
+    HttpReply { id: id }
   }
 
   // A request built in memory, as the server would hand it to a handler:
@@ -303,7 +307,9 @@ pub struct Request {
   pub fn self.build(method: String, target: String, headers: Array(Header) = [], body: Bytes = "".bytes): Request {
     block = Buf.new()
     for h in headers {
-      httpc.avant_http_header_check(h.name, h.value)
+      if why = httpc.avant_http_header_check(h.name, h.value) {
+        panic(why)
+      }
       block.push_str("${h.name}: ${h.value}\r\n")
     }
     parts = split_target(target)
@@ -373,7 +379,9 @@ pub struct Response {
   // response (response splitting). A Content-Type replaces the one the
   // response has (appended, it made a second Content-Type line).
   pub fn header(name: String, value: String): Response {
-    httpc.avant_http_header_check(name, value)
+    if why = httpc.avant_http_header_check(name, value) {
+      panic(why)
+    }
     if is_managed_header(name) {
       return self
     }
@@ -600,14 +608,14 @@ class HttpState {
   // path.
   fn add(method: String, path: String, handler: fn(Request): Response) {
     if self.serving {
-      httpc.avant_http_route_while_serving("route ${method} ${path}")
+      panic("route ${method} ${path} registered while the server is serving: register every route before serve")
     }
     self.routes.push(Route { method: method, path: path, handler: handler })
   }
 
   fn set_fallback(handler: fn(Request): Response) {
     if self.serving {
-      httpc.avant_http_route_while_serving("fallback route")
+      panic("fallback route registered while the server is serving: register every route before serve")
     }
     self.fallbacks.clear()
     self.fallbacks.push(Route { method: "", path: "", handler: handler })
@@ -615,14 +623,14 @@ class HttpState {
 
   fn add_timer(handler: fn()) {
     if self.serving {
-      httpc.avant_http_route_while_serving("every timer")
+      panic("every timer registered while the server is serving: register every route before serve")
     }
     self.timers.push(Hook { handler: handler })
   }
 
   fn add_close_hook(handler: fn()) {
     if self.serving {
-      httpc.avant_http_route_while_serving("on_close hook")
+      panic("on_close hook registered while the server is serving: register every route before serve")
     }
     self.close_hooks.push(Hook { handler: handler })
   }
@@ -640,7 +648,7 @@ class HttpState {
 
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket route ${path}")
+      panic("websocket route ${path} registered while the server is serving: register every route before serve")
     }
     k = self.ws_routes.size
     i = self.first_ws_route(path)
@@ -667,14 +675,14 @@ class HttpState {
 
   fn add_ws_open(path: String, handler: fn(WsConn, Request)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket_open route ${path}")
+      panic("websocket_open route ${path} registered while the server is serving: register every route before serve")
     }
     self.ws_open_routes.push(WsOpenRoute { path: path, handler: handler })
   }
 
   fn add_ws_close(path: String, handler: fn(WsConn, Int, String)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket_close route ${path}")
+      panic("websocket_close route ${path} registered while the server is serving: register every route before serve")
     }
     self.ws_close_routes.push(WsCloseRoute { path: path, handler: handler })
   }
@@ -877,7 +885,7 @@ pub struct HttpReply {
 
   pub fn send(resp: Response): Void | ReplyError {
     if resp.deferred {
-      httpc.avant_http_trap("http.HttpReply.send(Response.later()): a reply sends the final answer")
+      panic("http.HttpReply.send(Response.later()): a reply sends the final answer")
     }
     if httpc.avant_http_reply_send(self.id, resp.status, resp.ctype, resp.head, resp.body) == 0 {
       return ReplyError.gone
@@ -965,7 +973,7 @@ pub struct Server {
   // goes on. Registered before `serve`, like a route; `ms` is 1 or more.
   pub fn every(ms: Int, handler: fn()): Server {
     if ms < 1 {
-      httpc.avant_http_trap("http.Server.every(${ms}): a period is 1 ms or more")
+      panic("http.Server.every(${ms}): a period is 1 ms or more")
     }
     self.state.add_timer(handler)
     if !self.state.closed {
@@ -1093,12 +1101,14 @@ pub struct Server {
 
   fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
     if self.state.serving {
-      httpc.avant_http_limit_while_serving(name)
+      panic("http.Server.${name} called while the server is serving: set every limit before serve")
     }
     // A closed server's C record is gone (close released it, or serve
     // did when it returned): nothing is left to limit.
     if !self.state.closed {
-      httpc.avant_http_set_limit(self.handle, name, which, a, b)
+      if why = httpc.avant_http_set_limit(self.handle, name, which, a, b) {
+        panic(why)
+      }
     }
     self
   }
