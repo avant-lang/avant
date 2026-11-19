@@ -1658,7 +1658,7 @@ fn main {
 }
 ```
 
-- `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
+- `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields. It is `n` elements, not room for them, unlike `Buf.new(capacity)` and `Hash(K, V).new(capacity)`, which are empty: for an empty array with room, `xs: Array(T) = []` then `xs.reserve(n)`.
 - `Array(T).new(n, value)` makes `n` copies of `value`: a number, a `Bool`, a `String`, `Bytes`, a struct of those, or `nil` for any `T?`. A `T` that is or holds a mutable object (a class, an `Array`, a `Hash`, a `Buf`, a struct or optional holding one) is a compile error, since every element would be that one object.
 - `Array(T).new(n, (i) { ... })` runs the block once per index, `0` to `n - 1` in order, its value the element: the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out), for a grid's separate rows, and for one shared object on purpose (`Array(Node).new(n, (i) { shared })`). `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
@@ -1755,7 +1755,7 @@ fn main {
 
 ### Size limits
 
-A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147,483,647 elements (32-bit sizes), a `Hash` 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`); `fs.read` of a larger file is an `IoError` (`File too large`).
+A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147,483,647 elements (32-bit sizes), a `Hash` 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`); `fs.read` of a larger file is an `IoError` (`File too large`). One object's storage is also at most 4 GiB less one byte, and an `Array` of 4- or 8-byte elements meets that limit before its element count: an `Array(Int)` holds at most 536,870,911 elements and an `Array(Int32)` 1,073,741,823, and one grown by `push` stops at the last doubling of its room that fits (an `Array(Int)` that starts empty, at 268,435,456 elements); a `Hash`'s key and value storage is held to the same limit. Past it the program stops with `avant runtime: object too large (N bytes)`.
 
 ## Hashes
 
@@ -1782,7 +1782,7 @@ fn main {
 | --- | --- |
 | `["tea": 12, "milk": 3]` | a hash of these entries, set in order (a repeated key keeps its last value); its types are the first entry's, or the declared type's |
 | `Hash(K, V).new()`, `[:]` | an empty hash; `[:]` takes its type from a declaration or a parameter (`h: Hash(String, Int) = [:]`) |
-| `Hash(K, V).new(capacity)` | an empty hash with room for `capacity` entries before it grows, for a hash whose size is known ahead (a negative capacity traps) |
+| `Hash(K, V).new(capacity)` | an empty hash with room for `capacity` entries before it grows, for a hash whose size is known ahead (a negative capacity traps), as `Buf.new(capacity)` is an empty buffer with room; an array's room is `xs.reserve(n)`, since `Array(T).new(n)` makes `n` elements |
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
 | `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |
@@ -2794,7 +2794,7 @@ fn main {
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
 - A bare function name in a value position is that function (`f: fn(Int): Int = double`); another module's is qualified, as at a call (`f = util.double`). When a name means several functions (overloads, or two imported modules' of one name), the expected `fn` type or the module's name picks one.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
-- An optional function value is `(fn(Int): Int)?` (`fn(Int): Int?` returns an `Int?`), opened like any optional (`if f = cb { f(1) }`, `cb ?? double`), no larger than a function value (`nil` is a null code word).
+- An optional function value is `(fn(Int): Int)?` (`fn(Int): Int?` returns an `Int?`), opened like any optional (`if f = cb { f(1) }`, `cb ?? double`); its size is in [What an optional costs](#what-an-optional-costs).
 - There is no `==` on function values, and methods are not values.
 
 ### Lambdas
@@ -4176,6 +4176,8 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 `comptime { for f in Type.fields { quote { ... } } }` runs its quote once per field, with `f.name` and `f.type` to splice. In another module than the type's, the walk sees only `pub` fields.
 
+The `for` here is not the `for` statement: it runs while the program compiles, only over a type's `fields`, and its body is one `quote`; a `comptime` block holds exactly that form, and anything else in one (a range, an array, another statement) is a compile error that spells the form out.
+
 Over a generic type, `f.type` is the field's type as declared, naming the type's parameters: the functions the walk writes are generic, and each instance reads its own field types.
 
 ```avant
@@ -5468,7 +5470,7 @@ Each table names its machine and day (LangArena on a server, AMD EPYC 7351P; the
 
 The geometric-mean column is the mean over the 50 tasks of each task's time over Avant's, so every task weighs alike; the total is dominated by the longest tasks.
 
-**The total flatters Avant**: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, two rows carry collection hints, and several measure C libraries ([Reading these numbers](#reading-these-numbers)). Read it task by task.
+**The total flatters Avant**: the four `Matmul` rows and `Hash::CRC32` are not comparable programs (nor are C's two A* rows, marked ‡), two rows carry collection hints, and several measure C libraries ([Reading these numbers](#reading-these-numbers)). Read it task by task.
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -5500,14 +5502,14 @@ The geometric-mean column is the mean over the 50 tasks of each task's time over
 | `Sort::Self` | **0.614** | 4.487 | 1.544 | 2.453 | 3.063 |
 | `Graph::BFS` | **1.871** | 2.425 | 2.895 | 4.292 | 5.223 |
 | `Graph::DFS` | **1.896** | 2.133 | 2.531 | 3.782 | 3.300 |
-| `Graph::AStar` | **1.135** | 5.225 | 5.525 | 4.678 | 10.289 |
+| `Graph::AStar` | **1.135** | 5.225 ‡ | 5.525 | 4.678 | 10.289 |
 | `Hash::SHA256` | **0.492** | 2.246 | 2.144 | 2.263 | 2.559 |
 | `Hash::CRC32` † | **0.247** | 1.943 | 1.950 | 1.940 | 9.272 |
 | `Calculator::Ast` | **1.181** | 2.739 | 1.639 | 1.333 | 2.132 |
 | `Calculator::Interpreter` | **0.561** | 2.830 | 2.167 | 2.102 | 1.799 |
 | `Maze::Generator` | **0.962** | 1.226 | 2.027 | 5.454 | 3.396 |
 | `Maze::BFS` | **1.209** | 1.317 | 2.117 | 6.553 | 4.350 |
-| `Maze::AStar` | **1.806** | 3.557 | 2.590 | 7.896 | 7.585 |
+| `Maze::AStar` | **1.806** | 3.557 ‡ | 2.590 | 7.896 | 7.585 |
 | `CLBG::Fannkuchredux` | **2.042** | 2.680 | 2.398 | 2.455 | 2.598 |
 | `CLBG::Mandelbrot` | **2.171** | 2.188 | 2.304 | 2.251 | 2.178 |
 | `CLBG::Nbody` | 3.550 | 3.516 | **3.280** | 3.566 | 4.008 |
@@ -5606,7 +5608,7 @@ These notes are about [LangArena](#langarena).
 - **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 1 here, a superset of v3); the C column is Clang, the faster of the two C compilers (GCC: 143.231 s, 23.0 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations; LangArena's published numbers count only the timed iterations.
 - **Compiled-in task sizes.** Avant compiles the task configuration in as constants, the others read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
-- **Rows that are not comparable programs.** `Matmul` (four tasks): Avant sums with eight independent accumulators, which vectorizes; the references use one. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. These six rows are 12.6 of the 47.6 seconds between Avant's total and C's. In the 0.46.0 measurement above, `Hash::SHA256` and `Hash::CRC32` called runtime builtins that did the whole task in C: since then `Hash::SHA256` is written in Avant as its references write it (its "SHA-256" is their eight-chain hash, not FIPS SHA-256, so no library computes it), and `Hash::CRC32` calls std.digest, as an Avant program would.
+- **Rows that are not comparable programs.** In the 0.46.0 measurement above, Avant's `Matmul` (four tasks) summed with eight independent accumulators, which vectorizes, where the references use one, and its `Compress::LZWEncode` keyed the dictionary by integer, where C, Rust and Go key it by the byte sequence; with `LZWDecode`, which the notes then named too, these six rows are 12.6 of the 47.6 seconds between Avant's total and C's. Since then each `Matmul` task sums every dot product with one accumulator and stores the whole result matrix as the references do, and `LZWEncode` keys its dictionary by the byte sequence, built afresh in every run; `LZWDecode`'s decoder finds each entry by its code, as C's does (an offset and a length where C keeps a pointer and a length). In the same measurement `Hash::SHA256` and `Hash::CRC32` called runtime builtins that did the whole task in C: since then `Hash::SHA256` is written in Avant as its references write it (its "SHA-256" is their eight-chain hash, not FIPS SHA-256, so no library computes it), and `Hash::CRC32` calls std.digest, as an Avant program would. **C's two A\* rows** (‡, `Graph::AStar` and `Maze::AStar`, under both C compilers) are not the references' algorithm: C's priority-queue pop compares the root's children with the minimum it has just taken off, which neither is below, so it never sifts down and leaves the last item at the root, and its open set is not kept in cost order; these rows are left out of any comparison of the A\* tasks.
 - **Rows on a library** (the † rows: the library's speed, through Avant's bindings): every release also measures a pure-Avant twin of each, the references' algorithm written in Avant (`Hash::CRC32`'s bitwise loop, `Base64::Encode` and `Decode` as Go's encoding/base64, the JSON parse as serde_json's one-pass recursive descent, the regex tasks on Go's regexp (its parser, compiler, backtracker and Pike VM), the BWT inverse and LZW decode as the C reference writes them), and its record gives the totals twice, as written and in Avant alone. Where the references' algorithms differ, a row has two twins: the common one, the majority's algorithm, counts in the pure total, and the clever one, the approach of the reference ranked first on the task in LangArena's results, in a second line beside it. `Compress::BWTEncode`'s twin sorts each doubling round by comparison, as Rust (ranked first) and Go do, with C's two counting sorts measured beside; `Etc::CacheSimulation`'s makes a node at every miss, as C (ranked first) and Go do, where the task keeps Rust's node array; `Json::ParseMapping`'s clever twin parses the whole document and reads x, y and z from it, as C (ranked first) does, and its common twin decodes into types as Rust and Go do. `Compress::LZWEncode`'s clever twin keeps its phrase in one growing buffer looked up in place, making a key only at a miss, as Rust (ranked first) does; the task itself builds a new string at every byte, as C and Go do.
 - **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)), telling the collector when not to run and when everything is dead; no reference has an equivalent. Unhinted, `Binarytrees::Obj` takes 2.882 s (Crystal, the table's fastest, 2.925 s) at 1.72× C's memory, and `Calculator::Ast` 1.541 s, 1.16× Crystal's time ([What allocation costs today](#what-allocation-costs-today)).
 - **What the references call**: `Json::ParseDom` and `ParseMapping` (yyjson in Avant and C, simdjson in C++, serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust). `Sort::Self` is each language's library sort, by the task's definition. In `CSV::Parse` Rust and C++ use CSV libraries; in `Json::Generate` C and C++ use JSON libraries, Avant its own buffer.
