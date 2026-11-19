@@ -429,8 +429,11 @@ static inline void avant_barrier_slot_young(void *obj, void *slot) {
  * end while the proof that the old heap is unchanged may still hold, and
  * under AVANT_GC_VERIFY=1), so before a program's first full collection,
  * and after the log broke (a store into a large holder, a full log), it
- * costs a load and a test. */
-extern __attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
+ * costs a load and a test. The byte is ABI: generated code reads it in
+ * its inline pop of a reference (compiler/llvm/emit_gc.av ll_array_pop),
+ * which clears the popped word itself and takes the runtime's call only
+ * when this call would do something. */
+extern uint8_t avant_gc_proof_logging;
 __attribute__((visibility("hidden"))) void avant_gc_overwrite_slow(void *obj);
 static inline void avant_gc_overwrite(void *obj) {
   if (__builtin_expect(avant_gc_proof_logging, 0) && obj &&

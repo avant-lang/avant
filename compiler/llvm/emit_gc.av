@@ -810,6 +810,119 @@ pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
   res
 }
 
+// _v = call avant_array_pop_ptr(_a) and _s = call avant_array_pop_slot(_a,
+// size): the runtime's pop in place (runtime/avant_array.c), as push's: a
+// non-null array with a buffer, a size above zero and a capacity word that
+// is not negative (a frozen array's is, and its pop takes the call, which
+// traps) counts one element off and gives its last one: pop_slot the
+// slot's address (the MIR reads it, and zeroes it when it may hold
+// references), pop_ptr the reference itself, its word cleared so the
+// collector no longer reaches the element through the buffer. Before that
+// clear the runtime tells the collector's store log that a reference is
+// removed (avant_gc_overwrite), which does something only while the log
+// is on and the buffer is in the heap and not young: that case, as an
+// empty or null array, takes the call. The capacity word is read as the
+// runtime reads it, a relaxed atomic load. The call form when inline fast
+// paths are off.
+pub fn ll_array_pop(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  a = e.value(args[0])
+  ptr_form = name == "avant_array_pop_ptr"
+  esz = "8"
+  if !ptr_form {
+    esz = e.value(args[1])
+  }
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${a}, null")
+  test = e.part("arrhas")
+  fast = e.part("arrtake")
+  slow = e.part("arrpopcall")
+  done = e.part("arrpopped")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${a}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${a}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${a}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load atomic i32, ptr ${cp} monotonic, align 4")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  some = e.tmp()
+  e.line("${some} = icmp sgt i32 ${sz}, 0")
+  open = e.tmp()
+  e.line("${open} = icmp sge i32 ${cap}, 0")
+  b1 = e.tmp()
+  e.line("${b1} = and i1 ${hasd}, ${some}")
+  b2 = e.tmp()
+  e.line("${b2} = and i1 ${b1}, ${open}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${b2}, i1 true)")
+  if ptr_form {
+    // The store log: off (its byte zero), or the buffer young (32) or
+    // not in the heap (the 0x8000 bit clear) in its header flags, the
+    // 16 bits at its payload - 2.
+    chk = e.part("arrlog")
+    e.line("br i1 ${x}, label %${chk}, label %${slow}")
+    e.block(chk)
+    e.used_proof_global = true
+    lg = e.tmp()
+    e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
+    off = e.tmp()
+    e.line("${off} = icmp eq i8 ${lg}, 0")
+    fp = e.tmp()
+    e.line("${fp} = getelementptr inbounds i8, ptr ${dp}, i64 -2")
+    fl = e.tmp()
+    e.line("${fl} = load i16, ptr ${fp}, align 2")
+    hy = e.tmp()
+    e.line("${hy} = and i16 ${fl}, -32736")
+    nl = e.tmp()
+    e.line("${nl} = icmp ne i16 ${hy}, -32768")
+    quiet = e.tmp()
+    e.line("${quiet} = or i1 ${off}, ${nl}")
+    y = e.tmp()
+    e.line("${y} = call i1 @llvm.expect.i1(i1 ${quiet}, i1 true)")
+    e.line("br i1 ${y}, label %${fast}, label %${slow}")
+  } else {
+    e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  }
+  e.block(fast)
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, -1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${n} to i64")
+  off2 = e.tmp()
+  e.line("${off2} = mul nuw nsw i64 ${w}, ${esz}")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off2}")
+  v = ep
+  if ptr_form {
+    v = e.tmp()
+    e.line("${v} = load ptr, ptr ${ep}, align 8, !tbaa !3")
+    e.line("store ptr null, ptr ${ep}, align 8, !tbaa !3")
+  }
+  e.line("br label %${done}")
+  e.block(slow)
+  r = e.tmp()
+  if ptr_form {
+    e.line("${r} = call ptr @${name}(ptr ${a})")
+  } else {
+    e.line("${r} = call ptr @${name}(ptr ${a}, i64 ${esz})")
+  }
+  e.line("br label %${done}")
+  e.block(done)
+  res = e.tmp()
+  e.line("${res} = phi ptr [ ${v}, %${fast} ], [ ${r}, %${slow} ]")
+  res
+}
+
 // Whether the string object at Q (not null) is a view: its header's type
 // id (the 16 bits at Q - 4) is 1020; expected false.
 fn ll_str_is_view(e: LlEmit, q: String): String {

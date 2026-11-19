@@ -123,6 +123,11 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   if e.used_poll_global {
     out.push_str("@avant_gc_requested = external global i32\n\n")
   }
+  if e.used_proof_global {
+    // The collector's store-log switch (runtime/avant_gc.h), read by the
+    // inline pop of a reference.
+    out.push_str("@avant_gc_proof_logging = external global i8\n\n")
+  }
   if e.used_frame_global {
     // local-exec: a program is an executable that links avant_rt.o, so
     // the frame chain's head is one %fs-relative access.
@@ -715,6 +720,8 @@ fn ll_call(e: LlEmit, st: MStmt) {
       result = ll_buf_push_byte(e, st.args)
     } else if (x.name == "avant_array_push_i32" || x.name == "avant_array_push_i64" || x.name == "avant_array_push_ptr" || x.name == "avant_array_push_slot") && e.inline_fast {
       result = ll_array_push(e, x.name, st.args)
+    } else if (x.name == "avant_array_pop_ptr" || x.name == "avant_array_pop_slot") && e.inline_fast {
+      result = ll_array_pop(e, x.name, st.args)
     } else if x.name == "avant_str_view_test" && e.inline_fast {
       result = ll_str_view_test(e, st.args)
     } else if (x.name == "avant_str_flat" || x.name == "avant_str_c_arg") && e.inline_fast {
