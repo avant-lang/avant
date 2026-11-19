@@ -290,6 +290,20 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   cont = e.part("cont")
   z = e.tmp()
   e.line("${z} = icmp eq ptr ${h}, null")
+  if ll_barrier_stores_nil(e, o) {
+    // The store it precedes writes nil: no reference to remember, so the
+    // barrier matters only to the collector's store log (a reference is
+    // removed from the holder, as a pop's clear), and is tested only
+    // while the log is on.
+    e.used_proof_global = true
+    lg = e.tmp()
+    e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
+    off = e.tmp()
+    e.line("${off} = icmp eq i8 ${lg}, 0")
+    z2 = e.tmp()
+    e.line("${z2} = or i1 ${z}, ${off}")
+    z = z2
+  }
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
   fp = e.tmp()
@@ -306,6 +320,22 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   ll_barrier_call(e, h, k)
   e.line("br label %${cont}")
   e.block(cont)
+}
+
+// Whether the statement after the barrier on O (a bare local) stores nil
+// through it: `(*_h)...  = const null`.
+fn ll_barrier_stores_nil(e: LlEmit, o: MOperand): Bool {
+  stmts = e.f.blocks[e.bk].stmts
+  k = e.si + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if hp = o.place, p = stmts[k].place, r = stmts[k].rv, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() && r.kind == mrk_use() {
+    if a = r.a {
+      return a.kind == mok_null()
+    }
+  }
+  false
 }
 
 // The index in the current block of the store the barrier on O precedes

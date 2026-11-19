@@ -610,4 +610,17 @@ fn mir_rt_attrs(t: MRtTable) {
   t.set_attrs("avant_buf_starts", str_reader)
   // avant_buf.c:192-195: one field read of its argument.
   t.set_attrs("avant_buf_size", "nounwind willreturn nofree nosync memory(argmem: read)")
+  // The barriers (runtime/avant_gc_remset.c): they read the holder (its
+  // header, and its references when the store log records them) and write
+  // only the collector's own tables (the remembered set, the cards, the
+  // log) and the holder's header flags, which generated code reads only in
+  // its inline barrier and pop tests: a stale read there of a bit a
+  // barrier sets (remembered, logged, cards) only makes one more call, and
+  // no barrier changes the young and heap bits. So a field or a size
+  // loaded before a barrier's call is not loaded again after it (a queue's
+  // length around the store into its element).
+  barrier = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
+  t.set_attrs("avant_barrier", barrier)
+  t.set_attrs("avant_barrier_slot", barrier)
+  t.set_attrs("avant_barrier_at", barrier)
 }
