@@ -185,6 +185,8 @@ extern __thread uint8_t *avant_gc_base;
 extern __thread uint64_t *avant_gc_starts;
 extern uint64_t avant_nursery_held;
 extern uint64_t avant_young_bytes;
+/* 1 while this thread is inside a `gc.hold { }` (avant_gc_hold_begin). */
+extern __thread uint32_t avant_gc_hold_open;
 extern uint64_t avant_since_gc;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 /* One 64-word chunk (word_base a multiple of 64) of a
@@ -895,9 +897,64 @@ static inline AvantHeader *avant_header(void *payload) {
   return ((AvantHeader *)payload) - 1;
 }
 
+/* The runtime's own inline allocation of a small object: the sequence
+ * generated code emits (above, the inline nursery fast path), for an
+ * object of NBYTES (1 to AVANT_INLINE_MAX) when the cursor has room
+ * below the limit the runtime published for the single mutator; null
+ * otherwise, and the caller takes avant_alloc. The limit is null in a
+ * program with threads, a no-GC region, a collection, the stress mode's
+ * every read, and it is capped by the young budget, which this reads
+ * again as avant_alloc does, so this charges nothing avant_alloc would
+ * not: the runtime counts the bytes from the cursor at its next entry,
+ * as it counts generated code's. The payload
+ * is not zeroed: the caller writes every byte of it (the header's size)
+ * before anything can collect; the padding past it is zeroed here. A
+ * string is born with its tag (AVANT_FLAG_STRMETA), which the check
+ * modes' walk of the inline objects allows on bytes. */
+#define AVANT_INLINE_MAX 256u
+static inline __attribute__((always_inline)) void *avant_alloc_try_inline(uint64_t nbytes, uint32_t type_id,
+                                                                          uint16_t flags) {
+  uint8_t *b = avant_gc_bump;
+  uint8_t *lim = avant_gc_limit;
+  uint64_t total = (sizeof(AvantHeader) + nbytes + 7u) & ~(uint64_t)7u;
+  /* The young budget as avant_alloc reads it: once the bytes counted
+   * reach it (a large object's among them, which the published limit,
+   * settled before they joined, does not see), the object takes
+   * avant_alloc, whose entry collects; inside a hold nothing collects,
+   * and the inline path serves on. With the published limit alone the
+   * cursor ran to its hole's end first, and Csv::Parse, whose large
+   * buffers grow between its short strings, held 47% more memory. */
+  if (__builtin_expect(lim != NULL && nbytes - 1u < AVANT_INLINE_MAX && total <= (uint64_t)(lim - b) &&
+                           (avant_nursery_held < avant_young_bytes || avant_gc_hold_open),
+                       1)) {
+    AvantHeader *h = (AvantHeader *)(void *)b;
+    avant_gc_bump = b + total;
+    /* The last word of the object: its padding is zero, as avant_alloc
+     * leaves it (the caller's bytes overwrite the rest). */
+    *(uint64_t *)(void *)(b + total - 8u) = 0;
+    h->size = (uint32_t)nbytes;
+    h->type_id = (uint16_t)type_id;
+    h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | flags);
+    return (void *)(h + 1);
+  }
+  return NULL;
+}
+
+/* A fresh heap string of N bytes plus its NUL, tagged, not filled, by
+ * the inline allocation, or null when that cannot serve it (the caller
+ * then takes avant_str_alloc's path, which may collect). */
+static inline __attribute__((always_inline)) char *avant_str_alloc_try(uint64_t n) {
+  return (char *)avant_alloc_try_inline(n + 1u, AVANT_TYPE_BYTES, AVANT_FLAG_STRMETA);
+}
+
 /* A fresh heap string of N bytes plus its NUL (not tagged, not filled):
- * N past the ceiling traps before the allocation. */
+ * N past the ceiling traps before the allocation. A short one is
+ * allocated inline (avant_alloc_try_inline, tagged already). */
 static inline char *avant_str_alloc(uint64_t n) {
+  char *p = avant_str_alloc_try(n);
+  if (__builtin_expect(p != NULL, 1)) {
+    return p;
+  }
   avant_size_check(n, AVANT_SIZE_STRING);
   return (char *)avant_alloc(n + 1, AVANT_TYPE_BYTES);
 }

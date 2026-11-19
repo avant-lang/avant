@@ -626,7 +626,10 @@ static __attribute__((noinline)) void inline_walk(uint8_t *lo, uint8_t *hi) {
   uint64_t n = 0;
   while (p < hi) {
     const AvantHeader *h = (const AvantHeader *)p;
-    if (check && (h->flags != (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) || h->size == 0)) {
+    /* The runtime's own inline strings are born with their tag
+     * (avant_rt.h, avant_alloc_try_inline). */
+    uint16_t fl = h->type_id == AVANT_TYPE_BYTES ? (uint16_t)(h->flags & ~AVANT_FLAG_STRMETA) : h->flags;
+    if (check && (fl != (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) || h->size == 0)) {
       gc_die("avant gc verify: the inline allocation sequence left a header that is not a fresh young object's");
     }
     if (check) {

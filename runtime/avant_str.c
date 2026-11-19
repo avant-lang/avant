@@ -52,9 +52,15 @@ char *avant_str_empty(void) {
  * inside address lies in) and the source is formed from it after the
  * allocation. */
 static char *dup_raw_at(const char *s, size_t off, size_t n) {
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &s);
-  char *p = avant_str_alloc((uint64_t)n);
+  char *p;
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with s a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(n));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &s);
+    p = avant_str_alloc((uint64_t)(n));
+  }
   if (n) {
     memcpy(p, s + off, n);
   }
@@ -72,9 +78,15 @@ static char *dup_bytes(const char *s, size_t n) {
  * again after it. */
 static char *dup_bytes_at(const char *s, size_t off, size_t n) {
   size_t sn;
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &s);
-  char *p = avant_str_alloc((uint64_t)n);
+  char *p;
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with s a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(n));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &s);
+    p = avant_str_alloc((uint64_t)(n));
+  }
   if (n) {
     memcpy(p, avant_str_bytes(s, &sn) + off, n);
   }
@@ -218,10 +230,13 @@ char *avant_str_concat(const char *a, const char *b) {
   if (nb == 0) {
     return (char *)a;
   }
-  AVANT_GC_SCOPE(2);
-  AVANT_GC_ROOT(0, &a);
-  AVANT_GC_ROOT(1, &b);
-  char *p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
+  char *p = avant_str_alloc_try((uint64_t)na + (uint64_t)nb);
+  if (!p) {
+    AVANT_GC_SCOPE(2);
+    AVANT_GC_ROOT(0, &a);
+    AVANT_GC_ROOT(1, &b);
+    p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
+  }
   /* RC2: the bytes are formed after the allocation (a view's too). */
   memcpy(p, avant_str_bytes(a, &na), na);
   memcpy(p + na, avant_str_bytes(b, &nb), nb);
@@ -525,17 +540,23 @@ char *avant_str_from_byte(avant_int b) {
 
 char *avant_str_cat_int(const char *prefix, avant_int n) {
   char buf[24];
-  /* RC1: the prefix is a handle across the allocation (buf is C
-   * memory). */
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &prefix);
+  char *p;
   char *o = int_text(buf + sizeof(buf), n);
   size_t nd = (size_t)(buf + sizeof(buf) - o);
   if (!prefix) {
     prefix = AVANT_STR_EMPTY;
   }
   size_t np = avant_str_n(prefix);
-  char *p = avant_str_alloc((uint64_t)(np + nd));
+  /* RC1: the prefix is a handle across the allocation (buf is C
+   * memory). */
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with prefix a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(np + nd));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &prefix);
+    p = avant_str_alloc((uint64_t)(np + nd));
+  }
   if (np) {
     memcpy(p, avant_str_bytes(prefix, &np), np);
   }

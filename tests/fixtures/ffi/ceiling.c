@@ -4,7 +4,7 @@
  * and asks the runtime to grow it; the runtime must trap before it
  * allocates or writes anything (a write would land gigabytes past the
  * storage). The layouts are the runtime's (avant_buf.c, avant_array.c,
- * avant_hash.c). ceil_concat gives two small heap strings headers that
+ * avant_hash.c). ceil_concat makes two small strings whose headers
  * say 1.5 GiB and concatenates them (3 GiB, past the String ceiling; the
  * trap comes before the allocation, so nothing reads the false lengths); ceil_sparse makes a sparse file of N bytes for
  * file_read. Compiled with
@@ -114,12 +114,27 @@ int64_t ceil_probe(int64_t mode) {
 
 char *avant_str_concat(const char *a, const char *b);
 
-/* Two distinct strings: the runtime's length cache would check a cached
- * length's terminator, which a false length puts out of reach. */
+/* Two distinct strings outside the heap, with the header a literal has
+ * (its size, the bytes type, the string tag, no heap flag) and a false
+ * length: the runtime's length cache would check a cached length's
+ * terminator, which a false length puts out of reach. They are this
+ * file's own, not the program's: the program's strings may lie in a run
+ * of young objects the check modes walk by their headers (a runtime
+ * string is allocated inline), where a false size would end the walk
+ * past the cursor. A and B are the program's strings, unused. */
+typedef struct {
+  uint32_t size;
+  uint16_t type_id;
+  uint16_t flags;
+  char bytes[8];
+} __attribute__((aligned(8))) FakeStr;
+static FakeStr fake_a = {0x60000001u, 0, 0x4000u, "a"};
+static FakeStr fake_b = {0x60000001u, 0, 0x4000u, "b"};
+
 int64_t ceil_concat(char *a, char *b) {
-  *(uint32_t *)(void *)(a - 8) = 0x60000001u;
-  *(uint32_t *)(void *)(b - 8) = 0x60000001u;
-  (void)avant_str_concat(a, b);
+  (void)a;
+  (void)b;
+  (void)avant_str_concat(fake_a.bytes, fake_b.bytes);
   return 0;
 }
 
