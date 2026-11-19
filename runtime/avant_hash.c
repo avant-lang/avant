@@ -2708,7 +2708,7 @@ typedef struct {
  * their count in *N; a slice outside 0 <= start <= stop <= size traps.
  * The address lies inside an object that may move: form it again after
  * any call that may collect. */
-static const char *part_bytes(const void *src, int is_buf, avant_int start, avant_int stop, size_t *n) {
+static inline __attribute__((always_inline)) const char *part_bytes(const void *src, int is_buf, avant_int start, avant_int stop, size_t *n) {
   const char *d;
   size_t len;
   if (is_buf) {
@@ -2725,7 +2725,7 @@ static const char *part_bytes(const void *src, int is_buf, avant_int start, avan
   return d + start;
 }
 
-static void *find_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found) {
+static inline __attribute__((always_inline)) void *find_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found) {
   size_t n;
   const char *p = part_bytes(src, is_buf, start, stop, &n);
   int32_t e = 0;
@@ -2778,7 +2778,7 @@ static __attribute__((noinline)) void *insert_part(AvantHash *h, const void *src
 
 /* `inc`, a Set's `add` and the store of a scalar value: the value's
  * address, an absent key entered holding zero (*found 0). */
-static void *upsert_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found,
+static inline __attribute__((always_inline)) void *upsert_part(AvantHash *h, const void *src, int is_buf, avant_int start, avant_int stop, int32_t *found,
                          int how) {
   size_t n;
   const char *p = part_bytes(src, is_buf, start, stop, &n);
