@@ -3000,6 +3000,12 @@ pub class Parser {
 
   pub fn parse_break: Stmt {
     loc = expect(tk_break()).loc
+    k = self.current().kind
+    if !(k == tk_newline() || k == tk_r_brace() || k == tk_eof()) {
+      // break 2, break outer: one message at the word, not a dropped value
+      fail(self.current().loc, "break takes nothing after it: it leaves the loop it is in, and labelled or counted breaks (break 2, break outer) are not in the language; to leave several loops, put them in a function and return from it")
+      sync_stmt()
+    }
     Stmt.new(st_break(), loc)
   }
 

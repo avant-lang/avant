@@ -114,6 +114,11 @@ fn lambda_if_cases: Array(ECase) {
 // with no result type the message names the missing result.
 fn effect_cases: Array(ECase) {
   xs: Array(ECase) = []
+  // A count or a label after break is no value dropped: the message says
+  // what break is and how several loops are left.
+  xs.push(refused("break-count", "fn main {\n  for i in 0..3 {\n    for j in 0..3 {\n      break 2\n    }\n    puts(i)\n  }\n}\n", "break takes nothing after it: it leaves the loop it is in, and labelled or counted breaks (break 2, break outer) are not in the language; to leave several loops, put them in a function and return from it", "4:13"))
+  xs.push(refused("break-label", "fn main {\n  while true {\n    break outer\n  }\n}\n", "labelled or counted breaks (break 2, break outer) are not in the language", "3:11"))
+  xs.push(accepted("break-in-braces", "fn main {\n  for i in 0..3 {\n    if i == 1 { break }\n    puts(i)\n  }\n  while true {\n    break\n  }\n  puts(9)\n}\n", "0\n9\n"))
   xs.push(refused("effect-middle", "fn main {\n  x = 1\n  x + 1\n  puts(x)\n}\n", "this line computes a value and drops it", "3:3"))
   xs.push(refused("effect-name", "fn main {\n  x = 1\n  puts(x)\n  x\n  puts(2)\n}\n", "this line computes a value and drops it", "4:3"))
   xs.push(refused("effect-main-tail", "fn main {\n  x = 1\n  puts(x)\n  x\n}\n", "this line computes an Int and drops it: main has no result type; to return it, declare fn main: Int", "4:3"))
@@ -183,6 +188,9 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
       c.expect(jobs[i].code != 0 && !fs.exists("${dir}/ex-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("ex-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+      if f3.tag.starts_with("break-") {
+        c.expect(!log.contains("drops it"), "${f3.tag}: no value dropped")
+      }
     }
   }
 }
