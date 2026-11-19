@@ -31,6 +31,10 @@
 #   spread-compare: compare reads two spread tables;
 #   flag-spread: layout-flag.py --spread keeps a task whose base time lies
 #     within the head's layouts layout?, and calls one outside them beyond.
+#   check-rounds-many: tools/layout-check.sh time with four tasks and a
+#     rounds argument (a stub rounds.py records its arguments) asks for
+#     that many rounds and passes every task, the fourth one included;
+#     without the argument, one round per shift.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -149,4 +153,35 @@ o=$(python3 -I "$root/tools/layout-flag.py" --spread "$fs/layout.tsv" "$fs/round
 [ $rc -eq 0 ] && echo "$o" | grep -q "1 within the spread across the head's layouts (layout?): A::In +10.0% (base 1.000 s, head 1.000-1.100 s across 2 layouts); 1 beyond it: B::Out" \
   && [ "$(awk -F'\t' '$1 == "B::Out" { print $10 }' "$fs/layout.tsv")" = beyond ] && [ "$(awk -F'\t' '$1 == "A::In" { print $10 }' "$fs/layout.tsv")" = 'layout?' ]
 say flag-spread $? "rc=$rc $o"
+
+# 7. layout-check.sh time with four candidates: the rounds argument is not
+# a task's name. A fake checkout's rounds.py is the real one when imported
+# (the task names) and, run, records its arguments.
+lc=$w/lc; mkdir -p "$lc/root/tools" "$lc/d/layouts/0" "$lc/d/layouts/64"
+cp "$root/tools/layout-check.sh" "$lc/root/tools/"
+cat > "$lc/root/tools/rounds.py" <<'PY'
+import sys
+if __name__ == "__main__":
+    open(sys.argv[0] + ".args", "a").write(" ".join(sys.argv[1:]) + "\n")
+    sys.exit(0)
+exec(open(REAL).read())
+PY
+sed -i "s#REAL#'$root/tools/rounds.py'#" "$lc/root/tools/rounds.py"
+echo '0 64' > "$lc/d/shifts.txt"
+printf '[\n' > "$lc/run.js"
+for t in A::One B::Two C::Three D::Four; do
+  s=$(echo "$t" | sed 's/::/_/' | tr A-Z a-z)
+  for k in 0 64; do printf '#!/bin/sh\necho 1\n' > "$lc/d/layouts/$k/$s"; chmod +x "$lc/d/layouts/$k/$s"; done
+  printf '  {\n    "name": "%s",\n    "checksum": 1,\n  },\n' "$t" >> "$lc/run.js"
+done
+printf ']\n' >> "$lc/run.js"
+sh "$lc/root/tools/layout-check.sh" time "$lc/d" "$lc/run.js" 3 < /dev/null > "$lc/log" 2>&1; rc=$?
+a=$(cat "$lc/root/tools/rounds.py.args" 2>/dev/null)
+[ $rc -eq 0 ] && echo "$a" | grep -q -- '--rounds 3 ' && echo "$a" | grep -q ' A::One B::Two C::Three D::Four$'
+r1=$?
+rm -f "$lc/root/tools/rounds.py.args"
+sh "$lc/root/tools/layout-check.sh" time "$lc/d" "$lc/run.js" < /dev/null >> "$lc/log" 2>&1; rc2=$?
+b=$(cat "$lc/root/tools/rounds.py.args" 2>/dev/null)
+[ $r1 -eq 0 ] && [ $rc2 -eq 0 ] && echo "$b" | grep -q -- '--rounds 2 ' && echo "$b" | grep -q ' A::One B::Two C::Three D::Four$'
+say check-rounds-many $? "rc=$rc/$rc2 args: $a / $b; $(tail -2 "$lc/log" | tr '\n' ';')"
 echo done

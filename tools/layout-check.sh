@@ -37,7 +37,9 @@ case "$1" in
     echo "$shifts" > "$d/shifts.txt"
     ;;
   time)
-    d=$(realpath "$2") || exit 2; js=$3; [ -f "$d/shifts.txt" ] || { echo "layout-check.sh: build first" >&2; exit 2; }
+    # The rounds argument is read before the task names reset the
+    # positional parameters: with four or more tasks $4 is a task's name.
+    d=$(realpath "$2") || exit 2; js=$3; nr=${4:-}; [ -f "$d/shifts.txt" ] || { echo "layout-check.sh: build first" >&2; exit 2; }
     sh=$(tr -s ' \n' ',,' < "$d/shifts.txt" | sed 's/,$//'); k=$(echo "$sh" | tr ',' '\n' | wc -l)
     names=$(python3 -I -B -c 'import sys
 sys.path.insert(0, sys.argv[1]); import rounds
@@ -46,7 +48,7 @@ print("\n".join(n for n, _ in rounds.tasks_of(sys.argv[2]) if rounds.slug_of(n) 
     set --; for n in $names; do set -- "$@" "$n"; done
     [ $# -ge 1 ] || { echo "layout-check.sh: no task of $js among $(ls "$d/layouts/0" | tr '\n' ' ')" >&2; exit 1; }
     rm -rf "$d/rounds"
-    timeout -k 10 1800 python3 -I "$root/tools/rounds.py" langarena --rounds "${4:-$k}" --run-js "$js" --out "$d/rounds" \
+    timeout -k 10 1800 python3 -I "$root/tools/rounds.py" langarena --rounds "${nr:-$k}" --run-js "$js" --out "$d/rounds" \
       --side head="$d/layouts" --layouts "$sh" "$@" < /dev/null > "$d/rounds.log" 2>&1 \
       || { echo "layout-check.sh: the rounds failed ($d/rounds.log)" >&2; exit 1; }
     ;;
