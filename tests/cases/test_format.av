@@ -115,6 +115,15 @@ fn test_format(c: Checks) {
     lead_code = run_format(compiler, "format", lead_src, lead_log, empty_flags)
     c.eq_int(lead_code, 0, "format of lines that start with an operator exits 0")
     c.eq_str(read_or_empty(lead_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n    1,\n    -2\n  ]\n  [1, 2].each (v) { puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line")
+    // A block in pipes is not Avant, so the formatter gives `|` no
+    // meaning as a lambda's parameters: it is spaced as the operator,
+    // and a lambda's own parameters are in parentheses.
+    pipes_src = "${scratch()}/format-${stamp}-pipes.av"
+    pipes_log = "${scratch()}/format-${stamp}-pipes.log"
+    _ = fs.write(pipes_src, "fn main {\nxs.each { |x| puts(x) }\nxs.each (x) { puts(x|1) }\n}\n")
+    pipes_code = run_format(compiler, "format", pipes_src, pipes_log, empty_flags)
+    c.eq_int(pipes_code, 0, "format of a block in pipes exits 0")
+    c.eq_str(read_or_empty(pipes_log), "fn main {\n  xs.each { | x | puts(x) }\n  xs.each (x) { puts(x | 1) }\n}\n", "format gives pipes no lambda meaning")
     // `pub` before a field formats like `pub` before fn.
     pubf_src = "${scratch()}/format-${stamp}-pubf.av"
     pubf_log = "${scratch()}/format-${stamp}-pubf.log"

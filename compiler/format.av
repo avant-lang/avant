@@ -407,8 +407,7 @@ pub fn next_significant(tokens: Array(Token), i: Int): Int {
 
 // Whether the `(` at i begins the shorthand call `callee (params) {`:
 // after a function's name (not a type's), a lambda's parameter list,
-// maybe its result type, then `{` on the same line not followed by
-// pipes. Set off by the caller in the head of an `if`, `while`, `for`
+// maybe its result type, then `{` on the same line. Set off by the caller in the head of an `if`, `while`, `for`
 // or `switch` (reprint's head_depth), where the parser reads a call.
 pub fn shorthand_at(tokens: Array(Token), i: Int): Bool {
   p = prev_significant(tokens, i)
@@ -492,10 +491,6 @@ pub fn lambda_head_brace(tokens: Array(Token), i0: Int): Int {
   if i >= n || tokens[i].kind != tk_l_brace() {
     return -1
   }
-  k = next_significant(tokens, i)
-  if k == tk_pipe() || k == tk_pipe_pipe() {
-    return -1
-  }
   i
 }
 
@@ -512,14 +507,6 @@ pub fn fmt_skip(tokens: Array(Token), i0: Int, lines: Bool): Int {
     }
   }
   i
-}
-
-pub fn brace_starts_lambda(tokens: Array(Token), i: Int): Bool {
-  k = next_significant(tokens, i)
-  if k == tk_pipe() {
-    return true
-  }
-  k == tk_pipe_pipe()
 }
 
 pub fn must_separate(prev: Int, prev2: Int, curr: Int, nextk: Int): Bool {
@@ -711,7 +698,7 @@ pub fn index_op_name_at(tokens: Array(Token), i: Int): Bool {
   j >= 0 && tokens[j].kind == tk_fn()
 }
 
-pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, lambda_state: Int, separate: Bool): Bool {
+pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, separate: Bool): Bool {
   if separate {
     return false
   }
@@ -733,9 +720,6 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
     return true
   }
   if curr == tk_eq() && prev == tk_r_bracket() && index_op_name_at(tokens, prev_significant(tokens, i)) {
-    return true
-  }
-  if curr == tk_pipe() && lambda_state == 2 {
     return true
   }
   if curr == tk_l_bracket() && value_end(prev) {
@@ -902,7 +886,6 @@ pub fn reprint(tokens: Array(Token)): String {
   prev2 = -1
   prev_i = -1
   after_tight = false
-  lambda_state = 0
   // The bracket depth of the head of the `if`, `while`, `for` or
   // `switch` being printed, up to its body's `{`; -1 outside one.
   head_depth = -1
@@ -949,7 +932,7 @@ pub fn reprint(tokens: Array(Token)): String {
     } else {
       nextk = next_significant(tokens, i)
       separate = must_separate(prev, prev2, k, nextk)
-      tight = no_space(tokens, i, prev, k, after_tight, lambda_state, separate)
+      tight = no_space(tokens, i, prev, k, after_tight, separate)
       if k == tk_l_paren() && !separate && head_depth == opened.size && shorthand_at(tokens, i) {
         // Directly in a statement's head the `{` begins its body: a call.
         tight = after_tight || paren_hugs(tokens, i, prev)
@@ -977,39 +960,8 @@ pub fn reprint(tokens: Array(Token)): String {
     }
     if k == tk_comment() {
     } else if k == tk_file_line() {
-    } else if k == tk_l_brace() {
-      if brace_starts_lambda(tokens, i) {
-        lambda_state = 1
-      } else {
-        lambda_state = 0
-      }
+    } else if k == tk_l_brace() || k == tk_r_brace() {
       after_tight = false
-    } else if k == tk_r_brace() {
-      after_tight = false
-      lambda_state = 0
-    } else if lambda_state == 1 {
-      if k == tk_pipe() {
-        lambda_state = 2
-        after_tight = true
-      } else if k == tk_pipe_pipe() {
-        lambda_state = 0
-        after_tight = false
-      } else if k == tk_minus() || k == tk_amp() {
-        lambda_state = 0
-        after_tight = minus_is_prefix(prev, started)
-      } else {
-        lambda_state = 0
-        after_tight = tight_after_kind(k)
-      }
-    } else if lambda_state == 2 {
-      if k == tk_pipe() {
-        lambda_state = 0
-        after_tight = false
-      } else if k == tk_minus() || k == tk_amp() {
-        after_tight = minus_is_prefix(prev, started)
-      } else {
-        after_tight = tight_after_kind(k)
-      }
     } else if k == tk_minus() || k == tk_amp() {
       after_tight = minus_is_prefix(prev, started)
     } else {
