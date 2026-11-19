@@ -35,8 +35,7 @@ pub fn env(name: String): String? {
 // tasks that read it.
 pub fn env_set(name: String, value: String) {
   if process_sys.avant_sys_env_set(name, value) != 0 {
-    none: Int? = nil
-    _ = none.expect("process.env_set(name, value) needs a name without = or a zero byte, got \"${name}\"")
+    panic("process.env_set(name, value) needs a name without = or a zero byte, got \"${name}\"")
   }
 }
 
@@ -180,11 +179,10 @@ pub fn notify(signals: Array(Signal)): Signals {
   }
   slot = process_sys.avant_sys_signal_notify(mask)
   if slot < 0 {
-    none: Int? = nil
     if slot == -1 {
-      _ = none.expect("process.notify: SIGKILL and SIGSTOP cannot be caught, and the crash signals (segv, bus, fpe, ill, abrt, trap) are the runtime's")
+      panic("process.notify: SIGKILL and SIGSTOP cannot be caught, and the crash signals (segv, bus, fpe, ill, abrt, trap) are the runtime's")
     }
-    _ = none.expect("process.notify: at most 16 calls in a program")
+    panic("process.notify: at most 16 calls in a program")
   }
   Signals { slot: slot }
 }
