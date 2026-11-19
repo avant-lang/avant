@@ -42,7 +42,7 @@ pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
       return nil
     }
     d = v.to_u64()
-    if n > (18446744073709551615u64 - d) / r {
+    if n > (18446744073709551615 - d) / r {
       return nil
     }
     n = n * r + d
@@ -87,7 +87,7 @@ pub class Parser {
   failed: Bool = false
   pub err: CompileError? = nil
   pub errors: DiagBag
-  int_bits: UInt64 = 0u64
+  int_bits: UInt64 = 0
   int_suffix: String = ""
   in_quote: Bool = false
   for_id: Int = 0
@@ -96,7 +96,7 @@ pub class Parser {
   for_last: String = ""
   // The step of the range whose body for_advance walks (`by k`; 1
   // without one).
-  for_by: UInt64 = 1u64
+  for_by: UInt64 = 1
   // The `defer` statements parsed so far: a `for` whose body holds one
   // has a latch (parse_for).
   defers_seen: Int = 0
@@ -140,7 +140,7 @@ pub class Parser {
     self.failed = false
     self.err = nil
     self.errors = DiagBag.new()
-    self.int_bits = 0u64
+    self.int_bits = 0
     self.int_suffix = ""
     self.in_quote = false
     self.for_id = 0
@@ -1128,7 +1128,7 @@ pub class Parser {
               fail(vt.loc, "an enum member's value is an integer literal without a suffix")
             }
             bits = self.int_bits
-            if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
+            if (neg && bits > 2147483648) || (!neg && bits > 2147483647) {
               fits = false
             } else if neg {
               value = 0 - bits.to_i()
@@ -2486,7 +2486,7 @@ pub class Parser {
   }
 
   pub fn for_inc(loc: Location, name: String): Stmt {
-    for_inc_by(loc, name, 1u64)
+    for_inc_by(loc, name, 1)
   }
 
   pub fn for_inc_by(loc: Location, name: String, by: UInt64): Stmt {
@@ -2550,11 +2550,11 @@ pub class Parser {
     if !ok {
       return rb
     }
-    if lit.int_bits == 0u64 {
+    if lit.int_bits == 0 {
       fail(lit.loc, "for ... by 0 would never move: the step is a nonzero integer")
       return rb
     }
-    if lit.int_bits > 9223372036854775807u64 || lit.int_suffix.size > 0 {
+    if lit.int_bits > 9223372036854775807 || lit.int_suffix.size > 0 {
       fail(lit.loc, "for ... by takes an Int literal")
       return rb
     }
@@ -2640,7 +2640,7 @@ pub class Parser {
         for_step(loc, var_tok.value, s.body)
       }
       self.for_last = ""
-      self.for_by = 1u64
+      self.for_by = 1
       return s
     }
     if self.current().kind == tk_ident() && self.current().value == "by" {
@@ -2659,7 +2659,7 @@ pub class Parser {
     s2 = Stmt.new(st_while(), loc)
     s2.for_kind = 2
     s2.pre.push(for_assign(loc, xs_name, first))
-    s2.pre.push(for_assign(loc, idx_name, for_int_expr(loc, 0u64)))
+    s2.pre.push(for_assign(loc, idx_name, for_int_expr(loc, 0)))
     size_expr = Expr.new(ex_field(), loc)
     size_expr.object = for_name_expr(loc, xs_name)
     size_expr.ident = "size"
@@ -2894,7 +2894,7 @@ pub class Parser {
     label.bits = bits
     label.neg = neg
     if neg {
-      label.int_val = (0u64 &- bits).wrap_i()
+      label.int_val = (0 &- bits).wrap_i()
     } else {
       label.int_val = bits.wrap_i()
     }
@@ -3139,7 +3139,7 @@ pub class Parser {
       self.skip_newlines()
       if incl {
         one = Expr.new(ex_int(), op_loc)
-        one.int_bits = 1u64
+        one.int_bits = 1
         sum = Expr.new(ex_binary(), op_loc)
         sum.op = tk_plus()
         sum.left = stop
@@ -3239,7 +3239,7 @@ pub class Parser {
         if self.current().kind == tk_dot_dot() || self.current().kind == tk_dot_dot_eq() {
           // `xs[..stop]`: a slice from the start.
           zero = Expr.new(ex_int(), at)
-          zero.int_bits = 0u64
+          zero.int_bits = 0
           cur = self.parse_slice_rest(cur, at, zero)
         } else {
           idxe = self.parse_expr()
@@ -4427,7 +4427,7 @@ pub fn error_self_field(loc: Location, name: String): Expr {
 // `by k` in reverse, ending at `lo`, the range's start.
 pub class RangeStep {
   pub last: String = ""
-  pub by: UInt64 = 1u64
+  pub by: UInt64 = 1
   pub down: Bool = false
   pub lo: String = ""
 }
@@ -4482,7 +4482,7 @@ pub fn range_assign(loc: Location, name: String, value: Expr): Stmt {
 pub fn range_step_into(rs: RangeStep, loc: Location, counter: String, into: Array(Stmt)) {
   if rs.down {
     stop0 = Stmt.new(st_if(), loc)
-    if rs.by == 1u64 {
+    if rs.by == 1 {
       stop0.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.lo))
     } else {
       dist = range_call0(loc, range_binary(loc, tk_amp_minus(), range_name(loc, counter), range_name(loc, rs.lo)), "wrap_u64")
@@ -4497,7 +4497,7 @@ pub fn range_step_into(rs: RangeStep, loc: Location, counter: String, into: Arra
   }
   if rs.last.size > 0 {
     stop = Stmt.new(st_if(), loc)
-    if rs.by == 1u64 {
+    if rs.by == 1 {
       stop.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.last))
     } else {
       left = range_binary(loc, tk_minus(), range_name(loc, rs.last), range_name(loc, counter))
@@ -4587,7 +4587,7 @@ pub fn range_advance_expr(rs: RangeStep, e: Expr, counter: String, loc: Location
 // A range `for`'s `by`, as parsed: a literal's size and sign, or the
 // constant it names (`named`), whose value the checker reads.
 pub class RangeBy {
-  pub by: UInt64 = 1u64
+  pub by: UInt64 = 1
   pub down: Bool = false
   pub named: Expr? = nil
 }
@@ -4665,13 +4665,13 @@ pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: 
   // is less than the step, so the value is never below the start.
   top = range_name(loc, end_name)
   if !incl {
-    top = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1u64))
+    top = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1))
   }
   start = top
-  if by != 1u64 {
+  if by != 1 {
     top2 = range_name(loc, end_name)
     if !incl {
-      top2 = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1u64))
+      top2 = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1))
     }
     dist = range_call0(loc, range_binary(loc, tk_amp_minus(), top2, range_name(loc, lo_name)), "wrap_u64")
     extra = range_call0(loc, range_binary(loc, tk_percent(), dist, range_int(loc, by)), "wrap_i")

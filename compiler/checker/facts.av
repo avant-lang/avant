@@ -47,7 +47,7 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
   if prev.op != tk_eq() {
     return
   }
-  if t = prev.target, v = prev.value, t.kind == ex_name() && v.kind == ex_int() && v.int_bits <= 1000000u64 {
+  if t = prev.target, v = prev.value, t.kind == ex_name() && v.kind == ex_int() && v.int_bits <= 1000000 {
     ivar = t.ident
     if c = stmt.cond {
       cc = c
@@ -123,17 +123,17 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
   if s.kind == st_assign() {
     if t = s.target, t.kind == ex_name() && t.ident == ivar {
       if s.op == tk_plus_eq() {
-        if v = s.value, v.kind == ex_int() && v.int_bits >= 1u64 && v.int_bits <= 1000000u64 {
+        if v = s.value, v.kind == ex_int() && v.int_bits >= 1 && v.int_bits <= 1000000 {
           return v.int_bits.to_i()
         }
         return 0 - 2
       }
       if s.op == tk_eq() {
         if v = s.value, v.kind == ex_binary() && v.op == tk_plus(), l = v.left, r = v.right {
-          if l.kind == ex_name() && l.ident == ivar && r.kind == ex_int() && r.int_bits >= 1u64 && r.int_bits <= 1000000u64 {
+          if l.kind == ex_name() && l.ident == ivar && r.kind == ex_int() && r.int_bits >= 1 && r.int_bits <= 1000000 {
             return r.int_bits.to_i()
           }
-          if r.kind == ex_name() && r.ident == ivar && l.kind == ex_int() && l.int_bits >= 1u64 && l.int_bits <= 1000000u64 {
+          if r.kind == ex_name() && r.ident == ivar && l.kind == ex_int() && l.int_bits >= 1 && l.int_bits <= 1000000 {
             return l.int_bits.to_i()
           }
         }
@@ -591,7 +591,7 @@ pub fn (checker_self: Checker) bound_delta_of(e: Expr): Int {
 
 pub fn (checker_self: Checker) lit_small(e: Expr): Bool {
   if e.kind == ex_int() {
-    return e.int_bits <= 1000000u64
+    return e.int_bits <= 1000000
   }
   false
 }
@@ -1016,12 +1016,12 @@ pub fn (checker_self: Checker) collect_cond_nn(e: Expr, into: Array(String)) {
       return
     }
     if e.op == 47 {
-      if l = e.left, r = e.right, l.kind == ex_name() && r.kind == ex_int() && r.int_bits == 0u64 {
+      if l = e.left, r = e.right, l.kind == ex_name() && r.kind == ex_int() && r.int_bits == 0 {
         into.push(l.ident)
       }
     }
     if e.op == tk_less_eq() {
-      if l = e.left, r = e.right, r.kind == ex_name() && l.kind == ex_int() && l.int_bits == 0u64 {
+      if l = e.left, r = e.right, r.kind == ex_name() && l.kind == ex_int() && l.int_bits == 0 {
         into.push(r.ident)
       }
     }
@@ -1420,7 +1420,7 @@ pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
 
 pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int {
   if e.kind == ex_int() {
-    if e.int_bits <= 4611686018427387904u64 {
+    if e.int_bits <= 4611686018427387904 {
       return e.int_bits.to_i()
     }
     return 0 - 1
@@ -1542,7 +1542,7 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
       return
     }
     if op == tk_greater() || op == tk_greater_eq() {
-      if b.kind == ex_int() && b.int_bits <= 4611686018427387904u64 {
+      if b.kind == ex_int() && b.int_bits <= 4611686018427387904 {
         low = b.int_bits.to_i()
         if op == tk_greater() {
           low += 1
@@ -1558,7 +1558,7 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
       return
     }
     if op == tk_not_eq() {
-      if b.kind == ex_int() && b.int_bits == 0u64 {
+      if b.kind == ex_int() && b.int_bits == 0 {
         checker_self.gne_put(v)
       }
       return
@@ -1568,7 +1568,7 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
       if cb2 >= 0 {
         checker_self.gcap_put(v, cb2)
       }
-      if b.kind == ex_int() && b.int_bits <= 4611686018427387904u64 {
+      if b.kind == ex_int() && b.int_bits <= 4611686018427387904 {
         lv = b.int_bits.to_i()
         checker_self.gnn_put(v)
         if lv >= 1 {
@@ -1670,7 +1670,7 @@ pub fn (checker_self: Checker) compound_proven(op: Int, target: String, value: E
 
 pub fn (checker_self: Checker) divisor_proven(r: Expr): Bool {
   if r.kind == ex_int() {
-    return r.int_bits != 0u64
+    return r.int_bits != 0
   }
   if r.kind == ex_name() {
     if checker_self.gpos_has(r.ident) {

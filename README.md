@@ -1378,7 +1378,7 @@ An operation gives the mathematically correct value, or traps when none exists.
 
 - `+`, `-`, `*` trap on overflow at the operands' width; `/` and `%` trap on division by zero. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap the same way.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`). `MIN % -1` is `0`; only `MIN / -1` overflows.
-- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
+- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0 &- u`.
 - `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error. `x.try_shl(n)` and `x.try_shr(n)` return `nil` for such an amount instead (`T?`).
 - Integers have `abs` (not unsigned types) and `to_f`. `n.to_s(16)` writes `n` in base 16 (2 to 36, lower case, a `-` for a negative; another base traps), the counterpart of `s.to_i(16)`.
 - `a.min(b)`, `a.max(b)` and `x.clamp(lo, hi)` work on every number type, both operands of one type (`clamp` traps unless `lo <= hi`); an array's `xs.min()` and `xs.max()` take no argument.
@@ -4956,16 +4956,16 @@ The 64-bit operations a CPU does in an instruction or two that no expression on 
 import std.bits
 
 fn main {
-  p = bits.mul(18446744073709551615u64, 3u64)
+  p = bits.mul(18446744073709551615, 3)
   puts("${p.hi} ${p.lo}")                     // => 2 18446744073709551613
-  s = bits.add(18446744073709551615u64, 1u64, 0u64)
+  s = bits.add(18446744073709551615, 1, 0)
   puts("${s.sum} ${s.carry}")                 // => 0 1
-  d = bits.sub(0u64, 1u64, 0u64)
+  d = bits.sub(0, 1, 0)
   puts(d.borrow)                              // => 1
-  q = bits.div(p.hi, p.lo, 3u64)
+  q = bits.div(p.hi, p.lo, 3)
   puts(q.quo)                                 // => 18446744073709551615
-  puts(bits.rotate_left(1u64, -1))            // => 9223372036854775808
-  puts(bits.len(255u64))                      // => 8
+  puts(bits.rotate_left(1, -1))               // => 9223372036854775808
+  puts(bits.len(255))                         // => 8
 }
 ```
 

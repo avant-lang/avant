@@ -413,7 +413,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
       if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
         // The call takes a frame only when a default does name an
         // earlier parameter: a number tried here is given back unused.
-        fresh = expr.int_bits == 0u64
+        fresh = expr.int_bits == 0
         if fresh {
           checker_self.arg_frames = checker_self.arg_frames + 1
           expr.int_bits = checker_self.arg_frames.to_u64()
@@ -435,7 +435,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
           }
         }
         if fresh && !used {
-          expr.int_bits = 0u64
+          expr.int_bits = 0
           checker_self.arg_frames = checker_self.arg_frames - 1
         }
       }
@@ -475,7 +475,7 @@ pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Arr
   fresh: Array(Scope) = []
   checker_self.scopes = fresh
   checker_self.push_scope()
-  if expr.int_bits != 0u64 {
+  if expr.int_bits != 0 {
     for j in 0..i {
       if j < params.size {
         checker_self.bind(arg_frame_name(expr.int_bits, j), params[j])
@@ -2036,7 +2036,7 @@ pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
   args = checker_self.args_now
   if k < args.size {
     e = args[k]
-    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807u64 && t.show() == "UInt64" {
+    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807 && t.show() == "UInt64" {
       return "${e.int_bits}"
     }
   }

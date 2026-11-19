@@ -2202,7 +2202,7 @@ pub class Checker {
         if value.kind == ex_int() {
           if stmt.op == tk_plus_eq() {
             s = fact_any_slack(target.ident)
-            if s >= 0 && value.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && value.int_bits <= s.to_u64() + 1 {
               stmt.proven = true
             }
           }
@@ -3016,11 +3016,11 @@ pub class Checker {
       return nil
     }
     expr.object = nil
-    if f == "max" || min == 0u64 {
+    if f == "max" || min == 0 {
       expr.kind = ex_int()
       expr.int_bits = max
       if f == "min" {
-        expr.int_bits = 0u64
+        expr.int_bits = 0
       }
       return ty
     }
@@ -4590,15 +4590,15 @@ pub class Checker {
   // reach the minimum, max + 1).
   pub fn literal_int_max(ty: Ty): UInt64 {
     if ty.is_uint64() {
-      return 18446744073709551615u64
+      return 18446744073709551615
     }
     if ty.is_int32() {
-      return 2147483647u64
+      return 2147483647
     }
     if ty.is_uint32() {
-      return 4294967295u64
+      return 4294967295
     }
-    9223372036854775807u64
+    9223372036854775807
   }
 
   pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
@@ -4644,7 +4644,7 @@ pub class Checker {
       lit.ty = ty
       return ty
     }
-    if lit.int_bits > literal_int_max(ty) + 1u64 {
+    if lit.int_bits > literal_int_max(ty) + 1 {
       if lit.value_str.size > 0 {
         fail(expr.loc, "${lit.value_str} does not fit in ${ty.show()}")
       } else {
@@ -4964,7 +4964,7 @@ pub class Checker {
       top = 31u64
     }
     if neg {
-      if lit.int_bits != 0u64 {
+      if lit.int_bits != 0 {
         fail(loc, "shift amount -${lit.int_bits} out of range for ${left.show()} (0..${top})")
       }
       return
@@ -5258,13 +5258,13 @@ pub class Checker {
         if op == tk_plus() {
           if l.kind == ex_name() && r.kind == ex_int() {
             s = fact_any_slack(l.ident)
-            if s >= 0 && r.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && r.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
           if r.kind == ex_name() && l.kind == ex_int() {
             s = fact_any_slack(r.ident)
-            if s >= 0 && l.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && l.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
@@ -6880,9 +6880,9 @@ pub class Checker {
       if label.kind == lb_member() {
         return check_const_label(label, disc)
       }
-      if label.kind == lb_int() && !label.neg && label.bits <= 1u64 {
+      if label.kind == lb_int() && !label.neg && label.bits <= 1 {
         word = "false"
-        if label.bits == 1u64 {
+        if label.bits == 1 {
           word = "true"
         }
         fail(label.loc, "a case label of a switch over Bool is true or false: write `case ${word}`")
@@ -7047,7 +7047,7 @@ pub class Checker {
 
   // An integer label as written (its sign and magnitude).
   pub fn int_label_text(label: CaseLabel): String {
-    if label.neg && label.bits != 0u64 {
+    if label.neg && label.bits != 0 {
       return "-${label.bits}"
     }
     "${label.bits}"
@@ -7059,13 +7059,13 @@ pub class Checker {
     if !disc.is_integer() {
       return true
     }
-    if label.neg && disc.is_unsigned() && label.bits != 0u64 {
+    if label.neg && disc.is_unsigned() && label.bits != 0 {
       fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show()}")
       return false
     }
     max = literal_int_max(disc)
     if label.neg {
-      max = max + 1u64
+      max = max + 1
     }
     if label.bits > max {
       fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show()}")

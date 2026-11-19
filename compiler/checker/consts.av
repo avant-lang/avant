@@ -257,7 +257,7 @@ pub fn (checker_self: Checker) inline_const(e: Expr): Bool {
     name = e.ident
     if !checker_self.const_value(cv, e.loc) {
       e.kind = ex_int()
-      e.int_bits = 0u64
+      e.int_bits = 0
       e.ident = ""
       e.object = nil
       return true
@@ -331,7 +331,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
     if e.int_suffix == "u64" {
       return cv_of_u64(e.int_bits)
     }
-    if e.int_bits > 9223372036854775807u64 {
+    if e.int_bits > 9223372036854775807 {
       checker_self.fail(e.loc, "integer literal does not fit in Int; use ${e.int_bits}u64")
       return nil
     }
@@ -363,7 +363,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
   }
   if k == ex_unary() {
     if inner = e.inner {
-      if e.op == tk_minus() && inner.kind == ex_int() && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808u64 {
+      if e.op == tk_minus() && inner.kind == ex_int() && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808 {
         return cv_of_int(0 &- 9223372036854775807 &- 1)
       }
       if v = checker_self.fold_const(inner, m) {
@@ -611,13 +611,13 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
       r = a - b
     }
   } else if op == tk_star() {
-    if a != 0u64 && b > max / a {
+    if a != 0 && b > max / a {
       over = true
     } else {
       r = a * b
     }
   } else if op == tk_slash() || op == tk_percent() {
-    if b == 0u64 {
+    if b == 0 {
       checker_self.fail(e.loc, "the constant's value divides by zero")
       return nil
     }
@@ -627,7 +627,7 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
       r = a % b
     }
   } else if op == tk_less_less() || op == tk_greater_greater() {
-    if b > 63u64 {
+    if b > 63 {
       checker_self.fail(e.loc, "shift amount ${b} out of range for UInt64 (0..63)")
       return nil
     }
@@ -742,7 +742,7 @@ pub fn (checker_self: Checker) check_enum_consts {
               ok = false
             } else if c.kind == cv_int() && c.iv >= -2147483648 && c.iv <= 2147483647 {
               value = c.iv
-            } else if c.kind == cv_u64() && c.uv <= 2147483647u64 {
+            } else if c.kind == cv_u64() && c.uv <= 2147483647 {
               value = c.uv.to_i()
             } else if c.kind == cv_int() || c.kind == cv_u64() {
               checker_self.fail(loc, "the value of ${decl.names[i]}, the constant ${cname} = ${cv_text(c)}, does not fit in Int32")

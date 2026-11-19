@@ -731,14 +731,14 @@ pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter:
   for bi in 1..stmt.body.size - 1 {
     inner.push(stmt.body[bi])
   }
-  stmt.pre[1] = fw_assign(loc, ix, fw_int(loc, 0u64))
+  stmt.pre[1] = fw_assign(loc, ix, fw_int(loc, 0))
   count = Expr.new(ex_call(), loc)
   count.callee = "count"
   count.receiver = fw_name(loc, xs)
   stmt.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), count)
   body: Array(Stmt) = []
   body.push(fw_assign(loc, at, fw_name(loc, ix)))
-  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1u64))))
+  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
   for part in [0, 1] {
     read = Expr.new(ex_call(), loc)
     read.callee = "name_at"
@@ -873,7 +873,7 @@ pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): 
   at.right = fw_name(loc, ix)
   w.body.push(fw_assign(loc, cn, at))
   test: Expr? = nil
-  for b in [32u64, 9u64, 10u64, 13u64] {
+  for b in [32u64, 9, 10, 13] {
     op = tk_not_eq()
     join = tk_amp_amp()
     if space {
@@ -891,7 +891,7 @@ pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): 
   stop.cond = test
   stop.then_body.push(Stmt.new(st_break(), loc))
   w.body.push(stop)
-  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1u64))))
+  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
   w
 }
 

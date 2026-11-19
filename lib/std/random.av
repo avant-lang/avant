@@ -17,10 +17,10 @@ lib random_os {
 }
 
 pub class Random {
-  s0: UInt64 = 0u64
-  s1: UInt64 = 0u64
-  s2: UInt64 = 0u64
-  s3: UInt64 = 0u64
+  s0: UInt64 = 0
+  s1: UInt64 = 0
+  s2: UInt64 = 0
+  s3: UInt64 = 0
 
   // `Random.new(seed)`: the four words from the seed through SplitMix64,
   // as xoshiro's authors seed it, never all zero. `Random.new()`: the
@@ -28,13 +28,13 @@ pub class Random {
   fn initialize(seed: Int? = nil) {
     if n = seed {
       z = n.wrap_u64()
-      z = z &+ 11400714819323198485u64
+      z = z &+ 11400714819323198485
       self.s0 = mix(z)
-      z = z &+ 11400714819323198485u64
+      z = z &+ 11400714819323198485
       self.s1 = mix(z)
-      z = z &+ 11400714819323198485u64
+      z = z &+ 11400714819323198485
       self.s2 = mix(z)
-      z = z &+ 11400714819323198485u64
+      z = z &+ 11400714819323198485
       self.s3 = mix(z)
       return
     }
@@ -42,15 +42,15 @@ pub class Random {
     self.s1 = random_os.avant_os_entropy_u64()
     self.s2 = random_os.avant_os_entropy_u64()
     self.s3 = random_os.avant_os_entropy_u64()
-    if (self.s0 | self.s1 | self.s2 | self.s3) == 0u64 {
-      self.s0 = 1u64
+    if (self.s0 | self.s1 | self.s2 | self.s3) == 0 {
+      self.s0 = 1
     }
   }
 
   // The next 64 random bits.
   pub fn u64: UInt64 {
     x = self.s1
-    r = rotl(x &* 5u64, 7) &* 9u64
+    r = rotl(x &* 5, 7) &* 9
     t = x << 17
     self.s2 = self.s2 ^ self.s0
     self.s3 = self.s3 ^ x
@@ -88,7 +88,7 @@ pub class Random {
   // the threshold would make the low results likelier, so they are
   // drawn again.
   fn below(bound: UInt64): UInt64 {
-    threshold = (~bound &+ 1u64) % bound
+    threshold = (~bound &+ 1) % bound
     r = u64()
     while r < threshold {
       r = u64()
@@ -107,8 +107,8 @@ pub fn bytes(n: Int): Bytes {
 }
 
 fn mix(x: UInt64): UInt64 {
-  z = (x ^ (x >> 30)) &* 13787848793156543929u64
-  z = (z ^ (z >> 27)) &* 10723151780598845931u64
+  z = (x ^ (x >> 30)) &* 13787848793156543929
+  z = (z ^ (z >> 27)) &* 10723151780598845931
   z ^ (z >> 31)
 }
 
