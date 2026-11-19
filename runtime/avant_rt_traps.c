@@ -394,9 +394,9 @@ void avant_trap_size_at(int32_t kind, int32_t site) {
 }
 
 void avant_trap_negative(avant_int n, int32_t what) {
-  static const char *names[] = {"Array size", "repeat_byte count", "repeat count"};
+  static const char *names[] = {"Array size", "repeat_byte count", "repeat count", "Buf size"};
   trap_head();
-  trap_out("%s %lld is negative", names[what >= 0 && what <= 2 ? what : 0], (long long)n);
+  trap_out("%s %lld is negative", names[what >= 0 && what <= 3 ? what : 0], (long long)n);
   trap_tail();
 }
 

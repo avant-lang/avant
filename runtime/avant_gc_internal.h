@@ -147,6 +147,7 @@
 #endif
 #define CARD_SIZE (1u << CARD_SHIFT)
 #define SCALAR_LOS_MIN 6144
+_Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes size is SCALAR_LOS_MIN");
 /* The default young budget: 4 MiB, chosen among 4, 8 and 16 MiB on the
  * final collector (LangArena prod at each: total wall time 42.29 /
  * 42.53 / 42.67 s, average RSS 28.27 / 28.21 / 29.02 MB, worst memory

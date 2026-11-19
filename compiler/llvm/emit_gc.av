@@ -343,7 +343,7 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 //
 // The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
 // below: the runtime's avant_alloc_slow, and under the stress mode the
-// inline allocation itself after it).
+// inline allocation itself after it); avant_alloc_unzeroed's is itself.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -422,9 +422,17 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   e.line("br label %${cont}")
 
   e.block(slow)
-  e.used_alloc_slow = true
-  sc = e.tmp()
-  e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  sc = ""
+  if callee == "avant_alloc_unzeroed" {
+    // Its own slow call, which leaves a large payload unzeroed; under the
+    // stress mode it allocates there (the inline sequence is avant_alloc's,
+    // which that mode runs at every avant_alloc site).
+    sc = ll_alloc_call(e, callee, size, ty)
+  } else {
+    e.used_alloc_slow = true
+    sc = e.tmp()
+    e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  }
   s = ll_alloc_birth(e, sc, birth)
   e.line("br label %${cont}")
 

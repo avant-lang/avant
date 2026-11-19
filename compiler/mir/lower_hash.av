@@ -1227,11 +1227,14 @@ pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String,
 }
 
 // The builtins over heap values (calls.av:222-227, 270-276, 350-360):
-// `buf_new(cap = 0)`, `bytes_to_str(xs)`; nil when c
+// `buf_new(cap = 0)`, `buf_new(n, byte)`, `bytes_to_str(xs)`; nil when c
 // is not one of them.
 pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   f = ""
+  if c == "buf_new" && e.args.size == 2 {
+    return lw.buf_new_filled(e)
+  }
   if c == "buf_new" && e.args.size <= 1 {
     f = "avant_buf_new"
   } else if c == "bytes_to_str" && e.args.size == 1 {
@@ -1250,4 +1253,25 @@ pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
     ops.push(b.c_i64(0))
   }
   lw.call_to(ty, f, ops)
+}
+
+// `Buf.new(n, byte)`: n, then the byte; a negative n traps
+// (avant_trap_negative(n, 3)) and so does a byte outside 0..255
+// (byte_checked), each naming the call; then the runtime's Buf of n
+// bytes, its storage written once (avant_buf_new_filled).
+pub fn (lw: MirLower) buf_new_filled(e: Expr): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(e)
+  ops = lw.lower_args(e.args)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  k = b.temp(mt_int())
+  b.assign(b.pl(k), b.rv_use(ops[0]))
+  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
+  ok = lw.trap_open(neg, true)
+  lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(3)), e.loc)
+  v = lw.byte_checked(ops[1], e.loc)
+  lw.call_to(ty, "avant_buf_new_filled", lw.two(b.copy_local(k), v))
 }

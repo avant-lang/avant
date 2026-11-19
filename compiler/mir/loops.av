@@ -147,7 +147,7 @@ pub fn mir_lv_keeps_sizes(name: String): Bool {
       return true
     }
   }
-  exact = ["avant_alloc", "avant_pin", "avant_unpin", "avant_pin_field", "avant_release_range", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_new", "printf", "fabs", "floor", "sqrt", "exp", "ceil", "round", "trunc", "sin", "cos", "tan", "log", "log2", "log10", "pow", "atan2", "__avant_type_maps"]
+  exact = ["avant_alloc", "avant_alloc_unzeroed", "avant_pin", "avant_unpin", "avant_pin_field", "avant_release_range", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_new", "avant_buf_new_filled", "printf", "fabs", "floor", "sqrt", "exp", "ceil", "round", "trunc", "sin", "cos", "tan", "log", "log2", "log10", "pow", "atan2", "__avant_type_maps"]
   for i in 0..exact.size {
     if name == exact[i] {
       return true
@@ -163,7 +163,7 @@ fn lv_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
   while k >= 0 {
     st = blk.stmts[k]
     if mir_stmt_def(st) == h {
-      return st.kind == msk_call() && st.callee == "avant_alloc"
+      return st.kind == msk_call() && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
     }
     k -= 1
   }

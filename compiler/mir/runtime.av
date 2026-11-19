@@ -407,6 +407,10 @@ fn mir_rt_fill(t: MRtTable) {
   // collects: the allocation entry, the slot rows, and the rows the core
   // example and the verifier tests call.
   t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
+  // avant_alloc for a buffer of scalars the code writes whole before it
+  // reads it (`Array(T).new(n, value)`): its inline path is avant_alloc's,
+  // its slow call this one, which leaves a large payload unzeroed.
+  t.row("avant_alloc_unzeroed", "u64, u32", "ref", c, "alloc")
   // The inline allocation path's slow call (llvm/emit_gc.av
   // ll_alloc_slow_helper calls it); the MIR names avant_alloc only.
   t.row("avant_alloc_slow", "u64, u32", "ref", c, "")
@@ -457,6 +461,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_fmt_float", "f64, i64", "ref str", c, "")
   t.row("avant_str_strip", "ref str, i32", "ref str", c, "")
   t.row("avant_buf_new", "i64", "ref", c, "")
+  t.row("avant_buf_new_filled", "i64, i64", "ref", c, "")
   t.row("avant_buf_to_str", "ref", "ref str", c, "")
   // collects: the hand-off of a dead Buf (mir/take.av).
   t.row("avant_buf_take_str", "ref", "ref str", c, "")

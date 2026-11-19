@@ -62,6 +62,11 @@ typedef struct AvantHeader {
 } AvantHeader;
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
+/* avant_alloc for an object whose caller writes every byte of its payload
+ * before anything reads it: a large one of a type with no reference word
+ * (Bytes, a buffer of scalars) is not zeroed first; any other is zeroed
+ * as avant_alloc zeroes it. */
+void *avant_alloc_unzeroed(uint64_t nbytes, uint32_t type_id);
 /* `gc.hold { }` (std.gc): no collection this thread
  * would start runs between the two (nested pairs are one); the outermost
  * end runs what fell due inside. Other threads still collect. */
@@ -319,6 +324,7 @@ char *avant_str_from_c(const void *p, avant_int n);
 void *avant_bytes_to_buf(const char *s);
 
 void *avant_buf_new(avant_int cap);
+void *avant_buf_new_filled(avant_int n, avant_int byte);
 void *avant_buf_slice(void *buf, avant_int start, avant_int stop);
 void avant_buf_push_buf(void *buf, void *other);
 void avant_buf_push_byte(void *buf, avant_int b);
@@ -333,6 +339,10 @@ void avant_buf_clear(void *buf);
 void avant_buf_ensure(void *buf, avant_int n);
 void avant_bytes_ensure(void *buf, avant_int n);
 void avant_buf_append(void *buf, const void *p, int32_t n);
+/* The size set to N (at most the capacity). A Buf's storage past its
+ * size is not zeroed (avant_buf_new, a growth): the bytes a larger size
+ * covers are the caller's to have written first (avant_buf_ensure, then
+ * avant_buf_bytes and the writes, then this). */
 void avant_buf_set_size(void *buf, avant_int n);
 void avant_buf_set_ident(void *buf, avant_int n);
 /* Append-only fills of `buf`: copy len bytes from src_off to dst_off, then

@@ -1600,6 +1600,7 @@ fn main {
 | `Buf` operation | Result |
 | --- | --- |
 | `Buf.new()`, `Buf.new(capacity)` | an empty buffer |
+| `Buf.new(n, byte)` | `n` bytes, each `byte` (`Buf.new(n, 0)` is `n` zero bytes, writable by `buf[i] = x`; a negative `n` or a `byte` outside `0..255` traps) |
 | `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
 | `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |

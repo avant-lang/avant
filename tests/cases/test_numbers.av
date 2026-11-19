@@ -131,6 +131,14 @@ fn arraynew_cases: Array(FCase) {
   xs.push(refused("anew-generic", "class Node {\n  v: Int = 0\n}\nfn make(n: Int, x: T): Array(T) {\n  Array(T).new(n)\n}\nfn main {\n  a = make(2, 5)\n  puts(a[1])\n  b = make(2, Node.new())\n  puts(b.size)\n}\n", "Array(Node).new(n) needs its elements built"))
   xs.push(refused("anew-value-type", "fn main {\n  xs = Array(Int).new(2, \"a\")\n  puts(xs.size)\n}\n", "Array(Int).new's element value must be Int, got String"))
   xs.push(trapped("anew-negative", "fn main {\n  n = 0 - 5\n  xs = Array(Int).new(n)\n  puts(xs.size)\n}\n", "", "avant runtime: Array size -5 is negative"))
+  // Storage written whole at once is not zeroed first: filled arrays of
+  // scalars, a Buf of n bytes, a Buf's room past its size; twelve rounds
+  // so that later rounds take storage the earlier ones freed.
+  xs.push(accepted("anew-filled-reuse", "fn round(r: Int): Int {\n  n = 300000\n  a = Array(Int32).new(n, (r + 3).to_i32())\n  f = Array(Float64).new(n / 4, 0.5)\n  g = Array(Bool).new(n, true)\n  b = Buf.new(n, r + 1)\n  z = Buf.new(n, 0)\n  z[n - 1] = 9\n  c = Buf.new(n)\n  for i in 0..n {\n    c.push_byte(i & 127)\n  }\n  bad = 0\n  for i in 0..n {\n    if a[i] != (r + 3).to_i32() || !g[i] || b[i] != r + 1 || c[i] != (i & 127) {\n      bad += 1\n    }\n    if i < n - 1 && z[i] != 0 {\n      bad += 1\n    }\n  }\n  for i in 0..n / 4 {\n    if f[i] != 0.5 {\n      bad += 1\n    }\n  }\n  bad + z[n - 1] + b.size + c.size - 2 * n\n}\nfn main {\n  total = 0\n  for r in 0..12 {\n    total += round(r)\n  }\n  puts(total)\n  s = Buf.new(3, 65)\n  s.push_byte(66)\n  puts(s.to_s())\n  e = Buf.new(0, 7)\n  puts(e.size)\n}\n", "108\nAAAB\n0\n"))
+  xs.push(trapped("bufnew-negative", "fn main {\n  n = 0 - 5\n  b = Buf.new(n, 1)\n  puts(b.size)\n}\n", "", "avant runtime: Buf size -5 is negative"))
+  xs.push(trapped("bufnew-byte", "fn main {\n  v = 256 + 0\n  b = Buf.new(4, v)\n  puts(b.size)\n}\n", "", "avant runtime: byte 256 out of range (0..255)"))
+  xs.push(refused("bufnew-args", "fn main {\n  b = Buf.new(1, 2, 3)\n  puts(b.size)\n}\n", "Buf.new takes an optional Int capacity, or a size and a byte"))
+  xs.push(refused("bufnew-byte-type", "fn main {\n  b = Buf.new(2, \"a\")\n  puts(b.size)\n}\n", "byte must be Int"))
   xs
 }
 

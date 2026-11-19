@@ -5601,7 +5601,19 @@ pub class Checker {
         }
         return t_buf()
       }
-      fail(expr.loc, "buf_new takes an optional Int capacity")
+      if expr.args.size == 2 {
+        // `Buf.new(n, byte)`: n bytes, each byte.
+        size = check_expr_as(expr.args[0], t_int())
+        if !size.is_int() {
+          fail(expr.args[0].loc, "size must be Int")
+        }
+        byte = check_expr_as(expr.args[1], t_int())
+        if !byte.is_int() {
+          fail(expr.args[1].loc, "byte must be Int")
+        }
+        return t_buf()
+      }
+      fail(expr.loc, "Buf.new takes an optional Int capacity, or a size and a byte")
       return t_buf()
     }
     expected: Ty? = nil
@@ -5743,8 +5755,9 @@ pub class Checker {
       return t_int()
     }
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
-      // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
-      // (before, "unknown type Buf").
+      // `Buf.new`, `Buf.new(cap)` and `Buf.new(n, byte)` are `buf_new()`,
+      // `buf_new(cap)` and `buf_new(n, byte)` (before, "unknown type
+      // Buf").
       expr.callee = "buf_new"
       expr.derived = true
       expr.receiver = nil

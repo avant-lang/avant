@@ -303,7 +303,11 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
    * it (RC2). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &a);
-  void *nbuf = avant_alloc(bytes, buf_type_id);
+  /* A buffer of scalars is not zeroed (a large one, as Go's growslice
+   * leaves pointer-free storage): the elements below the size are copied
+   * in now, and nothing reads one past the size before a push writes it.
+   * A buffer of references is zeroed: the collector reads all its words. */
+  void *nbuf = buf_type_id == AVANT_TYPE_BYTES ? avant_alloc_bytes_room(bytes) : avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
     /* A large pointer buffer may be mature (a mature-allocating thread; young

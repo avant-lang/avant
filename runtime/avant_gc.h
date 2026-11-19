@@ -369,6 +369,16 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * (avant_gc_large_trim gives pages back). Never collects. */
 __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64_t nbytes);
 __attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t nbytes);
+/* The smallest Bytes the collector allocates as a large object (its
+ * SCALAR_LOS_MIN): one that avant_alloc_unzeroed may leave unzeroed. */
+#define AVANT_GC_BYTES_LARGE 6144
+/* Room for NBYTES of Bytes that the caller writes before anything reads
+ * it (a Buf's storage past its size, a buffer of scalars past its size):
+ * avant_alloc_unzeroed for a large one, avant_alloc for a block one,
+ * the size test inline so a small allocation pays no extra call. */
+static inline void *avant_alloc_bytes_room(uint64_t nbytes) {
+  return nbytes >= AVANT_GC_BYTES_LARGE ? avant_alloc_unzeroed(nbytes, 0) : avant_alloc(nbytes, 0);
+}
 /* 1 when P lies in the collected heap and is not the exact start of a
  * heap object (an address inside an object, or one where no object
  * lives); 0 for null, for an address outside the heap (C's own memory, a
