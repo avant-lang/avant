@@ -3732,13 +3732,20 @@ pub class Parser {
       fail(meth.loc, "Hash(K, V) only supports .new")
     }
     bare: Location? = meth.loc
+    // `Hash(K, V).new(capacity)`: room for that many entries.
+    cap: Expr? = nil
     if self.current().kind == tk_l_paren() {
       self.bump()
       self.skip_newlines()
+      if self.current().kind != tk_r_paren() {
+        cap = self.parse_expr()
+        self.skip_newlines()
+      }
       expect(tk_r_paren())
       bare = nil
     }
     e = Expr.new(ex_hash_new(), tok.loc)
+    e.size_expr = cap
     e.key_type = key
     e.val_type = val
     e.bare_name = bare

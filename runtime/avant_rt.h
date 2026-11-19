@@ -407,6 +407,7 @@ int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
 /* The values are structs holding references. */
 #define AVANT_HASH_V_WORDS 0x4000u
 void *avant_hash_create(uint32_t desc);
+void avant_hash_reserve(void *hash, avant_int n);
 void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, uint32_t vw, uint32_t ktid,
                               uint32_t vtid, uint32_t atid);
 void *avant_hash_find_xk(void *h, const void *key, int32_t *found);

@@ -570,12 +570,33 @@ pub fn (lw: MirLower) hash_found_load(p: MOperand, fl: Int, vty: Int): MOperand 
   b.copy_local(r)
 }
 
-// `Hash(K, V).new`: avant_hash_create(descriptor).
+// `Hash(K, V).new`: avant_hash_create(descriptor); `Hash(K, V).new(n)`:
+// n first (a negative n traps: avant_trap_negative(n, 4)), then the
+// hash, then avant_hash_reserve(h, n), its table made once with room for
+// n entries.
 pub fn (lw: MirLower) lower_hash_new(e: Expr): MOperand {
   b = lw.lw_b
   ty = lw.ety(e)
   if lw.failed() {
     return b.c_i32(0)
+  }
+  if x = e.size_expr {
+    nv = lw.lower_expr(x)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    k = b.temp(mt_int())
+    b.assign(b.pl(k), b.rv_use(nv))
+    neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
+    ok = lw.trap_open(neg, true)
+    lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(4)), e.loc)
+    e.size_expr = nil
+    h = lw.lower_hash_new(e)
+    e.size_expr = x
+    hk = lw.hold(h, ty)
+    b.call(-1, "avant_hash_reserve", lw.two(b.copy_local(hk), b.copy_local(k)))
+    return b.copy_local(hk)
   }
   d = 0
   if t = e.ty {

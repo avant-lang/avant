@@ -138,6 +138,10 @@ fn arraynew_cases: Array(FCase) {
   xs.push(trapped("bufnew-negative", "fn main {\n  n = 0 - 5\n  b = Buf.new(n, 1)\n  puts(b.size)\n}\n", "", "avant runtime: Buf size -5 is negative"))
   xs.push(trapped("bufnew-byte", "fn main {\n  v = 256 + 0\n  b = Buf.new(4, v)\n  puts(b.size)\n}\n", "", "avant runtime: byte 256 out of range (0..255)"))
   xs.push(refused("bufnew-args", "fn main {\n  b = Buf.new(1, 2, 3)\n  puts(b.size)\n}\n", "Buf.new takes an optional Int capacity, or a size and a byte"))
+  // Hash(K, V).new(capacity): a table sized once, filled past it too.
+  xs.push(accepted("hashnew-capacity", "fn main {\n  n = 1000\n  h = Hash(Int, Int).new(n)\n  for i in 0..n {\n    h[i * 7] = i\n  }\n  s = Hash(String, Int).new(3)\n  for w in [\"a\", \"b\", \"c\", \"d\", \"e\"] {\n    s[w] = w.size\n  }\n  z = Hash(Int, String).new(0)\n  z[1] = \"one\"\n  puts(h.size)\n  puts(h[700] ?? -1)\n  puts(s.size)\n  puts(z[1] ?? \"\")\n}\n", "1000\n100\n5\none\n"))
+  xs.push(trapped("hashnew-negative", "fn main {\n  n = 0 - 2\n  h = Hash(Int, Int).new(n)\n  puts(h.size)\n}\n", "", "avant runtime: Hash capacity -2 is negative"))
+  xs.push(refused("hashnew-type", "fn main {\n  h = Hash(Int, Int).new(\"x\")\n  puts(h.size)\n}\n", "Hash(K, V).new's capacity must be Int, got String"))
   xs.push(refused("bufnew-byte-type", "fn main {\n  b = Buf.new(2, \"a\")\n  puts(b.size)\n}\n", "byte must be Int"))
   xs
 }

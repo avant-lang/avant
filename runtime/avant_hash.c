@@ -1130,6 +1130,9 @@ static int open_compact_in_place(AvantHash *h) {
   return 1;
 }
 
+static void grow_to(AvantHash *h, int32_t ncap);
+
+/* gc-lint: holds nothing (the growth is its last statement; grow_to roots the hash). */
 static void grow(AvantHash *h) {
   int32_t ncap = h->cap ? h->cap * 2 : 8;
   /* A table whose live entries are at most three quarters of the entries
@@ -1150,6 +1153,12 @@ static void grow(AvantHash *h) {
     }
     ncap = h->cap;
   }
+  grow_to(h, ncap);
+}
+
+/* The table rebuilt at NCAP positions (a power of two), every live entry
+ * moved into it. */
+static void grow_to(AvantHash *h, int32_t ncap) {
   /* The slot ceiling, before anything is allocated: cap is a power of
    * two, so the next one would not fit. */
   if (ncap > AVANT_HASH_SLOTS_MAX || ncap <= 0) {
@@ -1213,6 +1222,28 @@ static void grow(AvantHash *h) {
   if (ometa) {
     (void)avant_gc_large_drop(ometa, 2);
   }
+}
+
+/* `Hash(K, V).new(n)`: the new hash's table made at once with room for N
+ * entries (the least power of two of at least 8 positions whose fill
+ * limit takes them), as Rust's HashMap::with_capacity and Go's make(map,
+ * n): a hash filled to a size known ahead grows no more until it passes
+ * it. Nothing for N up to what the table already takes. The ceiling traps
+ * as a growth's does. gc-lint: holds nothing (the growth is its last
+ * statement; grow_to roots the hash). */
+void avant_hash_reserve(void *hash, avant_int n) {
+  AvantHash *h = (AvantHash *)hash;
+  int32_t ncap = 8;
+  if (!h || n <= 0 || (h->cap && n <= fill_max(h->cap))) {
+    return;
+  }
+  while (fill_max(ncap) < n) {
+    if (ncap >= AVANT_HASH_SLOTS_MAX) {
+      avant_trap_size(AVANT_SIZE_HASH);
+    }
+    ncap *= 2;
+  }
+  grow_to(h, ncap);
 }
 
 static int needs_grow(const AvantHash *h);

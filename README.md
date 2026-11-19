@@ -1781,6 +1781,7 @@ fn main {
 | --- | --- |
 | `["tea": 12, "milk": 3]` | a hash of these entries, set in order (a repeated key keeps its last value); its types are the first entry's, or the declared type's |
 | `Hash(K, V).new()`, `[:]` | an empty hash; `[:]` takes its type from a declaration or a parameter (`h: Hash(String, Int) = [:]`) |
+| `Hash(K, V).new(capacity)` | an empty hash with room for `capacity` entries before it grows, for a hash whose size is known ahead (a negative capacity traps) |
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
 | `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |
