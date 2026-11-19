@@ -518,6 +518,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   } else {
     h = take_run(payload);
     gc_heap.heap_bytes += bytes;
+    gc_note_cycle_peak();
     gc_heap.ctr.los.callocs++;
   }
   h->size = (uint32_t)payload;

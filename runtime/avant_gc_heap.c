@@ -574,8 +574,13 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * collection began and not reused since (a block's, a chunk's idle
  * stamp below the current count of full collections), so a buffer freed
  * and reallocated every cycle (a parse pool, a sort's scratch) stays
- * resident. And free memory up to the retention target, the larger of
- * 4 MiB and a quarter of the live bytes, stays resident. The rest goes
+ * resident. And free memory up to the retention target, the largest of
+ * 4 MiB, a quarter of the live bytes and the most memory one of the last
+ * RETAIN_CYCLES full collections' cycles used beyond its live bytes
+ * (GcHeap.cycle_peak: a program that allocates and frees large storage
+ * in cycles keeps what a cycle takes, as mimalloc keeps freed pages and
+ * Go's scavenger keeps the heap goal; before, Compress::LZWDecode gave
+ * back and faulted in again about 3 MB a cycle), stays resident. The rest goes
  * back, highest chunks first: a wholly free or empty chunk is
  * decommitted (madvised, made PROT_NONE, its side slices madvised; one
  * whose memory is already returned always is: keeping it costs only
@@ -597,6 +602,12 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * every call did. */
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
+  uint32_t k;
+  for (k = 0; k < RETAIN_CYCLES; k++) {
+    if (gc_heap.retain_hist[k] > keep) {
+      keep = gc_heap.retain_hist[k];
+    }
+  }
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
   uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;

@@ -131,6 +131,9 @@
 #define HEAP_RESERVE_GB_DEFAULT 64
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
+/* RETAIN_CYCLES: the full collections whose use of memory beyond the live
+ * bytes the retention target remembers (GcHeap.cycle_peak). */
+#define RETAIN_CYCLES 4
 /* Card marking for large pointer buffers: a card is
  * 2^CARD_SHIFT bytes of heap address space, one byte
  * of the side table gc_heap.cards. Settable at build time for a
@@ -1280,6 +1283,16 @@ typedef struct GcHeap {
    * program that never runs a full collection
    * can return memory; under E it equals the full-collection count. */
   uint64_t return_clock;
+  /* The heap's bytes at their highest since the last full collection
+   * (cycle_peak, gc_note_cycle_peak), and what the last RETAIN_CYCLES full
+   * collections found the program used beyond its live bytes (the peak
+   * less the live bytes after each; retain_hist, a ring at retain_at):
+   * gc_heap_return keeps the largest of them resident, so the memory one
+   * cycle of the program needs is not given back for the next to fault
+   * in again. */
+  uint64_t cycle_peak;
+  uint64_t retain_hist[RETAIN_CYCLES];
+  uint32_t retain_at;
   /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
    * bit and bytes (GcSpace). */
   GcSpace space[SPACE_COUNT];
@@ -1683,6 +1696,14 @@ typedef struct GcHeap {
 } GcHeap;
 
 extern GcHeap gc_heap;
+
+/* GcHeap.cycle_peak, where the heap's bytes grow (a block taken, a large
+ * object's run). */
+static inline void gc_note_cycle_peak(void) {
+  if (gc_heap.heap_bytes > gc_heap.cycle_peak) {
+    gc_heap.cycle_peak = gc_heap.heap_bytes;
+  }
+}
 
 /* A mutator thread's collector state: gc_thread, thread-local, defined
  * in avant_gc_roots.c. */

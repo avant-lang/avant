@@ -231,6 +231,7 @@ Block *gc_new_block(uint8_t space) {
     }
     b = gc_block_take();
     gc_heap.heap_bytes += BLOCK_SIZE;
+    gc_note_cycle_peak();
     gc_note_peak();
   }
   /* Block memory is not pre-zeroed. Every allocation zeroes its own

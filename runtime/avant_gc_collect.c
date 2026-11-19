@@ -668,6 +668,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
+    /* What this cycle used beyond its live bytes joins the retention
+     * history (GcHeap.cycle_peak); the next cycle's peak starts here. */
+    gc_heap.retain_hist[gc_heap.retain_at++ % RETAIN_CYCLES] =
+        gc_heap.cycle_peak > gc_heap.heap_bytes ? gc_heap.cycle_peak - gc_heap.heap_bytes : 0;
+    gc_heap.cycle_peak = gc_heap.heap_bytes;
     /* Free memory beyond the retention target goes back to the OS. */
     gc_heap_return(gc_heap.live);
     if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
