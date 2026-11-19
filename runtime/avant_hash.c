@@ -402,13 +402,17 @@ static uint32_t hash_bytes(const char *s, size_t n, uint32_t seed) {
   return out;
 }
 
-/* The hash a String key of STR's bytes takes in every Hash and Set of
- * this process: for tests (the hash's known answers under a fixed seed,
- * and its spread) and diagnostics. */
-avant_int avant_hash_str_hash(const char *str) {
-  size_t n;
-  const char *d = avant_str_bytes(str, &n);
-  return (avant_int)hash_bytes(d, n, hash_seed());
+/* The hash a String key of the N bytes at BYTES takes in every Hash and
+ * Set of this process: for tests (the hash's known answers under a fixed
+ * seed, and its spread) and diagnostics. It takes the bytes and their
+ * count, never a string object: a `lib` block gives it a String as C's
+ * `char *`, which for a view that ends its base is the address of the
+ * view's bytes inside the base, with no header of its own before it. */
+avant_int avant_hash_str_hash(const char *bytes, avant_int n) {
+  if (!bytes || n <= 0) {
+    return (avant_int)hash_bytes(AVANT_STR_EMPTY, 0, hash_seed());
+  }
+  return (avant_int)hash_bytes(bytes, (size_t)n, hash_seed());
 }
 
 static uint32_t hash_i32(int32_t k) {
