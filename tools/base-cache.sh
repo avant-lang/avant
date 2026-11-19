@@ -35,8 +35,10 @@
 #                build time; COMPLETE, written last
 # The LangArena part, CACHE/TREE/la-DIGEST/ (DIGEST: the first 12 hex of
 # the sha256 of this checkout's langarena/ harness, without tmp/ and .git,
-# and of LangArena/run.js beside the checkout; another harness is another
-# part):
+# or of the harness BASE_CACHE_LANGARENA names (a langarena/ directory,
+# such as the base's own copy when this checkout's tasks use a spelling
+# the base does not know), and of LangArena/run.js beside the checkout;
+# another harness is another part):
 #   avant/langarena/      the harness, copied; avant/langarena/tmp/ holds
 #                         the 50 programs stitched for the prod run (the
 #                         harness's own stitching: its prod pass with a
@@ -180,11 +182,14 @@ build_entry() {
 }
 
 # The LangArena part's key: the harness and the configuration it reads.
+# The harness: this checkout's langarena/, or BASE_CACHE_LANGARENA.
+lah=${BASE_CACHE_LANGARENA:-$root/langarena}
 la_digest() {
-  [ -f "$root/langarena/harness/measure.cr" ] || { echo "base-cache.sh: no langarena/ harness in $root (copy it in)" >&2; exit 2; }
+  [ -f "$lah/harness/measure.cr" ] || { echo "base-cache.sh: no langarena/ harness at $lah (copy it in)" >&2; exit 2; }
   [ -f "$root/../LangArena/run.js" ] || { echo "base-cache.sh: no LangArena/run.js beside $root" >&2; exit 2; }
   {
-    (cd "$root" && find langarena -path langarena/tmp -prune -o -path langarena/.git -prune -o -type f -print | LC_ALL=C sort | xargs sha256sum)
+    # (each path as langarena/PATH, whichever directory holds it)
+    (cd "$lah" && find . -path ./tmp -prune -o -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs sha256sum | sed 's#  \./#  langarena/#')
     sha256sum < "$root/../LangArena/run.js"
   } | sha256sum | cut -c1-12
 }
@@ -195,7 +200,8 @@ build_la() {
   rm -rf "$p"; mkdir -p "$p/avant/tools" "$p/args" "$p/stitch" || exit 1
   log=$p/build.log; : > "$log"
   t0=$(now)
-  (cd "$root" && tar --exclude=./langarena/tmp --exclude=./langarena/.git -cf - langarena) | tar -xf - -C "$p/avant" || fail "$log" "copying langarena/ failed"
+  mkdir -p "$p/avant/langarena" || exit 1
+  (cd "$lah" && tar --exclude=./tmp --exclude=./.git -cf - .) | tar -xf - -C "$p/avant/langarena" || fail "$log" "copying langarena/ failed"
   cp "$here/la-harness.sh" "$p/avant/tools/la-harness.sh"
   ln -s "$(realpath "$root/../LangArena")" "$p/LangArena"
   # The harness built where it stitches (it finds avant/ and LangArena/ from

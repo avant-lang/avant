@@ -15,23 +15,43 @@
 #             file that names a changed file's path (tests/fixtures/x/y.av
 #             as fixtures/x/y), or imports a changed library module
 #             (lib/std/json.av as std.json); test_tools.av for a change
-#             under tools/ or tests/tools/. Only tests/cases/test_*.av
-#             files run (a helper beside them, such as harness.av, is not a
-#             test). With a test map (tools/test-map.sh: TEST_MAP, else the
-#             base cache entry's testmap/ when it was built) also every test
-#             file whose run executed a line the commit changes, or the
-#             function or class around it (`test-map.sh --pick`); the cell
-#             then reads `N failed, M passed: NAMES; by the map, K (J more):
-#             NAMES`, the first names by name, path and import, the second
-#             those only the map chose. A changed file none of these
-#             reaches is left to the corpus and the gate.
+#             under tools/ or tests/tools/; the test file that checks a
+#             dump golden (tests/goldens/list.txt: a changed SOURCE of a
+#             row, or a changed golden of its STEM, selects the row's TEST,
+#             as examples/http.av selects test_goldens.av); test_examples.av
+#             for a changed examples/STEM.av or tests/expected/STEM.out
+#             when tests/expected/STEM.out exists (the example it runs).
+#             Only tests/cases/test_*.av files run (a helper beside them,
+#             such as harness.av, is not a test). With a test map
+#             (tools/test-map.sh) also every test file whose run executed a
+#             line the commit changes, or the function or class around it
+#             (`test-map.sh --pick`); the cell then reads `N failed, M
+#             passed: NAMES; by the map, K (J more): NAMES`, the first names
+#             by name, path and import, the second those only the map
+#             chose. The map is TEST_MAP, else the base cache entry's
+#             testmap/, built for the base when the range changes a file
+#             under compiler/ or lib/ (the compiler's sources: a checker
+#             change selects the tests whose runs execute it) and none is
+#             there yet, once per base tree (about 8 minutes here, its own
+#             step); TEST_MAP=none reads no map. A changed file none of
+#             these reaches is left to the corpus and the gate.
 #   corpus    every program of examples/, tests/fixtures/, tests/cases/,
 #             tests/probe_matrix.av and compiler/main.av through
 #             `__emit-ll` (tools/ll-digests.sh): the programs whose .ll or
 #             message moved, by name, and their count
 #   langarena the 50 LangArena programs as the harness stitches them (the
 #             base cache's LangArena part) through `__emit-ll`: the moved
-#             ones, by name
+#             ones, by name. The base's side is the base compiler on this
+#             checkout's langarena/; when the base compiler refuses some of
+#             those programs (this checkout's harness, or its tasks, use a
+#             name or a spelling the base does not know, such as a helper
+#             defining a name the base holds as a builtin), the base's
+#             side is read from the base's own harness instead:
+#             CC_BASE_LANGARENA (a langarena/ directory), else the main
+#             worktree's langarena/ when it differs from this one's
+#             (cache.txt names the one read). The first commit's LangArena
+#             cell then compares two harnesses' programs (each moved, and
+#             counted against the base's own)
 #   instr     instruction counts (`perf stat -e instructions:u`,
 #             tools/la-count.sh) of the LangArena programs whose .ll moved
 #             (all 50 when runtime/ changed: the runtime moves the
@@ -53,11 +73,19 @@
 #
 # The commits are checked out in OUT/work/avant, a detached worktree of
 # this repository, removed at the end (`git worktree prune` clears it if
-# the run was stopped). Its seed and bin/re2c are this checkout's. Run it
-# under the machine lock's shared side (it builds, compiles and counts; it
-# does not time), with stdin from /dev/null. Status 0 when every commit's
-# tests passed and every counted program kept its output, 1 otherwise, 2 on
-# a usage error.
+# the run was stopped). Its seed and bin/re2c are this checkout's. It
+# builds, compiles and counts; it does not time: the machine lock's shared
+# side. With CC_RUNNER (the runner's command words, such as `python3 -I
+# PATH/ledger run`), the script is started outside the lock and each piece
+# of work takes it through the runner, one shared run each (`change-check:
+# base cache`, `change-check: test map`, then per commit `change-check:
+# SHORT build`, `SHORT corpus`, `SHORT langarena`, `SHORT counts`, `SHORT
+# tests`; CC_RUN_KIND their --kind, default new): no run holds the lock
+# for the whole range, so a whole-machine run waiting meanwhile goes
+# between two of them. Without CC_RUNNER the caller holds the lock (one
+# `ledger run` around the script, as before). Stdin from /dev/null.
+# Status 0 when every commit's tests passed and every counted program kept
+# its output, 1 otherwise, 2 on a usage error.
 set -u
 
 [ $# -eq 3 ] || { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -71,6 +99,17 @@ git rev-parse --verify -q "$head^{commit}" > /dev/null || { echo "change-check.s
 commits=$(git rev-list --reverse --first-parent "$base..$head")
 [ -n "$commits" ] || { echo "change-check.sh: no commit in $base..$head" >&2; exit 2; }
 mkdir -p "$out/state" || exit 2
+bad=0
+# rn STEP CMD...: CMD through CC_RUNNER on the lock's shared side, as
+# `change-check: STEP`; without CC_RUNNER, as it is.
+runner=${CC_RUNNER:-}
+rn() {
+  r_step=$1; shift
+  if [ -n "$runner" ]; then
+    # shellcheck disable=SC2086
+    $runner --step "change-check: $r_step" --kind "${CC_RUN_KIND:-new}" -- "$@"
+  else "$@"; fi
+}
 now() { date +%s.%N; }
 secs() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", b-a}'; }
 log=$out/run.log
@@ -78,20 +117,51 @@ log=$out/run.log
 # The commit before the first: the base cache of its tree.
 first=$(echo "$commits" | head -n 1)
 t0=$(now)
-e=$(sh "$here/base-cache.sh" "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache failed (run.log)" >&2; exit 1; }
-lap=$(sh "$here/base-cache.sh" --la "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache's LangArena part failed (run.log)" >&2; exit 1; }
+e=$(rn "base cache" sh "$here/base-cache.sh" "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache failed (run.log)" >&2; exit 1; }
+lap=$(rn "base cache" sh "$here/base-cache.sh" --la "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache's LangArena part failed (run.log)" >&2; exit 1; }
 echo "base cache: $e, $lap ($(secs "$t0" "$(now)") s, $(grep -c 'built ' "$log") built)" >> "$out/cache.txt"
+# The base's side of LangArena: its own harness when the base compiler
+# refuses some of this checkout's stitched programs.
+blap=$lap
+if [ -f "$lap/refused.txt" ]; then
+  bla=${CC_BASE_LANGARENA:-}
+  if [ -z "$bla" ]; then
+    mw=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+    [ -n "$mw" ] && [ -f "$mw/langarena/harness/measure.cr" ] && [ "$(realpath "$mw")" != "$root" ] && bla=$mw/langarena
+  fi
+  if [ -n "$bla" ]; then
+    bla=$(realpath "$bla")
+    blap=$(BASE_CACHE_LANGARENA=$bla rn "base cache" sh "$here/base-cache.sh" --la "$first^" 2>> "$log" < /dev/null) \
+      || { echo "change-check.sh: the base cache's LangArena part from $bla failed (run.log)" >&2; exit 1; }
+    if [ "$blap" = "$lap" ]; then
+      echo "langarena: the base refuses $(sed -n '1p' "$lap/refused.txt" | cut -f2) of this checkout's programs, and $bla is this checkout's harness (give the base's own as CC_BASE_LANGARENA): their counts read new" >> "$out/cache.txt"
+    else echo "langarena: the base refuses $(sed -n '1p' "$lap/refused.txt" | cut -f2) of this checkout's programs; the base's side read from its own harness $bla ($blap$([ -f "$blap/refused.txt" ] && echo ", which it refuses $(sed -n '1p' "$blap/refused.txt" | cut -f2) of"))" >> "$out/cache.txt"; fi
+  else
+    echo "langarena: the base refuses $(sed -n '1p' "$lap/refused.txt" | cut -f2) of this checkout's programs, and no harness of its own is known (CC_BASE_LANGARENA): their counts read new" >> "$out/cache.txt"
+  fi
+fi
 # The entry's lock held shared while it is read: tools/base-cache.sh
 # --prune removes no entry a run holds.
 exec 7>> "$e.lock" && flock -s 7
 cp "$e/ll.tsv" "$out/state/corpus.tsv"
-# The test map (tools/test-map.sh): TEST_MAP, else the base entry's own.
+# The test map (tools/test-map.sh): TEST_MAP, else the base entry's own,
+# built when the range changes the compiler's sources and it is missing.
 tmap=${TEST_MAP:-}
-[ -z "$tmap" ] && [ -f "$e/testmap/COMPLETE" ] && tmap=$e/testmap
+if [ "$tmap" = none ]; then tmap=""; tmwhy="none (TEST_MAP=none)"
+else
+  tmwhy="none (sh tools/test-map.sh $first^ builds the base's; TEST_MAP names another)"
+  if [ -z "$tmap" ] && [ ! -f "$e/testmap/COMPLETE" ] && [ -n "$(git diff --name-only "$first^" "$head" -- compiler lib)" ]; then
+    t1=$(now)
+    if m=$(rn "test map" sh "$here/test-map.sh" "$first^" 2>> "$log" < /dev/null) && [ -f "$m/COMPLETE" ]; then
+      echo "test map: built for the base, the range changing compiler/ or lib/ ($(secs "$t1" "$(now)") s)" >> "$out/cache.txt"
+    else tmwhy="none: its build failed (run.log), so the tests by name, path and import only"; bad=1; fi
+  fi
+  [ -z "$tmap" ] && [ -f "$e/testmap/COMPLETE" ] && tmap=$e/testmap
+fi
 if [ -n "$tmap" ] && [ -f "$tmap/COMPLETE" ]; then echo "test map: $tmap (tree $(sed -n 's/^tree: //p' "$tmap/MANIFEST"))" >> "$out/cache.txt"
-else tmap=""; echo "test map: none (sh tools/test-map.sh $first^ builds the base's; TEST_MAP names another)" >> "$out/cache.txt"; fi
-cp "$lap/ll.tsv" "$out/state/la.tsv"
-cp "$lap/ins.tsv" "$out/state/ins.tsv"
+else tmap=""; echo "test map: $tmwhy" >> "$out/cache.txt"; fi
+cp "$blap/ll.tsv" "$out/state/la.tsv"
+cp "$blap/ins.tsv" "$out/state/ins.tsv"
 
 # The work tree, its seed and re2c as this checkout's.
 work=$out/work/avant
@@ -116,6 +186,16 @@ touched() { # the changed paths on stdin -> test files of the work tree
   while IFS= read -r p; do
     case "$p" in tests/cases/test_*.av) [ -f "$work/$p" ] && echo "$p" ;; esac
     case "$p" in tools/*|tests/tools/*) [ -f "$work/tests/cases/test_tools.av" ] && echo tests/cases/test_tools.av ;; esac
+    # The dump goldens' list: a row's SOURCE, or a golden of its STEM.
+    if [ -f "$work/tests/goldens/list.txt" ]; then
+      g=""; case "$p" in tests/goldens/*) g=${p#tests/goldens/}; g=${g%.*} ;; esac
+      awk -v p="$p" -v g="$g" '!/^#/ && NF >= 3 && ($3 == p || $2 == g) { print "tests/cases/" $1 ".av" }' "$work/tests/goldens/list.txt"
+    fi
+    # The examples test runs examples/STEM.av against tests/expected/STEM.out.
+    case "$p" in examples/*.av|tests/expected/*.out)
+      x=$(basename "$p"); x=${x%.*}
+      [ -f "$work/tests/expected/$x.out" ] && [ -f "$work/tests/cases/test_examples.av" ] && echo tests/cases/test_examples.av ;;
+    esac
     stem=$(basename "$p"); stem=${stem%.*}; stem=${stem#avant_}; stem=${stem#test_}
     if [ ${#stem} -ge 3 ]; then
       for t in "$work"/tests/cases/test_*"$stem"*.av; do [ -f "$t" ] && echo "tests/cases/$(basename "$t")"; done
@@ -130,7 +210,7 @@ touched() { # the changed paths on stdin -> test files of the work tree
 }
 
 printf '| Commit | Subject | Files | C'"'"' | Tests | Corpus moved | LangArena moved | Instructions (new/old) | Time |\n| --- | --- | ---: | --- | --- | --- | --- | --- | ---: |\n' > "$out/table.md"
-bad=0; i=0
+i=0
 for c in $commits; do
   i=$((i + 1)); t0=$(now)
   short=$(git rev-parse --short=8 "$c"); subj=$(git log -1 --format=%s "$c" | sed 's/|/\\|/g')
@@ -141,7 +221,7 @@ for c in $commits; do
   ctree=$(git rev-parse "$c^{tree}")
   if [ -n "$(git diff --name-only "$ptree" "$ctree" -- compiler lib runtime tools/letters.sh tools/build-llvm.sh)" ]; then
     rebuilt=yes
-    (cd "$work" && timeout -k 10 1500 sh tools/letters.sh runtime b c-llvm < /dev/null > "$d/letters.log" 2>&1) || { echo "| $short | $subj | $(wc -l < "$d/changed.txt") | build failed | | | | | |" >> "$out/table.md"; bad=1; break; }
+    rn "$short build" sh -c 'cd "$1" && exec timeout -k 10 1500 sh tools/letters.sh runtime b c-llvm' cc-build "$work" < /dev/null > "$d/letters.log" 2>&1 || { echo "| $short | $subj | $(wc -l < "$d/changed.txt") | build failed | | | | | |" >> "$out/table.md"; bad=1; break; }
     ptree=$ctree
   else rebuilt=no; fi
   runtime_moved=no
@@ -153,7 +233,7 @@ for c in $commits; do
     { grep -F -x -f "$d/list.txt" "$d/changed.txt"; cut -f1 "$out/state/corpus.tsv" | LC_ALL=C sort > "$d/known.txt"; LC_ALL=C comm -23 "$d/list.txt" "$d/known.txt"; } | LC_ALL=C sort -u > "$d/compile.txt"
   fi
   : > "$d/new.tsv"
-  [ -s "$d/compile.txt" ] && sh "$here/ll-digests.sh" "$work" "$d/compile.txt" "$d/new.tsv" < /dev/null 2>> "$log"
+  [ -s "$d/compile.txt" ] && rn "$short corpus" sh "$here/ll-digests.sh" "$work" "$d/compile.txt" "$d/new.tsv" < /dev/null 2>> "$log"
   # The commit's corpus state: the recompiled rows, the rest carried over, the removed dropped.
   awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } FILENAME == ARGV[2] { if ($1 in n) print n[$1]; else print; next }' \
     "$d/new.tsv" "$out/state/corpus.tsv" > "$d/carried.tsv"
@@ -173,7 +253,7 @@ for c in $commits; do
   # LangArena: after a rebuild, the stitched programs again.
   if [ $rebuilt = yes ]; then
     ls "$lap/avant/langarena/tmp" | grep '\.av$' | grep -v '\.cfg\.av$' | LC_ALL=C sort > "$d/la-list.txt"
-    sh "$here/ll-digests.sh" "$work" "$d/la-list.txt" "$d/la.tsv" "$lap/avant/langarena/tmp" < /dev/null 2>> "$log"
+    rn "$short langarena" sh "$here/ll-digests.sh" "$work" "$d/la-list.txt" "$d/la.tsv" "$lap/avant/langarena/tmp" < /dev/null 2>> "$log"
     cmpr "$out/state/la.tsv" "$d/la.tsv" > "$d/la.txt"
     cp "$d/la.tsv" "$out/state/la.tsv"
   else : > "$d/la.txt"; fi
@@ -183,7 +263,7 @@ for c in $commits; do
   ins="-"
   if [ -s "$d/count.txt" ]; then
     # shellcheck disable=SC2046
-    sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
+    rn "$short counts" sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
     ins=$(awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; m[$1] = $3; next }
       { r = ($2 ~ /^[0-9]+$/ && n[$1] ~ /^[0-9]+$/ && n[$1] > 0) ? sprintf("%.4f", $2 / n[$1]) : (n[$1] == "compile-failed" && $2 ~ /^[0-9]+$/) ? "new (the base refused it)" : "?"
         o = ($3 == m[$1] || n[$1] == "compile-failed") ? "" : " OUTPUT CHANGED"
@@ -210,7 +290,7 @@ EOF
   if [ -s "$d/tests.txt" ]; then
     mkdir -p "$d/tmp"
     # shellcheck disable=SC2046
-    (cd "$work" && env -u AVANT_COMPILER -u AVANT_BACKEND TMPDIR="$d/tmp" timeout -k 10 1800 ./bin/avant-c-llvm test $(cat "$d/tests.txt") < /dev/null > "$d/tests.log" 2>&1)
+    rn "$short tests" sh -c 'cd "$1" && t=$2 && shift 2 && exec env -u AVANT_COMPILER -u AVANT_BACKEND TMPDIR="$t" timeout -k 10 1800 ./bin/avant-c-llvm test "$@"' cc-tests "$work" "$d/tmp" $(cat "$d/tests.txt") < /dev/null > "$d/tests.log" 2>&1
     trc=$?
     rm -rf "$d/tmp"
     sn() { if [ -s "$1" ]; then sed 's#tests/cases/##; s#\.av$##' "$1" | tr '\n' ' ' | sed 's/ $//'; else echo -; fi; }
