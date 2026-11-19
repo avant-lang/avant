@@ -265,8 +265,8 @@ for c in $commits; do
     # shellcheck disable=SC2046
     rn "$short counts" sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
     ins=$(awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; m[$1] = $3; next }
-      { r = ($2 ~ /^[0-9]+$/ && n[$1] ~ /^[0-9]+$/ && n[$1] > 0) ? sprintf("%.4f", $2 / n[$1]) : (n[$1] == "compile-failed" && $2 ~ /^[0-9]+$/) ? "new (the base refused it)" : "?"
-        o = ($3 == m[$1] || n[$1] == "compile-failed") ? "" : " OUTPUT CHANGED"
+      { r = !($1 in n) && $2 ~ /^[0-9]+$/ ? "new (not a program of the base'"'"'s harness)" : ($2 ~ /^[0-9]+$/ && n[$1] ~ /^[0-9]+$/ && n[$1] > 0) ? sprintf("%.4f", $2 / n[$1]) : (n[$1] == "compile-failed" && $2 ~ /^[0-9]+$/) ? "new (the base refused it)" : "?"
+        o = (!($1 in n) || $3 == m[$1] || n[$1] == "compile-failed") ? "" : " OUTPUT CHANGED"
         s = s (s == "" ? "" : ", ") $1 " " r o }
       END { print s }' "$out/state/ins.tsv" "$d/ins.tsv")
     grep -q 'OUTPUT CHANGED\| ?' <<EOF && bad=1

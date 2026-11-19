@@ -78,7 +78,8 @@
 #   check-base-harness: a base that refuses the caller's tasks, with
 #     CC_BASE_LANGARENA naming the base's own harness: the base's side is
 #     read from it, so the first commit's programs are counted against the
-#     base's own (ratios, the same output), and cache.txt says so.
+#     base's own (ratios, the same output), a task only the caller's
+#     harness has reads new, and cache.txt says so.
 # Where `perf stat -e instructions:u` cannot count (a container without
 # the counters), the LangArena part and change-check cannot be built: their
 # checks print `skip: NAME: why`. Prints one line per check, `ok: NAME`,
@@ -356,8 +357,10 @@ say neutral-base-refuses $? "rc=$rc $(tr '\n' ';' < "$w/neutral3/summary.txt" 2>
 (cd "$r" && TEST_MAP=none sh tools/change-check.sh "$nb" HEAD "$w/cc2" < /dev/null > "$w/cc2.log" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc2/table.md" | grep -q '| 2: a.av, b.av | a new (the base refused it), b new (the base refused it) |'
 say check-base-refuses $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc2/table.md" 2>/dev/null) $(tail -n 3 "$w/cc2.log" | tr '\n' ';')"
+echo 'task c' > "$r/langarena/tasks/c.av"
 (cd "$r" && TEST_MAP=none CC_BASE_LANGARENA="$w/oldla" sh tools/change-check.sh "$nb" HEAD "$w/cc4" < /dev/null > "$w/cc4.log" 2>&1); rc=$?
-[ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc4/table.md" | grep -q '| 2: a.av, b.av | a [0-9][0-9.]*, b [0-9][0-9.]* |' \
+rm -f "$r/langarena/tasks/c.av"
+[ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc4/table.md" | grep -q "| 3: a.av, b.av, c.av | a [0-9][0-9.]*, b [0-9][0-9.]*, c new (not a program of the base's harness) |" \
   && ! grep -F '| a new spelling |' "$w/cc4/table.md" | grep -q 'refused\|OUTPUT' \
   && grep -q "^langarena: the base refuses 2 of this checkout's programs; the base's side read from its own harness $w/oldla " "$w/cc4/cache.txt"
 say check-base-harness $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc4/table.md" 2>/dev/null) $(cat "$w/cc4/cache.txt" 2>/dev/null | tr '\n' ';') $(tail -n 3 "$w/cc4.log" | tr '\n' ';')"
