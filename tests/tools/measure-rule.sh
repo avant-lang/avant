@@ -6,6 +6,7 @@
 #
 # WORK is a new scratch directory. The judge reads spawner results written
 # here (an idle run, a time-shared one, one with many involuntary switches,
+# a threaded one whose own threads outnumber its CPUs,
 # one beside other work). Two fake tasks in a fake run.js: one that computes
 # for about 20 ms (whatever the machine's load, its counters are recorded)
 # and one that sleeps 60 ms before it prints (its CPU time is far under its
@@ -35,6 +36,22 @@ judge judge-idle "1000000000 2048 995000 2000 0 1 5 100 100 32 100" yes
 judge judge-timeshare "1000000000 2048 500000 0 0 1 180 100 100 32 100" no
 judge judge-switches "1000000000 2048 990000 5000 0 900 1000 100 100 32 100" no
 judge judge-outside "1000000000 2048 995000 2000 0 1 5 200 200 32 100" no
+# A program whose own threads outnumber its CPUs (16 on 8, 7.4 CPUs busy,
+# nothing outside): 400 involuntary switches a second pass under the limit
+# scaled by 16/8, 600 do not; without its threads, or with 4 on 8 CPUs,
+# the limit is not scaled.
+judge3() { # NAME LINE THREADS EXPECT
+  echo "$2" > "$w/res/$1"
+  got=$($R judge "$w/res/$1" "$3" < /dev/null); rc=$?
+  case "$4:$rc:$got" in yes:0:*"	yes"|no:3:*"	no: "*) say "$1" 0 ;; *) say "$1" 1 "status $rc: $got" ;; esac
+}
+judge3 judge-threads-own "1000000000 2048 7300000 100000 0 1 400 740 740 8 100" 16 yes
+judge3 judge-threads-beyond "1000000000 2048 7300000 100000 0 1 600 740 740 8 100" 16 no
+judge judge-threads-unknown "1000000000 2048 7300000 100000 0 1 400 740 740 8 100" no
+judge3 judge-threads-fewer "1000000000 2048 3700000 100000 0 1 400 380 380 8 100" 4 no
+mkdir -p "$w/cfg"; printf 'fn cfg_iterations: Int { 10 }\nfn cfg_threads: Int { 16 }\n' > "$w/cfg/matmul_t16.cfg.av"; echo 'fn cfg_n: Int { 9 }' > "$w/cfg/other.cfg.av"
+got=$(cd "$root/tools" && python3 -I -c 'import sys; sys.path.insert(0, "."); import rounds; d = sys.argv[1]; print(rounds.threads_of(d, "matmul_t16"), rounds.threads_of(d + "/0", "matmul_t16"), rounds.threads_of(d, "other"), rounds.threads_of(d, "none"))' "$w/cfg" < /dev/null)
+[ "$got" = "16 16 None None" ]; say threads-from-cfg $? "$got"
 
 # 2. The fake tasks and run.js.
 cat > "$w/task.c" <<'EOF'

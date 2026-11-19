@@ -145,7 +145,7 @@ timed() {
     w=$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.4f", (b - a) / 1e9 }')
     rss=$(tail -n 1 "$t_b.time" 2>/dev/null | tr -cd '0-9'); [ -n "$rss" ] || rss=0
     if [ -s "$t_b.res" ]; then
-      j=$(python3 -I "$here/rounds.py" judge "$t_b.res")
+      j=$(python3 -I "$here/rounds.py" judge "$t_b.res" ${t_threads:-})
       # the spawner's own status is 0; the task's is in its result
       [ $rc -eq 0 ] && rc=$(awk '{ s = $5; if (s % 256 == 0) print int(s / 256) % 256; else print 128 + s % 128 }' "$t_b.res")
     else
@@ -161,6 +161,12 @@ timed() {
 
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 retries=${LR_RETRIES:-3}
+# A task's own threads (the harness's SLUG.cfg.av beside its binary:
+# cfg_threads), for the rule's limit on involuntary switches; empty when
+# it names none.
+threads_of() { # BIN_DIR SLUG
+  sed -n 's/^ *fn cfg_threads: Int { *\([0-9][0-9]*\) *}.*/\1/p' "$1/$2.cfg.av" 2>/dev/null | head -n 1
+}
 cmd=${1:-}; [ $# -gt 0 ] && shift
 spawner() { # RAW: compiles the spawner into RAW once
   spawn=$(python3 -I "$here/rounds.py" spawner "$1") || die "cannot build the spawner (tools/rounds.py spawner)"
@@ -210,6 +216,7 @@ avant)
     if [ ! -x "$bindir/$slug" ]; then
       printf '%s\tfail\t-\t-\t-\t-\n' "$name" >>"$out"; continue
     fi
+    t_threads=$(threads_of "$bindir" "$slug")
     timed "$bindir" "$raw" "$slug" "./$slug"
     got=$(head -n 1 "$raw/$slug.out" | tr -d ' \r')
     if [ $rc -ne 0 ]; then st=fail; elif [ "$got" = "$sum" ]; then st=ok; else st=err; fi
@@ -229,6 +236,7 @@ avant)
       if [ ! -x "$bindir/$slug" ] || [ -z "$sum" ]; then
         printf '%s\tfail\t-\t-\t-\t-\n' "$name" >>"$pout"; continue
       fi
+      t_threads=$(threads_of "$bindir" "$slug")
       timed "$bindir" "$praw" "$slug" "./$slug"
       got=$(head -n 1 "$praw/$slug.out" | tr -d ' \r')
       if [ $rc -ne 0 ]; then st=fail; elif [ "$got" = "$sum" ]; then st=ok; else st=err; fi

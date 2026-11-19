@@ -11,7 +11,7 @@ this mode costs N + 1 runs of every task.
           [--max-involuntary N] [--max-outside CPUS] [--retries N] [TASK...]
   python3 tools/rounds.py table DIR
   python3 tools/rounds.py spawner DIR      (compiles the spawner into DIR, prints its path)
-  python3 tools/rounds.py judge RESULT     (one spawner result by the undisturbed rule)
+  python3 tools/rounds.py judge RESULT [THREADS]  (one spawner result by the undisturbed rule; THREADS the program's own)
 
 `tools/lr-table.sh rounds ...` calls the first form. BIN_DIR holds the
 harness-built Avant binaries (langarena/tmp after `measure.cr -- prod`); with
@@ -87,6 +87,7 @@ lr-avant.tsv files from the raw files.
 import hashlib
 import os
 import platform
+import re
 import signal
 import statistics
 import subprocess
@@ -292,6 +293,15 @@ def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None, env=None):
 #   competitor; idle, at most 0.53 CPUs on average (typically under 0.3).
 # For CPU-bound programs only: a program that waits for input or sleeps is
 # not timed here.
+# A program whose own threads outnumber the CPUs it may run on (Matmul::T16
+# in one NUMA node's 8 CPUs) preempts itself: idle, in a node slot, its
+# involuntary switches reached 133 to 414 a second (16 threads on 8 CPUs)
+# where the same program on the whole machine stays near 50; so the limit
+# on involuntary switches is scaled by its threads over its CPUs for such a
+# program (500 a second for 16 threads on 8 CPUs), its threads read from
+# the task's configuration (cfg_threads). The other two signs, and the
+# CPU time outside the program on its CPUs above all, are judged as for
+# any program: another process on its CPUs still shows there.
 CPU_TOLERANCE = 0.01      # wall - (user + sys) at most this fraction of the wall...
 CPU_SLACK_S = 0.005       # ...or this many seconds, whichever is larger (process start and reaping)
 MAX_INVOLUNTARY_PER_S = 250  # involuntary context switches per second of wall
@@ -313,7 +323,8 @@ def rule_from_env():
 
 
 def rule_text():
-    return ("undisturbed when the CPU time is under the wall by at most %g%% or %g s, at most %g involuntary switches a second, "
+    return ("undisturbed when the CPU time is under the wall by at most %g%% or %g s, at most %g involuntary switches a second "
+            "(times its threads over its CPUs when they outnumber them), "
             "at most %g CPUs busy outside the task on its CPUs and their SMT siblings; a disturbed run is run again at once, at most %d times"
             % (CPU_TOLERANCE * 100, CPU_SLACK_S, MAX_INVOLUNTARY_PER_S, MAX_OUTSIDE_CPUS, RETRIES))
 
@@ -335,8 +346,10 @@ def set_rule(flag, value):
         die("%s needs a number, not %r" % (flag, value))
 
 
-def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None):
-    """None when the run is undisturbed, else the reason (the counters that broke the rule)."""
+def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None, threads=None):
+    """None when the run is undisturbed, else the reason (the counters that broke the rule). threads: the
+    program's own threads, when known (cfg_threads): above its CPUs, the limit on involuntary switches is
+    scaled by threads / CPUs."""
     if "nivcsw" not in res:
         return None  # a result from before the counters: nothing to judge by
     tol = CPU_TOLERANCE if tol is None else tol
@@ -348,8 +361,12 @@ def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None):
     why = []
     if wall - cpu > max(tol * wall, slack):
         why.append("CPU time %.4f s under the wall %.4f s by %.1f%%" % (cpu, wall, (wall - cpu) / wall * 100 if wall else 0))
+    own = ""
+    if threads and res.get("cpus") and threads > res["cpus"]:
+        own = "; %d threads on %d CPUs" % (threads, res["cpus"])
+        max_inv = max_inv * threads / res["cpus"]
     if wall > 0 and res["nivcsw"] > max(10, max_inv * wall):  # at least 10 for a run of a few milliseconds
-        why.append("%d involuntary context switches, %.0f a second (at most %d)" % (res["nivcsw"], res["nivcsw"] / wall, max_inv))
+        why.append("%d involuntary context switches, %.0f a second (at most %d%s)" % (res["nivcsw"], res["nivcsw"] / wall, max_inv, own))
     if wall > 0 and res["outside_mine_s"] > max(max_out * wall, 0.05):  # 0.05 s: five clock ticks, the counters' grain
         why.append("%.2f CPUs busy outside the program on its CPUs (at most %g)" % (res["outside_mine_s"] / wall, max_out))
     return "; ".join(why) or None
@@ -463,7 +480,7 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
             base = os.path.join(rd, row.get("file", row["id"]))
             for attempt in range(RETRIES + 1):
                 res, out, err = one(row, "round %d" % r)
-                why = disturbance(res)
+                why = disturbance(res, threads=row.get("threads"))
                 last = why is None or attempt == RETRIES
                 # a disturbed run that is run again is kept beside the result as FILE.disturbed-N (N from 1),
                 # never as a .run file, so the readers of the .run files see one run per row and round
@@ -499,6 +516,20 @@ def tasks_of(run_js):
 
 def slug_of(name):
     return name.lower().replace("::", "_")
+
+
+def threads_of(bdir, slug):
+    """The task's own threads from the harness's configuration beside its binary (SLUG.cfg.av's cfg_threads,
+    in BIN_DIR or its parent: a layout's directory sits below it), else None."""
+    for d in (bdir, os.path.dirname(os.path.abspath(bdir))):
+        p = os.path.join(d, slug + ".cfg.av")
+        if os.path.exists(p):
+            for line in open(p):
+                m = re.match(r"\s*fn cfg_threads: Int \{\s*(\d+)\s*\}", line)
+                if m:
+                    return int(m.group(1))
+            return None
+    return None
 
 
 def checkout_of(path):
@@ -623,7 +654,8 @@ def cmd_langarena(argv):
     for n, c in sel:
         for side, bdir in sides:
             row = {"id": "%s--%s" % (side, slug_of(n)), "argv": ["./" + slug_of(n)], "cwd": os.path.abspath(bdir),
-                   "pin": not n.startswith("Matmul::T"), "fields": {"task": n, "side": side, "checksum": c}}
+                   "pin": not n.startswith("Matmul::T"), "fields": {"task": n, "side": side, "checksum": c},
+                   "threads": threads_of(bdir, slug_of(n))}
             if layouts:
                 row["layouts"] = [(lay, os.path.abspath(os.path.join(bdir, lay))) for lay in layouts]
                 row["cwd"] = row["layouts"][0][1]
@@ -815,10 +847,11 @@ def write_tables(d):
             f.write("\n".join(lr[s]) + ("\n" if lr[s] else ""))
 
 
-def cmd_judge(res_path):
-    """One spawner result file judged by the rule: prints its counters as
-    tab-separated fields (user_s sys_s nvcsw nivcsw outside_cpus) and then
-    `yes` or `no: REASON`; status 0 when undisturbed, 3 when disturbed."""
+def cmd_judge(res_path, threads=None):
+    """One spawner result file judged by the rule (THREADS: the program's own
+    threads, when known): prints its counters as tab-separated fields
+    (user_s sys_s nvcsw nivcsw outside_cpus) and then `yes` or `no:
+    REASON`; status 0 when undisturbed, 3 when disturbed."""
     try:
         f = [int(x) for x in open(res_path).read().split()]
     except (OSError, ValueError) as e:
@@ -826,7 +859,7 @@ def cmd_judge(res_path):
     if len(f) < 11:
         die("judge %s: not a result of this spawner" % res_path)
     res = parse_result(f)
-    why = disturbance(res)
+    why = disturbance(res, threads=threads)
     wall = f[0] / 1e9
     print("%.4f\t%.4f\t%d\t%d\t%.3f\t%s" % (res["user_s"], res["sys_s"], res["nvcsw"], res["nivcsw"],
                                          res["outside_mine_s"] / wall if wall else 0.0, "no: " + why if why else "yes"))
@@ -848,8 +881,10 @@ def main():
     if sys.argv[1] == "rule" and len(sys.argv) == 2:
         print(rule_text())
         return 0
-    if sys.argv[1] == "judge" and len(sys.argv) == 3:
-        return cmd_judge(sys.argv[2])
+    if sys.argv[1] == "judge" and len(sys.argv) in (3, 4):
+        if len(sys.argv) == 4 and not sys.argv[3].isdigit():
+            die("judge RESULT [THREADS]: THREADS is a number of threads, not %r" % sys.argv[3])
+        return cmd_judge(sys.argv[2], int(sys.argv[3]) if len(sys.argv) == 4 and sys.argv[3] != "0" else None)
     if sys.argv[1] == "table" and len(sys.argv) == 3:
         write_tables(sys.argv[2])
         print(os.path.join(sys.argv[2], "rounds.md"))
