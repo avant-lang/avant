@@ -71,7 +71,7 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
     return bad
   }
   t0 = now_us()
-  text = ll_emit_module(m, job.inline_fast)
+  text = ll_emit_module(m, job.inline_fast, job.codegen == "release")
   t1 = now_us()
   job.emit_us = t1 - t0
   if job.keep_ll.size > 0 {
@@ -99,7 +99,7 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
   if bad.size > 0 {
     return bad
   }
-  if e = write_failure(file_write(ll_path, ll_emit_module(m, inline_fast))) {
+  if e = write_failure(file_write(ll_path, ll_emit_module(m, inline_fast, true))) {
     return e.message()
   }
   ""

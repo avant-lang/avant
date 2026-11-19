@@ -110,6 +110,56 @@ pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
   e.frame_desc = "ptr getelementptr (i8, ptr ${name}, i64 2)"
 }
 
+// The slot locals read through a copy, into e.shadow, each copy an
+// alloca of its own (%sh<n>). A slot local's address escapes to the
+// runtime with the frame record, so LLVM must assume that every call
+// writes it, and keeps no slot's value in a register across a path with a
+// call: a loop whose rare path calls the runtime (a Buf's growth in
+// push_byte, an allocation's slow path) read each reference it uses from
+// its slot again in every iteration, and the data it reaches through it.
+// A copy LLVM can keep in a register holds the same value: every store of
+// the local writes the slot and the copy, and after each call the copy is
+// read again from the slot (LlEmit.resync), where a moving collection
+// rewrote it; between two calls no collection runs (a collection reads
+// and rewrites a thread's slots only at its safepoints: rule E2). The
+// slot is still what the collector reads and rewrites. A local qualifies
+// when it is one pointer word and its address is never taken (an address
+// could be stored through without the copy seeing it). Only in an
+// optimized build (shadows_on): without mem2reg the copies would be
+// loads and stores of their own.
+pub fn ll_shadow_slots(e: LlEmit, f: MFunc) {
+  e.shadow = []
+  e.resync_pending = false
+  if !e.shadows_on || e.frame_words < 0 {
+    return
+  }
+  any = false
+  for i in 0..f.locals.size {
+    ok = i < e.frame_at.size && e.frame_at[i] >= 0 && f.valid_local(i) && e.llt(f.locals[i].ty) == "ptr"
+    e.shadow.push(ok)
+    if ok {
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) {
+        if p.local < e.shadow.size {
+          e.shadow[p.local] = false
+        }
+      }
+    }
+  }
+  for i in 0..e.shadow.size {
+    if e.shadow[i] {
+      e.line("%sh${i} = alloca ptr, align 8")
+    }
+  }
+}
+
 pub fn ll_gc_frame_type(e: LlEmit): String {
   if e.frame_words == 0 {
     return "{ ptr, i64 }"
@@ -434,6 +484,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
   }
   s = ll_alloc_birth(e, sc, birth)
+  e.resync()
   e.line("br label %${cont}")
 
   e.block(cont)
@@ -687,6 +738,7 @@ pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
   e.line("br label %${done}")
   e.block(slow)
   e.line("call void @avant_buf_push_byte(ptr ${b}, i64 ${v})")
+  e.resync()
   e.line("br label %${done}")
   e.block(done)
   ""
@@ -800,6 +852,7 @@ pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
   } else {
     e.line("call void @${name}(ptr ${a}, ${et} ${v})")
   }
+  e.resync()
   e.line("br label %${done}")
   e.block(done)
   if !slot_form {
@@ -916,6 +969,7 @@ pub fn ll_array_pop(e: LlEmit, name: String, args: Array(MOperand)): String {
   } else {
     e.line("${r} = call ptr @${name}(ptr ${a}, i64 ${esz})")
   }
+  e.resync()
   e.line("br label %${done}")
   e.block(done)
   res = e.tmp()
@@ -959,6 +1013,7 @@ pub fn ll_str_unview(e: LlEmit, name: String, args: Array(MOperand)): String {
   e.block(view)
   r = e.tmp()
   e.line("${r} = call ptr @${name}(ptr ${s})")
+  e.resync()
   e.line("br label %${done}")
   e.block(done)
   p = e.tmp()
@@ -1040,6 +1095,7 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.line("br i1 ${x}, label %${yes}, label %${cont}")
   e.block(yes)
   e.line("call void @avant_gc_poll()")
+  e.resync()
   e.line("br label %${cont}")
   e.block(cont)
 }

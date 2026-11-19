@@ -34,9 +34,10 @@ pub fn ll_triple: String {
 
 // The .ll text of a module that verified at stage final. inline_fast
 // false emits the call forms of allocation and the barrier.
-pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
+pub fn ll_emit_module(m: MModule, inline_fast: Bool, shadows: Bool): String {
   e = LlEmit.new(m)
   e.inline_fast = inline_fast
+  e.shadows_on = shadows
   if m.globals.size > 0 {
     ll_const_facts(e)
   }
@@ -567,9 +568,10 @@ fn ll_function(e: LlEmit, f: MFunc) {
       }
     }
   }
+  ll_shadow_slots(e, f)
   i = 1
   while i <= f.nparams {
-    e.store(f.locals[i].ty, "%a${i}", e.local_addr(i), e.slot_vol(i))
+    e.store_local(i, "%a${i}")
     i += 1
   }
   e.line("br label %bb0")
@@ -606,9 +608,15 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
       val = ll_rvalue(e, rv, pt)
       ptr = e.place_ptr(p)
       e.store_tagged(pt, val, ptr, e.pa_vol, e.pa_tbaa)
+      if p.proj.size == 0 && e.shadowed(p.local) {
+        // The copy was stored; the slot the collector reads too.
+        e.store_tagged(pt, val, e.local_addr(p.local), false, e.pa_tbaa)
+      }
     }
   } else if k == msk_call() {
+    e.resync_pending = true
     ll_call(e, st)
+    e.resync()
   } else if k == msk_barrier() {
     ll_barrier(e, st.args[0])
   } else if k == msk_barrier_at() {
@@ -617,6 +625,11 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
     ll_bounds(e, st)
   } else if k == msk_gc_enter() {
     ll_gc_frame_enter(e)
+    if e.f.first_frame() || !e.inline_fast {
+      // The runtime's entry may set the heap up.
+      e.resync_pending = true
+      e.resync()
+    }
   } else if k == msk_gc_leave() {
     ll_gc_frame_leave(e)
   }
@@ -755,8 +768,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
     }
   }
   if st.dest >= 0 {
-    d = st.dest
-    e.store(e.f.locals[d].ty, result, e.local_addr(d), e.slot_vol(d))
+    e.store_local(st.dest, result)
   }
 }
 
@@ -1079,7 +1091,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   } else if k == mtk_return() {
     if e.f.has_ret() {
       ty = e.f.locals[0].ty
-      x = e.load(ty, e.local_addr(0), e.slot_vol(0))
+      x = e.load(ty, e.read_addr(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
     } else {
       e.line("ret void")

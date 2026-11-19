@@ -45,6 +45,14 @@ pub class LlEmit {
   pub frame_align: Int = 8
   pub frame_desc: String = ""
   pub frame_maps: Array(String)
+  // The slot locals read through a copy of their own (ll_shadow_slots):
+  // true at each such local's index, in the function being emitted;
+  // whether this module's functions get them (an optimized build), and
+  // whether a call was emitted since the copies were last read again from
+  // the frame record (resync).
+  pub shadow: Array(Bool)
+  pub shadows_on: Bool = false
+  pub resync_pending: Bool = false
   pub cur_file: Int = 0
   pub cur_line: Int = 0
   pub cur_col: Int = 0
@@ -104,6 +112,7 @@ pub class LlEmit {
     self.loop_md_n = ll_tbaa_last()
     self.frame_at = []
     self.frame_maps = []
+    self.shadow = []
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
     self.arith_keys = []
@@ -295,6 +304,51 @@ pub class LlEmit {
     local_name(n)
   }
 
+  // Whether local n is a slot local read through its copy.
+  pub fn shadowed(n: Int): Bool {
+    n < self.shadow.size && self.shadow[n]
+  }
+
+  // The address local n is read at: its copy's for a shadowed slot
+  // local, which holds the slot's value at every point between two calls
+  // (ll_shadow_slots), else local_addr's.
+  pub fn read_addr(n: Int): String {
+    if shadowed(n) {
+      return "%sh${n}"
+    }
+    local_addr(n)
+  }
+
+  // A store of a whole local's value: into its place, and into its copy
+  // when it is shadowed.
+  pub fn store_local(n: Int, val: String) {
+    ty = self.f.locals[n].ty
+    store(ty, val, local_addr(n), slot_vol(n))
+    if shadowed(n) {
+      store(ty, val, "%sh${n}", false)
+    }
+  }
+
+  // After a call that may collect or write a slot: every shadowed slot
+  // local's copy read again from the frame record, where a moving
+  // collection rewrote it. A copy read again and not used before its
+  // local's next store is dead, and the optimizer removes the load. Once
+  // per call: an inline fast path calls it in its slow block, right after
+  // the runtime's call, so that the fast path keeps the copies.
+  pub fn resync {
+    if !self.resync_pending {
+      return
+    }
+    self.resync_pending = false
+    for i in 0..self.shadow.size {
+      if self.shadow[i] {
+        t = tmp()
+        line("${t} = load ptr, ptr ${local_addr(i)}, align 8")
+        line("store ptr ${t}, ptr %sh${i}, align 8")
+      }
+    }
+  }
+
   // Rule E2: no slot access is volatile. A collection reads and rewrites
   // a thread's slots only while that thread is stopped at a safepoint (a
   // collecting call, the poll) or native (inside a call), in a shared
@@ -345,7 +399,7 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = local_addr(p.local)
+    ptr = read_addr(p.local)
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an
