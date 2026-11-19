@@ -1536,6 +1536,15 @@ pub class Checker {
   // has none.
   pub fn check_else_bind(stmt: Stmt): Ty? {
     n = stmt.else_bind
+    if n != "_" && !n.starts_with("__") {
+      if old = lookup(n) {
+        // As the condition's own binding: the else block's name is that
+        // block's own, so an existing name would be hidden in it.
+        form = if stmt.loop_head { "while" } else { "if" }
+        fail(stmt.loc, "${form} ... else ${n}: ${n} already names a variable here; the name an else binds is its block's own and ends with it (it would hide ${n} there): give the failure a new name")
+        return nil
+      }
+    }
     if stmt.pre.size > 0 {
       fail(stmt.loc, "else ${n} reads the failure of an if-assign's one binding, and this condition has several elements: bind them one by one, or switch over the value")
       return nil
