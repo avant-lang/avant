@@ -717,6 +717,7 @@ __attribute__((visibility("hidden"))) void avant_stack_thread_init(void *lo, voi
 __attribute__((visibility("hidden"))) void avant_stack_role(int role);
 __attribute__((visibility("hidden"))) void avant_stack_ensure(void);
 __attribute__((visibility("hidden"))) void avant_tmp_on_crash(void);
+__attribute__((visibility("hidden"))) void avant_out_pending(void);
 __attribute__((visibility("hidden"))) void (*avant_tmp_crash_handler(void))(int);
 __attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
 __attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);

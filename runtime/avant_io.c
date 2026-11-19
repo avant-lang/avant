@@ -1375,6 +1375,8 @@ static void out_check_at_exit(void) {
  * directory on it. std.http's sockets never raise it (every socket write
  * carries MSG_NOSIGNAL: uSockets' bsd_send and bsd_write2). The exit
  * check is registered first, so it runs after tmp_finish. */
+static void tmp_catch(int sig);
+
 __attribute__((constructor)) static void avant_io_start(void) {
   struct sigaction sa;
   sigset_t set;
@@ -1386,6 +1388,11 @@ __attribute__((constructor)) static void avant_io_start(void) {
   sigaddset(&set, SIGPIPE);
   sigprocmask(SIG_UNBLOCK, &set, NULL);
   atexit(out_check_at_exit);
+  /* A program ended by SIGTERM or SIGINT (kill, Ctrl-C) keeps what it
+   * printed: the handler writes stdout's buffer before the default
+   * action (tmp_on_signal). Only a default action is replaced. */
+  tmp_catch(SIGINT);
+  tmp_catch(SIGTERM);
 }
 
 /* The private directory's cleanup on a crash, from a fault handler that
@@ -1398,8 +1405,17 @@ void avant_tmp_on_crash(void) {
   tmp_finish();
 }
 
+/* A signal that ends the program (SIGTERM, SIGINT, SIGHUP, a closed
+ * pipe, a crash the fault handler does not take): what the program
+ * printed and stdout still buffers is written first, as a crash's is
+ * (avant_out_pending: the bytes up to the buffer's write pointer, with
+ * write(2), since the signal may stop a write half way), then the
+ * private directory's cleanup, then the signal's default action. */
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
+  if (sig != SIGPIPE) {
+    avant_out_pending();
+  }
   if (g_tmp_ready && getpid() == g_tmp_owner) {
     tmp_stop_children();
   }

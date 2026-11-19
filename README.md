@@ -4393,7 +4393,7 @@ fn main {
 
 **A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. To keep a child's output in a file, write `process.output`'s `stdout` with `fs.write`, or let a shell redirect it (`process.run("sh", ["-c", "make > build.log 2>&1"])`). `process.signal_of(e.signal)` names the signal (`Signal.kill`).
 
-**Signals.** `process.Signal` names a signal by its Linux name without `SIG` (`Signal.term`, `Signal.int`, `Signal.hup`, `Signal.pipe`, `Signal.usr1`, …; `s.number()` is its number, `process.signal_of(n)` the `Signal?` of a number). `process.notify(signals)` delivers the signals it names to the program instead of their default action (ending it), from that call on: its `recv()` waits for the next, in a task, so a server stopped by a container's SIGTERM closes and drains:
+**Signals.** A program that a SIGTERM or a SIGINT ends (`kill`, Ctrl-C) first writes what it printed and standard output still buffers, as a crash does, then dies by the signal (status 143, 130). `process.Signal` names a signal by its Linux name without `SIG` (`Signal.term`, `Signal.int`, `Signal.hup`, `Signal.pipe`, `Signal.usr1`, …; `s.number()` is its number, `process.signal_of(n)` the `Signal?` of a number). `process.notify(signals)` delivers the signals it names to the program instead of their default action (ending it), from that call on: its `recv()` waits for the next, in a task, so a server stopped by a container's SIGTERM closes and drains:
 
 <!-- check: compile -->
 ```avant

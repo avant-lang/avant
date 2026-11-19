@@ -16,6 +16,7 @@ fn program: String {
   b = Buf.new()
   b.push_str("import std.fs\nimport std.process\nimport std.time\n\n")
   b.push_str("lib crash_c {\n  fun avant_tmp_dir: String\n  fun so_call_on_thread(f: fn(Int): Int): Int\n  fun crash_write_null(k: Int): Int\n  fun crash_bus: Int\n}\n\n")
+  b.push_str("lib sig_c {\n  fun kill(pid: Int32, sig: Int32): Int32\n  fun getpid: Int32\n}\n\n")
   b.push_str("fn depth(n: Int): Int {\n  if n == 0 {\n    return 0\n  }\n  d = depth(n - 1)\n  d + 1 + ((d + n) & 1)\n}\n\n")
   b.push_str("fn start(n: Int): Int {\n  xs = [n]\n  depth(xs[0])\n}\n\n")
   b.push_str("fn null_on_thread(n: Int): Int {\n  xs = [n]\n  crash_c.crash_write_null(xs[0] - n)\n}\n\n")
@@ -29,6 +30,7 @@ fn program: String {
   b.push_str("  if m == \"null-task\" {\n    h2 = spawn { crash_c.crash_write_null(0) }\n    puts(h2.join() ?? -1)\n  }\n")
   b.push_str("  if m == \"null-callback\" {\n    puts(crash_c.so_call_on_thread(null_on_thread))\n  }\n")
   b.push_str("  if m == \"bus\" {\n    puts(crash_c.crash_bus())\n  }\n")
+  b.push_str("  if m == \"term\" {\n    puts(sig_c.kill(sig_c.getpid(), 15))\n  }\n")
   b.push_str("  puts(child.join() ?? -1)\n}\n")
   b.to_s()
 }
@@ -54,6 +56,11 @@ fn cases: Array(Case) {
     Case.new("null-task", 139, "avant runtime: segmentation fault in main in a task: address 0x0 is not mapped (a null pointer, most likely in C code)"),
     Case.new("null-callback", 139, "avant runtime: segmentation fault in null_on_thread in a callback on a C thread: address 0x0 is not mapped (a null pointer, most likely in C code)"),
     Case.new("bus", 135, "avant runtime: bus error in main on the main thread: address 0x"),
+    // Ended by SIGTERM: what it printed is kept, as for a crash, and the
+    // signal ends it (128 + 15), saying nothing. (SIGINT is ignored in a
+    // shell's background job, as these runs are: plain_signal_cases
+    // sends it in the foreground.)
+    Case.new("term", 143, ""),
   ]
 }
 
@@ -70,6 +77,22 @@ fn read_all(path: String): String {
 fn case_lines(work: String, bin: String, name: String, mode: String): String {
   d = "${work}/${name}"
   "(mkdir -p '${d}.base' && cd '${d}.base' && ulimit -c 0 && env AVANT_KEEP_TMP= TMPDIR='${d}.base' CRASH_MODE=${mode} CRASH_OUT='${d}' '${bin}' > '${d}.out' 2> '${d}.err'; echo $? > '${d}.rc'; p=$(cat '${d}.pid' 2>/dev/null); s=x; [ -n \"$p\" ] && s=$(ps -o stat= -p \"$p\" 2>/dev/null); case \"$s\" in ''|Z*) echo gone ;; *) echo \"alive $p\"; kill \"$p\" ;; esac > '${d}.child'; ls -A '${d}.base' > '${d}.left') &\n"
+}
+
+// A program that made no private directory, ended by SIGTERM or SIGINT
+// with its output a file: the lines it printed are written before it
+// dies by the signal.
+fn plain_signal_cases(c: Checks, compiler: String, work: String) {
+  src = "${work}/plain_sig.av"
+  _ = fs.write(src, "lib sig_c {\n  fun kill(pid: Int32, sig: Int32): Int32\n  fun getpid: Int32\n}\n\nfn main {\n  args = process.args()\n  puts(\"start\")\n  if args[1] == \"15\" {\n    puts(sig_c.kill(sig_c.getpid(), 15))\n  } else {\n    puts(sig_c.kill(sig_c.getpid(), 2))\n  }\n}\nimport std.process\n")
+  bin = "${work}/plain_sig.bin"
+  c.eq_int(compile_av(compiler, src, bin, "${work}/plain_sig.clog"), 0, "the plain signal program compiles")
+  for sig, code in [15: 143, 2: 130] {
+    out = "${work}/plain_sig_${sig}.out"
+    args = ["-c", "'${bin}' ${sig} > '${out}' 2> '${out}.err'; echo $? >> '${out}'"]
+    _ = process.run("/bin/sh", args)
+    c.eq_str(read_all(out), "start\n${code}\n", "a plain program ended by signal ${sig}: its output kept, status ${code}")
+  }
 }
 
 fn test_crash_cleanup(c: Checks) {
@@ -109,6 +132,7 @@ fn test_crash_cleanup(c: Checks) {
         c.eq_str(read_all("${d}.child").strip(), "gone", "${what}: the child it waited on is stopped")
       }
     }
+    plain_signal_cases(c, compiler, work)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

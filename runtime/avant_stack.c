@@ -562,6 +562,13 @@ static void chain(int sig, siginfo_t *si, void *ucv) {
  * soon as its write returns); the process ends next, so the buffer is not
  * flushed again. glibc's FILE fields; on another C library, nothing. */
 static void out_pending(void) {
+  avant_out_pending();
+}
+
+/* out_pending's work, for the end of a program by SIGTERM or SIGINT too
+ * (avant_io.c's tmp_on_signal): the signal may stop a thread in the
+ * middle of a write, as a fault may. */
+void avant_out_pending(void) {
 #if defined(__GLIBC__)
   FILE *f = stdout;
   const char *b = f->_IO_write_base;
