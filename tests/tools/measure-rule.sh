@@ -86,7 +86,8 @@ grep -q '^Fake::Sleep	disturbed	' "$w/rounds/x.lr-avant.tsv"; say rounds-lr-dist
 # 4. lr-table.sh: the re-measure's counters, one retry, the table's notes;
 # the twin's row, the library marks and the pure table.
 cp "$w/bin/fake_busy" "$w/bin/fake_busy-pure"
-printf 'task\tlibrary\ttwin\ttwin_slug\nFake::Busy\tlibbusy (C)\tFake::Busy-Pure\tfake_busy-pure\nFake::Sleep\tlibsleep (C)\t-\t-\n' > "$w/bin/library.tsv"
+cp "$w/bin/fake_busy" "$w/bin/fake_busy-clever"
+printf 'task\tlibrary\ttwin\ttwin_slug\tkind\tcompared\nFake::Busy\tlibbusy (C)\tFake::Busy-Pure\tfake_busy-pure\tcommon\tC, Go\nFake::Busy\tlibbusy (C)\tFake::Busy-Clever\tfake_busy-clever\tclever\tRust\nFake::Sleep\tlibsleep (C)\t-\t-\t-\t-\n' > "$w/bin/library.tsv"
 LR_RETRIES=1 sh "$root/tools/lr-table.sh" avant "$w/bin" "$w/run.js" "$w/lr/lr-avant.tsv" < /dev/null > "$w/lr.log" 2>&1 || mkdir -p "$w/lr"
 mkdir -p "$w/lr"
 awk -F'\t' '$1 == "task" { exit !(NF == 13 && $7 == "user_s" && $13 == "undisturbed") }' "$w/lr/lr-avant.tsv" \
@@ -100,16 +101,21 @@ printf '# label: Other\ntask\tstatus\twall_s\trss_kb\tinprog_s\texit\nFake::Busy
 sh "$root/tools/lr-table.sh" table "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/table.md" 2> "$w/table.err"
 grep 'Fake::Sleep' "$w/table.md" | head -n 1 | grep -q 'Avant: disturbed (2 attempts);'
 say lr-table-notes $? "$(grep -m 1 'Fake::Sleep' "$w/table.md")"
-awk -F'\t' '$1 == "Fake::Busy-Pure" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" && cmp -s "$w/bin/library.tsv" "$w/lr/library.tsv"
+awk -F'\t' '$1 == "Fake::Busy-Pure" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" \
+  && awk -F'\t' '$1 == "Fake::Busy-Clever" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" && cmp -s "$w/bin/library.tsv" "$w/lr/library.tsv"
 say lr-pure-measured $? "$(grep Pure "$w/lr/lr-avant-pure.tsv" 2>/dev/null)"
 grep -q '^Avant source: .* 2 of the 2 rows rely on a library' "$w/table.md" && grep -q '^Avant as written: wall sum ' "$w/table.md" \
   && grep 'Fake::Busy' "$w/table.md" | head -n 1 | grep -q '| Fake::Busy | .* library: libbusy (C); |$'
 say lr-table-library $? "$(head -n 3 "$w/table.md" | tr '\n' ' ')"
 sh "$root/tools/lr-table.sh" pure "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/pure.md" 2> "$w/pure.err"
 grep -q '^Avant as written: .* Pure Avant: wall sum ' "$w/pure.md" \
-  && grep 'Fake::Busy' "$w/pure.md" | head -n 1 | grep -q '| Fake::Busy | .* pure twin of libbusy (C); |$' \
+  && grep 'Fake::Busy' "$w/pure.md" | head -n 1 | grep -q '| Fake::Busy | .* common twin Fake::Busy-Pure of libbusy (C), the algorithm of C, Go; clever twin Fake::Busy-Clever, the algorithm of Rust: ok [0-9.]* s; |$' \
   && grep 'Fake::Sleep' "$w/pure.md" | head -n 1 | grep -q 'still on a library: libsleep (C); |$'
 say lr-table-pure $? "$(cat "$w/pure.err") $(grep -m 1 'Fake::Busy' "$w/pure.md")"
+# the clever line: Fake::Busy by its clever twin, Fake::Sleep as it is
+grep -q '^Avant as written: .* Pure Avant with the clever twins (1 of them, .*): wall sum [0-9.]* s over 2 ok rows' "$w/pure.md" \
+  && grep -q '^Avant source: .* 1 of the 2 rows still rely on a library' "$w/pure.md"
+say lr-table-clever $? "$(sed -n 3,5p "$w/pure.md" | tr '\n' ' ')"
 mkdir -p "$w/refrun"
 sh "$root/tools/lr-table.sh" ref Fake "$w/bin" "$w/refrun/fake.tsv" "$w/run.js" /bin/echo < /dev/null > "$w/refrun.log" 2>&1
 grep -q "^cpu: $(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -n 1)\$" "$w/refrun/machine.txt" \

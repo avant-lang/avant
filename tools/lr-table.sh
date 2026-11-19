@@ -16,8 +16,9 @@
 #       Re-measure the harness-built Avant binaries (BIN_DIR/<slug>, as left by
 #       `measure.cr -- prod` in langarena/tmp). Put OUT.tsv in the harness
 #       results directory as lr-avant.tsv. When BIN_DIR holds library.tsv
-#       (the harness's list of library-backed tasks and their pure-Avant
-#       twins), each twin's binary (BIN_DIR/<twin_slug>) is measured the
+#       (the harness's list of the library-backed tasks and of every
+#       pure-Avant twin: task, library or "-", twin, twin_slug, kind,
+#       compared), each twin's binary (BIN_DIR/<twin_slug>) is measured the
 #       same way, checked against its task's checksum in RUN_JS, into
 #       lr-avant-pure.tsv beside OUT.tsv (the same columns, the twin's name
 #       in the first), and library.tsv is copied beside OUT.tsv.
@@ -36,13 +37,19 @@
 #       (the wall sum of Avant's ok rows and their average MB). The Task
 #       cells are unchanged. Without library.tsv the output is as before.
 #   lr-table.sh pure REF_DIR AVANT [PUBLISHED.js]
-#       The same table for pure Avant: each task that has a pure-Avant twin
-#       (lr-avant-pure.tsv beside lr-avant.tsv, or runtime-pure.tsv beside
-#       the harness's runtime.tsv) is shown with its twin's numbers under
-#       its own task name, its Notes "pure twin of <library>;"; the other
-#       library-backed rows are noted "still on a library: <what>;". Both
-#       totals, "Avant as written" and "pure Avant", come first. Refused
-#       without library.tsv or without the twins' tsv.
+#       The same table for pure Avant: each task that has a common twin
+#       (library.tsv's kind "common" or "common+clever", or no kind: the
+#       majority's algorithm; its numbers in lr-avant-pure.tsv beside
+#       lr-avant.tsv, or runtime-pure.tsv beside the harness's runtime.tsv)
+#       is shown with its twin's numbers under its own task name, its Notes
+#       naming the twin, its kind and the references whose algorithm it
+#       writes; the other library-backed rows are noted "still on a
+#       library: <what>;". The totals come first: "Avant as written",
+#       "pure Avant", and pure Avant with the clever twins (kind "clever"
+#       or "common+clever": the approach of the reference ranked first on
+#       the task), each task with a clever twin counted by it and the
+#       others as in pure Avant. Refused without library.tsv or without the
+#       twins' tsv.
 #   lr-table.sh rounds N RUN_JS OUT_DIR [OPTION...] [TASK...]
 #       Median-of-N with rotation (tools/rounds.py langarena; its --help has
 #       the method): one warm-up, then N rounds of every task's binary,
@@ -296,7 +303,10 @@ table|pure)
   FILENAME == pubtsv { if ($1 == "t") pt[$2, $3] = $4; else pm[$2, $3] = $4; next }
   FILENAME == notesfile { if ($1 != "" && $1 !~ /^#/) note[$1] = $2; next }
   FILENAME == runsfile { if ($0 ~ / prod$/) { sub(/ prod$/, ""); prod[$0] = 1 }; next }
-  FILENAME == libfile { if ($1 != "") { lib[$1] = $2; if ($3 != "-" && $3 != "") twin[$1] = $3 }; next }
+  FILENAME == libfile { if ($1 != "") { if ($2 != "-" && $2 != "") lib[$1] = $2
+      if ($3 != "-" && $3 != "") { kind[$3] = ($5 == "" ? "common" : $5); cmpd[$3] = $6
+        if (kind[$3] ~ /^common/ && !($1 in twin)) twin[$1] = $3
+        if (kind[$3] ~ /clever$/ && !($1 in clever)) clever[$1] = $3 } }; next }
   FILENAME == purefile { pst[$1] = $2; pw[$1] = $3; pr[$1] = $4; if ($13 ~ /^no/) pdist[$1] = " Avant: disturbed (" $12 " attempts);"; next }
   file == 1 { order[++n] = $1; ast[$1] = $2; aw[$1] = $3; ar[$1] = $4; if ($13 ~ /^no/) { adist[$1] = " Avant: disturbed (" $12 " attempts);"; dist[$1] = dist[$1] adist[$1] }; next }
   { lang = fname; langs[lang] = 1; st[lang, $1] = $2; w[lang, $1] = $3; r[lang, $1] = $4; if ($13 ~ /^no/) dist[$1] = dist[$1] " " lang ": disturbed;" }
@@ -307,10 +317,16 @@ table|pure)
     nl = 0; ko = 0; ws = 0; ms = 0
     for (i = 1; i <= n; i++) { t = order[i]; if (t in lib) nl++; if (ast[t] == "ok") { ko++; ws += aw[t]; ms += ar[t] } }
     if (mode == "pure") {
-      np = 0; pko = 0; pws = 0; pms = 0
+      # the clever line first, from the numbers of the tasks: each task with a
+      # clever twin that ran counts it, else its common twin, else itself
+      cko = 0; cws = 0; cms = 0; nc = 0
+      for (i = 1; i <= n; i++) { t = order[i]; ct = (t in clever) ? clever[t] : ((t in twin) ? twin[t] : "")
+        if (ct != "" && (ct in pst)) { cs = pst[ct]; cw = pw[ct]; cr = pr[ct]; if (t in clever) nc++ } else { cs = ast[t]; cw = aw[t]; cr = ar[t] }
+        if (cs == "ok") { cko++; cws += cw; cms += cr } }
+      np = 0; npl = 0; pko = 0; pws = 0; pms = 0
       for (i = 1; i <= n; i++) { t = order[i]
         if ((t in twin) && (twin[t] in pst)) { tt = twin[t]; ast[t] = pst[tt]; aw[t] = pw[tt]; ar[t] = pr[tt]
-          dist[t] = pdist[tt] substr(dist[t], length(adist[t]) + 1); rep[t] = 1; np++ }
+          dist[t] = pdist[tt] substr(dist[t], length(adist[t]) + 1); rep[t] = 1; np++; if (t in lib) npl++ }
         if (ast[t] == "ok") { pko++; pws += aw[t]; pms += ar[t] } }
     }
     for (i = 1; i <= n; i++) {
@@ -338,14 +354,16 @@ table|pure)
       if (ast[t] != "ok") miss[t] = miss[t] " Avant: " ast[t] ";"
       if (t in note) miss[t] = miss[t] " " note[t]
       if (t in dist) miss[t] = miss[t] dist[t]
-      if (t in rep) miss[t] = miss[t] " pure twin of " lib[t] ";"
-      else if (t in lib) miss[t] = miss[t] (mode == "pure" ? " still on a library: " : " library: ") lib[t] ";"
+      if (t in rep) miss[t] = miss[t] " " kind[twin[t]] " twin " twin[t] ((t in lib) ? " of " lib[t] : "") ((cmpd[twin[t]] != "") ? ", the algorithm of " cmpd[twin[t]] : "") ";"
+      if (mode == "pure" && (t in rep) && (t in clever) && clever[t] != twin[t]) miss[t] = miss[t] " clever twin " clever[t] ((cmpd[clever[t]] != "") ? ", the algorithm of " cmpd[clever[t]] : "") ": " ((clever[t] in pst) ? sprintf("%s %.3f s", pst[clever[t]], pw[clever[t]]) : "not run") ";"
+      else if (mode == "pure" && !(t in rep) && (t in clever)) miss[t] = miss[t] " clever twin " clever[t] ((cmpd[clever[t]] != "") ? ", the algorithm of " cmpd[clever[t]] : "") ": " ((clever[t] in pst) ? sprintf("%s %.3f s", pst[clever[t]], pw[clever[t]]) : "not run") ";"
+      if (!(t in rep) && (t in lib)) miss[t] = miss[t] (mode == "pure" ? " still on a library: " : " library: ") lib[t] ";"
     }
     src = (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by GNU time; not the same method as the references)")
     if (mode == "pure") {
-      printf "Pure Avant: each task that has a pure-Avant twin (%d of them) is shown with its twin'"'"'s numbers under its own name (Notes: pure twin of what the task calls); the other library-backed rows are still on a library.\n\n", np
-      printf "Avant as written: wall sum %.3f s over %d ok rows, average %.1f MB. Pure Avant: wall sum %.3f s over %d ok rows, average %.1f MB.\n\n", ws, ko, (ko ? ms / ko / 1024 : 0), pws, pko, (pko ? pms / pko / 1024 : 0)
-      printf "Avant source: %s, the twins from %s. %d of the %d rows still rely on a library (their Notes say which). Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src, (avsrc == "lr" ? "lr-avant-pure.tsv" : "harness runtime-pure.tsv"), nl - np, n
+      printf "Pure Avant: each task that has a common twin (%d of them) is shown with its twin'"'"'s numbers under its own name (Notes: the twin, its kind, what the task calls and the references whose algorithm the twin writes, and a clever twin'"'"'s time where the task has one); the other library-backed rows are still on a library.\n\n", np
+      printf "Avant as written: wall sum %.3f s over %d ok rows, average %.1f MB. Pure Avant: wall sum %.3f s over %d ok rows, average %.1f MB. Pure Avant with the clever twins (%d of them, the approach of the reference ranked first where the references differ): wall sum %.3f s over %d ok rows, average %.1f MB.\n\n", ws, ko, (ko ? ms / ko / 1024 : 0), pws, pko, (pko ? pms / pko / 1024 : 0), nc, cws, cko, (cko ? cms / cko / 1024 : 0)
+      printf "Avant source: %s, the twins from %s. %d of the %d rows still rely on a library (their Notes say which). Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src, (avsrc == "lr" ? "lr-avant-pure.tsv" : "harness runtime-pure.tsv"), nl - npl, n
     } else if (haslib) {
       printf "Avant source: %s. %d of the %d rows rely on a library (their Notes say which). Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", src, nl, n
       printf "Avant as written: wall sum %.3f s over %d ok rows, average %.1f MB.\n\n", ws, ko, (ko ? ms / ko / 1024 : 0)
