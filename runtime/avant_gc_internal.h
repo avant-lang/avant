@@ -708,7 +708,9 @@ typedef struct BlockSet {
  * an object that is not young when the barrier's slow call logs the
  * references it holds, cleared when the next full collection begins (the
  * holders list). A header copied by the defragmenter never carries it
- * (the bits are cleared before anything moves). */
+ * (the bits are cleared before anything moves). Generated code reads it
+ * too: the inline pop of a reference takes no call for a logged buffer
+ * (compiler/llvm/emit_gc.av ll_array_pop). */
 #define AVANT_FLAG_LOGGED 512u
 
 /* The collector's counters, per family. AvantGcStats (avant_rt.h, ABI:

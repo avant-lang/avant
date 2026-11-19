@@ -785,9 +785,9 @@ pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
 // call, which traps. The word is read as the runtime reads it, a relaxed
 // atomic load (a task's end may swap it from its thread). A store of a
 // reference, and a slot that may hold one, first passes the buffer's
-// barrier as the runtime's does (avant_barrier_slot_young: nothing while
-// the buffer is young, else avant_barrier_slot with the slot), before the
-// store. push_slot returns the slot, which the MIR then stores through.
+// barrier, before the store, as an element store's (ll_barrier): nothing
+// while the buffer is young or remembered, else avant_barrier_slot with
+// the slot (the runtime's own push skips only a young buffer). push_slot returns the slot, which the MIR then stores through.
 // The call form when inline fast paths are off.
 pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
   e.used_tbaa = true
@@ -841,16 +841,17 @@ pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
   ep = e.tmp()
   e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off}")
   if name == "avant_array_push_ptr" || slot_form {
-    // The barrier before the store: the buffer's header flags (the 16
-    // bits at its payload - 2), young (32) or the call.
+    // The barrier before the store, as an element store's (ll_barrier):
+    // the buffer's header flags (the 16 bits at its payload - 2), in the
+    // heap and young (32) or remembered (16), else the call.
     fp = e.tmp()
     e.line("${fp} = getelementptr inbounds i8, ptr ${dp}, i64 -2")
     fl = e.tmp()
     e.line("${fl} = load i16, ptr ${fp}, align 2")
     yb = e.tmp()
-    e.line("${yb} = and i16 ${fl}, 32")
+    e.line("${yb} = and i16 ${fl}, -32720")
     old = e.tmp()
-    e.line("${old} = icmp eq i16 ${yb}, 0")
+    e.line("${old} = icmp ule i16 ${yb}, -32768")
     bar = e.part("arrbar")
     put = e.part("arrstore")
     e.line("br i1 ${old}, label %${bar}, label %${put}")
@@ -948,9 +949,10 @@ pub fn ll_array_pop(e: LlEmit, name: String, args: Array(MOperand)): String {
   x = e.tmp()
   e.line("${x} = call i1 @llvm.expect.i1(i1 ${b2}, i1 true)")
   if ptr_form {
-    // The store log: off (its byte zero), or the buffer young (32) or
-    // not in the heap (the 0x8000 bit clear) in its header flags, the
-    // 16 bits at its payload - 2.
+    // The store log: off (its byte zero), or, in the buffer's header
+    // flags (the 16 bits at its payload - 2), the buffer young (32),
+    // logged since the last full collection (512, the runtime's
+    // AVANT_FLAG_LOGGED) or not in the heap (the 0x8000 bit clear).
     chk = e.part("arrlog")
     e.line("br i1 ${x}, label %${chk}, label %${slow}")
     e.block(chk)
@@ -964,7 +966,7 @@ pub fn ll_array_pop(e: LlEmit, name: String, args: Array(MOperand)): String {
     fl = e.tmp()
     e.line("${fl} = load i16, ptr ${fp}, align 2")
     hy = e.tmp()
-    e.line("${hy} = and i16 ${fl}, -32736")
+    e.line("${hy} = and i16 ${fl}, -32224")
     nl = e.tmp()
     e.line("${nl} = icmp ne i16 ${hy}, -32768")
     quiet = e.tmp()
