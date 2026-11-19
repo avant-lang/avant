@@ -1706,6 +1706,9 @@ typedef struct GcThread {
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
   int alloc_mature;
+  /* The next large Bytes this thread allocates keeps whatever its pages
+   * held (avant_alloc_bytes_unzeroed): set only around that call. */
+  int los_nozero;
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
   ThreadReg reg;

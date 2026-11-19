@@ -1,5 +1,7 @@
 import harness
+import std.fs
 import std.json
+import std.process
 
 type Json = json.Json
 type JsonBuilder = json.JsonBuilder
@@ -509,6 +511,32 @@ fn test_json_limits(c: Checks) {
   c.eq_str(parse_says("[1, 2", 256, 9, 100), "invalid JSON at byte 5: unexpected end of data", "a text within the limits that does not parse")
 }
 
+// A parse's pool is sized by yyjson's own bound and not zeroed: a
+// 51-byte document's is the smallest large object, two pages (it was
+// three, zeroed), and the values read back are the text's in every
+// collector mode, after a large document's pages were freed (and
+// poisoned, in the check modes) too.
+fn test_json_pool(c: Checks) {
+  if compiler = process.env("AVANT_COMPILER") {
+    dir = scratch_dir()
+    bin = "${dir}/json_pool.bin"
+    c.eq_int(compile_av(compiler, "${avant_test_root()}/tests/fixtures/heap/json_pool.av", bin, "${dir}/json_pool.clog"), 0, "json_pool.av compiles")
+    clean = "env -u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS -u AVANT_GC_STATS"
+    // In the collector mode this file runs in (the gate runs it in each).
+    out = "${dir}/json_pool"
+    _ = process.run("/bin/sh", ["-c", "'${bin}' > '${out}.out' 2> '${out}.err'; echo $? > '${out}.rc'"])
+    c.eq_str(fs.read("${out}.rc") ?? "", "0\n", "json_pool.av: exit 0")
+    c.eq_str(fs.read("${out}.out") ?? "", "12000\n5000\n12 ada\n", "json_pool.av: the values parsed")
+    c.eq_str(fs.read("${out}.err") ?? "", "", "json_pool.av: no stderr")
+    st = "${dir}/json_pool.stats"
+    _ = process.run("/bin/sh", ["-c", "${clean} AVANT_GC_STATS=1 '${bin}' small > /dev/null 2> '${st}'"])
+    text = fs.read(st) ?? ""
+    c.expect(text.contains(" los_allocs=1000 los_bytes=8192000 "), "a small document's pool is two pages, 1000 parses: ${text.size} bytes of statistics")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -521,5 +549,6 @@ fn main: Int {
   test_json_value_written(c)
   test_json_limits(c)
   test_builder_values(c)
+  test_json_pool(c)
   c.finish()
 }

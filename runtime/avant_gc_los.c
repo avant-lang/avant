@@ -117,7 +117,8 @@ static uint64_t make_large_chunk(void) {
 }
 
 /* Take a run for PAYLOAD bytes; returns the header (8 bytes into the
- * run), the payload zeroed, the start bit not yet set. */
+ * run), the payload zeroed (left as its pages were for the thread's
+ * unzeroed Bytes, gc_thread.los_nozero), the start bit not yet set. */
 static AvantHeader *take_run(size_t payload) {
   uint64_t n = run_pages(payload);
   if (n <= PAGES_PER_CHUNK) {
@@ -162,7 +163,9 @@ static AvantHeader *take_run(size_t payload) {
       uint32_t pg = (uint32_t)p + k;
       gc_heap.pages[c * PAGES_PER_CHUNK + pg] = (uint32_t)p + 1;
       if ((ch->dirty_pages[pg >> 6] >> (pg & 63)) & 1ULL) {
-        memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        if (!gc_thread.los_nozero) {
+          memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        }
         gc_heap.free_resident_other -= PAGE_SIZE;
       }
     }
@@ -180,7 +183,7 @@ static AvantHeader *take_run(size_t payload) {
       memset(ch, 0, sizeof(GcChunk));
       ch->kind = k ? CHUNK_HUGE_CONT : CHUNK_HUGE;
       ch->head = k ? (uint32_t)c : (uint32_t)nch;
-      if (dirty) {
+      if (dirty && !gc_thread.los_nozero) {
         uint64_t used = (n << PAGE_SHIFT) - k * (uint64_t)CHUNK_SIZE;
         memset(chunk_base(c + k), 0, (size_t)(used < CHUNK_SIZE ? used : CHUNK_SIZE));
       }
@@ -508,7 +511,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   if (gc_heap.los_spare && gc_heap.los_spare->size == (uint32_t)payload) {
     h = gc_heap.los_spare;
     gc_heap.los_spare = NULL;
-    memset(payload_of(h), 0, payload);
+    if (!gc_thread.los_nozero) {
+      memset(payload_of(h), 0, payload);
+    }
     gc_heap.ctr.los.spare_hits++;
   } else {
     h = take_run(payload);

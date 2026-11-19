@@ -368,6 +368,7 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * (avant_zlib.c). A large object's size is set and its pages kept
  * (avant_gc_large_trim gives pages back). Never collects. */
 __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64_t nbytes);
+__attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t nbytes);
 /* 1 when P lies in the collected heap and is not the exact start of a
  * heap object (an address inside an object, or one where no object
  * lives); 0 for null, for an address outside the heap (C's own memory, a

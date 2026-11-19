@@ -1480,6 +1480,28 @@ __attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uin
   return obj;
 }
 
+/* A large Bytes of NBYTES (SCALAR_LOS_MIN or more) whose payload is
+ * not zeroed: it holds whatever its pages held, for runtime C that
+ * writes every byte it later reads (avant_json_parse's pool: yyjson
+ * writes its text copy and values before it reads them). Safe for the
+ * collector because a Bytes payload has no reference word: no trace,
+ * fix-up, verifier check or barrier reads its words, the field rule
+ * applies only to words a type map names, and a large object never
+ * moves. Below SCALAR_LOS_MIN the object would be a block object, which
+ * the young copy moves, so the size is the caller's to raise; such a
+ * request gets an ordinary zeroed object. */
+__attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t nbytes) {
+  void *obj;
+  if (nbytes < SCALAR_LOS_MIN) {
+    return avant_alloc(nbytes, AVANT_TYPE_BYTES);
+  }
+  gc_init();
+  gc_thread.los_nozero = 1;
+  obj = avant_alloc(nbytes, AVANT_TYPE_BYTES);
+  gc_thread.los_nozero = 0;
+  return obj;
+}
+
 /* A runtime helper about to allocate a young large object of BYTES that
  * replaces one it allocated before, which is usually dead by now
  * (avant_json_parse's pool, the previous document dropped), asks for

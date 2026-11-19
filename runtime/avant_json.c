@@ -51,13 +51,17 @@ char *avant_json_take_pool(void) {
   return pool ? pool : avant_str_empty();
 }
 
+/* The smallest pool: a Bytes this large is a large object (the
+ * collector's SCALAR_LOS_MIN), which never moves. */
+#define AVANT_JSON_POOL_MIN 6144
+
 /* The document's allocator: a bump over the
  * pool. yyjson allocates the text's copy and then the values, which it
  * grows by realloc at the end, so a reallocation of the last block grows
  * it in place and a free of the last block takes the bump back. After
  * the parse the document is the pool's first `top` bytes and the rest
  * goes back to the heap at once (avant_gc_large_trim): the pool is sized
- * for the worst case (24 bytes per text byte, 96 on the retry), and its
+ * for the worst case (yyjson's bound, 13 bytes per text byte), and its
  * unused tail used to stay a live young object as long as the Json did,
  * filling the young budget (Json::ParseMapping: 241 young collections). */
 typedef struct {
@@ -135,7 +139,18 @@ void *avant_json_parse(const char *s, avant_int max_depth, avant_int max_bytes, 
   }
   g_json_pool = NULL;
   for (attempt = 0; attempt < 2; attempt++) {
-    size_t pool_n = n * (attempt == 0 ? 24 : 96) + 8192;
+    /* yyjson's own bound for a text of n bytes (13 bytes a text byte
+     * and 256: the text's copy, then values of 16 bytes, at most one a
+     * two text bytes, grown by half each time), with room for this
+     * bump's two 16-byte alignments; at least a large object's size,
+     * since a smaller Bytes would be a block object the young copy
+     * moves, and yyjson's pointers into the pool must stay put. The
+     * retry, after an allocation failure (none is expected), takes
+     * 96 bytes a text byte. */
+    size_t pool_n = attempt == 0 ? yyjson_read_max_memory_usage(n, 0) + 64 : n * 96 + 8192;
+    if (pool_n < (size_t)AVANT_JSON_POOL_MIN) {
+      pool_n = (size_t)AVANT_JSON_POOL_MIN;
+    }
     yyjson_alc alc;
     JsonBump bump;
     yyjson_read_err err;
@@ -153,7 +168,11 @@ void *avant_json_parse(const char *s, avant_int max_depth, avant_int max_bytes, 
     /* The previous document's pool is usually dead by now: let the due
      * young collection free it before this one exists. */
     avant_gc_young_before((uint64_t)pool_n);
-    pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
+    /* Not zeroed: yyjson writes every byte of the pool it reads (its
+     * text copy, its values), and a Bytes payload holds no reference the
+     * collector reads (avant_alloc_bytes_unzeroed). Zeroing it was most
+     * of a small document's parse. */
+    pool = (char *)avant_alloc_bytes_unzeroed((uint64_t)pool_n);
     bump.base = (uint8_t *)pool;
     bump.cap = pool_n;
     bump.top = 0;
