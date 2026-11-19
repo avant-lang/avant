@@ -329,14 +329,15 @@ fn ll_type_maps(e: LlEmit) {
 // object's fields) once:
 // - a slot's load is !invariant.load; a reference also !nonnull, !align
 //   8 and !dereferenceable (its layout's size). True from the start-up
-//   on: nothing writes a slot but the start-up and the collector, and
-//   the runtime pins each object a slot names (avant_const_ready), so the
-//   collector never moves it and never rewrites the slot;
+//   on: nothing writes a slot but the start-up, and the runtime copies
+//   each value into the constants' region outside the collected heap
+//   (avant_const_ready), so the collector never moves it and never
+//   rewrites the slot;
 // - a field of the object loaded from a slot is !invariant.load when it
 //   is an Array's buffer reference or size (a frozen array never
 //   changes either: every change traps before it writes) or a class
 //   object's field (a constant's class has no field assigned outside
-//   initialize); the runtime pins those fields' objects too, so the
+//   initialize); those fields' objects are in the region too, so the
 //   collector never rewrites them; only when no C function of the
 //   program is handed a reference (an Array, a Hash, a class: C could
 //   write it), else the plain load;

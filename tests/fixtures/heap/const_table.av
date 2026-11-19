@@ -1,0 +1,43 @@
+import std.gc
+
+struct Entry {
+  name: String
+  n: Int
+}
+
+fn build(n: Int): Array(Entry) {
+  xs: Array(Entry) = []
+  for i in 0..n {
+    xs.push(Entry { name: "entry-${i}", n: i })
+  }
+  xs
+}
+
+fn index(xs: Array(Entry)): Hash(String, Int) {
+  h: Hash(String, Int) = [:]
+  for e in xs {
+    h[e.name] = e.n
+  }
+  h
+}
+
+// A table of 100,000 entries and a hash over it, computed before main:
+// they live outside the collector, so a full collection traces none of
+// them and the live data it finds is the program's own.
+const table = build(100000)
+const by_name = index(table)
+
+fn main {
+  total = 0
+  for r in 0..20 {
+    junk: Array(String) = []
+    for i in 0..2000 {
+      junk.push("j${i}")
+    }
+    gc.collect()
+    total += by_name["entry-${r * 997}"] ?? 0
+  }
+  puts(table.size)
+  puts(table[99999].name)
+  puts(total)
+}

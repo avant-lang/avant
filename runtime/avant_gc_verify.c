@@ -448,6 +448,7 @@ static void lost_root_slot(void **slot) {
 /* Before a full collection (a young one runs the precise half inside
  * gc_verify_remembered's pass over the same roots and fields). */
 void gc_verify_lost(void) {
+  gc_verify_consts();
   vb_ensure();
   verify_each_root(lost_root_slot, 0);
   while (gc_heap.work_n) {
@@ -1628,6 +1629,7 @@ static void vi_fallback(void) {
 }
 
 void gc_verify_remembered(void) {
+  gc_verify_consts();
   if (!(v_incr_now && vi_remembered())) {
     if (v_incr_now) {
       vi_fallback();

@@ -200,6 +200,34 @@ fn check_facts(c: Checks, compiler: String, dir: String) {
   c.eq_str(log_text("${d}/kheld.run.out"), "3069926720\n", "held release: stdout")
 }
 
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  for p in text.split(" ") {
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+// A 100,000-entry table and a hash over it, computed before main, live
+// outside the collector: the program runs and reads them in the
+// collector mode this file runs in, and the live data a full collection
+// finds (AVANT_GC_STATS) is the program's own, not the table's 9 MB.
+fn check_region(c: Checks, compiler: String, dir: String) {
+  bin = "${dir}/const_table.bin"
+  c.eq_int(compile_av(compiler, "${avant_test_root()}/tests/fixtures/heap/const_table.av", bin, "${dir}/const_table.clog"), 0, "const_table.av compiles")
+  out = "${dir}/const_table"
+  _ = process.run("/bin/sh", ["-c", "'${bin}' > '${out}.out' 2> '${out}.err'; echo $? > '${out}.rc'"])
+  c.eq_str(fs.read("${out}.rc") ?? "", "0\n", "const_table.av: exit 0")
+  c.eq_str(fs.read("${out}.out") ?? "", "100000\nentry-99999\n189430\n", "const_table.av: the table read back")
+  clean = "env -u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS"
+  _ = process.run("/bin/sh", ["-c", "${clean} AVANT_GC_STATS=1 '${bin}' > /dev/null 2> '${out}.stats'"])
+  st = fs.read("${out}.stats") ?? ""
+  live = stat_of(st, "live")
+  c.expect(live >= 0 && live < 1000000, "const_table.av: a full collection's live data is not the table's (live ${live})")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_const_values.av")
   if compiler = process.env("AVANT_COMPILER") {
@@ -211,6 +239,7 @@ fn test_main(c: Checks) {
     run_cases(c, compiler, dir, all)
     check_modules(c, compiler, dir)
     check_facts(c, compiler, dir)
+    check_region(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
