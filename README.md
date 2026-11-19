@@ -1270,7 +1270,7 @@ fn main {
 
 - The alias names itself in its own body, inside an `Array`'s element or a `Hash`'s value; the body is a union, so a value can end. It is one type by its name: a message shows `Json`, and a `pub` alias is the same type in every module that imports it.
 - It is a union like any other: built from its members' values, taken apart with `switch`, with no `==` and no printing of its own (switch on it and print the members).
-- A `Hash` value cannot hold `nil` ([Key and value types](#key-and-value-types)), so an alias that recurses through a `Hash` has no `Nil` member; an optional `Json?` outside it says "absent".
+- A `Hash` value may hold `nil` ([Key and value types](#key-and-value-types)), so an alias that recurses through a `Hash` may have a `Nil` member, as a JSON document's `null` does (`type AnyData = Nil | Bool | Int | String | Array(AnyData) | Hash(String, AnyData)`).
 - Two aliases that reach each other (`type P = Int | Array(Q)`, `type Q = String | Array(P)`) are refused: write the members in one alias.
 
 ### What an optional costs
@@ -1877,7 +1877,7 @@ fn main {
 - A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `equals` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
-- A value cannot be optional (`Hash(Int, String?)` is refused), nor a union that holds `Nil` (`Hash(Int, Nil | Int | String)`): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
+- A value may be optional (`Hash(Int, String?)`) or a union that holds `Nil` (`Hash(Int, Nil | Int | String)`): `h[k]` is then `nil` both for a stored `nil` and for a missing key, and `h.has(k)` tells them apart (`h["a"] = nil` makes `h.has("a")` true; `h.delete("a")` makes it false).
 
 ```avant
 struct Ticket {
