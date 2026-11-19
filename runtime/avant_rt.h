@@ -457,7 +457,6 @@ avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
 void avant_hash_del_sk(void *h, const char *key);
 void avant_hash_del_ik(void *h, avant_int key);
-avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_int stop);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
 /* A String key given as the bytes start up to stop of a String (_sk_part)

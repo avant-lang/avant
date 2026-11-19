@@ -932,7 +932,7 @@ static void sd_stamp(void) {
  * incremental throughout). Measured on four VERIFY +
  * STRESS rows, the incremental form throughout was not slower than the
  * whole form nor than the priced choice on any of them except
- * inc_slice_mature, where it is within a few percent of both.
+ * inc_by_slice_mature, where it is within a few percent of both.
  * Both forms check the same, so
  * the choice changes the time only, never the reports.
  *

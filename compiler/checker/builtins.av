@@ -1182,38 +1182,6 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return gone
   }
-  if expr.callee == "inc_slice" {
-    if expr.args.size == 3 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
-        return checker_self.t_int()
-      }
-    } else {
-      checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
-      return checker_self.t_int()
-    }
-    ok = false
-    if k = hash.key, v = hash.val, k.is_string() && v.is_int() {
-      ok = true
-    }
-    if !ok {
-      checker_self.fail(expr.loc, "inc_slice is Hash(String, Int) only")
-    }
-    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
-    if !ty_assignable(s, checker_self.t_string()) {
-      checker_self.fail(expr.args[0].loc, "inc_slice expects String")
-    }
-    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int() {
-      if !stop.is_int() {
-        checker_self.fail(expr.loc, "start and stop must be Int")
-      }
-    } else {
-      checker_self.fail(expr.loc, "start and stop must be Int")
-    }
-    return checker_self.t_int()
-  }
   if expr.callee == "get_slice" {
     if expr.args.size == 3 {
       if b = expr.block {

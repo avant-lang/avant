@@ -1,0 +1,82 @@
+// A hash insert by a slice stored a fresh young key into the hash's key
+// buffer without a barrier, unlike every other insertion path. A key
+// buffer of 1,024 or more slots is a large object, mature from birth;
+// once its keys have tenured, the remembered set drops it, and the next
+// young collection does not follow it: the new keys' nursery blocks are
+// discarded while the hash still names them.
+//
+// Here a Hash(String, Int) gets 1,400 keys by `h.inc(text[s..k])` (the
+// key read in place and built only at a miss), churn tenures them, then
+// 100 new keys go in the same way without crossing a growth, churn runs
+// young collections, and each new key is counted again. Every v word was
+// inserted once, so the second count returns 2 for each, the size grows
+// by exactly 100, and all three lines print 0. Before the fix the default
+// environment printed -100 and 43 (no new key found), and
+// AVANT_GC_VERIFY=1 reported a lost field reference in the key buffer.
+// The probe came from an audit of the collector's barriers; the insert
+// now enters the key through the store every insertion uses, which
+// barriers the slot first. It still exercises that barrier: a scratch
+// runtime without it prints -100 and 100 plainly, and the verifier stops
+// the program under AVANT_GC_VERIFY=1.
+
+class Junk {
+  a: String
+  b: Int
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  for i in 0..n {
+    j = Junk.new()
+    j.a = "x" + "y"
+    j.b = i
+    t += j.b % 3
+  }
+  t
+}
+
+fn words(prefix: String, nw: Int): String {
+  b = Buf.new()
+  for i in 0..nw {
+    b.push_str(prefix)
+    b.push_fmt_i(i)
+    b.push_str(" ")
+  }
+  b.to_s()
+}
+
+fn fill(h: Hash(String, Int), text: String): Int {
+  n = text.size
+  s = 0
+  k = 0
+  got = 0
+  while k < n {
+    if text[k] == 32 {
+      got += h.inc(text[s..k])
+      s = k + 1
+    }
+    k += 1
+  }
+  got
+}
+
+fn main {
+  nw = 100
+  a = words("a", 1400)
+  v = words("v", nw)
+  h = Hash(String, Int).new()
+  fill(h, a)
+  t = 0
+  for r in 0..4 {
+    t += churn(800000) % 7
+  }
+  fill(h, v)
+  for r in 0..4 {
+    t += churn(800000) % 7
+  }
+  // each v word was inserted once: inc now returns 2 for it
+  got = fill(h, v)
+  puts(got - 2 * nw)
+  puts(h.size - 1400 - nw)
+  puts(t % 2)
+}

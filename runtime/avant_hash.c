@@ -2502,56 +2502,6 @@ static int is_str_str(const AvantHash *h) {
   return key_is_str(h) && val_is_ref(h);
 }
 
-/* RC1/RC2 (avant_gc.h): grow and the key's allocation may collect, so
- * the hash and the text are handles and the slice's pointer is formed
- * again from the text after each (its offset is an integer). */
-avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_int stop) {
-  AvantHash *h = (AvantHash *)hp;
-  AVANT_GC_SCOPE(2);
-  AVANT_GC_ROOT(0, &h);
-  AVANT_GC_ROOT(1, &s);
-  if (!h || !is_str_int(h)) {
-    return 0;
-  }
-  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
-  const char *p = NULL;
-  size_t n = 0;
-  if (!s) {
-    s = AVANT_STR_EMPTY;
-  }
-  check_slice(s, start, stop, &p, &n);
-  size_t off = (size_t)start;
-  size_t sn;
-  uint32_t hv = hash_bytes(p, n, h->seed);
-  int32_t e = 0;
-  int32_t pos = 0;
-  if (find_bytes(h, p, n, hv, &e, &pos)) {
-    avant_int c;
-    avant_int *v = (avant_int *)val_at(h, h->vals, e);
-    if (__builtin_add_overflow(*v, 1, &c)) {
-      avant_trap_overflow();
-    }
-    *v = c;
-    return c;
-  }
-  ensure_cap(h);
-  /* RC2: the text's bytes (a view's too) are formed again after each
-   * call that may collect. */
-  p = avant_str_bytes(s, &sn) + off;
-  (void)find_bytes(h, p, n, hv, &e, &pos);
-  char *key = avant_str_alloc((uint64_t)n);
-  p = avant_str_bytes(s, &sn) + off;
-  if (n) {
-    memcpy(key, p, n);
-  }
-  key[n] = 0;
-  avant_str_tag(key);
-  e = claim(h, pos, (uint8_t)(1u | HASH_HEAP_LEN));
-  store_str_key(h, e, key, hv);
-  *(avant_int *)val_at(h, h->vals, e) = 1;
-  return 1;
-}
-
 const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   if (found) {

@@ -120,7 +120,7 @@
  *   has avant_barrier on that object (or avant_barrier_at on the
  *   stored-to address, or avant_barrier_slot with the slot) before the
  *   store (RC5; it used to be allowed after the store) and so before
- *   the next call that may collect (avant_hash_inc_slice and
+ *   the next call that may collect (a hash insert by a slice and
  *   array_grow lost young keys and elements without one). A store into
  *   an element buffer that knows its slot uses avant_barrier_slot (card
  *   marking); a bulk copy or fill barriers the buffer
@@ -191,7 +191,7 @@
  *     buf_append_slow, buf_grow                    C
  *     avant_buf_new, _to_str, _ensure,
  *       avant_bytes_to_buf                         C
- *     hash grow, setters, inc_slice                C
+ *     hash grow, setters, inserts by a slice       C
  *     put, upsert (their growth)                   C
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
  *     avant_json_parse                             C (yyjson allocates

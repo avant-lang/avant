@@ -23,7 +23,7 @@ import std.process
 // AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, AVANT_NURSERY=0,
 // AVANT_GC_STRESS=1); once the join freed the task, a second join freed it again.
 //
-// heap/inc_slice_mature.av and heap/array_reserve_mature.av (the
+// heap/inc_by_slice_mature.av and heap/array_reserve_mature.av (the
 // array_grow barrier) under AVANT_GC_STRESS=1 (the minimal
 // stress mode: a young collection at every outermost defer entry
 // and at every runtime C allocation): the known stdout, no stderr.
@@ -53,7 +53,7 @@ import std.process
 // under AVANT_YOUNG_MB=1.
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["limit_defer", "task_pins", "task_records", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
+  names = ["limit_defer", "task_pins", "task_records", "inc_by_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -112,8 +112,8 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     wants.push("array: 26602720 26602720 26602720\nfield: 374755 374755\nlocal: 42 42 42\nloop: 2980\nbad: 0\npins left: 0\n")
     e += 1
   }
-  progs.push("inc_slice_mature")
-  keys.push("inc_slice_mature.stress")
+  progs.push("inc_by_slice_mature")
+  keys.push("inc_by_slice_mature.stress")
   envs.push("-u AVANT_GC_VERIFY AVANT_GC_STRESS=1")
   wants.push("0\n0\n0\n")
   progs.push("array_reserve_mature")
