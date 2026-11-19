@@ -435,6 +435,13 @@ pub fn (checker_self: Checker) check_aliases {
   for al2 in checker_self.program.aliases {
     checker_self.clear_poison()
     checker_self.current_module = al2.mod_name
+    probe = TypeName.new(al2.loc, al2.name)
+    probe.mod_name = al2.mod_name
+    if g = checker_self.resolver.generic_alias_target(probe) {
+      // An alias of a generic type names the generic, resolved with each
+      // use's type arguments.
+      continue
+    }
     _ = checker_self.resolve_in_module(clone_type_name(al2.target))
     checker_self.pull_resolve()
   }

@@ -769,6 +769,14 @@ pub class TypeResolver {
     if id = self.tparams.get(tn.name), tn.args.size == 0 {
       return ty_var(tn.name)
     }
+    if tn.args.size > 0 && self.aliases.size > 0 {
+      if g = generic_alias_target(tn) {
+        use = clone_type_name(tn)
+        use.name = g.name
+        use.mod_name = g.mod_name
+        return instantiate_template(use)
+      }
+    }
     ntmpl = template_count(tn.name)
     if ntmpl > 0 && tn.mod_name.size == 0 && self.scope_mod.size > 0 {
       sm = std_owner_of(tn.name, self.scope_mod)
@@ -1172,6 +1180,13 @@ pub class TypeResolver {
   // in the generic's own module, read the same types. Type parameters
   // and built-in names are left as they are.
   pub fn pin_type_name(tn: TypeName) {
+    if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size > 0 {
+      if g = generic_alias_target(tn) {
+        // An alias of a generic: the generic itself, with these arguments.
+        tn.name = g.name
+        tn.mod_name = g.mod_name
+      }
+    }
     if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size == 0 {
       if al = find_alias(tn) {
         // An alias is the type it names, wherever the instance is read.
@@ -1276,6 +1291,10 @@ pub class TypeResolver {
       fail(tn.loc, "${tn.name} does not take type arguments")
       return self.t_int
     }
+    if g = generic_alias_target(tn) {
+      fail(tn.loc, "${tn.name} needs type arguments")
+      return self.t_int
+    }
     if done = self.rec_aliases.get(key) {
       return done
     }
@@ -1332,6 +1351,54 @@ pub class TypeResolver {
       return self.aliases[i].name
     }
     key
+  }
+
+  // The generic type an alias names when its target is a generic struct
+  // or class written without type arguments (`type Mutex = sync.Mutex`,
+  // then `Mutex(Int)`): the generic's name with its module, through an
+  // alias of such an alias; nil for any other alias. One alias serves
+  // every instance; the arguments and their checks are the generic's.
+  pub fn generic_alias_target(tn: TypeName): TypeName? {
+    if self.aliases.size == 0 || tn.fn_type || tn.members.size > 0 || tn.pinned {
+      return nil
+    }
+    found = find_alias(tn)
+    depth = 0
+    while depth < 16 {
+      if al = found {
+        t = al.target
+        if t.fn_type || t.members.size > 0 || t.nilable || t.args.size > 0 || t.pinned {
+          return nil
+        }
+        mod = t.mod_name
+        if mod.size == 0 {
+          if template_in(al.mod_name, t.name) {
+            mod = al.mod_name
+          } else {
+            saved = self.scope_mod
+            self.scope_mod = al.mod_name
+            owners = template_owners(t.name)
+            self.scope_mod = saved
+            if owners.size == 1 {
+              mod = owners[0]
+            }
+          }
+        }
+        if mod.size > 0 && template_in(mod, t.name) {
+          out = TypeName.new(tn.loc, t.name)
+          out.mod_name = mod
+          return out
+        }
+        saved2 = self.scope_mod
+        self.scope_mod = al.mod_name
+        found = find_alias(t)
+        self.scope_mod = saved2
+        depth += 1
+      } else {
+        return nil
+      }
+    }
+    nil
   }
 
   // Whether an alias names itself in its own body (a recursive alias):

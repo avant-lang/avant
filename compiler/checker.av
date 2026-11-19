@@ -6172,6 +6172,25 @@ pub class Checker {
     recv
   }
 
+  // A receiver naming an alias of a generic type with type arguments
+  // (`type Mutex = sync.Mutex`, then `Mutex(Int).new(1)`) is rewritten
+  // in place to the generic's own name and module.
+  pub fn expand_generic_alias_recv(recv: Expr) {
+    if recv.kind != ex_name() || recv.type_args.size == 0 {
+      return
+    }
+    tn = TypeName.new(recv.loc, recv.ident)
+    tn.mod_name = recv.mod_name
+    saved = self.resolver.scope_mod
+    self.resolver.scope_mod = self.current_module
+    got = self.resolver.generic_alias_target(tn)
+    self.resolver.scope_mod = saved
+    if g = got {
+      recv.ident = g.name
+      recv.mod_name = g.mod_name
+    }
+  }
+
   pub fn flatten_type_chain(recv: Expr): Expr {
     segs: Array(String) = []
     if ident_chain(recv, segs) && segs.size > 2 {
@@ -6243,6 +6262,7 @@ pub class Checker {
       recv = flatten_type_chain(recv)
     }
     expr.receiver = recv
+    expand_generic_alias_recv(recv)
     if recv.kind == ex_name() && recv.type_args.size > 0 && recv.mod_name.size == 0 {
       // A std module's generic type named bare (`Mutex(Int).new`): the
       // program's own or an import's is meant, else the qualified
