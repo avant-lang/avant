@@ -1876,7 +1876,7 @@ fn main {
 ```
 
 - A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes.
-- A struct that defines its own equality (`fn equals`) defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `equals` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `equals` and no `hash`, or `hash` and no `equals`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing; it exists only as that parameter (it is not made, stored, returned or captured).
+- A struct that defines its own equality (`fn equals`) defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `equals` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `equals` and no `hash`, or `hash` and no `equals`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing, for the call only: it is never made by the program, stored (in a field, an optional or a collection), returned or captured, and it may be passed to a helper function or named by a local that adds several values to it.
 - A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
 - A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `equals` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
@@ -5398,7 +5398,7 @@ Run-time failures are [traps](#traps).
 
 ## Coming from another language
 
-Where Avant differs on purpose:
+Where Avant differs on purpose. The reason for each choice, and for each one considered and set aside, is in the design contract, [DESIGN.md](DESIGN.md), with the numeric rules in one place and what safe code cannot do.
 
 ### The deliberate differences
 
@@ -5408,21 +5408,21 @@ Where Avant differs on purpose:
 | `null` in any reference | absence only in `T?`, which must be opened ([Nil and unions](#nil-and-unions)) | no null error at run time |
 | a 32-bit `int` that wraps | `Int` is 64-bit and overflow traps; `&+` wraps on request; `Int32` is for dense storage ([Numbers](#numbers)) | a wrong number never passes silently |
 | numbers that convert themselves | no implicit conversion, between widths or to floats ([Conversions](#conversions)) | no silent truncation or precision loss |
-| integer division that floors (Python's `//`, Ruby's `/`) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | |
+| integer division that floors (Python's `//`, Ruby's `/`) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | the hardware's division, and C's |
 | `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end, `..=` includes it ([For](#for)) | ranges match zero-based indexes |
-| truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
+| truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | zero, empty and absent are never mixed up |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
 | strings of characters | strings of bytes; `.chars` or `.code_points()` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
 | a missing hash key that raises, or reads as zero | `h[k]` is `V?` ([Hashes](#hashes)) | absence is handled where it happens |
-| hashes that remember insertion order | they do, for every key type ([Hashes](#hashes)) | |
+| hashes that remember insertion order | they do, for every key type ([Hashes](#hashes)) | output that does not depend on the hash's per-process seed |
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
-| `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
+| `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | it parses without knowing types, where `<` and `>` could be comparisons |
 | `return` inside a lambda returning from the lambda | the same, also in a lambda a builtin inlines (`xs.each (x) { ... }`); `for` is the loop that leaves the function early ([Lambdas given to builtins](#lambdas-given-to-builtins)) | one meaning of `return` |
 | a panic caught per request by the server | a trap in an `std.http` handler fails its request (500) and the server goes on; a trap in a C callback it made, or the runtime's own stop, still ends the process, so run servers under a supervisor too ([Traps](#traps)) | no unwinding machinery: the handler's frames are dropped |
 | one optimized build (Go) | two modes: `--debug` for the edit-and-run loop, `--release` for the rest, and only it is timed ([Build modes](#build-modes)) | a fast edit-and-run loop |
-| a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
+| a power operator `**` | none; `x.pow(y)` ([Floats](#floats)) | one operator fewer, with its own precedence and types |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
 
 ### By language
@@ -5675,7 +5675,7 @@ Nothing else, and no environment variable. The archive holds `avant` with LLVM 2
 
 ## Contributing
 
-Avant's compiler is written in Avant and is built by a published release of itself. How it works, building it from source, the gate and the suite, and how this README's examples are checked are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Avant's compiler is written in Avant and is built by a published release of itself. How it works, building it from source, the gate and the suite, and how this README's examples are checked are in [CONTRIBUTING.md](CONTRIBUTING.md). The rules a change to the language keeps, and the reasons for its choices, are in [DESIGN.md](DESIGN.md).
 
 ## License
 
