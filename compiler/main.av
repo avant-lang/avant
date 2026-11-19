@@ -32,7 +32,6 @@ import llvm.glue
 import mir.selftest
 import mir.ir
 import mir.print
-import migrate
 import loader
 import location
 import parser
@@ -174,26 +173,6 @@ pub fn driver_format(args: Array(String)) {
     if a == "--calls" {
       calls = true
     }
-  }
-  lambdas = false
-  for a in args {
-    if a == "--lambdas" {
-      lambdas = true
-    }
-  }
-  if lambdas {
-    lfiles: Array(String) = []
-    for a in args {
-      if a == "--check" || a == "--calls" {
-        format_usage_error("format --lambdas writes the files it changes; it takes no ${a}")
-      } else if a != "--lambdas" && a != "--write" && a.starts_with("-") {
-        format_usage_error("unknown format argument ${a}")
-      } else if a != "--lambdas" && a != "--write" {
-        lfiles.push(a)
-      }
-    }
-    driver_format_lambdas(lfiles)
-    return
   }
   if calls {
     files: Array(String) = []

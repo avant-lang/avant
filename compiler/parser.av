@@ -117,19 +117,6 @@ pub class Parser {
   arg_names: Array(String) = []
   // The bounds the last type parameter list wrote (`class Top(T: Ranked)`).
   tparam_bounds: Array(TypeBound) = []
-  // For `avant format --lambdas` (compiler/migrate.av): each block
-  // written with pipes or after a call, whether it stood directly in a statement's head
-  // (where the `{` begins the body), and, for an expression statement
-  // that is a call with such a block, the offset of the statement's
-  // first token by the block's offset.
-  pub pipe_blocks: Array(Block) = []
-  pub pipe_heads: Array(Bool) = []
-  // Whether a block in pipes, or a block after a call, parses without an
-  // error: only for `avant format --lambdas`, which rewrites them. Every
-  // other parse refuses both and names the lambda form.
-  pub accept_pipes: Bool = false
-  pub stmt_starts: Hash(String, Int)
-  stmt_start_now: Int = 0
   // The modules this file imports, as written, so a type's qualifier may
   // be a module's last name (whole_qualifier).
   import_names: Array(String) = []
@@ -138,7 +125,6 @@ pub class Parser {
     self.source = source
     self.import_names = []
     self.tokens = tokens
-    self.stmt_starts = Hash(String, Int).new()
     self.index = 0
     self.allow_struct_lit = true
     self.failed = false
@@ -1401,8 +1387,7 @@ pub class Parser {
       return nil
     }
     self.bump()
-    // A call's trailing block belongs to the value, as in a statement
-    // (`const lens = words.map { |w| w.size }`).
+    // A block after a call is refused here as in a statement.
     value = maybe_trailing_block(parse_expr())
     c = ConstDef.new(tok.loc, name, value)
     c.vis = vis
@@ -2090,9 +2075,7 @@ pub class Parser {
       }
       return self.parse_ident_stmt()
     }
-    start = self.current().loc.offset()
     expr = self.parse_expr()
-    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
@@ -2163,14 +2146,11 @@ pub class Parser {
       s.op = tk_eq()
       return s
     }
-    start = self.current().loc.offset()
     expr = self.parse_expr()
-    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
   pub fn finish_stmt(expr: Expr): Stmt {
-    start = self.stmt_start_now
     expr2 = maybe_trailing_block(expr)
     self.skip_newlines_if_continuing()
     if token_is_assign_op(self.current().kind) {
@@ -2192,11 +2172,6 @@ pub class Parser {
     // nothing (`Void | E`), the guard of an assignment without a name.
     if self.current().kind == tk_else() {
       return stmt_expr(expr2.loc, self.parse_else_guard(expr2))
-    }
-    if expr2.kind == ex_call() {
-      if b = expr2.block {
-        self.stmt_starts["${b.loc.offset()}"] = start
-      }
     }
     stmt_expr(expr2.loc, expr2)
   }
@@ -2233,6 +2208,10 @@ pub class Parser {
     bin
   }
 
+  // A block after a call, a field or a function's name, on the line the
+  // call ends on (`f(a) { ... }`, `xs.each { |x| ... }`): not Avant. It is
+  // refused, with a hint naming the lambda form, and skipped; a block on
+  // the next line is a statement of its own.
   pub fn maybe_trailing_block(expr: Expr): Expr {
     if expr.kind == ex_unary() {
       if inner = expr.inner {
@@ -2240,9 +2219,6 @@ pub class Parser {
       }
       return expr
     }
-    // A trailing block starts on the line its call ends on: a block on the
-    // next line is a statement of its own (a lambda as a value), never
-    // the block of the call or field read before it.
     i = self.index
     if i >= self.tokens.size {
       return expr
@@ -2250,35 +2226,31 @@ pub class Parser {
     if self.tokens[i].kind != tk_l_brace() {
       return expr
     }
-    // A function's bare name followed by a block is a call with that block,
-    // as a qualified or a method name is (`twice { |x| x + 1 }` as
-    // `m.twice { |x| x + 1 }`); a capitalized name is a type's.
+    // A capitalized name is a type's (a struct literal).
     bare_fn = expr.kind == ex_name() && expr.type_args.size == 0 && expr.ident.size > 0 && !(expr.ident[0] >= 65 && expr.ident[0] <= 90)
     if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() && !bare_fn {
       return expr
     }
-    head = !self.allow_struct_lit
-    // `x = gc.hold { ... }` is left to the checker, which says that
-    // gc.hold is a statement.
+    // `x = gc.hold { ... }`: the checker says that gc.hold is a statement.
     hold = i >= 3 && self.tokens[i - 1].value == "hold" && self.tokens[i - 2].kind == tk_dot() && self.tokens[i - 3].value == "gc"
-    if !self.accept_pipes && !hold && !self.pipes_after_brace(i) {
+    if hold {
+      tb = self.parse_trailing_block()
+      call = Expr.new(ex_call(), tb.loc)
+      call.callee = "hold"
+      if obj = expr.object {
+        call.receiver = obj
+      }
+      call.block = tb
+      return call
+    }
+    if !self.pipes_after_brace(i) {
       fail(self.tokens[i].loc, block_after_call_message())
     }
-    tb = self.parse_trailing_block()
-    self.pipe_blocks.push(tb)
-    self.pipe_heads.push(head)
-    got = attach_block(expr, tb)
-    // A postfix `?` right after the block passes the call's failure up
-    // (`m.try_with { |n| n += 1 }?`), as after any call.
+    _ = self.parse_trailing_block()
     if self.current().kind == tk_question() {
-      at = self.bump().loc
-      tr = Expr.new(ex_try(), at)
-      tr.inner = got
-      return parse_infix_after(tr)
+      self.bump()
     }
-    // A binary operator after the block takes the call as its left
-    // operand (`xs.map { |v| v } ?? fallback`).
-    parse_infix_after(got)
+    parse_infix_after(expr)
   }
 
   pub fn if_assign_ahead: Bool {
@@ -3052,10 +3024,9 @@ pub class Parser {
     left
   }
 
-  // An operand already parsed, a call with its trailing block, continued
-  // by the operators after it as parse_expr_min continues its first
-  // operand (`m.try_with { |n| n += 1 } ?? return`): the block is
-  // attached after the call's expression, which stops at the `{`.
+  // An operand already parsed (a call whose refused block was skipped),
+  // continued by the operators after it as parse_expr_min continues its
+  // first operand.
   pub fn parse_infix_after(left: Expr): Expr {
     if self.current().kind != tk_newline() && infix_prec(self.current().kind) < 0 {
       return left
@@ -3452,10 +3423,7 @@ pub class Parser {
     }
     if k == tk_l_brace() && self.lambda_ahead() {
       e = Expr.new(ex_lambda(), tok.loc)
-      head = !self.allow_struct_lit
       lb = self.parse_trailing_block()
-      self.pipe_blocks.push(lb)
-      self.pipe_heads.push(head)
       e.block = lb
       return e
     }
@@ -3688,8 +3656,8 @@ pub class Parser {
     }
     expect(tk_r_paren())
     // `Array(T).new(n, (i) { ... })`: a lambda written there builds each
-    // element (the call named "Array.new" with the block, as the older
-    // `Array(T).new(n) { |i| ... }`); an array of n copies of one function
+    // element (the call named "Array.new" with the block); an array of n
+    // copies of one function
     // value takes it from a name.
     if e.elems.size == 1 && e.elems[0].kind == ex_lambda() {
       if lb = e.elems[0].block, lb.paren {
@@ -4061,7 +4029,7 @@ pub class Parser {
   // The index of the `{` of a lambda whose parameter list opens at the
   // `(` at index i, or -1: `()`, names with or without `: Type`, then an
   // optional `: Result`, then `{` on the line the list ends on, not
-  // followed by pipes (`f(a) { |x| ... }` is a call with a block).
+  // followed by pipes (`f(a) { |x| ... }`, a block in pipes, refused).
   // Syntactic only: () and a list of two or more names are not
   // expressions (there are no tuples), a typed list is not either, and
   // for one bare name the `{` decides.
@@ -4216,7 +4184,7 @@ pub class Parser {
     loc = expect(tk_l_brace()).loc
     self.skip_newlines()
     block = Block.new(loc)
-    if !self.accept_pipes && (self.current().kind == tk_pipe() || self.current().kind == tk_pipe_pipe()) {
+    if self.current().kind == tk_pipe() || self.current().kind == tk_pipe_pipe() {
       fail(loc, pipes_message())
     }
     if self.current().kind == tk_pipe_pipe() {
@@ -4278,53 +4246,6 @@ pub class Parser {
     }
     lead_check(block.body)
     expect(tk_r_brace())
-  }
-
-  pub fn attach_block(left: Expr, block: Block): Expr {
-    if left.kind == ex_call() {
-      if b = left.block {
-        fail(block.loc, "call already has a block")
-        return left
-      }
-      left.block = block
-      left.bare_name = nil
-      return left
-    }
-    if left.kind == ex_field() {
-      call = Expr.new(ex_call(), block.loc)
-      call.callee = left.ident
-      if obj = left.object {
-        call.receiver = obj
-      }
-      call.block = block
-      return call
-    }
-    if left.kind == ex_name() {
-      call = Expr.new(ex_call(), left.loc)
-      call.callee = left.ident
-      call.block = block
-      return call
-    }
-    if left.kind == ex_array_new() {
-      // `Array(T).new(n) { |i| ... }`: the block builds each element. A
-      // call named "Array.new" (no program can write that name) with the
-      // size as its argument, T as its elem_type and the block, so every
-      // walk that knows a call with a block knows this form.
-      if left.elems.size > 0 {
-        fail(block.loc, "Array(T).new(n, value) takes no block; a lambda builds each element: Array(T).new(n, (i) { ... })")
-        return left
-      }
-      call = Expr.new(ex_call(), left.loc)
-      call.callee = "Array.new"
-      call.elem_type = left.elem_type
-      if sz = left.size_expr {
-        call.args.push(sz)
-      }
-      call.block = block
-      return call
-    }
-    fail(block.loc, "trailing block must follow a call")
-    left
   }
 
   pub fn parse_arg_list: Array(Expr) {
