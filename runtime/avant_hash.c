@@ -606,6 +606,39 @@ static size_t skey_n(const char *s, uint8_t st) {
   return avant_str_n(s);
 }
 
+/* Whether the String key SLOT (a table's: flat, a heap string or a
+ * literal, whose header size is its bytes and terminator; or null, the
+ * empty key) is the N bytes at S. A compact probe calls it on a hash that
+ * agrees: it reads the key's header and bytes, one cache line for a
+ * short key, and not the entry's state (the header is the length for
+ * every flat key). A key of 16 bytes or fewer is compared in two loads
+ * of each side, overlapping, as the hash reads it. */
+static inline __attribute__((always_inline)) int skey_eq(const char *slot, const char *s, size_t n) {
+  size_t m;
+  if (!slot) {
+    return n == 0;
+  }
+  m = (size_t)avant_header((void *)slot)->size - 1;
+  if (m != n) {
+    return 0;
+  }
+  const unsigned char *a = (const unsigned char *)slot;
+  const unsigned char *b = (const unsigned char *)s;
+  if (n <= 16) {
+    if (n >= 8) {
+      return ((hb_rd8(a) ^ hb_rd8(b)) | (hb_rd8(a + n - 8) ^ hb_rd8(b + n - 8))) == 0;
+    }
+    if (n >= 4) {
+      return ((hb_rd4(a) ^ hb_rd4(b)) | (hb_rd4(a + n - 4) ^ hb_rd4(b + n - 4))) == 0;
+    }
+    if (n == 0) {
+      return 1;
+    }
+    return a[0] == b[0] && a[n >> 1] == b[n >> 1] && a[n - 1] == b[n - 1];
+  }
+  return memcmp(a, b, n) == 0;
+}
+
 /* ---- the two layouts: positions, entries, growth, deletion ---- */
 
 /* The layout a hash takes, by its key: the compact one for String and
@@ -629,8 +662,15 @@ static int32_t fill_max(int32_t cap) {
   return cap - cap / 4;
 }
 
-/* Compact meta: uint32 index[cap], uint8 state[fill_max(cap)], then (String
+/* Compact meta: uint64 index[cap], uint8 state[fill_max(cap)], then (String
  * and struct keys) uint32 hash[fill_max(cap)] at the next 4-byte boundary.
+ * An index position holds its entry's number plus one in its low word (0:
+ * empty) and the entry's hash in its high word: a probe compares the hash
+ * in the position it loaded, and reads an entry's key only when the hash
+ * agrees (with the hash in the entries alone, each probe read the index
+ * and then the entry's hash, two cache lines apart in a large table:
+ * Calculator::Interpreter, LZWEncode and CacheSimulation spent a fifth of
+ * their time in those loads).
  * Open meta: uint8 state[cap] (0 empty, 1 live, 2 deleted: a deleted
  * position is not taken again until the next growth, so no entry moves
  * while the table lives), then uint32 order[fill_max(cap)] at the next
@@ -639,7 +679,7 @@ static inline size_t meta_hash_off(const AvantHash *h, int32_t cap) {
   if (!is_compact(h)) {
     return ((size_t)cap + 3) & ~(size_t)3;
   }
-  size_t off = (size_t)cap * 4 + (size_t)fill_max(cap);
+  size_t off = (size_t)cap * 8 + (size_t)fill_max(cap);
   return (off + 3) & ~(size_t)3;
 }
 
@@ -653,7 +693,7 @@ static uint64_t meta_bytes(const AvantHash *h, int32_t cap) {
   if (key_hashed(h)) {
     return (uint64_t)meta_hash_off(h, cap) + (uint64_t)fill_max(cap) * 4;
   }
-  return (uint64_t)cap * 4 + (uint64_t)fill_max(cap);
+  return (uint64_t)cap * 8 + (uint64_t)fill_max(cap);
 }
 
 /* The entries a table of CAP positions has room for. */
@@ -661,13 +701,23 @@ static int32_t entry_cap(const AvantHash *h, int32_t cap) {
   return is_compact(h) ? fill_max(cap) : cap;
 }
 
-static inline uint32_t *index_of(const AvantHash *h) {
-  return (uint32_t *)h->meta;
+static inline uint64_t *index_of(const AvantHash *h) {
+  return (uint64_t *)h->meta;
+}
+
+/* A compact index position for entry E of hash HV. */
+static inline uint64_t ix_word(int32_t e, uint32_t hv) {
+  return ((uint64_t)hv << 32) | ((uint32_t)e + 1u);
+}
+
+/* The entry a compact index word names, or -1. */
+static inline int32_t ix_entry(uint64_t w) {
+  return (int32_t)(uint32_t)w - 1;
 }
 
 static inline uint8_t *states_of(const AvantHash *h) {
   if (is_compact(h)) {
-    return (uint8_t *)h->meta + (size_t)h->cap * 4;
+    return (uint8_t *)h->meta + (size_t)h->cap * 8;
   }
   return (uint8_t *)h->meta;
 }
@@ -689,7 +739,7 @@ static inline uint8_t ent_state(const AvantHash *h, int32_t e) {
  * position's own when it is live (open). */
 static inline int32_t pos_entry(const AvantHash *h, int32_t i) {
   if (is_compact(h)) {
-    return (int32_t)index_of(h)[i] - 1;
+    return ix_entry(index_of(h)[i]);
   }
   return st_full(states_of(h)[i]) ? i : -1;
 }
@@ -728,7 +778,7 @@ static int ent_live(const AvantHash *h, int32_t e) {
  * whose position test (POS, below) and key compare are a load and a
  * compare each. */
 #define POS_OPEN(i) (st[i] == 0 ? -1 : (st_full(st[i]) ? (i) : -2))
-#define POS_COMPACT(i) ((int32_t)ix[i] - 1)
+#define POS_COMPACT(i) ix_entry(ix[i])
 
 #define FIND_INT_AT(T, POS)                                                         \
   do {                                                                            \
@@ -797,7 +847,7 @@ static int find_int(const AvantHash *h, int64_t key, uint32_t hv, int32_t *ent, 
   int32_t n;
   unsigned kw = kw_of(h);
   if (is_compact(h)) {
-    const uint32_t *ix = index_of(h);
+    const uint64_t *ix = index_of(h);
     FIND_INT_WIDTHS(POS_COMPACT);
   } else {
     const uint8_t *st = states_of(h);
@@ -820,28 +870,8 @@ static int find_int(const AvantHash *h, int64_t key, uint32_t hv, int32_t *ent, 
   return 0;
 }
 
-#define FIND_BYTES_AT(POS)                                                          \
-  do {                                                                            \
-    for (k = 0; k < cap; k++) {                                                   \
-      int32_t e = POS(i);                                                         \
-      if (e < 0) {                                                                \
-        *pos = i;                                                                 \
-        return 0;                                                                 \
-      }                                                                           \
-      if (hs[e] == hv) {                                                          \
-        const char *slot = skey_at(keys, e);                                      \
-        if (bytes_eq(slot, skey_n(slot, es[e]), s, n)) {                          \
-          *ent = e;                                                               \
-          return 1;                                                               \
-        }                                                                         \
-      }                                                                           \
-      i = (i + 1) & mask;                                                         \
-    }                                                                             \
-  } while (0)
-
-
-/* As FIND_BYTES_AT, passing over a deleted position (POS gives -2): the
- * open layout's. */
+/* A String key's probe of the open layout: a deleted position (POS gives
+ * -2) is passed over. */
 #define FIND_BYTES_SKIP_AT(POS)                                                          \
   do {                                                                            \
     for (k = 0; k < cap; k++) {                                                   \
@@ -875,8 +905,22 @@ static int find_bytes(const AvantHash *h, const char *s, size_t n, uint32_t hv, 
   const uint8_t *es = states_of(h);
   const void *keys = h->keys;
   if (is_compact(h)) {
-    const uint32_t *ix = index_of(h);
-    FIND_BYTES_AT(POS_COMPACT);
+    const uint64_t *ix = index_of(h);
+    for (k = 0; k < cap; k++) {
+      uint64_t w = ix[i];
+      if (!w) {
+        *pos = i;
+        return 0;
+      }
+      if ((uint32_t)(w >> 32) == hv) {
+        int32_t e = ix_entry(w);
+        if (skey_eq(skey_at(keys, e), s, n)) {
+          *ent = e;
+          return 1;
+        }
+      }
+      i = (i + 1) & mask;
+    }
   } else {
     const uint8_t *st = es;
     FIND_BYTES_SKIP_AT(POS_OPEN);
@@ -885,14 +929,15 @@ static int find_bytes(const AvantHash *h, const char *s, size_t n, uint32_t hv, 
   return 0;
 }
 
-/* A new entry at position POS (from a failed lookup after ensure_cap):
- * its number, state ST set, the size counted. Its key, hash and value
+/* A new entry at position POS (from a failed lookup after ensure_cap),
+ * of hash HV (a compact table's index keeps it): its number, state ST
+ * set, the size counted. Its key, hash and value
  * are the caller's to store (the value is zero). */
-static int32_t claim(AvantHash *h, int32_t pos, uint8_t st) {
+static int32_t claim(AvantHash *h, int32_t pos, uint8_t st, uint32_t hv) {
   int32_t e = pos;
   if (is_compact(h)) {
     e = h->used;
-    index_of(h)[pos] = (uint32_t)e + 1u;
+    index_of(h)[pos] = ix_word(e, hv);
   } else {
     order_of(h)[h->used] = (uint32_t)pos;
   }
@@ -950,7 +995,7 @@ static void move_entry(AvantHash *dst, const AvantHash *src, void *okeys, void *
   while (pos_entry(dst, i) >= 0) {
     i = (i + 1) & mask;
   }
-  int32_t ne = claim(dst, i, st);
+  int32_t ne = claim(dst, i, st, hv);
   if (key_is_str(src)) {
     avant_barrier_slot_young(dst->keys, &((void **)dst->keys)[ne]);
     ((void **)dst->keys)[ne] = ((void **)okeys)[e];
@@ -1026,15 +1071,15 @@ static void compact_in_place(AvantHash *h) {
     }
     memset(st + w, 0, (size_t)(end - w));
   }
-  uint32_t *ix = index_of(h);
+  uint64_t *ix = index_of(h);
   int32_t mask = h->cap - 1;
-  memset(ix, 0, (size_t)h->cap * 4);
+  memset(ix, 0, (size_t)h->cap * 8);
   for (e = 0; e < w; e++) {
     int32_t i = (int32_t)(hs[e] & (uint32_t)mask);
     while (ix[i] != 0) {
       i = (i + 1) & mask;
     }
-    ix[i] = (uint32_t)e + 1u;
+    ix[i] = ix_word(e, hs[e]);
   }
   h->used = w;
 }
@@ -1293,8 +1338,8 @@ static void erase(AvantHash *h, int32_t e) {
  * gc-lint: a store helper (erase makes the call on the two buffers first, RC5). */
 static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
   int32_t i = (int32_t)(ent_hash(h, e) & (uint32_t)mask);
-  uint32_t *ix = index_of(h);
-  while ((int32_t)ix[i] - 1 != e) {
+  uint64_t *ix = index_of(h);
+  while (ix_entry(ix[i]) != e) {
     i = (i + 1) & mask;
   }
   states_of(h)[e] = 0;
@@ -1315,11 +1360,10 @@ static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
     ix[i] = 0;
     k = (i + 1) & mask;
     for (;;) {
-      int32_t ke = (int32_t)ix[k] - 1;
-      if (ke < 0) {
+      if (!ix[k]) {
         return;
       }
-      int32_t home = (int32_t)(ent_hash(h, ke) & (uint32_t)mask);
+      int32_t home = (int32_t)((uint32_t)(ix[k] >> 32) & (uint32_t)mask);
       int move = (i <= k) ? (home <= i || home > k) : (home <= i && home > k);
       if (move) {
         ix[i] = ix[k];
@@ -1547,7 +1591,7 @@ static void *put_ik_slow(AvantHash *h, avant_int key, uint32_t hv, int32_t *foun
   if (found) {
     *found = 0;
   }
-  e = claim(h, pos, 1);
+  e = claim(h, pos, 1, hv);
   ikey_put(h, h->keys, e, key);
   zero_val(h, val_at(h, h->vals, e));
   return val_at(h, h->vals, e);
@@ -1578,7 +1622,7 @@ static void *put_ik(AvantHash *h, avant_int key, int32_t *found, int grow_first)
       if (found) {
         *found = 0;
       }
-      e = claim(h, pos, 1);
+      e = claim(h, pos, 1, hv);
       ikey_put(h, h->keys, e, key);
       zero_val(h, val_at(h, h->vals, e));
       return val_at(h, h->vals, e);
@@ -1617,7 +1661,7 @@ static inline __attribute__((always_inline)) void *put_sk_slow(AvantHash *h, con
   if (found) {
     *found = 0;
   }
-  e = claim(h, pos, occ_mark(key, n));
+  e = claim(h, pos, occ_mark(key, n), hv);
   store_str_key(h, e, key, hv);
   zero_val(h, val_at(h, h->vals, e));
   return val_at(h, h->vals, e);
@@ -1654,7 +1698,7 @@ static void *put_sk(AvantHash *h, const char *key, int32_t *found, int grow_firs
       if (found) {
         *found = 0;
       }
-      e = claim(h, pos, occ_mark(key, n));
+      e = claim(h, pos, occ_mark(key, n), hv);
       store_str_key(h, e, key, hv);
       zero_val(h, val_at(h, h->vals, e));
       return val_at(h, h->vals, e);
@@ -1771,17 +1815,17 @@ static int find_struct(const AvantHash *h, const char *k, uint32_t hv, int32_t *
   }
   int32_t mask = cap - 1;
   int32_t i = (int32_t)(hv & (uint32_t)mask);
-  const uint32_t *hs = hashes_of(h);
-  const uint32_t *ix = index_of(h);
+  const uint64_t *ix = index_of(h);
   const char *keys = (const char *)h->keys;
   size_t kw = hx(h)->kw;
   for (n = 0; n < cap; n++) {
-    int32_t e = (int32_t)ix[i] - 1;
+    uint64_t w = ix[i];
+    int32_t e = ix_entry(w);
     if (e < 0) {
       *pos = i;
       return 0;
     }
-    if (hs[e] == hv && xkey_eq(h, keys + (size_t)e * kw, k)) {
+    if ((uint32_t)(w >> 32) == hv && xkey_eq(h, keys + (size_t)e * kw, k)) {
       *ent = e;
       return 1;
     }
@@ -1842,7 +1886,7 @@ static void *put_xk(AvantHash *h, const char *k, int32_t *found, int grow_first)
   if (found) {
     *found = 0;
   }
-  e = claim(h, pos, 1);
+  e = claim(h, pos, 1, hv);
   store_xkey(h, e, k, hv);
   zero_val(h, val_at(h, h->vals, e));
   return val_at(h, h->vals, e);
@@ -2198,12 +2242,13 @@ static int find_user(AvantHash *const *hh, const char *k, uint32_t hv, int32_t *
   int32_t i = (int32_t)(hv & (uint32_t)mask);
   for (n = 0; n < cap; n++) {
     const AvantHash *h = *hh;
-    int32_t e = (int32_t)index_of(h)[i] - 1;
+    uint64_t w = index_of(h)[i];
+    int32_t e = ix_entry(w);
     if (e < 0) {
       *pos = i;
       return 0;
     }
-    if (hashes_of(h)[e] == hv) {
+    if ((uint32_t)(w >> 32) == hv) {
       const char *slot = (const char *)h->keys + (size_t)e * hx(h)->kw;
       probe_push(hh);
       int32_t eq = hx(h)->ueq(slot, k);
@@ -2252,7 +2297,7 @@ static void *put_uk(AvantHash *h, const char *k, int32_t *found, int grow_first)
   if (found) {
     *found = 0;
   }
-  e = claim(h, pos, 1);
+  e = claim(h, pos, 1, hv);
   store_xkey(h, e, k, hv);
   zero_val(h, val_at(h, h->vals, e));
   return val_at(h, h->vals, e);
@@ -2620,12 +2665,15 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
   uint32_t hv = hash_concat_bytes(a, na, b, nb, h->seed);
   mask = h->cap - 1;
   i = (int32_t)(hv & (uint32_t)mask);
+  /* A String key's table is compact: its index words hold the hashes. */
+  const uint64_t *ix = index_of(h);
   for (n = 0; n < h->cap; n++) {
-    int32_t e = pos_entry(h, i);
+    uint64_t w = ix[i];
+    int32_t e = ix_entry(w);
     if (e < 0) {
       return 0;
     }
-    if (hashes_of(h)[e] == hv) {
+    if ((uint32_t)(w >> 32) == hv) {
       const char *slot = skey_at(h->keys, e);
       if (bytes_eq_concat(slot, skey_n(slot, ent_state(h, e)), a, na, b, nb)) {
         if (found) {
