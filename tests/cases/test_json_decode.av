@@ -128,6 +128,54 @@ fn test_decode_errors(c: Checks) {
   }
 }
 
+// Members in the fields' order, in another order, given twice, with
+// unknown ones between, after a nested object: the fields are read in
+// their order first and the object searched when the next member has
+// another name, with the same values and errors whatever the order.
+struct Inner {
+  pub a: Int
+  pub b: String
+}
+
+struct Outer {
+  pub first: Int
+  pub inner: Inner
+  pub list: Array(Inner)
+  pub mid: Float64
+  pub tag: String?
+  pub last: Bool
+}
+
+fn outer_says(text: String, skip: Bool): String {
+  if o = json.decode(text, Outer, ignore_unknown: skip) {
+    b = Buf.new()
+    for x in o.list {
+      b.push_str(" ${x.a}${x.b}")
+    }
+    return "${o.first} ${o.inner.a}${o.inner.b}${b.to_s()} ${o.mid} ${o.tag ?? "nil"} ${o.last}"
+  } else e {
+    return e.message
+  }
+}
+
+fn test_decode_member_order(c: Checks) {
+  c.eq_str(outer_says("{\"first\": 1, \"inner\": {\"a\": 2, \"b\": \"x\"}, \"list\": [{\"a\": 3, \"b\": \"y\"}, {\"b\": \"z\", \"a\": 4}], \"mid\": 0.5, \"tag\": \"t\", \"last\": true}", false), "1 2x 3y 4z 0.5 t true", "members in the fields' order, an inner object's in another")
+  c.eq_str(outer_says("{\"last\": false, \"tag\": null, \"mid\": 2, \"list\": [], \"inner\": {\"b\": \"q\", \"a\": 9}, \"first\": 5}", false), "5 9q 2.0 nil false", "members in the reverse order")
+  c.eq_str(outer_says("{\"first\": 1, \"first\": 2, \"inner\": {\"a\": 1, \"b\": \"x\", \"a\": 7}, \"list\": [], \"mid\": 1, \"last\": true, \"mid\": 3}", false), "1 1x 1.0 nil true", "a name given twice, at the cursor and after it: the first")
+  c.eq_str(outer_says("{\"inner\": {\"a\": 1, \"b\": \"x\"}, \"first\": 1, \"list\": [], \"first\": 8, \"mid\": 1, \"last\": true}", false), "1 1x 1.0 nil true", "a name given twice, the first one out of order")
+  c.eq_str(outer_says("{\"first\": 1, \"zz\": 0, \"inner\": {\"a\": 1, \"q\": [1, {\"a\": 5}], \"b\": \"x\"}, \"list\": [], \"yy\": {\"last\": false}, \"mid\": 1, \"last\": true}", true), "1 1x 1.0 nil true", "unknown members between, skipped; a nested one's names are not the object's")
+  c.eq_str(outer_says("{\"first\": 1, \"zz\": 0, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [], \"mid\": 1, \"last\": true}", false), "at $.zz: unknown member (ignore_unknown: true skips unknown members)", "an unknown member between known ones")
+  c.eq_str(outer_says("{\"first\": 1, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [{\"a\": 1}], \"mid\": 1, \"last\": true}", false), "at $.list[0].b: missing member", "a missing member after a nested object")
+  c.eq_str(outer_says("{\"first\": 1, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [], \"mid\": \"no\", \"last\": true}", false), "at $.mid: expected a number, found a string", "a wrong kind at the cursor")
+  c.eq_str(outer_says("{\"first\": 1, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [], \"mid\": 1, \"last\": true, \"tag\": 3}", false), "at $.tag: expected a string, found 3", "a wrong kind out of order")
+  c.eq_str(outer_says("{\"first\": 1, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [], \"mid\": 1}", false), "at $.last: missing member", "the last member missing")
+  // The same type over two documents, one after the other: each read
+  // begins at its own object.
+  t1 = outer_says("{\"first\": 1, \"inner\": {\"a\": 1, \"b\": \"x\"}, \"list\": [], \"mid\": 1, \"last\": true}", false)
+  t2 = outer_says("{\"last\": false, \"mid\": 2, \"list\": [], \"inner\": {\"a\": 2, \"b\": \"y\"}, \"first\": 2}", false)
+  c.eq_str(t1 + " / " + t2, "1 1x 1.0 nil true / 2 2y 2.0 nil false", "two documents in turn")
+}
+
 fn test_decode_shapes(c: Checks) {
   if xs = json.decode("[1, 2, 3]", Array(Int)) {
     c.eq_int(xs.sum(), 6, "an Array at the root")
@@ -406,6 +454,7 @@ fn test_main(c: Checks) {
   test_decode_order(c)
   test_decode_errors(c)
   test_decode_shapes(c)
+  test_decode_member_order(c)
   test_encode(c)
   test_decode_many(c)
   test_decode_limits(c)

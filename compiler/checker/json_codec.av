@@ -586,20 +586,44 @@ pub fn json_dec_call(ty: Ty, j: String, deps: Array(Ty)): String {
   "__avant_json_dec__${json_key(ty)}(${j}, ignore_unknown)"
 }
 
+// Whether reading a value of ty may begin an object's read of its own
+// (a struct or a class, or an Array or a Hash holding one), which moves
+// the cursor.
+pub fn json_nests(ty: Ty): Bool {
+  t = ty
+  if ty.is_nilable() && ty.members.size == 2 {
+    t = ty_without_nil(ty)
+  }
+  if t.is_int() || t.is_float() || t.is_string() || t.is_bool() || t.is_enum() || json_std_type(t, "Json") || json_std_type(t, "JsonValue") {
+    return false
+  }
+  if t.is_array() {
+    if e = t.inner {
+      return json_nests(e)
+    }
+  }
+  if t.is_hash() {
+    if v = t.val {
+      return json_nests(v)
+    }
+  }
+  true
+}
+
 // The runtime call that reads a member of a scalar type by its name
 // ("" for any other type), and what a message says it expected.
 pub fn json_scalar_reader(ty: Ty): String {
   if ty.is_int() {
-    return "avant_json_obj_int"
+    return "avant_json_ord_int"
   }
   if ty.is_float() {
-    return "avant_json_obj_f64"
+    return "avant_json_ord_f64"
   }
   if ty.is_string() {
-    return "avant_json_obj_str"
+    return "avant_json_ord_str"
   }
   if ty.is_bool() {
-    return "avant_json_obj_bool"
+    return "avant_json_ord_bool"
   }
   ""
 }
@@ -723,9 +747,16 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
 // A struct's or class's reader: each field's member read by its name
 // (absent: nil for an optional, the field's default for a field that
 // has one, else an error), the members counted, so a name no field has
-// is looked for only when there is one; then the literal.
+// is looked for only when there is one; then the literal. The fields
+// are read in their declared order, each first from the member after
+// the one the last read took (the runtime's cursor, one name compared),
+// the object searched only when that member has another name: a text
+// written from the type has its members in that order. A field read by
+// a reader of its own (a struct, an Array, a Hash) moves the cursor to
+// the objects inside it, so the cursor is taken before and put back
+// after when a field follows.
 pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)) {
-  b.push_str("  size = jsonc.avant_json_obj_size(j.node)\n")
+  b.push_str("  size = jsonc.avant_json_ord_begin(j.node)\n")
   b.push_str("  if size < 0 {\n")
   b.push_str("    return codec_wrong(j.node, \"an object\")\n")
   b.push_str("  }\n")
@@ -785,7 +816,12 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
       }
       b.push_str("  }\n")
     } else {
-      b.push_str("  if c${i} = jsonc.avant_json_get(j.node, ${key}) {\n")
+      b.push_str("  if c${i} = jsonc.avant_json_ord_get(j.node, ${key}) {\n")
+      // A reader of its own (not an enum's) may begin objects of its own.
+      keep = i + 1 < ty.fields.size && json_nests(inner)
+      if keep {
+        b.push_str("    m${i} = jsonc.avant_json_ord_mark(j.node)\n")
+      }
       b.push_str("    found += 1\n")
       ind = "    "
       if opt {
@@ -798,6 +834,9 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
       b.push_str("${ind}v${i} = ${json_dec_call(inner, "Json { node: c${i}, pool: j.pool }", deps)} else e${i} {\n")
       b.push_str("${ind}  return codec_at_key(e${i}, ${key})\n")
       b.push_str("${ind}}\n")
+      if keep {
+        b.push_str("${ind}jsonc.avant_json_ord_resume(j.node, m${i})\n")
+      }
       b.push_str("${ind}f${i} = v${i}\n")
       if opt {
         b.push_str("    }\n")

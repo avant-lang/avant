@@ -656,3 +656,100 @@ avant_int avant_json_write_f64(void *buf, double v) {
   avant_buf_append(buf, tmp, (int32_t)k);
   return 0;
 }
+
+/* ---- The typed decode's ordered reads ----
+ *
+ * A decoded type's fields are read in their declared order, and a
+ * document written from that type (or by most writers of that shape)
+ * has its members in the same order: each read first tries the member
+ * after the one the last read took, one name comparison, and searches
+ * the object only when that member has another name. The cursor is the
+ * thread's: avant_json_ord_begin sets it on an object, each read that
+ * takes the member at it steps it on, a search leaves it where it is (so
+ * the member at it is always the first of its name: every member before
+ * it was taken by an earlier field, and fields have distinct names), and
+ * a read on another object than the cursor's searches. A nested decode
+ * begins its own object; the caller takes the cursor before it
+ * (avant_json_ord_mark) and puts it back after (avant_json_ord_resume).
+ * No pointer here is read unless the object it came from is the one
+ * read: the cursor only points inside the object it was set on. */
+static __thread yyjson_val *g_ord_obj;
+static __thread yyjson_val *g_ord_cur;
+static __thread yyjson_val *g_ord_end;
+
+/* The member count of an object, -1 for any other value (as
+ * avant_json_obj_size), the cursor set at its first member. */
+avant_int avant_json_ord_begin(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v)) {
+    g_ord_obj = NULL;
+    return -1;
+  }
+  g_ord_obj = v;
+  g_ord_cur = unsafe_yyjson_get_first(v);
+  g_ord_end = unsafe_yyjson_get_next(v);
+  return (avant_int)yyjson_obj_size(v);
+}
+
+static yyjson_val *ord_get(void *nodep, const char *key) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  const char *k;
+  size_t n;
+  if (!v || !key) {
+    return NULL;
+  }
+  k = avant_str_bytes(key, &n);
+  if (v == g_ord_obj && g_ord_cur < g_ord_end) {
+    yyjson_val *cur = g_ord_cur;
+    if (unsafe_yyjson_get_len(cur) == n && memcmp(unsafe_yyjson_get_str(cur), k, n) == 0) {
+      yyjson_val *val = cur + 1;
+      g_ord_cur = unsafe_yyjson_get_next(val);
+      return val;
+    }
+  }
+  if (!yyjson_is_obj(v)) {
+    return NULL;
+  }
+  return yyjson_obj_getn(v, k, n);
+}
+
+void *avant_json_ord_get(void *nodep, const char *key) {
+  return ord_get(nodep, key);
+}
+
+avant_int avant_json_ord_int(void *nodep, const char *key) {
+  return node_int(ord_get(nodep, key));
+}
+
+double avant_json_ord_f64(void *nodep, const char *key) {
+  return node_f64_or_nan(ord_get(nodep, key));
+}
+
+avant_int avant_json_ord_bool(void *nodep, const char *key) {
+  return node_bool(ord_get(nodep, key));
+}
+
+char *avant_json_ord_str(void *nodep, const char *key) {
+  return node_str(ord_get(nodep, key));
+}
+
+/* The cursor, when it is on this object (else NULL), and the cursor put
+ * back on it after a nested decode moved it (NULL: no cursor, every read
+ * searches). */
+void *avant_json_ord_mark(void *nodep) {
+  if (nodep && (yyjson_val *)nodep == g_ord_obj) {
+    return g_ord_cur;
+  }
+  return NULL;
+}
+
+void avant_json_ord_resume(void *nodep, void *cur) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !cur || !yyjson_is_obj(v)) {
+    g_ord_obj = NULL;
+    return;
+  }
+  g_ord_obj = v;
+  g_ord_cur = (yyjson_val *)cur;
+  g_ord_end = unsafe_yyjson_get_next(v);
+}
