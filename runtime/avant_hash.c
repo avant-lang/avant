@@ -386,7 +386,9 @@ static inline uint64_t hb_rd4(const unsigned char *p) {
   return v;
 }
 
-static uint32_t hash_bytes(const char *s, size_t n, uint32_t seed) {
+/* Inlined at each lookup and store: as a call it cost Calculator::Interpreter,
+ * CacheSimulation and LZWEncode 2% to 4.5% of their instructions. */
+static inline __attribute__((always_inline)) uint32_t hash_bytes(const char *s, size_t n, uint32_t seed) {
   const unsigned char *p = (const unsigned char *)s;
   uint32_t out;
   if (!p) {
