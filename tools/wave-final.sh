@@ -74,7 +74,15 @@
 #      branch that moved on since is not this head's base.
 #   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
 #      of tools/la-harness.sh, built once per checkout), then the LR table
-#      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
+#      (tools/lr-table.sh), OUT/la. The tasks are timed on the whole
+#      machine, one after another, as the references were; the pure-Avant
+#      twins then on the NUMA nodes at once (tools/la-twins.py: each twin's
+#      prod run and LR re-measure, one run a node, pinned with its memory),
+#      their rows merged where the sequential passes wrote them and the
+#      harness's reports written again (la/twins.tsv, la/twins.log); on a
+#      machine with one node, without numactl, or with
+#      WAVE_LA_TWINS_AT_ONCE=0, the twins run after the tasks in the same
+#      passes, as before; needs WAVE_LA_SIDE (a directory holding
 #      this checkout's copy as avant/ and LangArena/ side by side, the layout
 #      the harness expects) and this machine's LR reference (the results
 #      directory the other languages were measured into): WAVE_LR_REFERENCE,
@@ -498,24 +506,49 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
     # a build, on the shared side.
     # shellcheck disable=SC2016
     lk shared "langarena harness" sh -c 'cd "$1" && h=$(sh tools/la-harness.sh 2> "$2/harness-build.log" < /dev/null) && echo "$h" > "$2/harness.txt"' la-harness "$side/avant" "$la"
+    # The twins at once on the NUMA nodes (tools/la-twins.py), where the
+    # machine has two or more and numactl: the estimates that order them
+    # are the base's twin times when BASE_STATS's final has them.
+    twins_at_once=0
+    if [ "${WAVE_LA_TWINS_AT_ONCE:-1}" != 0 ] && command -v numactl > /dev/null 2>&1 \
+      && [ "$(ls -d /sys/devices/system/node/node[0-9]* 2>/dev/null | wc -l)" -ge 2 ]; then twins_at_once=1; fi
+    est=""; [ -n "$base" ] && [ -f "$(dirname "$base")/la/lr-avant-pure.tsv" ] && est=$(dirname "$base")/la/lr-avant-pure.tsv
     # The timing alone holds the whole machine: the prod pass, then the LR
-    # re-measure of its binaries. Its own start and end (timed.txt) give the
-    # time it held the machine, the lock's wait left out.
+    # re-measure of its binaries (the tasks; with the twins at once, then
+    # the twins on the nodes and the harness's reports again). Its own
+    # start and end (timed.txt) give the time it held the machine, the
+    # lock's wait left out.
     # shellcheck disable=SC2016
     lk timed langarena sh -c 'date +%s.%N > "$2/timed.txt"; h=$(cat "$2/harness.txt" 2>/dev/null) || exit 3; echo "harness: $h" > "$2/la-prod.log"
       t0=$(date +%s.%N)
-      cd "$1" && AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" \
+      tw=; [ "$7" = 1 ] && tw=0
+      cd "$1" && env AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" ${tw:+AVANT_TWINS=0} \
         timeout -k 10 2700 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1
       echo "prod $? $t0 $(date +%s.%N)" > "$2/prod.txt"
-      sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1 \
-        && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
-      lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref"
+      env ${tw:+LR_TWINS=0} sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1
+      lrc=$?
+      if [ "$7" = 1 ]; then
+        t1=$(date +%s.%N)
+        AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release timeout -k 10 2700 python3 -I tools/la-twins.py "$2" "$h" "$5/LangArena/run.js" ${8:+--estimates "$8"} < /dev/null > "$2/twins.log" 2>&1
+        echo "twins $? $t1 $(date +%s.%N)" > "$2/twins.txt"
+        # the reports again, with the twins merged in: a pass that measures nothing
+        AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" AVANT_TASK_LIST=- \
+          timeout -k 10 300 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1 || lrc=4
+      fi
+      [ $lrc -eq 0 ] && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
+      lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref" "$twins_at_once" "$est"
     lrc=$?; curname=floor
     rc=$(awk '{ print $2 }' "$la/prod.txt" 2>/dev/null); [ -n "$rc" ] || rc=none
     pw=$(awk '{ printf "%.1f", $4 - $3 }' "$la/prod.txt" 2>/dev/null)
+    twl=""
+    if [ $twins_at_once = 1 ]; then
+      trc=$(awk '{ print $2 }' "$la/twins.txt" 2>/dev/null); [ -n "$trc" ] || trc=none
+      [ "$trc" = 0 ] || rc="$rc, twins rc=$trc"
+      twl="; the twins on the NUMA nodes at once: $(sed -n 's/^la-twins: //p' "$la/twins.log" 2>/dev/null | head -n 1) (la/twins.tsv)"
+    fi
     if [ -n "$runner" ]; then held_what="the whole machine held"; else held_what="the timed part took"; fi
     held=$(awk 'NR == 1 { a = $1 } NR == 2 { printf "%.1f", $1 - a }' "$la/timed.txt" 2>/dev/null)
-    if [ "$rc" = 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$pw s; LR table la/table.md against $ref$ref_from$(la_disturbed); $held_what ${held:-?} s"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
+    if [ "$rc" = 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$pw s$twl; LR table la/table.md against $ref$ref_from$(la_disturbed); $held_what ${held:-?} s"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
     # The floor: tools/floor.py on la/table.md, beside the base's.
     fbase=${WAVE_FLOOR_BASE:-}
     [ -z "$fbase" ] && [ -n "$base" ] && [ -f "$(dirname "$base")/la/table.md" ] && fbase=$(dirname "$base")/la/table.md

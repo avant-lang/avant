@@ -357,4 +357,61 @@ printf 'deadbeef\nanothertree\n' > "$w/layb/final/head.txt"
 final "$f" "$w/lay2.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
 has '^layout: skipped (the floor.s base table is of tree anothertree, the base cache.s entry of feedface' "$w/lay2.out/SUMMARY.txt"
 say layout-two-bases $? "$(line layout: "$w/lay2.out/SUMMARY.txt")"
+
+# 13. The twins at once: a stub harness whose tasks pass lists two twins,
+# each twin's pass writes its row, and a pass that names no task writes the
+# reports from the merged rows; a stub LR table writes a twin's row where
+# LR_TASKS=0 asks for it alone. With two NUMA nodes or more and numactl,
+# the tasks pass leaves the twins out (AVANT_TWINS=0, LR_TWINS=0),
+# tools/la-twins.py times them on the nodes, their rows are merged in the
+# library's order and the reports written again; with
+# WAVE_LA_TWINS_AT_ONCE=0 they stay in the passes, as before.
+f=$(fake tw)
+cp "$root/tools/la-twins.py" "$root/tools/floor.py" "$f/tools/"
+cat > "$f/tools/la-harness.sh" <<'STUB'
+#!/bin/sh
+d=$(cd "$(dirname "$0")/.." && pwd)/langarena/tmp; mkdir -p "$d"
+cat > "$d/stub-measure" <<'EOF'
+#!/bin/sh
+d=$AVANT_RESULTS_DIR; mkdir -p "$d/raw"
+echo "prod twins=${AVANT_TWINS:-} list=${AVANT_TASK_LIST:-}" >> "$STUB_LOG"
+case "${AVANT_TASK_LIST:-}" in
+  "") printf 'task\tlibrary\ttwin\ttwin_slug\tkind\tcompared\nA::A\tlib\tA::A-Pure\ta_a-pure\tcommon\tC\nB::B\tlib\tB::B-Pure\tb_b-pure\tcommon\tC\n' > "$d/library.tsv"
+      echo '[]' > "$d/runtime.json" ;;
+  -) echo "pure rows: $(grep -c '"name"' "$d/runtime-pure.json")" > "$d/SUMMARY.md" ;;
+  *) echo "[1/1] $AVANT_TASK_LIST run (timeout 900s)"; sleep 0.5
+     printf '[{"name": "%s", "checksum_ok": "true"}]\n' "$AVANT_TASK_LIST" > "$d/runtime-pure.json" ;;
+esac
+EOF
+chmod +x "$d/stub-measure"; echo "$d/stub-measure"
+STUB
+cat > "$f/tools/lr-table.sh" <<'STUB'
+#!/bin/sh
+if [ "$1" = avant ]; then
+  echo "lr tasks=${LR_TASKS:-} twins=${LR_TWINS:-} list=${LR_TWIN_LIST:-}" >> "$STUB_LOG"
+  if [ "${LR_TASKS:-}" = 0 ]; then
+    printf 'task\tstatus\twall_s\n' > "$4"; printf '# label: Avant pure\ntask\tstatus\twall_s\n%s\tok\t1.000\n' "$LR_TWIN_LIST" > "$(dirname "$4")/lr-avant-pure.tsv"
+  else printf 'task\tstatus\twall_s\nA::A\tok\t1.000\n' > "$4"; fi
+  exit 0
+fi
+[ -n "${3:-}" ] && printf 'name\twall_s\trss_mb\tchecksum_ok\nA::A\t1.0\t1\ttrue\n' > "$3/runtime.tsv"
+printf '## Combined (worse of the two multipliers)\n\n| # | Task | Avant s | Best s | Best (time) | Time x | Avant MB | Best MB | Best (mem) | Mem x | vs Crystal t/m | vs Go t/m |\n| ---: | --- |\n| 1 | A::A | 1.0 | 1.0 | C | 1.00 | 1 | 1 | C | 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |\n'
+STUB
+if command -v numactl > /dev/null 2>&1 && [ "$(ls -d /sys/devices/system/node/node[0-9]* 2>/dev/null | wc -l)" -ge 2 ]; then
+  : > "$w/tw.log"
+  final "$f" "$w/tw.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/tw/side" WAVE_LR_DEFAULT="$w/default" STUB_LOG="$w/tw.log"
+  s=$w/tw.out/SUMMARY.txt; la=$w/tw.out/la
+  has '^langarena: prod rc=0 wall=[0-9.]* s; the twins on the NUMA nodes at once: 2 twins, 4 jobs on nodes [0-9,]* in [0-9.]* s' "$s" \
+    && [ "$(awk -F'\t' '!/^#/ && $1 != "task" { print $1 }' "$la/lr-avant-pure.tsv" | tr '\n' ' ')" = "A::A-Pure B::B-Pure " ] \
+    && [ "$(grep -c '"name"' "$la/runtime-pure.json")" = 2 ] && grep -qx 'pure rows: 2' "$la/SUMMARY.md" \
+    && grep -qx 'prod twins=0 list=' "$w/tw.log" && grep -qx 'lr tasks= twins=0 list=' "$w/tw.log" && grep -qx 'prod twins= list=-' "$w/tw.log" \
+    && [ "$(grep -c '^[PR] ' "$la/twins.tsv")" = 4 ]
+  say twins-at-once $? "$(line langarena: "$s"); $(tr '\n' ';' < "$w/tw.log" 2>/dev/null); $(tr '\n' ';' < "$la/twins.tsv" 2>/dev/null)"
+else echo "skip: twins-at-once: this machine has one NUMA node or no numactl"; fi
+: > "$w/tw2.log"
+final "$f" "$w/tw2.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/tw/side" WAVE_LR_DEFAULT="$w/default" STUB_LOG="$w/tw2.log" WAVE_LA_TWINS_AT_ONCE=0
+s=$w/tw2.out/SUMMARY.txt
+has '^langarena: prod rc=0 wall=[0-9.]* s; LR table' "$s" && [ ! -e "$w/tw2.out/la/twins.tsv" ] \
+  && [ "$(tr '\n' ';' < "$w/tw2.log")" = "prod twins= list=;lr tasks= twins= list=;" ]
+say twins-in-the-passes $? "$(line langarena: "$s"); $(tr '\n' ';' < "$w/tw2.log" 2>/dev/null)"
 echo done

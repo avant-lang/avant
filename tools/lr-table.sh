@@ -22,6 +22,11 @@
 #       same way, checked against its task's checksum in RUN_JS, into
 #       lr-avant-pure.tsv beside OUT.tsv (the same columns, the twin's name
 #       in the first), and library.tsv is copied beside OUT.tsv.
+#       LR_TASKS=0 leaves the tasks out (OUT.tsv gets its header alone),
+#       LR_TWINS=0 the twins; LR_TWIN_LIST (twins' names, comma-separated)
+#       times only those twins; LR_LIBRARY names the library.tsv to read
+#       instead of BIN_DIR's (tools/la-twins.py times each twin on a NUMA
+#       node of its own with these, beside the others).
 #   lr-table.sh table REF_DIR AVANT [PUBLISHED.js]
 #       Markdown table on stdout. REF_DIR holds one <lang>.tsv per reference
 #       language, and optionally notes.txt ("Task<TAB>note" lines, shown in
@@ -211,7 +216,7 @@ avant)
   raw="$out.raw"; mkdir -p "$raw"
   spawner "$raw"
   header "Avant" >"$out"
-  tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
+  [ "${LR_TASKS:-1}" = 0 ] || tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
     slug=$(echo "$name" | tr 'A-Z' 'a-z' | sed 's/::/_/g')
     if [ ! -x "$bindir/$slug" ]; then
       printf '%s\tfail\t-\t-\t-\t-\n' "$name" >>"$out"; continue
@@ -224,13 +229,14 @@ avant)
     echo "Avant $name $st $w s $rss KB ($und)" >&2
   done
   # the pure-Avant twins the harness listed, each against its task's checksum
-  lib=$bindir/library.tsv
-  if [ -f "$lib" ]; then
+  lib=${LR_LIBRARY:-$bindir/library.tsv}
+  if [ "${LR_TWINS:-1}" != 0 ] && [ -f "$lib" ]; then
     od=$(dirname "$out"); pout=$od/lr-avant-pure.tsv
     praw="$pout.raw"; mkdir -p "$praw"
     [ "$(realpath "$lib")" = "$(realpath -m "$od/library.tsv")" ] || cp "$lib" "$od/library.tsv"
     header "Avant pure" >"$pout"
-    awk -F'\t' '$1 != "task" && $3 != "-" && $3 != "" { print $1 "\t" $3 "\t" $4 }' "$lib" |
+    awk -F'\t' -v only="${LR_TWIN_LIST:-}" 'BEGIN { n = split(only, o, ","); for (i = 1; i <= n; i++) want[o[i]] = 1 }
+      $1 != "task" && $3 != "-" && $3 != "" && (only == "" || ($3 in want)) { print $1 "\t" $3 "\t" $4 }' "$lib" |
     while IFS="$(printf '\t')" read -r task name slug; do
       sum=$(tasks "$runjs" | awk -F'\t' -v t="$task" '$1 == t { print $2; exit }')
       if [ ! -x "$bindir/$slug" ] || [ -z "$sum" ]; then
