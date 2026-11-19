@@ -50,7 +50,7 @@ judge3 judge-threads-beyond "1000000000 2048 7300000 100000 0 1 600 740 740 8 10
 judge judge-threads-unknown "1000000000 2048 7300000 100000 0 1 400 740 740 8 100" no
 judge3 judge-threads-fewer "1000000000 2048 3700000 100000 0 1 400 380 380 8 100" 4 no
 mkdir -p "$w/cfg"; printf 'fn cfg_iterations: Int { 10 }\nfn cfg_threads: Int { 16 }\n' > "$w/cfg/matmul_t16.cfg.av"; echo 'fn cfg_n: Int { 9 }' > "$w/cfg/other.cfg.av"
-got=$(cd "$root/tools" && python3 -I -c 'import sys; sys.path.insert(0, "."); import rounds; d = sys.argv[1]; print(rounds.threads_of(d, "matmul_t16"), rounds.threads_of(d + "/0", "matmul_t16"), rounds.threads_of(d, "other"), rounds.threads_of(d, "none"))' "$w/cfg" < /dev/null)
+got=$(cd "$root/tools" && python3 -I -B -c 'import sys; sys.path.insert(0, "."); import rounds; d = sys.argv[1]; print(rounds.threads_of(d, "matmul_t16"), rounds.threads_of(d + "/0", "matmul_t16"), rounds.threads_of(d, "other"), rounds.threads_of(d, "none"))' "$w/cfg" < /dev/null)
 [ "$got" = "16 16 None None" ]; say threads-from-cfg $? "$got"
 
 # 2. The fake tasks and run.js.
