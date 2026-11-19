@@ -7521,6 +7521,20 @@ pub class Checker {
         res = t_void()
         if !dropped {
           res = inline_result(b)
+        } else if rt = b.ret_type {
+          // A statement drops the value, so its lambda gives none: a
+          // written result would only make every `return` with a value
+          // and the last expression read as errors of their own.
+          written = inline_result(b)
+          if !written.is_void() && !self.has_err() {
+            who = "m"
+            if o = expr.object, o.kind == ex_name() {
+              who = o.ident
+            }
+            fail(b.loc, "this ${expr.callee}'s value is unused: it is a statement, and its lambda declares the result ${written.show()}; to drop the value, write `_ = ${who}.${expr.callee}(...)`, or remove the result type")
+            self.pop_scope()
+            return t_void()
+          }
         }
         s = inline_enter(b, expr.callee, res)
         result = check_with_body(b, !dropped)
