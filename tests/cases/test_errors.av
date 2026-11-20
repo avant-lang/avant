@@ -227,6 +227,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-sender-concat", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.concat([3])\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
     expect_err(c, compiler, stamp, "spawn-array-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.shuffle(random.Random.new(1))\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
     expect_err(c, compiler, stamp, "spawn-sender-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.shuffle(random.Random.new(1))\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
+    expect_err(c, compiler, stamp, "bind-runtime-signature", "lib c {\n  fun avant_gc_collect(x: Int): Int\n}\n\nfn main {\n  puts(c.avant_gc_collect(3))\n}\n", "fun avant_gc_collect binds the runtime's avant_gc_collect with another signature: the runtime's is () -> void, this binding's (i64) -> i64")
     // A captured Hash is read-only as a captured Array is: through the
     // captured name in the block, through the pending name in the sender
     // before the join; its keys and values cross in turn.
