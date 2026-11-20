@@ -35,6 +35,22 @@ fn test_std_http_llvm(c: Checks, compiler: String, root: String, dir: String) {
       what = "under ${envs[i]}"
     }
     c.eq_int(run[0].code, 0, "test_std_http.av built by the llvm back end, ${what}: passes")
+    if run[0].code != 0 {
+      // The child's own report is in files the runner does not keep:
+      // show its failed checks and the end of its stderr here.
+      out = log_text("${dir}/http.${i}.out")
+      for line in out.split("\n") {
+        if line.contains("✕") || line.contains("got ") {
+          c.expect(false, "child: ${line}")
+        }
+      }
+      err = log_text("${dir}/http.${i}.err")
+      start = 0
+      if err.size > 2000 {
+        start = err.size - 2000
+      }
+      c.expect(false, "child stderr: ${err[start..]}")
+    }
     i += 1
   }
 }
