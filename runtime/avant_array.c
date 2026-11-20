@@ -286,27 +286,43 @@ static void arr_frozen_trap(void *arr, int32_t op) {
   avant_trap_frozen(op);
 }
 
-/* min_cap is checked against the ceiling here, before anything is
- * allocated: every growth comes through this one. The ceiling is the
- * element count's or, for wide elements, one object's storage
- * (avant_array_max); the last doubling stops at it, so an Array(Int)
- * grown by push reaches 536870911 elements, not only the 268435456 of
- * the last doubling that fits. */
-static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
+/* The last doublings of a large Array, where the ceiling of one
+ * object's storage can come first (avant_array_max: a division, so it
+ * is computed only here): the room doubles up to that ceiling and stops
+ * at it, so an Array(Int) grown by push reaches 536870911 elements, not
+ * only the 268435456 of the last doubling that fits; past it, the trap
+ * names the element count and size. */
+__attribute__((noinline, cold)) static int32_t array_grow_last(int32_t ncap, int64_t min_cap, uint64_t elem_size) {
   uint64_t max = avant_array_max(elem_size);
-  if (min_cap < 0 || (uint64_t)min_cap > max) {
+  if ((uint64_t)min_cap > max) {
+    avant_trap_array_size(elem_size);
+  }
+  while (ncap < min_cap) {
+    ncap = (uint64_t)ncap * 2 > max ? (int32_t)max : ncap * 2;
+  }
+  return ncap;
+}
+
+/* Below this room a doubling stays within one object's storage for
+ * elements of up to 64 bytes, so the ordinary growth compares the room
+ * once a doubling, as it did before the storage's ceiling was counted;
+ * a wider element type past the storage is refused by the allocation
+ * (avant_alloc's trap). */
+#define ARRAY_GROW_FAST_MAX (1 << 25)
+
+/* min_cap is checked against the ceiling here, before anything is
+ * allocated: every growth comes through this one. */
+static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
+  if (__builtin_expect((uint64_t)min_cap > (uint64_t)AVANT_SIZE_MAX, 0)) {
     avant_trap_array_size(elem_size);
   }
   int32_t ncap = a->cap ? a->cap : 4;
   while (ncap < min_cap) {
-    if ((uint64_t)ncap * 2 > max) {
-      ncap = (int32_t)max;
+    if (ncap > ARRAY_GROW_FAST_MAX) {
+      ncap = array_grow_last(ncap, min_cap, elem_size);
       break;
     }
     ncap *= 2;
-  }
-  if ((uint64_t)ncap > max) {
-    ncap = (int32_t)max;
   }
   uint64_t bytes = (uint64_t)ncap * elem_size;
   /* RC1: the allocation may collect; a is a handle, a->buf is read after

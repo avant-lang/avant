@@ -140,22 +140,6 @@ pub fn (lw: MirLower) elem_size(aty: Int): MOperand {
   lw.lw_b.c_u64(n.to_i())
 }
 
-// The ceiling of an Array of aty's elements, for the count in local k:
-// the header's 32-bit size (2147483647 elements) or, for elements of 4
-// bytes or more, one object's storage (4294967295 bytes) when that comes
-// first, as the runtime's growth has it (avant_rt.h avant_array_max).
-pub fn (lw: MirLower) array_ceiling_check(k: Int, aty: Int, loc: Location) {
-  b = lw.lw_b
-  es = lw.lw_m.types.size_of(lw.elem_of(aty)).to_i()
-  max = 2147483647
-  if es > 0 && 4294967295 / es < max {
-    max = 4294967295 / es
-  }
-  big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(max)))
-  ok = lw.trap_open(big, true)
-  lw.trap_close(ok, "avant_trap_array_size", lw.one(lw.elem_size(aty)), loc)
-}
-
 // A local holding o's value: its own local when o is a bare copy, else a
 // temporary assigned here (a place's deref needs a local).
 pub fn (lw: MirLower) hold(o: MOperand, ty: Int): Int {
@@ -372,7 +356,12 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
   ok = lw.trap_open(neg, true)
   lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
-  lw.array_ceiling_check(k, aty, e.loc)
+  // The ceiling: the header keeps a 32-bit size. An element count
+  // under it whose bytes pass one object's storage is refused by the
+  // allocation, so no second compare runs here.
+  big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647)))
+  ok2 = lw.trap_open(big, true)
+  lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
   n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))

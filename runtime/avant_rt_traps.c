@@ -402,10 +402,14 @@ void avant_trap_array_size(uint64_t elem_size) {
   trap_tail();
 }
 
-/* Array(T).new(n) past its element type's ceiling, with its site. */
-void avant_trap_array_size_at(uint64_t elem_size, int32_t site) {
-  g_trap_loc = site_text(site);
-  avant_trap_array_size(elem_size);
+/* An allocation of more bytes than one object holds (avant_alloc): an
+ * Array(T).new(n) whose count is under the 32-bit size but whose elements
+ * pass the storage, or C code asking for such an object. The count and
+ * element size are not known here, so the bytes are named. */
+void avant_trap_object_size(uint64_t nbytes) {
+  trap_head();
+  trap_out("an object of %llu bytes would exceed one object's storage (at most 4294967295 bytes)", (unsigned long long)nbytes);
+  trap_tail();
 }
 
 /* Array(T).new(n) past the ceiling, with its site. */

@@ -665,7 +665,6 @@ static inline uint64_t avant_array_max(uint64_t elem_size) {
   return by_bytes < (uint64_t)AVANT_SIZE_MAX ? by_bytes : (uint64_t)AVANT_SIZE_MAX;
 }
 __attribute__((noreturn, cold)) void avant_trap_array_size(uint64_t elem_size);
-__attribute__((noreturn, cold)) void avant_trap_array_size_at(uint64_t elem_size, int32_t site);
 /* An Avant Int the runtime passes on to a C int (an HTTP status, an errno,
  * a signal number): the value, or a trap naming the C type (the correct
  * value or a trap). */

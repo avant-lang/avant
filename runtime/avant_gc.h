@@ -561,4 +561,10 @@ static inline void avant_gc_scope_close_(AvantGcFrame *f) {
  * that carried the stress point of AVANT_GC_STRESS=1; the stress point is
  * avant_alloc's own now, so every allocation has it). */
 
+/* An allocation past one object's storage (UINT32_MAX bytes, the 32-bit
+ * size of the object header): a trap naming the bytes asked for. Reached
+ * by Array(T).new(n) of wide elements, whose generated check stops only
+ * a count past the 32-bit size (avant_rt_traps.c). */
+__attribute__((visibility("hidden"), noreturn, cold)) void avant_trap_object_size(uint64_t nbytes);
+
 #endif

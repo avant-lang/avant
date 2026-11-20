@@ -1251,11 +1251,10 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     gc_fast_refresh();
   }
   if (nbytes > UINT32_MAX) {
-    /* A size the program asked for, not a collector fault: status 1
-     * like a trap, no core dump. */
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: object too large (%llu bytes)\n", (unsigned long long)nbytes);
-    exit(1);
+    /* A size the program asked for, not a collector fault: a trap
+     * (status 1, no core dump) naming one object's storage, the ceiling
+     * of an Array of wide elements (avant_trap_object_size). */
+    avant_trap_object_size(nbytes);
   }
   if (type_id > UINT16_MAX) {
     gc_die("type id too large");
