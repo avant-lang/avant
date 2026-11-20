@@ -1,5 +1,6 @@
 #!/bin/sh
 # tools/layout-flag.py, tools/layout-retime.sh, tools/layout-cc.sh,
+# tools/layout-runtime.sh,
 # tools/layout-spread.py and tools/rounds.py --layouts. Run by
 # tests/cases/test_tools.av; by hand:
 #
@@ -42,7 +43,22 @@
 #     shifts.txt lists them all;
 #   check-build-subline-checked: a stub that ignores AVANT_CODE_SHIFT is
 #     caught (main not where the shift puts it), the build fails;
-#   check-build-subline-bad: a sub-line shift of 64 is refused.
+#   check-build-subline-bad: a sub-line shift of 64 is refused;
+#   check-build-loops-bad: a loop alignment other than 16 or 64 is refused;
+#   cc-c-asm-same: a compile through layout-cc.sh's assembly path with no
+#     shift is the plain compile's object byte for byte;
+#   cc-c-shift: LAYOUT_C_SHIFT=16 puts every function 16 bytes into its
+#     line and leaves no patchable-entry section;
+#   cc-runtime: LAYOUT_RUNTIME links a runtime object from its directory,
+#     and a missing one fails the link with status 2;
+#   check-build-runtime-moving: layout-check.sh build (its default method)
+#     in a fake checkout with a runtime: each sub-line layout's binary
+#     links the runtime built at its shift (avant_alloc 16 and 32 bytes
+#     into its line, 32l16 included), shift 0 the checkout's own;
+#   check-build-runtime-fixed: LAYOUT_CHECK_RUNTIME=fixed keeps the
+#     runtime at offset 0 at a sub-line layout;
+#   runtime-shift0-same: tools/layout-runtime.sh --check at shift 0
+#     rebuilds the checkout's runtime objects byte for byte.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -209,16 +225,83 @@ rm -f "$out.s"; exit $rc
 STUB
 chmod +x "$lb/root/bin/avant-c-llvm"
 echo 'fn main {}' > "$lb/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lb/la/args/x_one"
-LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
+LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
 ok=0
 for k in 0 64 16 32; do "$lb/d/layouts/$k/x_one" < /dev/null || ok=1; done
 m16=$(nm "$lb/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
 [ $rc -eq 0 ] && [ $ok -eq 0 ] && [ "$(cat "$lb/d/shifts.txt")" = "0 64 16 32" ] && [ -n "$m16" ] && [ $((0x$m16 % 64)) -eq 16 ]
 say check-build-subline $? "rc=$rc runs=$ok main@16=$m16 shifts=$(cat "$lb/d/shifts.txt" 2>/dev/null); $(tail -2 "$lb/log" | tr '\n' ';')"
-STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
+STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
 [ $rc -eq 1 ] && grep -q 'at sub-line shift 16: main is at .*, not 16 bytes into its line' "$lb/log2"
 say check-build-subline-checked $? "rc=$rc $(tr '\n' ';' < "$lb/log2")"
 LAYOUT_CHECK_SUBLINE="64" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d3" x_one < /dev/null > "$lb/log3" 2>&1; rc=$?
 [ $rc -eq 2 ] && grep -q 'sub-line shift 64 is not below 64' "$lb/log3"
 say check-build-subline-bad $? "rc=$rc $(tr '\n' ';' < "$lb/log3")"
+LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SUBLINE="16l32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d4" x_one < /dev/null > "$lb/log4" 2>&1; rc=$?
+[ $rc -eq 2 ] && grep -q "the loops' alignment is 16 or 64" "$lb/log4"
+say check-build-loops-bad $? "rc=$rc $(tr '\n' ';' < "$lb/log4")"
+
+# 9. The C code's own shift (layout-cc.sh's LAYOUT_C_SHIFT, LAYOUT_C_ASM,
+# LAYOUT_RUNTIME) and the runtime moving with the program at the sub-line
+# layouts (tools/layout-runtime.sh, layout-check.sh's default method).
+lr=$w/lr; mkdir -p "$lr"
+printf 'int f(int x) { int s = 0; for (int i = 0; i < x; i++) s += i * x; return s; }\nint g(int x) { return x + 1; }\n' > "$lr/u.c"
+cc -c -O2 -falign-functions=64 -o "$lr/plain.o" "$lr/u.c"
+LAYOUT_C_ASM=1 sh "$root/tools/layout-cc.sh" -c -O2 -falign-functions=64 -o "$lr/asm.o" "$lr/u.c"; rc=$?
+[ $rc -eq 0 ] && cmp -s "$lr/plain.o" "$lr/asm.o"
+say cc-c-asm-same $? "rc=$rc: the compile through assembly differs from the plain one"
+LAYOUT_C_SHIFT=16 sh "$root/tools/layout-cc.sh" -c -O2 -falign-functions=64 -o "$lr/s16.o" "$lr/u.c"; rc=$?
+fa=$(nm "$lr/s16.o" | awk '$3 == "f" { print $1 }'); ga=$(nm "$lr/s16.o" | awk '$3 == "g" { print $1 }')
+[ $rc -eq 0 ] && [ $((0x$fa % 64)) -eq 16 ] && [ $((0x$ga % 64)) -eq 16 ] \
+  && [ "$(objdump -d --no-show-raw-insn "$lr/s16.o" | grep -c -E '^\s+[0-9a-f]+:\s+[a-z]' )" -gt 0 ] \
+  && ! readelf -S "$lr/s16.o" | grep -q patchable
+say cc-c-shift $? "rc=$rc f@$fa g@$ga"
+mkdir -p "$lr/x/runtime/build" "$lr/rt"
+printf 'int avant_alloc(int x) { return x * 3; }\n' > "$lr/rt.c"
+cc -c -o "$lr/x/runtime/build/avant_rt.o" "$lr/rt.c"; cc -c -DMOVED -o "$lr/rt/avant_rt.o" "$lr/rt.c"
+printf 'int avant_alloc(int);\nint main(void) { return avant_alloc(0); }\n' > "$lr/m.c"; cc -c -o "$lr/m.o" "$lr/m.c"
+LAYOUT_RUNTIME="$lr/rt" sh "$root/tools/layout-cc.sh" -o "$lr/m1" "$lr/m.o" "$lr/x/runtime/build/avant_rt.o"; rc=$?
+rm -f "$lr/rt/avant_rt.o"
+LAYOUT_RUNTIME="$lr/rt" sh "$root/tools/layout-cc.sh" -o "$lr/m2" "$lr/m.o" "$lr/x/runtime/build/avant_rt.o" 2> "$lr/m2.err"; rc2=$?
+[ $rc -eq 0 ] && "$lr/m1" && [ $rc2 -eq 2 ] && grep -q 'no such runtime object' "$lr/m2.err"
+say cc-runtime $? "rc=$rc rc2=$rc2 $(cat "$lr/m2.err")"
+# A fake checkout: a runtime whose build.sh compiles one unit through $CC
+# into runtime/build/avant_rt.o, and a stub C' that links its program
+# with that object through $CC, as the real one does.
+lm=$w/lm; mkdir -p "$lm/root/tools" "$lm/root/bin" "$lm/root/runtime" "$lm/la/avant/langarena/tmp" "$lm/la/args"
+cp "$root/tools/layout-check.sh" "$root/tools/layout-cc.sh" "$root/tools/layout-runtime.sh" "$lm/root/tools/"
+cp "$lr/rt.c" "$lm/root/runtime/rt.c"
+cat > "$lm/root/runtime/build.sh" <<'RT'
+#!/bin/sh
+root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+mkdir -p "$root/build"
+cd "$root" && ${CC:-cc} -c -O2 -falign-functions=64 -o build/avant_rt.o rt.c
+RT
+sh "$lm/root/runtime/build.sh"
+cat > "$lm/root/bin/avant-c-llvm" <<'STUB'
+#!/bin/sh
+out=$3
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+k=${AVANT_CODE_SHIFT:-0}
+printf '.text\n.p2align 6\n.skip %d, 0x90\n.globl main\nmain:\n xorl %%edi, %%edi\n call avant_alloc\n ret\n.section .note.GNU-stack,"",@progbits\n' "$k" > "$out.s"
+${CC:-cc} -o "$out" "$out.s" "$root/runtime/build/avant_rt.o"; rc=$?
+rm -f "$out.s"; exit $rc
+STUB
+chmod +x "$lm/root/bin/avant-c-llvm"
+echo 'fn main {}' > "$lm/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lm/la/args/x_one"
+LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16 32l16" sh "$lm/root/tools/layout-check.sh" build "$lm/la" "$lm/d" x_one < /dev/null > "$lm/log" 2>&1; rc=$?
+a16=$(nm "$lm/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+a32=$(nm "$lm/d/layouts/32l16/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+a0=$(nm "$lm/d/layouts/0/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+[ $rc -eq 0 ] && [ $((0x$a0 % 64)) -eq 0 ] && [ $((0x$a16 % 64)) -eq 16 ] && [ $((0x$a32 % 64)) -eq 32 ] \
+  && [ "$(cat "$lm/d/method.txt")" = "runtime: moving" ] && "$lm/d/layouts/16/x_one" < /dev/null; r=$?
+say check-build-runtime-moving $r "rc=$rc alloc@0=$a0 @16=$a16 @32l16=$a32 $(tail -2 "$lm/log" | tr '\n' ';')"
+LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lm/root/tools/layout-check.sh" build "$lm/la" "$lm/d2" x_one < /dev/null > "$lm/log2" 2>&1; rc=$?
+a16=$(nm "$lm/d2/layouts/16/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+[ $rc -eq 0 ] && [ $((0x$a16 % 64)) -eq 0 ] && [ "$(cat "$lm/d2/method.txt")" = "runtime: fixed" ]
+say check-build-runtime-fixed $? "rc=$rc alloc@16=$a16"
+sh "$lm/root/tools/layout-runtime.sh" --check "$lm/root/runtime" 0 "$lm/rt0" < /dev/null; rc=$?
+[ $rc -eq 0 ]
+say runtime-shift0-same $? "rc=$rc"
+
 echo done

@@ -564,8 +564,8 @@ def cmd_langarena(argv):
                 sides.append(tuple(v.split("=", 1)))
             elif x == "--layouts":
                 layouts = [p.strip() for p in v.split(",") if p.strip()]
-                if not layouts or any(not p.isdigit() for p in layouts):
-                    die("--layouts needs shifts in bytes, comma-separated (0,64,192)")
+                if not layouts or any(not re.fullmatch(r"[0-9]+(l(16|64))?", p) for p in layouts):
+                    die("--layouts needs shifts in bytes, comma-separated (0,64,192; a sub-line shift may name its loops' alignment, 16l16)")
             elif x == "--pin":
                 pin = int(v)
             elif x == "--short":
