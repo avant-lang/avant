@@ -9,6 +9,7 @@ import resolve
 import parser
 import loader
 import typed_ir
+import array_verbs
 import checker.names
 import checker
 import receiver_writes
@@ -789,11 +790,23 @@ pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
 }
 
 pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
+  // A method that may lower its array's size (array_verbs.av): called on
+  // the container, written without parentheses, or as the generic
+  // function the checker made of it (its first argument is the array).
   if e.kind == ex_call() {
-    if e.callee == "pop" || e.callee == "clear" {
+    if array_verb_has(e.callee, av_shrinks()) {
       if recv = e.receiver, checker_self.expr_root_name(recv) == cont {
         return true
       }
+    }
+    tv = array_verb_of_template(e.callee)
+    if tv.size > 0 && array_verb_has(tv, av_shrinks()) && e.args.size > 0 && checker_self.expr_root_name(e.args[0]) == cont {
+      return true
+    }
+  }
+  if e.kind == ex_field() && e.method_call && array_verb_has(e.ident, av_shrinks()) {
+    if obj = e.object, checker_self.expr_root_name(obj) == cont {
+      return true
     }
   }
   if inner = e.inner, checker_self.deep_shrinks_expr(inner, cont) {
@@ -2023,7 +2036,7 @@ pub fn (checker_self: Checker) node_shrinks(e: Expr, c: String, cty: Ty): Bool {
       if rt = r.ty {
         if e.resolved.size == 0 {
           if rt.is_array() {
-            if name == "pop" || name == "clear" {
+            if array_verb_has(name, av_shrinks()) {
               return checker_self.expr_root_name(r) == c || rt.same_as(cty)
             }
             if plain_array_method(name) {

@@ -251,7 +251,11 @@ pub fn avant_root: String {
       }
     }
   }
-  if file_exists("runtime/build/avant_rt.o") {
+  // The working directory's runtime only for a compiler started from
+  // inside that tree (a seed in bin/vX/ links the tree it builds): a
+  // release run from a PATH or another directory inside a clone of the
+  // repository links its own runtime, not the clone's.
+  if file_exists("runtime/build/avant_rt.o") && args.size > 0 && started_inside_cwd(args[0]) {
     return "."
   }
   exe = self_exe_path()
@@ -262,6 +266,24 @@ pub fn avant_root: String {
     }
   }
   "."
+}
+
+// Whether the program path argv0 names a file under the working
+// directory: a relative path with a directory that does not climb out
+// (`./bin/v1/avant`, `bin/v1/avant`), or an absolute one below the
+// physical working directory. A bare name was found on PATH.
+pub fn started_inside_cwd(argv0: String): Bool {
+  if argv0.size == 0 {
+    return false
+  }
+  if argv0[0] == 47 {
+    here = cwd_physical()
+    return here.size > 1 && argv0.starts_with("${here}/")
+  }
+  if !argv0.contains("/") {
+    return false
+  }
+  !(argv0.starts_with("../") || argv0.contains("/../"))
 }
 
 pub fn runtime_object_names: Array(String) {

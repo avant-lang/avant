@@ -103,6 +103,23 @@ fn test_bind(c: Checks) {
     c.expect(lay_codes[2] != 0, "bind without the helper fails")
     c.expect(lay_texts[2].contains("avant-bind not found") && lay_texts[2].contains("runtime/build.sh"), "bind without the helper says how to build it")
 
+    // A release run inside a checkout of the repository links its own
+    // runtime, not the checkout's (co's avant_rt.o is empty: linking it
+    // would fail). rel2 is a release layout whose runtime and lib are
+    // this tree's.
+    mkdir_p("${lay}/rel2")
+    copy_file(abs_compiler, "${lay}/rel2/avant")
+    for part in ["runtime", "lib"] {
+      ln = ["-s", "${here}/${part}", "${lay}/rel2/${part}"]
+      _ = run_out("/bin/ln", ln, "${lay}/ln.log")
+    }
+    _ = fs.write("${lay}/hello.av", "fn main {\n  puts(\"own runtime\")\n}\n")
+    ra = ["-u", "AVANT_ROOT", "-C", "${lay}/co", "${lay}/rel2/avant", "compile", "${lay}/hello.av", "${lay}/hello.bin"]
+    c.eq_int(run_out("/usr/bin/env", ra, "${lay}/rel2.log") ?? -1, 0, "a release run inside a checkout links its own runtime: ${read_text("${lay}/rel2.log")}")
+    hello_args: Array(String) = []
+    c.eq_int(run_out("${lay}/hello.bin", hello_args, "${lay}/hello.log") ?? -1, 0, "the release's program runs")
+    c.eq_str(read_text("${lay}/hello.log"), "own runtime\n", "the release's program prints")
+
     add_h = "${root}/examples/c/add.h"
     add_log = "${scratch()}/bind-${stamp}-add.log"
     add_flags: Array(String) = []

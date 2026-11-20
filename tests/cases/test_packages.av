@@ -387,6 +387,7 @@ fn test_packages(c: Checks) {
     c.eq_str(fs.read(app_rlog) ?? "", "hello patched\n", "the program runs the patched dependency")
 
     _ = fs.write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
+    _ = fs.write("${dep_a}/usea.av", "import shared\npub fn use_a: String {\n  \"a:\" + who()\n}\n")
     _ = fs.write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
     c.eq_int(pkg_git(dep_a, "init", "-q", glog), 0, "git init depA")
     c.eq_int(pkg_git(dep_a, "add", "-A", glog), 0, "git add depA")
@@ -406,6 +407,16 @@ fn test_packages(c: Checks) {
     } else {
       c.expect(false, "read ambiguity log")
     }
+    // Inside a dependency its own module comes first: depa's `import
+    // shared` opens depa's shared.av, though depb has one too.
+    _ = fs.write("${app2}/only_a.av", "import usea\nfn main {\n  puts(use_a())\n}\n")
+    own_bin = "${base}/own-bin"
+    own_clog = "${base}/own-compile.log"
+    own_rlog = "${base}/own-run.log"
+    c.eq_int(compile_av(compiler, "${app2}/only_a.av", own_bin, own_clog), 0, "a dependency's own module wins inside it")
+    chmod_x(own_bin)
+    c.eq_int(run_av_bin(own_bin, own_rlog), 0, "run with the dependency's own module")
+    c.eq_str(fs.read(own_rlog) ?? "", "a:A\n", "the dependency's import opens its own shared.av")
 
     _ = fs.write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
     c.eq_int(pkg_git(inner, "init", "-q", glog), 0, "git init inner")

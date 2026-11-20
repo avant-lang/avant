@@ -908,7 +908,13 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.in_task -= 1
       checker_self.pop_scope()
       checker_self.end_for_vars(saved_for)
+      saved_pp = checker_self.par_param
+      saved_pt = checker_self.par_param_ty
+      checker_self.par_param = b.params[0]
+      checker_self.par_param_ty = e
       checker_self.collect_spawn_captures(expr, b.body)
+      checker_self.par_param = saved_pp
+      checker_self.par_param_ty = saved_pt
       return ty_array(result)
     }
     checker_self.fail(expr.loc, "parallel needs an element type")

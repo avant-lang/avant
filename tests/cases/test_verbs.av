@@ -52,6 +52,7 @@ fn cases: Array(LCase) {
   xs.push(refused("find-predicate", "fn main {\n  xs = [1, 2]\n  puts(xs.find((x) { x }) ?? 0)\n}\n", "the predicate of find must give a Bool, got Int", "3:16"))
   xs.push(refused("min-by-key", "fn main {\n  xs = [1, 2]\n  puts(xs.min_by((x) { [x] }) ?? 0)\n}\n", "the key of min_by must be a number, a String or Bytes, got Array(Int)", "3:18"))
   xs.push(refused("delete-if-walk", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    xs.delete_if((y) { y == x })\n  }\n}\n", "cannot delete_if xs while walking it", "4:7"))
+  xs.push(refused("sort-by-walk", "fn main {\n  xs = [3, 1, 2]\n  for x in xs {\n    xs.sort_by((y) { y })\n  }\n}\n", "cannot sort_by xs while walking it", "4:7"))
   xs.push(refused("fill-shared", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  bs = [Box.new()]\n  bs.fill(Box.new())\n}\n", "fill(v) would put the same object in every element", "7:14"))
   xs.push(refused("unique-eq", "fn main {\n  bs = [Buf.new()]\n  puts(bs.unique().size)\n}\n", "unique compares the elements with ==: Buf has no ==", "3:10"))
   xs.push(refused("first-arguments", "fn main {\n  xs = [1, 2]\n  puts(xs.first(1) ?? 0)\n}\n", "first takes no arguments", "3:10"))

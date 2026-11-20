@@ -289,6 +289,20 @@ pub class MirLower {
     self.lw_err = r
   }
 
+  // A program the lowering refuses for what it says, not for a form the
+  // back end lacks: the message as a checker's error, at loc. The first
+  // failure wins, as with refuse.
+  pub fn refuse_program(loc: Location, message: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    r = CompileError.new(loc, diag_code(4, message), message).render()
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    self.lw_err = r
+  }
+
   // A form the checker refuses, or the lowering handles before this
   // point, reached all the same: a compiler bug, not a feature to come.
   // An internal error at loc naming what; the first failure wins.

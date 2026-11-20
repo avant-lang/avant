@@ -224,15 +224,19 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         if cs.params[i].is_enum() {
           o = lw.enum_to_c(o, cs.params[i])
         }
+        // A runtime entry reads a string's length from its header, so it
+        // gets the flat form whoever declares it (a program's own lib
+        // block may bind one): a view's bytes in place have no header.
+        rt_entry = cs.runtime || e.callee.starts_with("avant_")
         if lw.c_ret_string(cs.params[i]) && !(cs.runtime && b.module.rt.class_of(e.callee) == mcc_never()) {
-          o = lw.c_string_arg(o, ps[i], cs.runtime)
+          o = lw.c_string_arg(o, ps[i], rt_entry)
         } else if cs.params[i].is_struct() && lw.has_c_strings(cs.params[i], 0) {
           // A struct by value: its strings as C reads them, in a copy.
           lw.at(a.loc)
           sv = lw.hold(o, ps[i])
           cp = b.temp(ps[i])
           b.assign(b.pl(cp), b.rv_use(b.copy_local(sv)))
-          lw.c_strings_out_in(b.pl(cp), cs.params[i], cs.runtime, a.loc, 0)
+          lw.c_strings_out_in(b.pl(cp), cs.params[i], rt_entry, a.loc, 0)
           o = b.copy_local(cp)
         }
         // A reference the C function holds, or an aggregate the emitter
@@ -254,6 +258,20 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     }
     lw.at(e.loc)
     sig = b.sig(ps, ret, false)
+    if !cs.runtime && (e.callee.starts_with("avant_") || e.callee.starts_with("__avant")) {
+      // A program's own binding of a runtime entry: the compiler calls
+      // the entry with the call table's signature, and one declaration
+      // serves both, so a binding with another signature would call it
+      // with arguments it does not take. (The C library's names in the
+      // table are C's, which a program may bind with its own types.)
+      if r = b.module.rt.find(e.callee) {
+        want = b.module.rt.sig_of(r, b.types)
+        if want >= 0 && want != sig {
+          lw.refuse_program(e.loc, "fun ${e.callee} binds the runtime's ${e.callee} with another signature: the runtime's is ${b.types.sigs[want].text}, this binding's ${b.types.sigs[sig].text}; declare it as the runtime does, or bind another C name")
+          return zero
+        }
+      }
+    }
     x = b.extern_c(e.callee, sig)
     if has_cb {
       b.module.externs[x].cls = mcc_collects()

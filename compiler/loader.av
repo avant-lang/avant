@@ -516,11 +516,16 @@ pub class Loader {
     hits: Array(String) = []
     dep = dep_root_of(importer)
     if dep.size > 0 {
+      // Inside a dependency its own modules come first, as a package's do
+      // in Go and Rust: another dependency's module of the same name is
+      // looked for only when the package has none.
       consider_hit(hits, join_dir(path_dirname(importer), rel))
       consider_hit(hits, join_dir(dep, rel))
-      for dep_dir in self.dep_dirs {
-        if dep_dir != dep {
-          consider_hit(hits, join_dir(dep_dir, rel))
+      if hits.size == 0 {
+        for dep_dir in self.dep_dirs {
+          if dep_dir != dep {
+            consider_hit(hits, join_dir(dep_dir, rel))
+          }
         }
       }
     } else {
