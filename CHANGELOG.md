@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## 0.48.0 - 2026-11-19
+## 0.48.0 - 2026-11-20
 
 ### Added
 
@@ -24,6 +24,8 @@
 * Sorting with a comparator, `sort_by` and `fn compare` is a stable run-adaptive merge sort, O(n log n) (it was quadratic).
 * Memory: a local whose value is dead no longer keeps it alive; storage written at once is not zeroed first; a large array or `Buf` grows in place; `push` runs in line; the collector keeps the memory a cycle uses; module constants live outside the collector.
 * Faster: float and integer printing, `std.json`, the HTTP request path (pipelined answers written in one call per batch; 23% more pipelined requests a second).
+* Faster strings and lookups: short strings are allocated and copied in line; a `String`-keyed `Hash` or `Set` keeps each entry's hash in its index (4 bytes more a slot) and compares short keys in line.
+* `pop` runs in line; optimized code keeps references in registers between calls.
 * Traps name more: a fault in C code, an integer overflow's own line, a library precondition's calling line, a change to an array or hash a running task or walk reads.
 * A program built from one commit in two checkouts is the same bytes.
 * The README's benchmark tables are this release's, on one server: every LangArena task now does its references' work (each change a correction; on the tasks whose source did not change, v0.47.0's time at 0.93× its memory), and `std.http` answers the most pipelined requests a second of the eight servers, at the least memory.
