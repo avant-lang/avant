@@ -10,7 +10,8 @@ import std.process
 // links it with the runtime as the old driver links a program. Checked:
 // (a) the 10.2 example's .ll is byte-identical to
 // tests/fixtures/mir/example.ll (the specification's .ll up to temporary and
-// statement-part names) and the same in every mode;
+// statement-part names) in --debug, and in --release with its slot locals
+// read through copies;
 // (b) it runs in all three modes; (c) under AVANT_GC_VERIFY=1
 // AVANT_YOUNG_MB=1 it is silent and its GC statistics are the specification's;
 // the call forms run too; `constructs` (the rest of the specification's constructs) and
@@ -195,8 +196,12 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   }
   got = log_text("${dir}/ex-debug.ll")
   c.eq_str(got, want, "the 10.2 example's .ll is tests/fixtures/mir/example.ll")
-  c.eq_str(log_text("${dir}/ex-bare.ll"), got, "the example's .ll in the bare mode is the debug one")
-  c.eq_str(log_text("${dir}/ex-release.ll"), got, "the example's .ll in --release is the debug one")
+  // An optimized build reads its slot locals through copies LLVM can keep
+  // in registers (compiler/llvm/emit_gc.av ll_shadow_slots); --debug,
+  // without mem2reg, does not.
+  rel = log_text("${dir}/ex-release.ll")
+  c.eq_str(log_text("${dir}/ex-bare.ll"), rel, "the example's .ll in the bare mode is the --release one")
+  c.expect(rel.contains("%sh") && !got.contains("%sh"), "the example's .ll in --release reads its slot locals through copies, the debug one does not")
 
   // (d) the selftest's final-stage modules: verified and compiled.
   i = 0

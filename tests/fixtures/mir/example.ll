@@ -14,7 +14,7 @@ target triple = "x86_64-pc-linux-gnu"
 
 declare ptr @avant_alloc(i64, i32)
 declare ptr @avant_alloc_slow(i64, i32)
-declare void @avant_barrier(ptr)
+declare void @avant_barrier(ptr) nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)
 declare void @avant_gc_frame_enter(ptr)
 declare void @avant_gc_frame_leave(ptr)
 declare void @avant_io_init_argv(i32, ptr)
