@@ -1,7 +1,9 @@
 import harness
+import std.fs
+import std.process
 
 fn threads_fixture: String {
-  "lib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main: Int {\n  args = argv()\n  out = \"\"\n  i = 0\n  while i < args.size {\n    if i > 0 {\n      out = out + \",\"\n    }\n    out = out + args[i]\n    i = i + 1\n  }\n  puts(out)\n  puts(task.avant_chosen_threads())\n  0\n}\n"
+  "lib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main: Int {\n  args = process.args()\n  out = \"\"\n  i = 0\n  while i < args.size {\n    if i > 0 {\n      out = out + \",\"\n    }\n    out = out + args[i]\n    i = i + 1\n  }\n  puts(out)\n  puts(task.avant_chosen_threads())\n  0\n}\nimport std.process\n"
 }
 
 fn has_sub(s: String, needle: String): Bool {
@@ -14,7 +16,7 @@ fn has_sub(s: String, needle: String): Bool {
   i = 0
   last = s.size - needle.size
   while i <= last {
-    if str_slice(s, i, i + needle.size) == needle {
+    if s[i..i + needle.size] == needle {
       return true
     }
     i += 1
@@ -23,7 +25,7 @@ fn has_sub(s: String, needle: String): Bool {
 }
 
 fn run_args(bin: String, args: Array(String), log: String): Int {
-  process_run_out(bin, args, log) ?? -1
+  run_out(bin, args, log) ?? -1
 }
 
 fn run_env_args(bin: String, name: String, value: String, args: Array(String), log: String): Int {
@@ -31,16 +33,16 @@ fn run_env_args(bin: String, name: String, value: String, args: Array(String), l
   full.push("${name}=${value}")
   full.push(bin)
   full.concat(args)
-  process_run_out("/usr/bin/env", full, log) ?? -1
+  run_out("/usr/bin/env", full, log) ?? -1
 }
 
 fn test_threads(c: Checks) {
   c.suite("tests/cases/test_threads.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/threads-${stamp}.av"
     bin = "${scratch()}/threads-${stamp}.bin"
-    c.wrote(file_write(src, threads_fixture()), "write threads fixture")
+    c.wrote(fs.write(src, threads_fixture()), "write threads fixture")
     code = compile_av(compiler, src, bin, "${scratch()}/threads-${stamp}.clog")
     c.eq_int(code, 0, "compile threads fixture")
 
@@ -51,7 +53,7 @@ fn test_threads(c: Checks) {
     a1.push("alpha")
     rc1 = run_args(bin, a1, log1)
     c.eq_int(rc1, 0, "plain run exits")
-    if out1 = file_read(log1) {
+    if out1 = fs.read(log1) {
       lines = out1.split("\n")
       c.expect(lines.size >= 2, "plain run prints two lines")
       if lines.size >= 2 {
@@ -71,7 +73,7 @@ fn test_threads(c: Checks) {
     a2.push("alpha")
     rc2 = run_args(bin, a2, log2)
     c.eq_int(rc2, 0, "--avant-threads run exits")
-    if out2 = file_read(log2) {
+    if out2 = fs.read(log2) {
       c.expect(!has_sub(out2, "avant-threads"), "--avant-threads removed from argv")
       c.expect(has_sub(out2, ",alpha\n"), "program arg survives --avant-threads")
       c.expect(has_sub(out2, "\n3\n"), "chosen count is the --avant-threads value")
@@ -88,7 +90,7 @@ fn test_threads(c: Checks) {
     a3.push("--threads=4")
     rc3 = run_args(bin, a3, log3)
     c.eq_int(rc3, 0, "--threads run exits")
-    if out3 = file_read(log3) {
+    if out3 = fs.read(log3) {
       c.expect(has_sub(out3, ",--threads,3,--threads=4\n"), "--threads reaches argv unchanged: ${out3}")
       lines3 = out3.split("\n")
       c.expect(lines3.size >= 2 && default_count.size > 0 && lines3[1] == default_count, "--threads does not set the count")
@@ -103,7 +105,7 @@ fn test_threads(c: Checks) {
     a4.push("--avant-threads=2")
     rc4 = run_env_args(bin, "AVANT_THREADS", "7", a4, log4)
     c.eq_int(rc4, 0, "precedence run exits")
-    if out4 = file_read(log4) {
+    if out4 = fs.read(log4) {
       c.expect(has_sub(out4, "\n2\n"), "flag is used with AVANT_THREADS set")
     } else {
       c.expect(false, "read precedence run")
@@ -112,7 +114,7 @@ fn test_threads(c: Checks) {
     a5: Array(String) = []
     rc5 = run_env_args(bin, "AVANT_THREADS", "6", a5, log5)
     c.eq_int(rc5, 0, "env run exits")
-    if out5 = file_read(log5) {
+    if out5 = fs.read(log5) {
       lines5 = out5.split("\n")
       c.expect(lines5.size >= 2 && default_count.size > 0 && lines5[1] == default_count, "AVANT_THREADS is ignored")
     } else {
@@ -131,7 +133,7 @@ fn test_threads(c: Checks) {
       ba.push("${bin} '${arg}' 2>&1")
       brc = run_args("/bin/sh", ba, bl)
       c.eq_int(brc, 1, "${arg} is refused with status 1")
-      if bo = file_read(bl) {
+      if bo = fs.read(bl) {
         c.eq_str(bo, "avant runtime: ${arg}: the thread pool's size is --avant-threads=N, N from 1 to 1024\n", "${arg}'s message")
       } else {
         c.expect(false, "read ${arg} run")
@@ -144,7 +146,7 @@ fn test_threads(c: Checks) {
       oa.push("--avant-threads=${ok}")
       orc = run_args(bin, oa, ol)
       c.eq_int(orc, 0, "--avant-threads=${ok} is taken")
-      if oo = file_read(ol) {
+      if oo = fs.read(ol) {
         c.expect(has_sub(oo, "\n${ok}\n"), "--avant-threads=${ok} sets the count")
       } else {
         c.expect(false, "read --avant-threads=${ok}")
@@ -158,7 +160,7 @@ fn test_threads(c: Checks) {
     a8.push("--avant-threads=9")
     rc8 = run_args(bin, a8, log8)
     c.eq_int(rc8, 0, "dashdash run exits")
-    if out8 = file_read(log8) {
+    if out8 = fs.read(log8) {
       c.expect(has_sub(out8, "--avant-threads=9"), "flag after -- stays in argv")
       c.expect(!has_sub(out8, "\n9\n"), "flag after -- does not set the count")
     } else {
@@ -178,11 +180,11 @@ fn test_threads(c: Checks) {
       pa.push("${n}")
       prc = run_args(pbin, pa, pl)
       c.eq_int(prc, 0, "set_pool_size(${n}) run exits")
-      if po = file_read(pl) {
+      if po = fs.read(pl) {
         lines = po.split("\n")
         c.expect(lines.size >= 2 && lines[0] == "${n}", "pool_size() is ${n} after set_pool_size(${n}): ${po}")
         if lines.size >= 2 {
-          most = str_slice(lines[1], 13, lines[1].size).to_i() ?? 0
+          most = lines[1][13..lines[1].size].to_i() ?? 0
           c.expect(most >= 1 && most <= n, "set_pool_size(${n}): at most ${n} tasks at once, got ${most}")
         }
       } else {
@@ -197,7 +199,7 @@ fn test_threads(c: Checks) {
     pwa.push("1")
     pwrc = run_args(pbin, pwa, pwl)
     c.eq_int(pwrc, 0, "set_pool_size over --avant-threads exits")
-    if pwo = file_read(pwl) {
+    if pwo = fs.read(pwl) {
       c.expect(has_sub(pwo, "1\nmost at once 1\n"), "set_pool_size runs after the flag: ${pwo}")
     } else {
       c.expect(false, "read set_pool_size over --avant-threads")
@@ -209,8 +211,8 @@ fn test_threads(c: Checks) {
     paa.push("${pbin} after 2>&1")
     parc = run_args("/bin/sh", paa, pal)
     c.eq_int(parc, 1, "set_pool_size after the pool started traps")
-    if pao = file_read(pal) {
-      c.expect(has_sub(pao, "set_pool_size(3) after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when Http.listen without loops: takes its loop count from it"), "the after-start trap names the rule: ${pao}")
+    if pao = fs.read(pal) {
+      c.expect(has_sub(pao, "sync.set_pool_size(3) after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when http.listen without loops: takes its loop count from it"), "the after-start trap names the rule: ${pao}")
       c.expect(!has_sub(pao, "not reached"), "the program stops at the late set")
     } else {
       c.expect(false, "read set_pool_size after start")
@@ -223,8 +225,8 @@ fn test_threads(c: Checks) {
       pra.push("${pbin} range ${n} 2>&1")
       prrc = run_args("/bin/sh", pra, prl)
       c.eq_int(prrc, 1, "set_pool_size(${n}) traps")
-      if pro = file_read(prl) {
-        c.expect(has_sub(pro, "set_pool_size(${n}): the thread pool's size is from 1 to 1024"), "set_pool_size(${n})'s trap: ${pro}")
+      if pro = fs.read(prl) {
+        c.expect(has_sub(pro, "sync.set_pool_size(${n}): the thread pool's size is from 1 to 1024"), "set_pool_size(${n})'s trap: ${pro}")
       } else {
         c.expect(false, "read set_pool_size(${n})")
       }
@@ -251,7 +253,7 @@ fn test_threads(c: Checks) {
         ta.push(bin)
         trc = run_args("/usr/bin/taskset", ta, tl)
         c.eq_int(trc, 0, "taskset -c ${spec} run exits")
-        if tout = file_read(tl) {
+        if tout = fs.read(tl) {
           tlines = tout.split("\n")
           c.expect(tlines.size >= 2 && tlines[1] == want, "under taskset -c ${spec} the count is ${want}")
         } else {
@@ -267,7 +269,7 @@ fn test_threads(c: Checks) {
     tfa.push("--avant-threads=3")
     tfrc = run_args("/usr/bin/taskset", tfa, tfl)
     c.eq_int(tfrc, 0, "taskset with --avant-threads exits")
-    if tfo = file_read(tfl) {
+    if tfo = fs.read(tfl) {
       c.expect(has_sub(tfo, "\n3\n"), "--avant-threads wins over the affinity mask")
     } else {
       c.expect(false, "read taskset with --avant-threads")
@@ -288,7 +290,7 @@ fn test_threads(c: Checks) {
       wa.push("--avant-threads=${pool}")
       wrc = run_args("/usr/bin/timeout", wa, wl)
       c.eq_int(wrc, 0, "waiters with --avant-threads=${pool} end")
-      if wo = file_read(wl) {
+      if wo = fs.read(wl) {
         c.eq_str(wo, "true\ntrue\n", "waiters with --avant-threads=${pool}: every value received, every lock taken")
       } else {
         c.expect(false, "read waiters --avant-threads=${pool}")
@@ -307,7 +309,7 @@ fn test_threads(c: Checks) {
     la.push("--avant-threads=1")
     lrc = run_args("/usr/bin/env", la, ll)
     c.eq_int(lrc, 124, "waiters past the thread limit wait (timeout ends them)")
-    if lo = file_read(ll) {
+    if lo = fs.read(ll) {
       c.expect(has_sub(lo, "avant runtime: tasks are queued while the pool's 2 threads are all taken, some by tasks waiting on a Channel or a Mutex, and the pool starts no more (its limit is 2 threads)"), "the limit's message names the limit")
       c.expect(has_sub(lo, "--avant-threads=N bounds the tasks that run at once"), "the limit's message names --avant-threads")
     } else {

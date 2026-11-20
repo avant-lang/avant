@@ -11,9 +11,10 @@
 // The Buf is dead after the call when, in the calling function:
 // - every local that may hold it (the class of locals joined by whole
 //   copies `_x = copy _y`, and the data pointers `_d = copy (*_b).0` read
-//   from them) is defined only by `avant_buf_new`, `avant_bytes_to_buf`,
-//   `zero`, or a copy within the class: no parameter, no call result
-//   from elsewhere, no load from the heap (the object was made here);
+//   from them) is defined only by `avant_buf_new`, `avant_buf_new_filled`,
+//   `avant_bytes_to_buf`, `zero`, or a copy within the class: no
+//   parameter, no call result from elsewhere, no load from the heap (the
+//   object was made here);
 // - no such local escapes: a whole value is used only as an argument of
 //   a runtime helper that keeps no reference (tk_keeps_none), as an
 //   argument of an Avant function whose parameter keeps none (below), as
@@ -48,7 +49,7 @@ fn tk_keeps_none(name: String): Bool {
 }
 
 fn tk_fresh(name: String): Bool {
-  name == "avant_buf_new" || name == "avant_bytes_to_buf"
+  name == "avant_buf_new" || name == "avant_buf_new_filled" || name == "avant_bytes_to_buf"
 }
 
 fn tk_direct(st: MStmt): Bool {

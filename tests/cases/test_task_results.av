@@ -1,5 +1,7 @@
 import harness
 import std.sync
+import std.fs
+import std.process
 
 // A task's value of any type, `?` in a spawn block, structured
 // completion (a task's join waits for every task it spawned), joins and
@@ -117,7 +119,7 @@ fn value_cases(c: Checks) {
   c.eq_str(hs.join() ?? "", "a3", "a second join")
 
   // A dropped handle: the task still runs to its end.
-  m = Mutex(Int).new(0)
+  m = sync.Mutex(Int).new(0)
   for i in 0..8 {
     _ = spawn { m.with (x) { x += 1 } }
   }
@@ -154,13 +156,15 @@ fn try_cases(c: Checks) {
   ws = ["2", "x", "4"].parallel (w) { w.to_i()? * 2 }
   c.eq_int((ws[0] ?? -1) + (ws[1] ?? -1) + (ws[2] ?? -1), 11, ".parallel ? with nil")
 
-  // ? inside a Mutex's with, in a spawn block: the lock is released.
-  m = Mutex(Int).new(5)
+  // ? inside a Mutex's with, in a spawn block: the lambda's result type
+  // holds the failure, which leaves the with (the lock released) as its
+  // value, and the spawn block's ? gives it to the join.
+  m = sync.Mutex(Int).new(5)
   h5 = spawn {
-    m.with { |x|
+    m.with((x): Int | Bad {
       x += check(7)?
       x
-    }
+    })?
   }
   c.eq_int(h5.join() ?? -1, -1, "? leaves with")
   c.eq_int(m.with (x) { x }, 5, "the mutex is free and unchanged")
@@ -173,7 +177,7 @@ fn structured_cases(c: Checks) {
   // done.
   for round in 0..20 {
     xs = [1, 2, 3]
-    done = Channel(Int).new(1)
+    done = sync.Channel(Int).new(1)
     h = spawn {
       inner = spawn {
         t = 0
@@ -215,9 +219,9 @@ fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("timeout -k 5 60 ${bin} --avant-threads=${n} 2> ${log}.err")
-    status = process_run_out("/bin/sh", args, log) ?? -1
+    status = run_out("/bin/sh", args, log) ?? -1
     c.eq_int(status, 0, "nested joins with ${n} pool threads: status")
-    c.eq_str(file_read(log) ?? "", "17711\n55\n111\n", "nested joins with ${n} pool threads: output")
+    c.eq_str(fs.read(log) ?? "", "17711\n55\n111\n", "nested joins with ${n} pool threads: output")
   }
 
   pbin = "${scratch()}/task-results-ptraps-${stamp}.bin"
@@ -233,9 +237,9 @@ fn fixture_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       args.push("timeout -k 5 60 ${pbin} 2> ${elog}")
     }
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     if kind == "main" {
       c.eq_int(status, 1, ".parallel traps on the main thread: status 1")
       c.eq_str(out, "", ".parallel traps on the main thread: nothing after it")
@@ -255,7 +259,7 @@ fn test_task_results(c: Checks) {
   value_cases(c)
   try_cases(c)
   structured_cases(c)
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     fixture_cases(c, compiler, now_ms())
   }
 }

@@ -11,7 +11,10 @@ import std.gc
 // registered while serving, a trap inside a mutex's `with` (the mutex
 // is poisoned: the next `with` on it traps too, and `try_with` reads
 // it), a trap inside `pin` and `gc.hold` (both given back), and a trap
-// in a WebSocket message handler (the connection is closed 1011). A trap
+// in a WebSocket message handler (the connection is closed 1011). The
+// trap a program raises, `panic(message)`, fails its request the same
+// way, in a route, after `??`, in the fallback and in a WebSocket
+// handler, its message and site printed. A trap
 // in a C callback the handler made still ends the program (GET
 // /callback). The program spawns nothing. With an argument (a path) it
 // writes its port there and waits for tests/fixtures/http/raw_client.py
@@ -61,13 +64,13 @@ fn cmp_trap(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
 }
 
 fn main: Int {
-  a = argv()
+  a = process.args()
   xs = [1, 2, 3]
-  m = Mutex(Acc).new(Acc.new())
-  mark = Mutex(Acc).new(Acc.new())
+  m = sync.Mutex(Acc).new(Acc.new())
+  mark = sync.Mutex(Acc).new(Acc.new())
   seen = Hash(String, Int).new()
   seen["a"] = 1
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+  if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
     if a.size > 2 && a[2] == "ceiling" {
       _ = server.memory_ceiling(1)
@@ -140,6 +143,19 @@ fn main: Int {
       before = mark.with (acc) { acc.n }
       Response.text("pins left ${gc_rt.avant_pin_count() - before}, ${t}")
     })
+    server.get("/panic", (req) {
+      panic("a handler panicked at ${req.path}")
+    })
+    server.get("/panic-or", (req) {
+      n = req.param("n") ?? panic("no n in ${req.path}")
+      Response.text("n ${n}")
+    })
+    server.fallback((req) {
+      if req.path == "/fb-panic" {
+        panic("the fallback panicked")
+      }
+      Response.text("not found", 404)
+    })
     server.get("/callback", (req) {
       buf = libc.calloc(4, 4)
       buf.v = 3
@@ -150,6 +166,9 @@ fn main: Int {
       if (msg.text() ?? "") == "trap" {
         _ = at(xs, 5)
       }
+      if (msg.text() ?? "") == "panic" {
+        panic("a WebSocket handler panicked")
+      }
       _ = conn.send_message(msg)
     })
     server.get("/__stop", (req) {
@@ -157,7 +176,7 @@ fn main: Int {
       Response.text("bye")
     })
     if a.size > 1 {
-      if wrote = file_write(a[1], "${server.port()}\n") {
+      if wrote = fs.write(a[1], "${server.port()}\n") {
       }
       server.serve()
       puts("served")
@@ -170,3 +189,9 @@ fn main: Int {
   puts("listen failed")
   1
 }
+
+// Imported last, so no line the goldens name moves.
+import std.fs
+import std.process
+
+type Response = http.Response

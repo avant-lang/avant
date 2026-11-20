@@ -1,0 +1,26 @@
+// A package that binds C memory and shares it with its own tasks: a
+// Ptr to a C layout this module's lib block declares crosses here.
+lib ptrpkg {
+  struct Cell {
+    n: Int32
+  }
+  fun calloc(n: Int, size: Int): Ptr(Cell)
+  fun free(p: Ptr(Cell))
+  fun malloc(n: Int): Ptr(Void)
+}
+
+pub fn shared_sum(k: Int): Int {
+  p = ptrpkg.calloc(1, Cell.size)
+  p.n = 41
+  h = spawn { p.n.to_i() + k }
+  r = h.join() ?? -1
+  ptrpkg.free(p)
+  r
+}
+
+pub fn handed: Ptr(Cell) {
+  q = ptrpkg.calloc(1, Cell.size)
+  q.n = 7
+  h = spawn { q }
+  h.join() ?? q
+}

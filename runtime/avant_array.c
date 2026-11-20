@@ -235,6 +235,47 @@ void avant_array_frozen(void *arr, int32_t op) {
   arr_frozen_trap(arr, op);
 }
 
+/* A store through a struct method's receiver p, in a program with held
+ * method calls that spawns (compiler/mir/lower_agg.av recv_store_check).
+ * When p lies in an array this thread's call holds, and the freeze has
+ * more counts than this thread's holds of that array, a task reads it
+ * (one the call started: a task that read it before the call made the
+ * call's element place trap), and the store would change an element
+ * under it: it traps at the store's site, naming the held call. */
+void avant_array_recv_store(void *p, const char *site) {
+  int i;
+  int j;
+  if (g_arr_hold_n == 0) {
+    return;
+  }
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    AvantArray *a = (AvantArray *)*g_arr_holds[i].slot;
+    char *lo;
+    int32_t c;
+    int32_t mine = 0;
+    if (!a || !a->buf) {
+      continue;
+    }
+    lo = (char *)a->buf;
+    if ((char *)p < lo || (char *)p >= lo + (uint64_t)a->size * g_arr_holds[i].elem_size) {
+      continue;
+    }
+    c = arr_cap_word(a);
+    if (c >= 0) {
+      return;
+    }
+    for (j = g_arr_hold_n - 1; j >= 0; j--) {
+      if (*g_arr_holds[j].slot == (void *)a) {
+        mine++;
+      }
+    }
+    if (mine == (c & 0x7fffffff)) {
+      return;
+    }
+    avant_trap_frozen_call(AVANT_FROZEN_RECV, g_arr_holds[i].name, site);
+  }
+}
+
 static void arr_frozen_trap(void *arr, int32_t op) {
   int i;
   for (i = g_arr_hold_n - 1; i >= 0; i--) {
@@ -262,7 +303,18 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
    * it (RC2). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &a);
-  void *nbuf = avant_alloc(bytes, buf_type_id);
+  /* A large buffer grows in place when the pages after it are free (the
+   * elements stay where they are; the room added is zeroed unless the
+   * elements are scalars). */
+  if (a->buf && a->size > 0 && avant_gc_large_extend(a->buf, bytes, buf_type_id == AVANT_TYPE_BYTES)) {
+    a->cap = ncap;
+    return;
+  }
+  /* A buffer of scalars is not zeroed (a large one, as Go's growslice
+   * leaves pointer-free storage): the elements below the size are copied
+   * in now, and nothing reads one past the size before a push writes it.
+   * A buffer of references is zeroed: the collector reads all its words. */
+  void *nbuf = buf_type_id == AVANT_TYPE_BYTES ? avant_alloc_bytes_room(bytes) : avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
     /* A large pointer buffer may be mature (a mature-allocating thread; young
@@ -271,9 +323,16 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
       avant_barrier(nbuf);
     }
   }
+  void *obuf = a->buf;
   avant_barrier(a);
   a->buf = nbuf;
   a->cap = ncap;
+  /* The array no longer names its old buffer: a large one goes back now
+   * unless a root still names it, or it is mature with references
+   * (avant_gc_large_drop), as a Buf's storage does. */
+  if (obuf) {
+    (void)avant_gc_large_drop(obuf, 2);
+  }
 }
 
 /* The push and reserve entries (RC1, avant_gc.h; they

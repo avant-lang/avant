@@ -27,8 +27,8 @@ fn main: Int {
   // them: the pool runs that many at once whatever the machine's CPUs
   // (with two, the exiting task never started and the run waited for
   // its bound).
-  set_pool_size(16)
-  a = argv()
+  sync.set_pool_size(16)
+  a = process.args()
   kind = "one"
   if a.size > 1 {
     kind = a[a.size - 1]
@@ -76,7 +76,7 @@ fn main: Int {
     return 6
   } else if kind == "mutex" {
     // A task exits while holding a mutex another task waits for.
-    m = Mutex(Int).new(0)
+    m = sync.Mutex(Int).new(0)
     hs.push(spawn {
       for k in 0..1000000 {
         m.with (n) { n += 1 }
@@ -97,3 +97,6 @@ fn main: Int {
   puts("after")
   0
 }
+
+// Imported last, so no line the goldens name moves.
+import std.process

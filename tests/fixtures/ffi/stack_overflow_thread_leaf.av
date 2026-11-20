@@ -1,0 +1,25 @@
+// A C thread Avant did not start calls back an Avant function that
+// recurses too deep without allocating, in a program that neither spawns
+// nor serves HTTP (tests/fixtures/ffi/ffi.c, so_call_on_thread): the
+// callback's thunk gives the thread its signal stack at its entry, so the
+// stack overflow is named there too.
+lib so {
+  fun so_call_on_thread(f: fn(Int): Int): Int
+}
+
+fn depth(n: Int): Int {
+  if n == 0 {
+    return 0
+  }
+  d = depth(n - 1)
+  d + 1 + ((d + n) & 1)
+}
+
+fn start(n: Int): Int {
+  depth(n)
+}
+
+fn main {
+  puts("start")
+  puts(so.so_call_on_thread(start))
+}

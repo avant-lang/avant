@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Front-end corrections (proven on both back ends until the old one
 // retired). The fixed forms compile and print their known
@@ -10,10 +12,10 @@ import backends
 // `Money.zero.c`), types/bump_method.av (a method named `bump` called
 // on a value), types/generic_defaults.av (literal and nil field
 // defaults of generic class instances, typed by the checker),
-// closures/block_break.av (`break` in a block builtin with no `while`
-// around it; `break`/`continue` of a loop inside a lambda),
-// closures/with_break.av (`break` inside `Mutex.with` leaves the block
-// and its loop and releases the lock: once refused).
+// closures/block_break.av (`break` in a `for` with no `while` around
+// it; `break`/`continue` of a loop inside a lambda),
+// closures/with_break.av (a `Mutex.with` lambda that returns early
+// releases the lock, and the loop is left by `break` after it).
 // The checker rejects `break` in a lambda body inside a `while`
 // (closures/refuse_break.av) at the statement, writing no program.
 
@@ -116,7 +118,7 @@ fn test_frontend(c: Checks, compiler: String, root: String, dir: String) {
       t = log_text(j.log)
       c.expect(t.contains(bw[i]), "${bad[i]} under ${bs[b]}: ${bw[i]}")
       c.expect(t.contains(bl[i]), "${bad[i]} under ${bs[b]}: at ${bl[i]}")
-      c.expect(!file_exists("${dir}/${out_of(k, bs[b])}"), "${bad[i]} under ${bs[b]}: no program written")
+      c.expect(!fs.exists("${dir}/${out_of(k, bs[b])}"), "${bad[i]} under ${bs[b]}: no program written")
       b += 1
     }
     i += 1
@@ -175,7 +177,7 @@ fn test_frontend(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_frontend.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_frontend(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

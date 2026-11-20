@@ -225,6 +225,11 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
   if l >= 0 {
     return l
   }
+  if t.rec {
+    // A recursive alias's union holds an array of itself: container_ty
+    // notes it ahead (union_ahead) and it is filled here.
+    lw.lw_busy[name] = 1
+  }
   payloads: Array(Int) = []
   nil_tag = -1
   i = 0
@@ -241,7 +246,51 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
     }
     i += 1
   }
+  if t.rec {
+    lw.lw_busy[name] = 0
+    ahead = lw.lw_m.types.layout_named(name)
+    if ahead >= 0 {
+      uf: Array(Int) = []
+      un: Array(String) = []
+      uf.push(mt_i32())
+      un.push("tag")
+      for j in 0..payloads.size {
+        uf.push(payloads[j])
+        un.push("m${j}")
+      }
+      lw.lw_m.types.set_fields(ahead, uf, un)
+      lw.lw_m.types.layouts[ahead].nil_tag = nil_tag
+      lw.fill_pending(name, ahead)
+      return ahead
+    }
+  }
   lw.lw_b.note_union(name, payloads, nil_tag)
+}
+
+// The layout of a recursive alias's union being laid out, for an array
+// of it inside itself: noted empty (once) and filled by union_layout.
+pub fn (lw: MirLower) union_ahead(name: String): Int {
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  f: Array(Int) = []
+  n: Array(String) = []
+  lw.lw_b.note_layout(name, mlk_union(), f, n)
+}
+
+// The element buffers of the struct or union name, noted while it was
+// laid out (empty then), completed with its layout.
+pub fn (lw: MirLower) fill_pending(name: String, layout: Int) {
+  for k in 0..lw.lw_pend_struct.size {
+    if lw.lw_pend_struct[k] == name {
+      ef: Array(Int) = []
+      ef.push(lw.lw_m.types.agg(layout))
+      en: Array(String) = []
+      en.push("")
+      lw.lw_m.types.set_fields(lw.lw_pend_elems[k], ef, en)
+    }
+  }
 }
 
 // ---- symbols
@@ -265,7 +314,7 @@ pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
 pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m = mir_mty(ot)
   pre = "${mir_module_part(ot.mod_name)}."
-  if (ot.is_struct() || ot.is_class()) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && str_starts(m, pre) {
+  if (ot.is_struct() || ot.is_class()) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && m.starts_with(pre) {
     return str_slice(m, pre.size, m.size)
   }
   m
@@ -316,11 +365,7 @@ pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
 
 pub fn (lw: MirLower) clone_place(p: MPlace): MPlace {
   q = MPlace.new(p.local)
-  i = 0
-  while i < p.proj.size {
-    q.proj.push(p.proj[i])
-    i += 1
-  }
+  q.proj.concat(p.proj)
   q
 }
 
@@ -521,6 +566,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
           return
         }
         lw.at(st.loc)
+        lw.recv_store_check(p, st.loc)
         lw.store_place(p, ty, val)
         return
       }
@@ -542,11 +588,35 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
       }
       r = lw.compound_arith(st, ty, cur, rhs, v)
       lw.at(st.loc)
+      lw.recv_store_check(p2, st.loc)
       lw.store_place(p2, ty, r)
     }
     return
   }
   lw.refuse(t.loc, "an untyped assignment")
+}
+
+// A store through a struct method's receiver (`self.x = v`, `x += 1`,
+// `self.q.y = v`), in a program that both spawns and has a call that
+// freezes the Array holding its receiver (held_method_call): the method
+// may have started a task that reads that Array, and the receiver is one
+// of its elements, so the store asks the runtime first
+// (`avant_array_recv_store`), which traps when the receiver lies in an
+// Array this thread's call froze and a task froze too. Any other program
+// has no such call, and its code is the same as without the check.
+pub fn (lw: MirLower) recv_store_check(p: MPlace, loc: Location) {
+  if !lw.lw_self_struct || p.local != lw.lw_self || !lw.lw_m.shared || !lw.lw_m.elem_holds {
+    return
+  }
+  b = lw.lw_b
+  b.call(-1, "avant_array_recv_store", lw.two(b.copy_local(lw.lw_self), b.str_const(lw.site_text(loc))))
+}
+
+// FILE:LINE:COL as every trap names its site (the file relative to the
+// program's directory or the compiler's root, rel_path), so the message
+// is the same from any directory.
+pub fn (lw: MirLower) site_text(loc: Location): String {
+  "${lw.rel_path(loc.path)}:${loc.line()}:${loc.column()}"
 }
 
 // A store into a C layout's C scalar field: the value in its Avant view,
@@ -764,11 +834,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   }
   all: Array(MOperand) = []
   all.push(r)
-  i = 0
-  while i < ops.size {
-    all.push(ops[i])
-    i += 1
-  }
+  all.concat(ops)
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
 }
@@ -791,21 +857,17 @@ pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: Strin
     name = e.ident
   }
   if rt = recv.ty {
-    name = "${rt.show()}.${name}"
+    name = "${rt.show_bare()}.${name}"
   }
   hargs: Array(MOperand) = []
   hargs.push(slot)
   hargs.push(lw.elem_size(aty))
   hargs.push(b.str_const(name))
-  hargs.push(b.str_const(e.loc.show()))
+  hargs.push(b.str_const(lw.site_text(e.loc)))
   b.call(-1, "avant_array_hold", hargs)
   all: Array(MOperand) = []
   all.push(r)
-  i = 0
-  while i < ops.size {
-    all.push(ops[i])
-    i += 1
-  }
+  all.concat(ops)
   lw.at(e.loc)
   v = lw.call_to(ret, sym, all)
   k = -1
@@ -957,7 +1019,8 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   if lw.failed() {
     return
   }
-  b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
+  nf = b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
+  nf.in_lib = mir_lib_source(cdef.mod_name, cdef.loc.path)
   if f2 = init {
     for i in 0..f2.params.size {
       b.name_param(i + 1, f2.params[i].name)
@@ -1035,9 +1098,7 @@ pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
     b.barrier(o)
     iargs: Array(MOperand) = []
     iargs.push(b.copy_local(o))
-    for a in args {
-      iargs.push(a)
-    }
+    iargs.concat(args)
     dummy = b.call(-1, init_sym, iargs)
     return b.copy_local(o)
   }
@@ -1158,7 +1219,7 @@ pub fn mir_is_http_server(t: Ty): Bool {
 }
 
 pub fn mir_handler_method(name: String): Bool {
-  name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close"
+  name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close" || name == "fallback" || name == "every" || name == "on_close"
 }
 
 // Whether a route call registers a handler that captures an Array or a

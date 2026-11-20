@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Walks: a loop's own variable, and a collection changed during its walk.
 // Each program is compiled in parallel; an accepted one must print what
@@ -14,14 +16,18 @@ import backends
 //     (`each`, `any`, `all`, a comparator, a Hash's or a Set's `each`,
 //     `Array(T).new(n) { |i| }`) that names an existing variable is
 //     refused the same way; blocks one after the other may share names.
+//   - the name an `if` or `while` condition binds (`if v = x`, `while v =
+//     xs.pop()`, each binding of a condition list, an `if` used as a
+//     value) is its block's own: a name that already exists is refused;
+//     conditions one after the other may bind the same name.
 //   - a Hash or a Set changed during its own walk (`each`, and `for`
 //     over a Set): a key or an element added, through the walked name or
 //     another (a function's parameter too), traps after the step that
 //     added it (the walk would miss it), even when the step deleted it
-//     again; an existing key's value assigned, a key deleted (the
-//     current one or another) and a clear are defined (a deleted key is
-//     not visited), and an addition followed by a break leaves the walk
-//     without a trap.
+//     again, and so does a deletion of another key or a clear (the walk
+//     reads the table in place); an existing key's value assigned and
+//     the visited key deleted are defined, and an addition followed by a
+//     break leaves the walk without a trap.
 //   - an Array walked with `for`, `each`, `any` or `all` over plain
 //     values: a sort or a reverse of it through its own name inside the
 //     walk is refused (the walk would read some elements twice and miss
@@ -73,52 +79,64 @@ fn cases: Array(PCase) {
   xs.push(refused("for-nested-same-name", "fn main {\n  n = 0\n  for i in 0..3 {\n    for i in 0..2 {\n      n += 1\n    }\n  }\n  puts(n)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
   xs.push(refused("for-parameter-name", "fn f(i: Int): Int {\n  for i in 0..3 {\n    puts(i)\n  }\n  i\n}\n\nfn main {\n  puts(f(7))\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "2:3"))
   xs.push(refused("for-inclusive-outer-local", "fn main {\n  k = 0\n  for k in 1..=3 {\n    puts(k)\n  }\n  puts(k)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "3:3"))
-  xs.push(refused("for-in-lambda-outer-local", "fn main {\n  i = 5\n  f = { |n: Int|\n    for i in 0..n {\n      puts(i)\n    }\n  }\n  f(2)\n  puts(i)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
+  xs.push(refused("for-in-lambda-outer-local", "fn main {\n  i = 5\n  f = (n: Int) {\n    for i in 0..n {\n      puts(i)\n    }\n  }\n  f(2)\n  puts(i)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
+  xs.push(refused("if-bind-outer-local", "fn main {\n  v = 1\n  o: Int? = 5\n  if v = o {\n    puts(v)\n  }\n  puts(v)\n}\n", "if v = ...: v already names a variable here; the name a condition binds is its block's own", "4:3"))
+  xs.push(refused("else-bind-outer-local", "class E: Error {\n  message: String = \"bad\"\n}\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return n\n  }\n  E.new()\n}\nfn main {\n  e = 3\n  if v = f(0) {\n    puts(v)\n  } else e {\n    puts(\"failed\")\n  }\n  puts(e)\n}\n", "if ... else e: e already names a variable here; the name an else binds is its block's own", "12:3"))
+  xs.push(refused("while-else-bind-outer-param", "class E: Error {\n  message: String = \"bad\"\n}\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return n\n  }\n  E.new()\n}\nfn walk(err: String) {\n  n = 3\n  while v = f(n) {\n    n -= 1\n  } else err {\n    puts(err)\n  }\n}\nfn main {\n  walk(\"x\")\n}\n", "while ... else err: err already names a variable here", "12:3"))
+  xs.push(refused("else-guard-outer-local", "class E: Error {\n  message: String = \"bad\"\n}\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return n\n  }\n  E.new()\n}\nfn g: Int {\n  e = 3\n  v = f(0) else e {\n    return e\n  }\n  v\n}\nfn main {\n  puts(g())\n}\n", "else e: e already names a variable here; the name an else guard binds is its block's own", "12:12"))
+  xs.push(accepted("else-bind-new-name", "class E: Error {\n  message: String = \"bad\"\n}\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return n\n  }\n  E.new()\n}\nfn main {\n  if v = f(0) {\n    puts(v)\n  } else e {\n    puts(e)\n  }\n  if w = f(2) {\n    puts(w)\n  } else e {\n    puts(e)\n  }\n}\n", "bad\n2\n"))
+  xs.push(refused("while-bind-outer-local", "fn main {\n  xs = [1, 2, 3]\n  x = 0\n  while x = xs.pop() {\n    puts(x)\n  }\n  puts(x)\n}\n", "while x = ...: x already names a variable here; the name a condition binds is its block's own", "4:3"))
+  xs.push(refused("if-bind-chain-outer-local", "fn main {\n  a = 1\n  h = [\"x\": 2]\n  if b = h.get(\"x\"), a = h.get(\"x\") {\n    puts(a + b)\n  }\n  puts(a)\n}\n", "if a = ...: a already names a variable here", "4:3"))
+  xs.push(refused("if-bind-chain-first-outer", "fn main {\n  a = 1\n  h = [\"x\": 2]\n  if a = h.get(\"x\"), b = h.get(\"x\") {\n    puts(a + b)\n  }\n  puts(a)\n}\n", "if a = ...: a already names a variable here", "4:3"))
+  xs.push(refused("if-bind-parameter", "fn f(n: Int, o: Int?): Int {\n  if n = o {\n    return n\n  }\n  n\n}\n\nfn main {\n  puts(f(1, 2))\n}\n", "if n = ...: n already names a variable here", "2:3"))
+  xs.push(refused("if-bind-value-outer", "fn main {\n  w = 3\n  o: Int? = 5\n  x = if w = o { w } else { 0 }\n  puts(x + w)\n}\n", "if w = ...: w already names a variable here", "4:7"))
+  xs.push(refused("while-bind-chain-outer", "fn main {\n  xs = [1, 2]\n  n = 0\n  while x = xs.pop(), n = xs.pop() {\n    puts(x + n)\n  }\n  puts(n)\n}\n", "while n = ...: n already names a variable here", "4:3"))
+  xs.push(accepted("if-bind-new-names", "fn main {\n  o: Int? = 5\n  if v = o {\n    puts(v)\n  }\n  if v = o {\n    puts(v + 1)\n  }\n  xs = [1, 2]\n  t = 0\n  while x = xs.pop() {\n    t += x\n  }\n  while x = xs.pop() {\n    t += x\n  }\n  if _ = o {\n    puts(t)\n  }\n}\n", "5\n6\n3\n"))
   xs.push(refused("for-name-gone-after", "fn main {\n  for i in 0..3 {\n    puts(i)\n  }\n  puts(i)\n}\n", "unknown name i", "5:8"))
   xs.push(refused("for-field-name", "class K {\n  pub i: Int = 5\n\n  fn run {\n    for i in 0..3 {\n      puts(i)\n    }\n    puts(self.i)\n  }\n}\n\nfn main {\n  K.new().run()\n}\n", "i is a field of K", "5:5"))
   xs.push(accepted("for-same-name-in-sequence", "fn main {\n  t = 0\n  for i in 0..3 {\n    t += i\n  }\n  for i in 0..2 {\n    t += i\n  }\n  for x in [10, 20] {\n    t += x\n  }\n  for x in [100] {\n    t += x\n  }\n  puts(t)\n}\n", "134\n"))
   xs.push(accepted("for-sibling-functions", "fn a: Int {\n  s = 0\n  for i in 0..4 {\n    s += i\n  }\n  s\n}\n\nfn b(i: Int): Int {\n  t = 0\n  for j in 0..i {\n    t += j\n  }\n  t\n}\n\nfn main {\n  puts(a() + b(5))\n}\n", "16\n"))
-  xs.push(traps("hash-add-own", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    h[k + 100] = v\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(traps("hash-add-other", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    g[k + 100] = v\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(traps("hash-inc-new-key", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    h.inc(k + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(traps("hash-add-in-function", "fn grow(m: Hash(String, Int)) {\n  m[\"new\"] = 1\n}\n\nfn main {\n  h = [\"a\": 1, \"b\": 2]\n  h.each { |k, v|\n    grow(h)\n  }\n  puts(h.size)\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(accepted("hash-assign-existing", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30]\n  g = h\n  h.each { |k, v|\n    h[k] = v + 1\n    g[k] = v + 2\n  }\n  puts((h[1] ?? 0) + (h[2] ?? 0) + (h[3] ?? 0))\n}\n", "66\n"))
-  xs.push(accepted("hash-delete-current", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    _ = h.delete(k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 4 size 0\n"))
-  xs.push(accepted("hash-delete-other-name", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    _ = g.delete(5 - k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 2 size 2\n"))
-  xs.push(accepted("hash-clear", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    g.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 1 size 0\n"))
-  xs.push(traps("hash-add-then-delete", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    h[k + 100] = v\n    _ = h.delete(k + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(accepted("hash-add-then-break", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  h.each { |k, v|\n    h[k + 100] = v\n    break\n  }\n  puts(h.size)\n}\n", "3\n"))
-  xs.push(accepted("hash-add-after-walk", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  added: Array(Int) = []\n  h.each { |k, v|\n    added.push(k + 100)\n  }\n  for a in added {\n    h[a] = 0\n  }\n  puts(h.size)\n}\n", "4\n"))
-  xs.push(accepted("hash-walk-another-hash", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  other = Hash(Int, Int).new()\n  h.each { |k, v|\n    other[k] = v\n    other[k + 10] = v\n  }\n  puts(other.size)\n}\n", "4\n"))
-  xs.push(accepted("hash-string-keys-delete", "fn main {\n  h = [\"a\": 1, \"b\": 2, \"c\": 3]\n  seen = 0\n  h.each { |k, v|\n    seen += 1\n    if v != 2 {\n      _ = h.delete(k)\n    }\n  }\n  puts(\"\${seen} \${h.size}\")\n}\n", "3 1\n"))
-  xs.push(traps("hash-string-keys-add", "fn main {\n  h = [\"a\": 1, \"b\": 2]\n  h.each { |k, v|\n    h[\"\${k}\${k}\"] = v\n  }\n  puts(h.size)\n}\n", "a key was added to a Hash during its walk"))
-  xs.push(traps("set-add-own", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = s.add(v + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element was added to a Set during its walk"))
-  xs.push(traps("set-add-other", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = t.add(v + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element was added to a Set during its walk"))
-  xs.push(accepted("set-add-present", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = s.add(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 4\n"))
-  xs.push(accepted("set-delete-current", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = s.delete(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 0\n"))
-  xs.push(accepted("set-clear", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    t.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 1 size 0\n"))
+  xs.push(traps("hash-add-own", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    h[k + 100] = v\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("hash-add-other", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    g[k + 100] = v\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("hash-inc-new-key", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    h.inc(k + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("hash-add-in-function", "fn grow(m: Hash(String, Int)) {\n  m[\"new\"] = 1\n}\n\nfn main {\n  h = [\"a\": 1, \"b\": 2]\n  h.each (k, v) {\n    grow(h)\n  }\n  puts(h.size)\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(accepted("hash-assign-existing", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30]\n  g = h\n  h.each (k, v) {\n    h[k] = v + 1\n    g[k] = v + 2\n  }\n  puts((h[1] ?? 0) + (h[2] ?? 0) + (h[3] ?? 0))\n}\n", "66\n"))
+  xs.push(accepted("hash-delete-current", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    _ = h.delete(k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 4 size 0\n"))
+  xs.push(traps("hash-delete-other-name", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    _ = g.delete(5 - k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(traps("hash-clear", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    g.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(traps("hash-add-then-delete", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each (k, v) {\n    h[k + 100] = v\n    _ = h.delete(k + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(accepted("hash-add-then-break", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  for k, v in h {\n    h[k + 100] = v\n    break\n  }\n  puts(h.size)\n}\n", "3\n"))
+  xs.push(accepted("hash-add-after-walk", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  added: Array(Int) = []\n  h.each (k, v) {\n    added.push(k + 100)\n  }\n  for a in added {\n    h[a] = 0\n  }\n  puts(h.size)\n}\n", "4\n"))
+  xs.push(accepted("hash-walk-another-hash", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  other = Hash(Int, Int).new()\n  h.each (k, v) {\n    other[k] = v\n    other[k + 10] = v\n  }\n  puts(other.size)\n}\n", "4\n"))
+  xs.push(accepted("hash-string-keys-delete", "fn main {\n  h = [\"a\": 1, \"b\": 2, \"c\": 3]\n  seen = 0\n  h.each (k, v) {\n    seen += 1\n    if v != 2 {\n      _ = h.delete(k)\n    }\n  }\n  puts(\"\${seen} \${h.size}\")\n}\n", "3 1\n"))
+  xs.push(traps("hash-string-keys-add", "fn main {\n  h = [\"a\": 1, \"b\": 2]\n  h.each (k, v) {\n    h[\"\${k}\${k}\"] = v\n  }\n  puts(h.size)\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("set-add-own", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each (v) {\n    _ = s.add(v + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element was added to a Set during its walk"))
+  xs.push(traps("set-add-other", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each (v) {\n    _ = t.add(v + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element was added to a Set during its walk"))
+  xs.push(accepted("set-add-present", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each (v) {\n    _ = s.add(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 4\n"))
+  xs.push(accepted("set-delete-current", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each (v) {\n    _ = s.delete(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 0\n"))
+  xs.push(traps("set-clear", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each (v) {\n    t.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element other than the visited one was deleted from a Set during its walk"))
   xs.push(refused("for-sort-own", "fn main {\n  xs = [3, 1, 2]\n  for x in xs {\n    xs.sort()\n    puts(x)\n  }\n}\n", "cannot sort xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
   xs.push(refused("for-reverse-own", "fn main {\n  xs = [3, 1, 2]\n  for x in xs {\n    xs.reverse()\n    puts(x)\n  }\n}\n", "cannot reverse xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
-  xs.push(refused("each-sort-block-own", "fn main {\n  xs = [\"b\", \"a\"]\n  xs.each { |x|\n    xs.sort { |a, b| a.size < b.size }\n    puts(x)\n  }\n}\n", "cannot sort xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:13"))
-  xs.push(refused("any-reverse-own", "fn main {\n  xs = [1, 2, 3]\n  found = xs.any { |x|\n    xs.reverse()\n    x == 2\n  }\n  puts(found)\n}\n", "cannot reverse xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
+  xs.push(refused("each-sort-block-own", "fn main {\n  xs = [\"b\", \"a\"]\n  xs.each (x) {\n    xs.sort (a, b) { a.size < b.size }\n    puts(x)\n  }\n}\n", "cannot sort xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
+  xs.push(refused("any-reverse-own", "fn main {\n  xs = [1, 2, 3]\n  found = xs.any (x) {\n    xs.reverse()\n    x == 2\n  }\n  puts(found)\n}\n", "cannot reverse xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
   xs.push(refused("for-sort-field", "class Bag {\n  pub items: Array(Int) = []\n\n  fn run {\n    for x in self.items {\n      self.items.sort()\n      puts(x)\n    }\n  }\n}\n\nfn main {\n  b = Bag.new()\n  b.items.push(2)\n  b.run()\n}\n", "cannot sort self.items while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "6:17"))
   xs.push(refused("for-reverse-class-array", "class C {\n  pub x: Int = 0\n}\n\nfn main {\n  cs = [C.new(), C.new()]\n  for c in cs {\n    cs.reverse()\n    puts(c.x)\n  }\n}\n", "cannot reverse cs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "8:7"))
   xs.push(accepted("for-sort-another-array", "fn main {\n  xs = [3, 1, 2]\n  ys = [9, 8]\n  for x in xs {\n    ys.sort()\n    puts(x + ys[0])\n  }\n  xs.sort()\n  puts(xs[0])\n}\n", "11\n9\n10\n1\n"))
   xs.push(accepted("for-push-own-live-size", "fn main {\n  xs = [1, 2]\n  n = 0\n  for x in xs {\n    if x < 4 {\n      xs.push(x + 2)\n    }\n    n += 1\n  }\n  puts(\"\${n} \${xs.size}\")\n}\n", "5 5\n"))
   xs.push(accepted("for-pop-own-ends-early", "fn main {\n  xs = [1, 2, 3, 4]\n  n = 0\n  for x in xs {\n    _ = xs.pop()\n    n += 1\n  }\n  puts(\"\${n} \${xs.size}\")\n}\n", "2 2\n"))
-  xs.push(accepted("each-push-other-name", "fn main {\n  xs = [1, 2]\n  ys = xs\n  n = 0\n  xs.each { |x|\n    if x < 4 {\n      ys.push(x + 2)\n    }\n    n += 1\n  }\n  puts(\"\${n} \${xs.size}\")\n}\n", "5 5\n"))
+  xs.push(accepted("each-push-other-name", "fn main {\n  xs = [1, 2]\n  ys = xs\n  n = 0\n  xs.each (x) {\n    if x < 4 {\n      ys.push(x + 2)\n    }\n    n += 1\n  }\n  puts(\"\${n} \${xs.size}\")\n}\n", "5 5\n"))
   xs.push(accepted("for-clear-other-name", "fn main {\n  xs = [1, 2, 3]\n  ys = xs\n  n = 0\n  for x in xs {\n    ys.clear()\n    n += 1\n  }\n  puts(\"\${n} \${xs.size}\")\n}\n", "1 0\n"))
   xs.push(traps("set-for-add", "fn main {\n  s: Set(Int) = [1, 2, 3]\n  n = 0\n  for v in s {\n    _ = s.add(v * 10)\n    n += 1\n  }\n  puts(n)\n}\n", "an element was added to a Set during its walk"))
   xs.push(accepted("set-for-delete", "fn main {\n  s: Set(Int) = [1, 2, 3]\n  n = 0\n  for v in s {\n    _ = s.delete(v)\n    n += 1\n  }\n  puts(\"\${n} \${s.size}\")\n}\n", "3 0\n"))
   xs.push(accepted("set-for-add-then-break", "fn main {\n  s: Set(Int) = [1, 2, 3]\n  for v in s {\n    _ = s.add(v * 10)\n    break\n  }\n  puts(s.size)\n}\n", "4\n"))
   xs.push(accepted("set-for-reassigned", "fn main {\n  s: Set(Int) = [1, 2, 3]\n  n = 0\n  for v in s {\n    s = [7]\n    n += v\n  }\n  puts(\"\${n} \${s.size}\")\n}\n", "6 1\n"))
-  xs.push(refused("each-param-outer-local", "fn main {\n  x = 100\n  [1, 2, 3].each { |x| puts(x) }\n  puts(x)\n}\n", "|x|: x already names a variable here; a parameter of each's block is the block's own", "3:18"))
-  xs.push(refused("any-param-outer-local", "fn main {\n  x = 100\n  found = [1, 2, 3].any { |x| x == 2 }\n  puts(\"\${found} \${x}\")\n}\n", "|x|: x already names a variable here; a parameter of any's block", "3:25"))
-  xs.push(refused("sort-param-outer-local", "fn main {\n  a = 1\n  xs = [3, 1, 2]\n  xs.sort { |a, b| a < b }\n  puts(a)\n}\n", "|a|: a already names a variable here; a parameter of sort's block", "4:11"))
-  xs.push(refused("hash-each-param-outer-local", "fn main {\n  k = \"none\"\n  h = [\"a\": 1]\n  h.each { |k, v| puts(v) }\n  puts(k)\n}\n", "|k|: k already names a variable here; a parameter of each's block", "4:10"))
-  xs.push(refused("set-each-param-outer-local", "fn main {\n  v = 0\n  s: Set(Int) = [1, 2]\n  s.each { |v| puts(v) }\n  puts(v)\n}\n", "|v|: v already names a variable here; a parameter of each's block", "4:10"))
-  xs.push(refused("build-param-outer-local", "fn main {\n  i = 9\n  xs = Array(Int).new(3) { |i| i * 2 }\n  puts(\"\${xs[2]} \${i}\")\n}\n", "|i|: i already names a variable here; a parameter of Array.new's block", "3:26"))
-  xs.push(accepted("each-params-own-names", "fn main {\n  t = 0\n  [1, 2, 3].each { |x| t += x }\n  [4].each { |x| t += x }\n  h = [\"a\": 10]\n  h.each { |k, v| t += v }\n  xs = [3, 1, 2]\n  xs.sort { |a, b| a < b }\n  puts(\"\${t} \${xs[0]}\")\n}\n", "20 1\n"))
+  xs.push(refused("each-param-outer-local", "fn main {\n  x = 100\n  [1, 2, 3].each (x) { puts(x) }\n  puts(x)\n}\n", "|x|: x already names a variable here; a parameter of each's block is the block's own", "3:18"))
+  xs.push(refused("any-param-outer-local", "fn main {\n  x = 100\n  found = [1, 2, 3].any (x) { x == 2 }\n  puts(\"\${found} \${x}\")\n}\n", "|x|: x already names a variable here; a parameter of any's block", "3:25"))
+  xs.push(refused("sort-param-outer-local", "fn main {\n  a = 1\n  xs = [3, 1, 2]\n  xs.sort (a, b) { a < b }\n  puts(a)\n}\n", "|a|: a already names a variable here; a parameter of sort's block", "4:11"))
+  xs.push(refused("hash-each-param-outer-local", "fn main {\n  k = \"none\"\n  h = [\"a\": 1]\n  h.each (k, v) { puts(v) }\n  puts(k)\n}\n", "|k|: k already names a variable here; a parameter of each's block", "4:10"))
+  xs.push(refused("set-each-param-outer-local", "fn main {\n  v = 0\n  s: Set(Int) = [1, 2]\n  s.each (v) { puts(v) }\n  puts(v)\n}\n", "|v|: v already names a variable here; a parameter of each's block", "4:10"))
+  xs.push(refused("build-param-outer-local", "fn main {\n  i = 9\n  xs = Array(Int).new(3, (i) { i * 2 })\n  puts(\"\${xs[2]} \${i}\")\n}\n", "|i|: i already names a variable here; a parameter of Array.new's block", "3:26"))
+  xs.push(accepted("each-params-own-names", "fn main {\n  t = 0\n  [1, 2, 3].each (x) { t += x }\n  [4].each (x) { t += x }\n  h = [\"a\": 10]\n  h.each (k, v) { t += v }\n  xs = [3, 1, 2]\n  xs.sort (a, b) { a < b }\n  puts(\"\${t} \${xs[0]}\")\n}\n", "20 1\n"))
   xs
 }
 
@@ -126,7 +144,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/wk-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/wk-${f.tag}.bin", "${dir}/wk-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -152,7 +170,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
       c.expect(log_text("${dir}/wk-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/wk-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/wk-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("wk-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -161,7 +179,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_walks.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

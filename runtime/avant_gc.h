@@ -120,7 +120,7 @@
  *   has avant_barrier on that object (or avant_barrier_at on the
  *   stored-to address, or avant_barrier_slot with the slot) before the
  *   store (RC5; it used to be allowed after the store) and so before
- *   the next call that may collect (avant_hash_inc_slice and
+ *   the next call that may collect (a hash insert by a slice and
  *   array_grow lost young keys and elements without one). A store into
  *   an element buffer that knows its slot uses avant_barrier_slot (card
  *   marking); a bulk copy or fill barriers the buffer
@@ -191,7 +191,7 @@
  *     buf_append_slow, buf_grow                    C
  *     avant_buf_new, _to_str, _ensure,
  *       avant_bytes_to_buf                         C
- *     hash grow, setters, inc_slice                C
+ *     hash grow, setters, inserts by a slice       C
  *     put, upsert (their growth)                   C
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
  *     avant_json_parse                             C (yyjson allocates
@@ -265,7 +265,7 @@
  *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
  *                          generation's budget in MiB, fixed; 0 is the
  *                          adaptive budget (4 MiB to start, within 4 to
- *                          64 MiB)
+ *                          32 MiB)
  *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
  *                          MiB ("heap limit" past it); 0 is no limit
  *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
@@ -347,9 +347,6 @@ __attribute__((visibility("hidden"))) void avant_gc_lock(pthread_mutex_t *m);
 __attribute__((visibility("hidden"))) void avant_gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
 __attribute__((visibility("hidden"))) int avant_gc_cond_timedwait(pthread_cond_t *cv, pthread_mutex_t *m,
                                                                  const struct timespec *deadline);
-/* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
- * collection bumps. */
-extern _Atomic uint32_t g_avant_str_gen;
 extern atomic_int g_avant_shared;
 
 /* RC4's no-GC regions (the contract above). Hidden: only
@@ -371,6 +368,17 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * (avant_zlib.c). A large object's size is set and its pages kept
  * (avant_gc_large_trim gives pages back). Never collects. */
 __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64_t nbytes);
+__attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t nbytes);
+/* The smallest Bytes the collector allocates as a large object (its
+ * SCALAR_LOS_MIN): one that avant_alloc_unzeroed may leave unzeroed. */
+#define AVANT_GC_BYTES_LARGE 6144
+/* Room for NBYTES of Bytes that the caller writes before anything reads
+ * it (a Buf's storage past its size, a buffer of scalars past its size):
+ * avant_alloc_unzeroed for a large one, avant_alloc for a block one,
+ * the size test inline so a small allocation pays no extra call. */
+static inline void *avant_alloc_bytes_room(uint64_t nbytes) {
+  return nbytes >= AVANT_GC_BYTES_LARGE ? avant_alloc_unzeroed(nbytes, 0) : avant_alloc(nbytes, 0);
+}
 /* 1 when P lies in the collected heap and is not the exact start of a
  * heap object (an address inside an object, or one where no object
  * lives); 0 for null, for an address outside the heap (C's own memory, a
@@ -386,6 +394,11 @@ __attribute__((visibility("hidden"))) int avant_gc_interior(const void *p);
  * large Bytes object starts at (6 KiB). Not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size);
+/* A large young object PAYLOAD, which the caller alone names, grown in
+ * place to NEW_SIZE bytes when the pages after it are free (the added
+ * bytes zeroed unless NOZERO); 1 when it was, 0 otherwise (nothing
+ * changed). Takes the world lock; not a collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_extend(void *payload, uint64_t new_size, int nozero);
 /* A growth replaced the large buffer PAYLOAD and no longer names it: it is
  * freed now unless a root of this thread names it, it is pinned, mature
  * with reference fields, or the program is shared (avant_gc_los.c). 1 when
@@ -416,8 +429,11 @@ static inline void avant_barrier_slot_young(void *obj, void *slot) {
  * end while the proof that the old heap is unchanged may still hold, and
  * under AVANT_GC_VERIFY=1), so before a program's first full collection,
  * and after the log broke (a store into a large holder, a full log), it
- * costs a load and a test. */
-extern __attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
+ * costs a load and a test. The byte is ABI: generated code reads it in
+ * its inline pop of a reference (compiler/llvm/emit_gc.av ll_array_pop),
+ * which clears the popped word itself and takes the runtime's call only
+ * when this call would do something. */
+extern uint8_t avant_gc_proof_logging;
 __attribute__((visibility("hidden"))) void avant_gc_overwrite_slow(void *obj);
 static inline void avant_gc_overwrite(void *obj) {
   if (__builtin_expect(avant_gc_proof_logging, 0) && obj &&

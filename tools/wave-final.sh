@@ -74,7 +74,15 @@
 #      branch that moved on since is not this head's base.
 #   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
 #      of tools/la-harness.sh, built once per checkout), then the LR table
-#      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
+#      (tools/lr-table.sh), OUT/la. The tasks are timed on the whole
+#      machine, one after another, as the references were; the pure-Avant
+#      twins then on the NUMA nodes at once (tools/la-twins.py: each twin's
+#      prod run and LR re-measure, one run a node, pinned with its memory),
+#      their rows merged where the sequential passes wrote them and the
+#      harness's reports written again (la/twins.tsv, la/twins.log); on a
+#      machine with one node, without numactl, or with
+#      WAVE_LA_TWINS_AT_ONCE=0, the twins run after the tasks in the same
+#      passes, as before; needs WAVE_LA_SIDE (a directory holding
 #      this checkout's copy as avant/ and LangArena/ side by side, the layout
 #      the harness expects) and this machine's LR reference (the results
 #      directory the other languages were measured into): WAVE_LR_REFERENCE,
@@ -92,9 +100,12 @@
 #      base cache entry's tree: the head's instruction counts of the base
 #      cache's stitched programs (tools/la-count.sh, shared), and the tasks
 #      whose time moved beyond 3% and 0.02 s at counts within 0.1% named
-#      "layout?" (tools/layout-flag.py): a `layout:` line, la/layout.tsv and
-#      a "Layout?" section in floor.md (tools/layout-retime.sh is the
-#      experiment that tells)
+#      (tools/layout-flag.py), each then timed again with its code at four
+#      whole-line shifts and three within its lines (tools/layout-check.sh:
+#      the build shared, the timing --timed,
+#      la/layout-check/): it stays "layout?" only when the base's time lies
+#      within the head's range across its layouts, else "beyond"; a
+#      `layout:` line, la/layout.tsv and a "Layout?" section in floor.md
 #   7. tmp-after.txt (red on an entry this run left in /tmp, tmp-new.txt;
 #      an entry another program removed meanwhile is listed in
 #      tmp-gone.txt, not red), and SUMMARY.txt: one line per step
@@ -496,24 +507,49 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
     # a build, on the shared side.
     # shellcheck disable=SC2016
     lk shared "langarena harness" sh -c 'cd "$1" && h=$(sh tools/la-harness.sh 2> "$2/harness-build.log" < /dev/null) && echo "$h" > "$2/harness.txt"' la-harness "$side/avant" "$la"
+    # The twins at once on the NUMA nodes (tools/la-twins.py), where the
+    # machine has two or more and numactl: the estimates that order them
+    # are the base's twin times when BASE_STATS's final has them.
+    twins_at_once=0
+    if [ "${WAVE_LA_TWINS_AT_ONCE:-1}" != 0 ] && command -v numactl > /dev/null 2>&1 \
+      && [ "$(ls -d /sys/devices/system/node/node[0-9]* 2>/dev/null | wc -l)" -ge 2 ]; then twins_at_once=1; fi
+    est=""; [ -n "$base" ] && [ -f "$(dirname "$base")/la/lr-avant-pure.tsv" ] && est=$(dirname "$base")/la/lr-avant-pure.tsv
     # The timing alone holds the whole machine: the prod pass, then the LR
-    # re-measure of its binaries. Its own start and end (timed.txt) give the
-    # time it held the machine, the lock's wait left out.
+    # re-measure of its binaries (the tasks; with the twins at once, then
+    # the twins on the nodes and the harness's reports again). Its own
+    # start and end (timed.txt) give the time it held the machine, the
+    # lock's wait left out.
     # shellcheck disable=SC2016
     lk timed langarena sh -c 'date +%s.%N > "$2/timed.txt"; h=$(cat "$2/harness.txt" 2>/dev/null) || exit 3; echo "harness: $h" > "$2/la-prod.log"
       t0=$(date +%s.%N)
-      cd "$1" && AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" \
+      tw=; [ "$7" = 1 ] && tw=0
+      cd "$1" && env AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" ${tw:+AVANT_TWINS=0} \
         timeout -k 10 2700 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1
       echo "prod $? $t0 $(date +%s.%N)" > "$2/prod.txt"
-      sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1 \
-        && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
-      lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref"
+      env ${tw:+LR_TWINS=0} sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1
+      lrc=$?
+      if [ "$7" = 1 ]; then
+        t1=$(date +%s.%N)
+        AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release timeout -k 10 2700 python3 -I tools/la-twins.py "$2" "$h" "$5/LangArena/run.js" ${8:+--estimates "$8"} < /dev/null > "$2/twins.log" 2>&1
+        echo "twins $? $t1 $(date +%s.%N)" > "$2/twins.txt"
+        # the reports again, with the twins merged in: a pass that measures nothing
+        AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" AVANT_TASK_LIST=- \
+          timeout -k 10 300 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1 || lrc=4
+      fi
+      [ $lrc -eq 0 ] && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
+      lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref" "$twins_at_once" "$est"
     lrc=$?; curname=floor
     rc=$(awk '{ print $2 }' "$la/prod.txt" 2>/dev/null); [ -n "$rc" ] || rc=none
     pw=$(awk '{ printf "%.1f", $4 - $3 }' "$la/prod.txt" 2>/dev/null)
+    twl=""
+    if [ $twins_at_once = 1 ]; then
+      trc=$(awk '{ print $2 }' "$la/twins.txt" 2>/dev/null); [ -n "$trc" ] || trc=none
+      [ "$trc" = 0 ] || rc="$rc, twins rc=$trc"
+      twl="; the twins on the NUMA nodes at once: $(sed -n 's/^la-twins: //p' "$la/twins.log" 2>/dev/null | head -n 1) (la/twins.tsv)"
+    fi
     if [ -n "$runner" ]; then held_what="the whole machine held"; else held_what="the timed part took"; fi
     held=$(awk 'NR == 1 { a = $1 } NR == 2 { printf "%.1f", $1 - a }' "$la/timed.txt" 2>/dev/null)
-    if [ "$rc" = 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$pw s; LR table la/table.md against $ref$ref_from$(la_disturbed); $held_what ${held:-?} s"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
+    if [ "$rc" = 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$pw s$twl; LR table la/table.md against $ref$ref_from$(la_disturbed); $held_what ${held:-?} s"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
     # The floor: tools/floor.py on la/table.md, beside the base's.
     fbase=${WAVE_FLOOR_BASE:-}
     [ -z "$fbase" ] && [ -n "$base" ] && [ -f "$(dirname "$base")/la/table.md" ] && fbase=$(dirname "$base")/la/table.md
@@ -530,9 +566,8 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
     else step "floor: red (no LR table)"; fi
     # Layout?: a task whose time moved against the base's LR re-measure
     # while its instruction count (the head's C' and the base cache's, on
-    # the same stitched programs) did not is named, here and in floor.md:
-    # worth one layout experiment (tools/layout-retime.sh) before the time
-    # is believed. Only when the base's table and the base cache are of one
+    # the same stitched programs) did not is named, here and in floor.md,
+    # and judged by its own layouts below. Only when the base's table and the base cache are of one
     # tree, so the times and the counts are of one base.
     curname=layout
     blr=${fbase:+$(dirname "$fbase")/lr-avant.tsv}
@@ -548,6 +583,18 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
         sh tools/la-count.sh . "$lap" "$2/ins-head.tsv" < /dev/null >> "$2/ins-head.log" 2>&1; exit 0' la-counts "$entry" "$la"
       if [ -s "$la/ins-head.tsv" ] && [ -s "$la/la-part.txt" ]; then
         ll=$(python3 -I tools/layout-flag.py "$la/lr-avant.tsv" "$blr" "$la/ins-head.tsv" "$(cat "$la/la-part.txt")/ins.tsv" "$la/layout.tsv" 2> "$la/layout.err")
+        # Each task so flagged is timed again across its own layouts (the
+        # head's program at several code shifts, tools/layout-check.sh):
+        # it stays layout? only when the base's time lies within that
+        # spread; one beyond it moved more than its address moves it.
+        spread=""
+        if [ -n "$ll" ] && [ "$(wc -l < "$la/layout.tsv")" -gt 1 ]; then
+          # shellcheck disable=SC2046
+          lk shared "layout check build" sh tools/layout-check.sh build "$(cat "$la/la-part.txt")" "$la/layout-check" $(awk -F'\t' 'NR > 1 { print $2 }' "$la/layout.tsv") < /dev/null > "$la/layout-check.log" 2>&1 \
+            && lk timed "layout check" sh tools/layout-check.sh time "$la/layout-check" "$side/LangArena/run.js" < /dev/null >> "$la/layout-check.log" 2>&1 \
+            && spread=$(python3 -I tools/layout-flag.py --spread "$la/layout.tsv" "$la/layout-check/rounds" 2>> "$la/layout.err")
+          [ -n "$spread" ] && ll=$spread || ll="$ll; the check across layouts failed (la/layout-check.log), so every one stays layout?"
+        fi
         if [ -n "$ll" ]; then
           step "$ll (la/layout.tsv)"
           if [ -f "$out/floor.md" ]; then
@@ -555,13 +602,13 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
               echo
               echo "## Layout?"
               echo
-              echo "Tasks whose time moved against the base's (\`$blr\`) while their instruction count did not (the head's C' and the base cache's, \`la/ins-head.tsv\` and the part's \`ins.tsv\`): where the code sits is the first suspect, one layout experiment each (\`tools/layout-retime.sh\`) before the time is believed."
+              echo "Tasks whose time moved against the base's (\`$blr\`) while their instruction count did not (the head's C' and the base cache's, \`la/ins-head.tsv\` and the part's \`ins.tsv\`), each timed again with its code at several shifts (\`tools/layout-check.sh\`, \`la/layout-check/\`): **layout?** when the base's time lies within the head's range across its layouts (the address alone covers the difference), **beyond** when it lies outside (the change, or noise in the one-pass times)."
               echo
               if [ "$(wc -l < "$la/layout.tsv")" -gt 1 ]; then
-                echo "| Task | Base s | Head s | Time | Instructions | On the floor |"
-                echo "| --- | ---: | ---: | ---: | ---: | --- |"
+                echo "| Task | Base s | Head s | Time | Instructions | Head across layouts s | Verdict | On the floor |"
+                echo "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |"
                 awk -F'\t' 'FILENAME == ARGV[1] { if ($0 ~ /^\| [A-Z]/) { split($0, c, " \\| "); sub(/^\| /, "", c[1]); fl[c[1]] = 1 }; next }
-                  FNR > 1 { printf "| %s | %.3f | %.3f | %s%% | %s%% | %s |\n", $1, $3, $4, $5, $6, ($1 in fl) ? "yes" : "no" }' "$out/floor.md" "$la/layout.tsv"
+                  FNR > 1 { printf "| %s | %.3f | %.3f | %s%% | %s%% | %s | %s | %s |\n", $1, $3, $4, $5, $6, (NF >= 10 ? $7 "–" $8 : "—"), (NF >= 10 ? $10 : "layout?"), ($1 in fl) ? "yes" : "no" }' "$out/floor.md" "$la/layout.tsv"
               else echo "None: $ll."; fi
             } >> "$out/floor.md"
           fi

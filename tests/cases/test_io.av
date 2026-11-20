@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Programs that print, exit, read their input and files, and run other
 // programs, each case a small program. They are compiled in parallel; a
@@ -18,6 +20,7 @@ class IoCase {
   pub has_input: Bool = false
   pub stdin_dir: Bool = false
   pub merged: Bool = false
+  pub err_has: String = ""
   pub status: Int = 0
   pub pos: String = ""
   pub ok: Bool = false
@@ -57,6 +60,13 @@ fn with_input(f: IoCase, input: String): IoCase {
   f
 }
 
+// stderr holds err (a trap inside the library: its site is the
+// library's).
+fn with_err_has(f: IoCase, err: String): IoCase {
+  f.err_has = err
+  f
+}
+
 fn merged(f: IoCase): IoCase {
   f.merged = true
   f
@@ -79,7 +89,7 @@ fn writer_cases(xs: Array(IoCase)) {
   pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i() {\n    return n\n  }\n  Bad.new()\n}\n"
   xs.push(refused("print-empty", "fn main {\n  print()\n}\n", "print takes one argument", "2:3"))
   xs.push(refused("eprint-empty", "fn main {\n  eprint()\n}\n", "eprint takes one argument", "2:3"))
-  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "print does not take a block", "2:3"))
+  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "a block in pipes is not Avant", "2:12"))
   xs.push(accepted("print-scalars", "fn main {\n  print(\"a\")\n  print(1)\n  print(-2)\n  print(2.5)\n  print(true)\n  n: Int32 = 7\n  print(n)\n  print(18446744073709551615u64)\n  puts(\"|\")\n}\n", "a1-22.5true718446744073709551615|\n"))
   xs.push(with_err(accepted("eputs-eprint", "fn main {\n  puts(\"out\")\n  eputs(\"e1\")\n  eprint(\"e\")\n  eprint(2)\n  eputs(1.5)\n  eputs(false)\n}\n", "out\n"), "e1\ne21.5\nfalse\n"))
   xs.push(merged(accepted("eputs-order", "fn main {\n  puts(\"a\")\n  eputs(\"b\")\n  print(\"c\")\n  eprint(\"d\")\n  puts(\"e\")\n}\n", "a\nb\ncde\n")))
@@ -119,7 +129,7 @@ fn leave_cases(xs: Array(IoCase)) {
   xs.push(with_status(accepted("exit-if-end", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  } else {\n    exit(6)\n  }\n}\nfn main {\n  puts(pick(2))\n  puts(pick(0))\n}\n", "2\n"), 6))
   xs.push(with_status(accepted("exit-switch-arm", "enum Tok { a, b }\nfn code(t: Tok): Int {\n  switch t {\n    case a { 10 }\n    case b { exit(7) }\n  }\n}\nfn main {\n  puts(code(Tok.a))\n  puts(code(Tok.b))\n}\n", "10\n"), 7))
   xs.push(refused("exit-guard-other-call", bad + "fn main {\n  n = f(\"x\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "11:14"))
-  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = { |c: Int| puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
+  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = (c: Int) { puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
 }
 
 fn input_cases(xs: Array(IoCase)) {
@@ -133,31 +143,31 @@ fn input_cases(xs: Array(IoCase)) {
   dir.stdin_dir = true
   xs.push(dir)
   // A file read line by line: it closes itself at its end; close stops it.
-  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = file_open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = file_write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = file_open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close()\n  puts(r.read_line() ?? \"closed\")\n  r.close()\n  puts(r.path)\n  w = file_open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  } else e {\n    if err = e {\n      puts(err)\n    } else {\n      puts(\"end\")\n    }\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\n", "6\nab\nclosed\nfl.txt\nend\n4\ndone\n"))
-  xs.push(accepted("file-open-errors", "fn main {\n  if r = file_open(\"no-such.txt\") {\n    puts(\"opened\")\n  } else e {\n    puts(\"\${e}\")\n  }\n  if r = file_open(\".\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.message())\n    puts(e.op)\n  }\n}\n", "cannot open no-such.txt: No such file or directory\ncannot open .: Is a directory\nopen\n"))
+  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = fs.open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = fs.write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = fs.open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close()\n  puts(r.read_line() ?? \"closed\")\n  r.close()\n  puts(r.path)\n  w = fs.open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  } else e {\n    if err = e {\n      puts(err)\n    } else {\n      puts(\"end\")\n    }\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\nimport std.fs\n", "6\nab\nclosed\nfl.txt\nend\n4\ndone\n"))
+  xs.push(accepted("file-open-errors", "fn main {\n  if r = fs.open(\"no-such.txt\") {\n    puts(\"opened\")\n  } else e {\n    puts(\"\${e}\")\n  }\n  if r = fs.open(\".\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.message())\n    puts(e.op)\n  }\n}\nimport std.fs\n", "cannot open no-such.txt: No such file or directory\ncannot open .: Is a directory\nopen\n"))
   xs.push(refused("read-line-dropped", "fn main {\n  read_line()\n}\n", "this statement drops a value that can be an error (Nil | IoError | String)", "2:3"))
 }
 
 fn fs_cases(xs: Array(IoCase)) {
-  walk = "fn main {\n  _ = dir_make(\"wk/b/deep\")\n  _ = dir_make(\"wk/a\")\n  _ = file_write(\"wk/a/x.txt\", \"12345\")\n  _ = file_write(\"wk/top.txt\", \"\")\n  _ = file_write(\"wk/b/deep/y\", \"yy\")\n  names = dir_walk(\"wk\") ?? []\n  for n in names {\n    puts(n)\n  }\n  puts(dir_exists(\"wk/b/deep\"))\n  puts(dir_exists(\"wk/top.txt\"))\n  puts(dir_exists(\"wk/none\"))\n  puts(file_size(\"wk/a/x.txt\") ?? -1)\n  puts(file_size(\"wk/none\") ?? -1)\n}\n"
+  walk = "fn main {\n  _ = fs.make_dir(\"wk/b/deep\")\n  _ = fs.make_dir(\"wk/a\")\n  _ = fs.write(\"wk/a/x.txt\", \"12345\")\n  _ = fs.write(\"wk/top.txt\", \"\")\n  _ = fs.write(\"wk/b/deep/y\", \"yy\")\n  names = fs.walk(\"wk\") ?? []\n  for n in names {\n    puts(n)\n  }\n  puts(fs.is_dir(\"wk/b/deep\"))\n  puts(fs.is_dir(\"wk/top.txt\"))\n  puts(fs.is_dir(\"wk/none\"))\n  puts(fs.size(\"wk/a/x.txt\") ?? -1)\n  puts(fs.size(\"wk/none\") ?? -1)\n}\nimport std.fs\n"
   xs.push(accepted("fs-walk", walk, "a\na/x.txt\nb\nb/deep\nb/deep/y\ntop.txt\ntrue\nfalse\nfalse\n5\n-1\n"))
-  xs.push(accepted("fs-make-delete", "fn report(r: Void | IoError) {\n  r else e {\n    puts(\"\${e}\")\n    return\n  }\n  puts(\"ok\")\n}\nfn main {\n  report(dir_make(\"md/one/two\"))\n  report(dir_make(\"md/one/two\"))\n  _ = file_write(\"md/f\", \"x\")\n  report(dir_make(\"md/f\"))\n  report(dir_make(\"md/f/sub\"))\n  report(file_delete(\"md/f\"))\n  puts(file_exists(\"md/f\"))\n  report(file_delete(\"md/f\"))\n  report(file_delete(\"md/one\"))\n  if s = file_size(\"md/gone\") {\n    puts(s)\n  } else e {\n    puts(e.message())\n  }\n  if w = dir_walk(\"md/none\") {\n    puts(w.size)\n  } else e2 {\n    puts(e2.message())\n  }\n}\n", "ok\nok\ncannot make md/f: File exists\ncannot make md/f/sub: Not a directory\nok\nfalse\ncannot delete md/f: No such file or directory\ncannot delete md/one: Is a directory\ncannot stat md/gone: No such file or directory\ncannot list md/none: No such file or directory\n"))
-  xs.push(accepted("fs-walk-link", "lib c {\n  fun symlink(target: String, path: String): Int32\n}\nfn main {\n  _ = dir_make(\"lk/d\")\n  _ = file_write(\"lk/d/f\", \"1\")\n  _ = c.symlink(\"..\", \"lk/d/up\")\n  for n in dir_walk(\"lk\") ?? [] {\n    puts(n)\n  }\n}\n", "d\nd/f\nd/up\n"))
-  xs.push(refused("fs-make-dropped", "fn main {\n  dir_make(\"x\")\n}\n", "this statement drops a value that can be an error (Void | IoError); read the error with `else e { ... }`", "2:3"))
+  xs.push(accepted("fs-make-delete", "fn report(r: Void | IoError) {\n  r else e {\n    puts(\"\${e}\")\n    return\n  }\n  puts(\"ok\")\n}\nfn main {\n  report(fs.make_dir(\"md/one/two\"))\n  report(fs.make_dir(\"md/one/two\"))\n  _ = fs.write(\"md/f\", \"x\")\n  report(fs.make_dir(\"md/f\"))\n  report(fs.make_dir(\"md/f/sub\"))\n  report(fs.delete(\"md/f\"))\n  puts(fs.exists(\"md/f\"))\n  report(fs.delete(\"md/f\"))\n  report(fs.delete(\"md/one\"))\n  if s = fs.size(\"md/gone\") {\n    puts(s)\n  } else e {\n    puts(e.message())\n  }\n  if w = fs.walk(\"md/none\") {\n    puts(w.size)\n  } else e2 {\n    puts(e2.message())\n  }\n}\nimport std.fs\n", "ok\nok\ncannot make md/f: File exists\ncannot make md/f/sub: Not a directory\nok\nfalse\ncannot delete md/f: No such file or directory\ncannot delete md/one: Is a directory\ncannot stat md/gone: No such file or directory\ncannot list md/none: No such file or directory\n"))
+  xs.push(accepted("fs-walk-link", "lib c {\n  fun symlink(target: String, path: String): Int32\n}\nfn main {\n  _ = fs.make_dir(\"lk/d\")\n  _ = fs.write(\"lk/d/f\", \"1\")\n  _ = c.symlink(\"..\", \"lk/d/up\")\n  for n in fs.walk(\"lk\") ?? [] {\n    puts(n)\n  }\n}\nimport std.fs\n", "d\nd/f\nd/up\n"))
+  xs.push(refused("fs-make-dropped", "fn main {\n  fs.make_dir(\"x\")\n}\nimport std.fs\n", "this statement drops a value that can be an error (Void | IoError); read the error with `else e { ... }`", "2:5"))
   // dir_make and file_delete give Void | IoError: `?` passes the error up.
-  xs.push(accepted("fs-make-try", "fn setup(p: String): Void | IoError {\n  dir_make(\"\${p}/a/b\")?\n  file_delete(\"\${p}/none\")?\n  puts(\"unreached\")\n}\n\nfn main {\n  setup(\"st\") else e {\n    puts(\"\${e}\")\n    puts(dir_exists(\"st/a/b\"))\n    return\n  }\n}\n", "cannot delete st/none: No such file or directory\ntrue\n"))
-  xs.push(refused("fs-exists-type", "fn main {\n  puts(dir_exists(1))\n}\n", "argument 1 of dir_exists is Int, expected String", "2:19"))
+  xs.push(accepted("fs-make-try", "fn setup(p: String): Void | IoError {\n  fs.make_dir(\"\${p}/a/b\")?\n  fs.delete(\"\${p}/none\")?\n  puts(\"unreached\")\n}\n\nfn main {\n  setup(\"st\") else e {\n    puts(\"\${e}\")\n    puts(fs.is_dir(\"st/a/b\"))\n    return\n  }\n}\nimport std.fs\n", "cannot delete st/none: No such file or directory\ntrue\n"))
+  xs.push(refused("fs-exists-type", "fn main {\n  puts(fs.is_dir(1))\n}\nimport std.fs\n", "argument 1 of is_dir is Int, expected String", "2:18"))
 }
 
 fn process_cases(xs: Array(IoCase)) {
-  xs.push(accepted("output-captured", "fn main {\n  if r = process_output(\"sh\", [\"-c\", \"echo out; echo err >&2; exit 3\"]) {\n    puts(r.status)\n    print(r.stdout)\n    print(r.stderr)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "3\nout\nerr\n"))
-  xs.push(accepted("output-input", "fn main {\n  r = process_output(\"tr\", [\"a-z\", \"A-Z\"], \"hello\\nworld\") ?? return\n  puts(r.stdout)\n  puts(r.stderr.size)\n  e = process_output(\"cat\", []) ?? return\n  puts(e.stdout.size)\n}\n", "HELLO\nWORLD\n0\n0\n"))
-  xs.push(accepted("output-large", "fn main {\n  r = process_output(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero; head -c 2000000 /dev/zero >&2; cat > /dev/null\"], \"x\") ?? return\n  puts(r.stdout.size)\n  puts(r.stderr.size)\n  b = buf_new()\n  for i in 0..200000 {\n    b.push_str(\"line \${i}\\n\")\n  }\n  w = process_output(\"wc\", [\"-l\"], b.to_s()) ?? return\n  puts(w.stdout)\n}\n", "3000000\n2000000\n200000\n\n"))
-  xs.push(accepted("output-input-unread", "fn main {\n  b = buf_new()\n  for i in 0..100000 {\n    b.push_str(\"0123456789\")\n  }\n  r = process_output(\"sh\", [\"-c\", \"exit 5\"], b.to_s()) ?? return\n  puts(r.status)\n  puts(\"alive\")\n}\n", "5\nalive\n"))
-  xs.push(accepted("output-errors", "fn main {\n  if r = process_output(\"no-such-program-xyz\", []) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.errno > 0)\n  }\n  if r = process_output(\"sh\", [\"-c\", \"kill -9 $$\"]) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.signal)\n  }\n  st = process_output(\"sh\", [\"-c\", \"exit 127\"]) ?? return\n  puts(st.status)\n}\n", "cannot run no-such-program-xyz: No such file or directory\ntrue\nsh killed by signal 9 (Killed)\n9\n127\n"))
-  xs.push(accepted("output-into", "fn main {\n  out = buf_new()\n  err = buf_new()\n  out.push_str(\">\")\n  st = process_output_into(\"sh\", [\"-c\", \"echo one; echo two >&2; exit 4\"], out, err) ?? -1\n  puts(st)\n  print(out.to_s())\n  print(err.to_s())\n  st2 = process_output_into(\"tr\", [\"a-z\", \"A-Z\"], out, err, \"again\\n\") ?? -1\n  puts(st2)\n  print(out.to_s())\n  out.clear()\n  err.clear()\n  for i in 0..3 {\n    _ = process_output_into(\"sh\", [\"-c\", \"printf x\"], out, err)\n  }\n  puts(out.to_s())\n  big = process_output_into(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero\"], out, err) ?? -1\n  puts(big)\n  puts(out.size)\n  if r = process_output_into(\"no-such-program-xyz\", [], out, err) {\n    puts(r)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "4\n>one\ntwo\n0\n>one\nAGAIN\nxxx\n0\n3000003\ncannot run no-such-program-xyz: No such file or directory\n"))
-  xs.push(accepted("reader-scoped", "fn first(path: String): String {\n  got = \"none\"\n  r = file_open(path) ?? return \"missing\"\n  r.scoped((f) {\n    got = f.read_line() ?? \"empty\"\n  })\n  puts(r.read_line() ?? \"closed\")\n  got\n}\nfn main {\n  _ = file_write(\"sc.txt\", \"alpha\\nbeta\\n\")\n  puts(first(\"sc.txt\"))\n  puts(first(\"nope.txt\"))\n  n = 0\n  for i in 0..3000 {\n    r = file_open(\"sc.txt\") ?? return\n    r.scoped((f) {\n      if line = f.read_line() {\n        n += line.size\n      }\n    })\n  }\n  puts(n)\n}\n", "closed\nalpha\nmissing\n15000\n"))
-  xs.push(refused("output-dropped", "fn main {\n  process_output(\"true\", [])\n}\n", "this statement drops a value that can be an error (ProcessError | ProcessOutput)", "2:3"))
+  xs.push(accepted("output-captured", "fn main {\n  if r = process.output(\"sh\", [\"-c\", \"echo out; echo err >&2; exit 3\"]) {\n    puts(r.status)\n    print(r.stdout)\n    print(r.stderr)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\nimport std.process\n", "3\nout\nerr\n"))
+  xs.push(accepted("output-input", "fn main {\n  r = process.output(\"tr\", [\"a-z\", \"A-Z\"], \"hello\\nworld\") ?? return\n  puts(r.stdout)\n  puts(r.stderr.size)\n  e = process.output(\"cat\", []) ?? return\n  puts(e.stdout.size)\n}\nimport std.process\n", "HELLO\nWORLD\n0\n0\n"))
+  xs.push(accepted("output-large", "fn main {\n  r = process.output(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero; head -c 2000000 /dev/zero >&2; cat > /dev/null\"], \"x\") ?? return\n  puts(r.stdout.size)\n  puts(r.stderr.size)\n  b = Buf.new()\n  for i in 0..200000 {\n    b.push_str(\"line \${i}\\n\")\n  }\n  w = process.output(\"wc\", [\"-l\"], b.to_s()) ?? return\n  puts(w.stdout)\n}\nimport std.process\n", "3000000\n2000000\n200000\n\n"))
+  xs.push(accepted("output-input-unread", "fn main {\n  b = Buf.new()\n  for i in 0..100000 {\n    b.push_str(\"0123456789\")\n  }\n  r = process.output(\"sh\", [\"-c\", \"exit 5\"], b.to_s()) ?? return\n  puts(r.status)\n  puts(\"alive\")\n}\nimport std.process\n", "5\nalive\n"))
+  xs.push(accepted("output-errors", "fn main {\n  if r = process.output(\"no-such-program-xyz\", []) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.errno > 0)\n  }\n  if r = process.output(\"sh\", [\"-c\", \"kill -9 $$\"]) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.signal)\n  }\n  st = process.output(\"sh\", [\"-c\", \"exit 127\"]) ?? return\n  puts(st.status)\n}\nimport std.process\n", "cannot run no-such-program-xyz: No such file or directory\ntrue\nsh killed by signal 9 (Killed)\n9\n127\n"))
+  xs.push(accepted("output-into", "fn main {\n  out = Buf.new()\n  err = Buf.new()\n  out.push_str(\">\")\n  st = process.output_into(\"sh\", [\"-c\", \"echo one; echo two >&2; exit 4\"], out, err) ?? -1\n  puts(st)\n  print(out.to_s())\n  print(err.to_s())\n  st2 = process.output_into(\"tr\", [\"a-z\", \"A-Z\"], out, err, \"again\\n\") ?? -1\n  puts(st2)\n  print(out.to_s())\n  out.clear()\n  err.clear()\n  for i in 0..3 {\n    _ = process.output_into(\"sh\", [\"-c\", \"printf x\"], out, err)\n  }\n  puts(out.to_s())\n  big = process.output_into(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero\"], out, err) ?? -1\n  puts(big)\n  puts(out.size)\n  if r = process.output_into(\"no-such-program-xyz\", [], out, err) {\n    puts(r)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\nimport std.process\n", "4\n>one\ntwo\n0\n>one\nAGAIN\nxxx\n0\n3000003\ncannot run no-such-program-xyz: No such file or directory\n"))
+  xs.push(accepted("reader-scoped", "fn first(path: String): String {\n  got = \"none\"\n  r = fs.open(path) ?? return \"missing\"\n  r.scoped((f) {\n    got = f.read_line() ?? \"empty\"\n  })\n  puts(r.read_line() ?? \"closed\")\n  got\n}\nfn main {\n  _ = fs.write(\"sc.txt\", \"alpha\\nbeta\\n\")\n  puts(first(\"sc.txt\"))\n  puts(first(\"nope.txt\"))\n  n = 0\n  for i in 0..3000 {\n    r = fs.open(\"sc.txt\") ?? return\n    r.scoped((f) {\n      if line = f.read_line() {\n        n += line.size\n      }\n    })\n  }\n  puts(n)\n}\nimport std.fs\n", "closed\nalpha\nmissing\n15000\n"))
+  xs.push(refused("output-dropped", "fn main {\n  process.output(\"true\", [])\n}\nimport std.process\n", "this statement drops a value that can be an error (process.Output | ProcessError)", "2:10"))
 }
 
 fn loop_cases(xs: Array(IoCase)) {
@@ -172,6 +182,29 @@ fn loop_cases(xs: Array(IoCase)) {
   xs.push(refused("read-line-loop-drops", "fn main {\n  while line = read_line() {\n    puts(line)\n  }\n}\n", "this while would end silently when the value is an error (IoError)", "2:16"))
 }
 
+// std.fs and std.process beside what moved there: append, rename,
+// env_set, the whole name, a bare name refused (a std module's functions
+// take its name), and the prelude's old names refused with the new
+// spelling.
+fn moved_cases(xs: Array(IoCase)) {
+  xs.push(accepted("fs-append", "import std.fs\n\nfn main {\n  _ = fs.append(\"ap.txt\", \"one\\n\")\n  n = fs.append(\"ap.txt\", \"two\\n\") ?? -1\n  puts(n)\n  puts(fs.read(\"ap.txt\") ?? \"?\")\n  if e = fs.append(\"no/such/dir/x\", \"z\") {\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "4\none\ntwo\n\ncannot write no/such/dir/x: No such file or directory\n"))
+  xs.push(accepted("fs-rename", "import std.fs\n\nfn main {\n  _ = fs.write(\"rn-a.txt\", \"moved\")\n  fs.rename(\"rn-a.txt\", \"rn-b.txt\") else e {\n    puts(\"\${e}\")\n    return\n  }\n  puts(\"\${fs.exists(\"rn-a.txt\")} \${fs.read(\"rn-b.txt\") ?? \"?\"}\")\n  fs.rename(\"rn-none.txt\", \"rn-c.txt\") else e {\n    puts(\"\${e.op}: \${e}\")\n    return\n  }\n}\n", "false moved\nrename: cannot rename rn-none.txt: No such file or directory\n"))
+  xs.push(accepted("process-env-set", "import std.process\n\nfn main {\n  puts(process.env(\"IO_SET_X\") ?? \"unset\")\n  process.env_set(\"IO_SET_X\", \"one two\")\n  puts(process.env(\"IO_SET_X\") ?? \"unset\")\n  r = process.output(\"sh\", [\"-c\", \"echo $IO_SET_X\"]) ?? return\n  print(r.stdout)\n  puts(process.args().size)\n}\n", "unset\none two\none two\n1\n"))
+  xs.push(with_err_has(with_status(accepted("process-env-set-bad", "import std.process\n\nfn main {\n  process.env_set(\"A=B\", \"x\")\n  puts(\"set\")\n}\n", ""), 1), "avant runtime: process.env_set(name, value) needs a name without = or a zero byte, got \"A=B\" at io-process-env-set-bad.av:4:10"))
+  xs.push(with_err_has(with_status(accepted("random-int-site", "import std.random\n\nfn main {\n  r = random.Random.new(1)\n  puts(r.int(2, 9) < 9)\n  puts(r.int(0))\n}\n", "true\n"), 1), "avant runtime: random.Random.int(n) needs n > 0, got 0 at io-random-int-site.av:6:9"))
+  xs.push(accepted("fs-whole", "import std.fs\n\nfn main {\n  _ = std.fs.write(\"bare.txt\", \"hi\")\n  puts(std.fs.read(\"bare.txt\") ?? \"?\")\n  puts(std.fs.exists(\"bare.txt\"))\n}\n", "hi\ntrue\n"))
+  // A program that names IoError or ProcessError alone gets the prelude's types; its own type of that name is its own, beside read_line too.
+  xs.push(accepted("prelude-types-named", "fn show(e: ProcessError): String {\n  e.message\n}\n\nfn io(e: IoError): String {\n  e.message\n}\n\nfn main {\n  puts(show(ProcessError.new(\"x\", 2, 0, \"\")))\n}\n", "cannot run x: No such file or directory\n"))
+  xs.push(accepted("prelude-types-own", "class IoError {\n  pub what: String\n\n  fn initialize(what: String) {\n    self.what = what\n  }\n}\n\nstruct ProcessError {\n  code: Int\n}\n\nfn main {\n  puts(IoError.new(\"mine\").what)\n  puts(ProcessError { code: 3 }.code)\n  if line = read_line() {\n    puts(line)\n  }\n}\n", "mine\n3\n"))
+  xs.push(refused("fs-bare", "import std.fs\n\nfn main {\n  _ = write(\"bare.txt\", \"hi\")\n}\n", "write needs its module's name: write fs.write; a std module's functions are not named bare", "4:7"))
+  xs.push(refused("moved-file-read", "fn main {\n  puts(file_read(\"x\") ?? \"\")\n}\n", "file_read is now fs.read(path): import std.fs", "2:8"))
+  xs.push(refused("moved-argv", "fn main {\n  puts(argv().size)\n}\n", "argv is now process.args(): import std.process", "2:8"))
+  xs.push(refused("moved-env-get", "fn main {\n  puts(env_get(\"HOME\") ?? \"\")\n}\n", "env_get is now process.env(name): import std.process", "2:8"))
+  xs.push(refused("moved-file-exists", "fn main {\n  puts(file_exists(\"x\"))\n}\n", "file_exists is now fs.exists(path): import std.fs", "2:8"))
+  xs.push(refused("moved-process-run", "fn main {\n  _ = process_run(\"true\", [])\n}\n", "process_run is now process.run(program, args): import std.process", "2:7"))
+  xs.push(refused("gone-run-out", "fn main {\n  _ = process_run_out(\"true\", [], \"x\")\n}\n", "unknown function process_run_out", "2:7"))
+}
+
 fn cases: Array(IoCase) {
   xs: Array(IoCase) = []
   puts_cases(xs)
@@ -183,6 +216,7 @@ fn cases: Array(IoCase) {
   loop_cases(xs)
   fs_cases(xs)
   process_cases(xs)
+  moved_cases(xs)
   xs
 }
 
@@ -213,9 +247,9 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/io-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     if f.has_input {
-      _ = file_write("${dir}/io-${f.tag}.in", f.input)
+      _ = fs.write("${dir}/io-${f.tag}.in", f.input)
     }
     jobs.push(compile_job("", compiler, src, "${dir}/io-${f.tag}.bin", "${dir}/io-${f.tag}.log"))
   }
@@ -237,14 +271,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
       c.eq_str(log_text("${dir}/io-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       if !f3.merged {
         err = log_text("${dir}/io-${f3.tag}.run.err")
-        if f3.status == 1 && f3.err.size > 0 && !f3.err.contains("\n") {
+        if f3.err_has.size > 0 {
+          c.expect(err.contains(f3.err_has), "${f3.tag}: stderr says ${f3.err_has}")
+        } else if f3.status == 1 && f3.err.size > 0 && !f3.err.contains("\n") {
           c.expect(err.contains(f3.err) && err.contains("io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
         } else {
           c.eq_str(err, f3.err, "${f3.tag}: stderr")
         }
       }
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
@@ -253,7 +289,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_io.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

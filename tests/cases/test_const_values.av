@@ -1,0 +1,256 @@
+import harness
+import backends
+import std.fs
+import std.process
+
+// Module constants whose value is not a scalar made of literals: a
+// String, an array, a hash, a struct or class value, a call. Each is
+// computed once before main, in the order they are written (a module's
+// after those of the modules it imports), and read from its slot; a
+// failure while computing one stops the program before main naming it;
+// one that reads a value computed after it is refused. The value never
+// changes at any depth: a change written through the constant is
+// refused at the use, a Mutex, a Channel, a Buf or a function value in
+// it at the declaration, a class whose field is assigned outside its
+// initialize at the declaration, and a change through another path
+// stops the program. Each program is compiled in parallel; a refused
+// one must say the expected words at the expected line and column, an
+// accepted one print what it should, a stopped one exit 1 saying the
+// expected words.
+
+class KCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 0 refused, 1 runs and prints want, 2 stops with want on stderr.
+  pub kind: Int = 0
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): KCase {
+  f = KCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): KCase {
+  f = KCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn stopped(tag: String, src: String, needle: String): KCase {
+  f = KCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 2
+  f
+}
+
+fn schema_src: String {
+  "class Schema {\n  pub fields: Array(String) = []\n\n  pub fn str(name: String): Schema {\n    self.fields.push(name)\n    self\n  }\n\n  pub fn has(name: String): Bool {\n    self.fields.has(name)\n  }\n}\n\nconst schema = Schema.new().str(\"body\").str(\"title\")\n"
+}
+
+fn point_src: String {
+  "struct Point {\n  x: Int\n  y: Int\n\n  fn len2: Int {\n    self.x * self.x + self.y * self.y\n  }\n\n  fn bump {\n    self.x += 1\n  }\n}\n\nconst origin = Point { x: 3, y: 4 }\n"
+}
+
+fn value_cases: Array(KCase) {
+  xs: Array(KCase) = []
+  xs.push(accepted("values", "const names = [\"ada\", \"bob\", \"cy\"]\nconst greeting = \"hello\"\nconst ages = [\"ada\": 36, \"bob\": 41]\nconst title = \"\${greeting}, \${names[1]}\"\nconst count = names.size * 10\nconst kib = 1 << 10\nconst port = \"8080\".to_i()\nconst tags = Set(String).new()\n\nfn main {\n  puts(title)\n  puts(ages[\"bob\"] ?? 0)\n  puts(count + kib)\n  puts(port + 1)\n  puts(tags.size)\n  for n in names {\n    puts(n)\n  }\n  f = (i: Int) { names[i].size }\n  puts(f(2))\n}\n", "hello, bob\n41\n1054\n8081\n0\nada\nbob\ncy\n2\n"))
+  xs.push(accepted("trailing-block", "const words = [\"a\", \"bb\", \"ccc\"]\nconst big = words.any (w) { w.size > 2 }\nconst small = words.any((w) { w.size > 5 })\nconst best = words.max_by (w) { w.size }\nfn main {\n  puts(big)\n  puts(small)\n  puts(best)\n}\n", "true\nfalse\nccc\n"))
+  xs.push(accepted("objects", "${schema_src()}${point_src()}\nfn main {\n  puts(schema.has(\"title\"))\n  puts(schema.fields.size)\n  puts(origin.len2())\n  puts(origin.x + origin.y)\n  p = origin\n  p.bump()\n  puts(p.x)\n  puts(origin.x)\n}\n", "true\n2\n25\n7\n4\n3\n"))
+  xs.push(accepted("order", "const first = [\"a\", \"b\"]\nconst second = first.size + 1\nconst third = make()\n\nfn make: String {\n  \"\${first[0]}\${second}\"\n}\n\nfn main {\n  puts(third)\n}\n", "a3\n"))
+  xs.push(accepted("tasks", "const nums = [3, 1, 2]\n\nfn work(n: Int): Int {\n  nums[0] * n\n}\n\nfn main {\n  hs = [1, 2, 3].parallel (n) { work(n) + nums.size }\n  puts(hs[2])\n  h = spawn { nums[1] + nums[2] }\n  puts(h.join() ?? 0)\n}\n", "12\n3\n"))
+  xs
+}
+
+fn freeze_cases: Array(KCase) {
+  xs: Array(KCase) = []
+  xs.push(refused("push", "const names = [\"x\"]\n\nfn main {\n  names.push(\"y\")\n}\n", "push would change the constant names: a constant's value never changes, at any depth", "4:8"))
+  xs.push(refused("index-store", "const names = [\"x\"]\n\nfn main {\n  names[0] = \"y\"\n}\n", "this changes the constant names: a constant's value never changes, at any depth", "4:8"))
+  xs.push(refused("hash-delete", "const ages = [\"ada\": 36]\n\nfn main {\n  ages.delete(\"ada\")\n}\n", "delete would change the constant ages", "4:7"))
+  xs.push(refused("hash-store", "const ages = [\"ada\": 36]\n\nfn main {\n  ages[\"bob\"] = 1\n}\n", "this changes the constant ages", "4:7"))
+  xs.push(refused("struct-field", "${point_src()}\nfn main {\n  origin.x = 1\n}\n", "this changes the constant origin", "17:9"))
+  xs.push(refused("struct-method", "${point_src()}\nfn main {\n  origin.bump()\n}\n", "bump would change the constant origin", "17:9"))
+  xs.push(refused("class-method", "${schema_src()}\nfn main {\n  schema.str(\"x\")\n}\n", "str would change the constant schema", "17:9"))
+  xs.push(refused("class-inner-push", "${schema_src()}\nfn main {\n  schema.fields.push(\"x\")\n}\n", "push would change the constant schema", "17:16"))
+  xs.push(refused("class-field-assigned", "class Box {\n  pub n: Int = 0\n}\n\nconst boxes = [Box.new()]\n\nfn main {\n  b = boxes[0]\n  b.n = 5\n}\n", "the constant boxes never changes, so it cannot hold a Box: its field n is assigned at", "5:7"))
+  xs.push(refused("mutex", "import std.sync\n\nclass Holder {\n  pub lock: sync.Mutex(Int)\n\n  fn initialize {\n    self.lock = sync.Mutex(Int).new(0)\n  }\n}\n\nconst h = Holder.new()\n\nfn main {\n  puts(1)\n}\n", "the constant h never changes, so it cannot hold a sync.Mutex(Int) (h.lock): a Mutex or a Channel is for a value that changes", "11:7"))
+  xs.push(refused("channel", "import std.sync\n\nconst cs = [sync.Channel(Int).new(1)]\n\nfn main {\n  puts(1)\n}\n", "so it cannot hold a sync.Channel(Int) (an element of cs)", "3:7"))
+  xs.push(refused("buf", "const b = Buf.new()\n\nfn main {\n  puts(1)\n}\n", "the constant b never changes, so it cannot hold a Buf (b), which changes in place: use Bytes", "1:7"))
+  xs.push(refused("fn-value", "fn twice(n: Int): Int {\n  n * 2\n}\n\nconst f = [twice]\n\nfn main {\n  puts(1)\n}\n", "so it cannot hold a function value", "5:7"))
+  xs.push(stopped("alias-push", "const words = [\"x\", \"y\"]\n\nfn main {\n  xs = words\n  xs.push(\"z\")\n}\n", "push on an array a constant holds: a constant's value never changes, at any depth; change a copy (clone()) at "))
+  xs.push(stopped("alias-store", "const words = [\"x\", \"y\"]\n\nfn set(xs: Array(String)) {\n  xs[0] = \"z\"\n}\n\nfn main {\n  set(words)\n}\n", "an element store on an array a constant holds"))
+  xs.push(stopped("alias-method", "${schema_src()}\nfn main {\n  s = schema\n  s.str(\"x\")\n}\n", "push on an array a constant holds"))
+  xs.push(stopped("alias-hash", "const ages = [\"ada\": 36]\n\nfn main {\n  h = ages\n  h[\"bob\"] = 1\n}\n", "a store on a hash a constant holds"))
+  xs.push(accepted("copy-changes", "const words = [\"x\", \"y\"]\n\nfn main {\n  xs = words.clone()\n  xs.push(\"z\")\n  puts(xs.size)\n  puts(words.size)\n}\n", "3\n2\n"))
+  xs
+}
+
+fn start_cases: Array(KCase) {
+  xs: Array(KCase) = []
+  xs.push(refused("later", "const a = b.size\nconst b = [1]\n\nfn main {\n  puts(a)\n}\n", "this value reads the constant b, which is computed after it (declared at ", "1:11"))
+  xs.push(refused("itself", "const a = [a.size]\n\nfn main {\n  puts(a)\n}\n", "the value of constant a reads a itself", "1:12"))
+  xs.push(refused("through-fn", "const a = make()\nconst b = \"b\"\n\nfn make: String {\n  \"a\${b}\"\n}\n\nfn main {\n  puts(a)\n}\n", "the value of constant a reads the constant b through make, and b is computed after it", "1:7"))
+  xs.push(refused("nil", "const n = nil\n\nfn main {\n  puts(1)\n}\n", "the value of constant n gives nothing: a constant names a value", "1:7"))
+  xs.push(refused("void", "fn hi {\n  puts(1)\n}\n\nconst n = hi()\n\nfn main {\n  puts(1)\n}\n", "the value of constant n gives nothing", "5:7"))
+  xs.push(refused("label", "const n = [1].size\n\nfn main {\n  switch 3 {\n    case n { puts(1) }\n    else { puts(2) }\n  }\n}\n", "the constant n is computed before main, not when compiling", "5:10"))
+  xs.push(refused("unknown", "const a = zz + 1\n\nfn main {\n  puts(a)\n}\n", "unknown name zz", "1:11"))
+  xs.push(stopped("trap", "fn pick(i: Int): String {\n  xs = [\"a\"]\n  xs[i]\n}\n\nconst bad = pick(3)\n\nfn main {\n  puts(\"main\")\n}\n", "index 3 out of bounds (size 1) in pick (kv-trap.av:1:1), computing the constant bad (kv-trap.av:6:7) before main"))
+  xs.push(stopped("failure", "const port = \"80a\".to_i()\n\nfn main {\n  puts(port)\n}\n", "the constant port has no value: computed before main, its value is a failure (Nil) at kv-failure.av:1:7"))
+  xs.push(stopped("error", "class Bad: Error {\n  pub message: String = \"bad\"\n}\n\nfn load: String | Bad {\n  Bad.new()\n}\n\nconst text = load()\n\nfn main {\n  puts(text)\n}\n", "the constant text has no value: computed before main, its value is a failure (Bad)"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(KCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/kv-${f.tag}.av"
+    _ = fs.write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/kv-${f.tag}.bin", "${dir}/kv-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind > 0 {
+      runs.push(run_job(dir, "kv-${f2.tag}.bin", "kv-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/kv-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/kv-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 2 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
+      c.eq_str(log_text("${dir}/kv-${f3.tag}.run.out"), "", "${f3.tag}: no stdout")
+      c.expect(log_text("${dir}/kv-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/kv-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("kv-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// Across modules: an imported module's values are computed first, its
+// pub ones read bare and qualified.
+fn check_modules(c: Checks, compiler: String, dir: String) {
+  d = "${dir}/kvmods"
+  mkdir_p(d)
+  _ = fs.write("${d}/kvbase.av", "pub const base = [\"a\", \"b\"]\npub const joined = base.join(\"+\")\n")
+  _ = fs.write("${d}/kvmid.av", "import kvbase\n\npub const more = \"\${kvbase.joined}|\${joined}\"\n")
+  _ = fs.write("${d}/kvmain.av", "import kvmid\nimport kvbase\n\nconst last = \"\${more}/\${base.size}\"\n\nfn main {\n  puts(kvmid.more)\n  puts(last)\n}\n")
+  jobs: Array(HJob) = [compile_job("", compiler, "${d}/kvmain.av", "${d}/kvmain.bin", "${d}/kvmain.log")]
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "modules: compiles")
+  runs: Array(HJob) = [run_job(d, "kvmain.bin", "kvmain.run")]
+  run_waves(runs)
+  c.eq_str(log_text("${d}/kvmain.run.out"), "a+b|a+b\na+b|a+b/2\n", "modules: stdout")
+}
+
+// What LLVM is told: a slot's load in a function after the start-up
+// never changes (an Array's: never null, 8-aligned, its header's size),
+// nor does the Array's buffer reference and size, or a class object's
+// field; the start-up reads its slots plainly and is never inlined; a
+// program that hands a reference to a C function keeps the fields'
+// loads plain. And a constant read in a loop that collects, held in a
+// local, in a release build: its object is pinned, so the loop may keep
+// it in a register.
+fn check_facts(c: Checks, compiler: String, dir: String) {
+  d = "${dir}/kvfacts"
+  mkdir_p(d)
+  body = "class Conf {\n  pub scale: Int = 3\n}\n\nconst table = [5, 6, 7]\nconst conf = Conf.new()\nconst twice = table[1] * 2\n\nfn weight(i: Int): Int {\n  table[i] * conf.scale\n}\n"
+  _ = fs.write("${d}/kf.av", "${body}\nfn main {\n  puts(weight(2) + twice)\n}\n")
+  _ = fs.write("${d}/kfc.av", "${body}\nlib cside {\n  fun cside_sum(xs: Array(Int)): Int\n}\n\nfn main {\n  puts(weight(2) + cside.cside_sum(table))\n}\n")
+  c.eq_int(emit_ll(compiler, "${d}/kf.av", "${d}/kf.ll", "${d}/kf.log"), 0, "facts: emits")
+  c.eq_int(emit_ll(compiler, "${d}/kfc.av", "${d}/kfc.ll", "${d}/kfc.log"), 0, "facts with C: emits")
+  ll = log_text("${d}/kf.ll")
+  llc = log_text("${d}/kfc.ll")
+  c.expect(ll.contains("!invariant.load !13, !nonnull !13, !align !{i64 8}, !dereferenceable !{i64 16}"), "facts: the slot's load never changes and names a 16-byte header")
+  c.expect(ll.contains("!tbaa !5, !invariant.load !13"), "facts: the Array's buffer reference never changes")
+  c.expect(ll.contains("!tbaa !11, !invariant.load !13"), "facts: the class object's field never changes")
+  c.expect(ll.contains("/__consts\"() noinline #0"), "facts: the start-up is never inlined")
+  c.expect(llc.contains("!invariant.load !13, !nonnull !13"), "facts with C: the slot's load never changes")
+  c.expect(!llc.contains("!tbaa !5, !invariant.load !13") && !llc.contains("!tbaa !11, !invariant.load !13"), "facts with C: the fields' loads are plain")
+  src = "const table = make()\n\nfn make: Array(Int) {\n  xs: Array(Int) = []\n  for i in 0..1024 {\n    xs.push(i * 3)\n  }\n  xs\n}\n\nfn fill(n: Int, out: Array(Int)): Int {\n  t = table\n  s = 0\n  for i in 0..n {\n    out.push(t[i & 1023])\n    s += t[(i * 7) & 1023]\n  }\n  s\n}\n\nfn main {\n  total = 0\n  for r in 0..20 {\n    out: Array(Int) = []\n    total += fill(100000, out) + out.size\n  }\n  puts(total)\n}\n"
+  _ = fs.write("${d}/kheld.av", src)
+  jobs: Array(HJob) = []
+  jobs.push(env_job("", compiler, ["compile", "${d}/kheld.av", "${d}/kheld.bin", "--release"], "${d}/kheld.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "held release: compiles")
+  runs: Array(HJob) = [run_job(d, "kheld.bin", "kheld.run")]
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "held release: exit 0")
+  c.eq_str(log_text("${d}/kheld.run.out"), "3069926720\n", "held release: stdout")
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  for p in text.split(" ") {
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+// A 100,000-entry table and a hash over it, computed before main, live
+// outside the collector: the program runs and reads them in the
+// collector mode this file runs in, and the live data a full collection
+// finds (AVANT_GC_STATS) is the program's own, not the table's 9 MB.
+fn check_region(c: Checks, compiler: String, dir: String) {
+  bin = "${dir}/const_table.bin"
+  c.eq_int(compile_av(compiler, "${avant_test_root()}/tests/fixtures/heap/const_table.av", bin, "${dir}/const_table.clog"), 0, "const_table.av compiles")
+  out = "${dir}/const_table"
+  _ = process.run("/bin/sh", ["-c", "'${bin}' > '${out}.out' 2> '${out}.err'; echo $? > '${out}.rc'"])
+  c.eq_str(fs.read("${out}.rc") ?? "", "0\n", "const_table.av: exit 0")
+  c.eq_str(fs.read("${out}.out") ?? "", "100000\nentry-99999\n189430\n", "const_table.av: the table read back")
+  clean = "env -u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS"
+  _ = process.run("/bin/sh", ["-c", "${clean} AVANT_GC_STATS=1 '${bin}' > /dev/null 2> '${out}.stats'"])
+  st = fs.read("${out}.stats") ?? ""
+  live = stat_of(st, "live")
+  c.expect(live >= 0 && live < 1000000, "const_table.av: a full collection's live data is not the table's (live ${live})")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_const_values.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    dir = scratch_dir()
+    all: Array(KCase) = []
+    all.concat(value_cases())
+    all.concat(freeze_cases())
+    all.concat(start_cases())
+    run_cases(c, compiler, dir, all)
+    check_modules(c, compiler, dir)
+    check_facts(c, compiler, dir)
+    check_region(c, compiler, dir)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

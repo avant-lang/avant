@@ -79,6 +79,20 @@ pub class FlowFacts {
   pub reach_memo: Hash(String, Bool) = Hash(String, Bool).new()
 }
 
+// The context of a deferred block's statements (Checker.try_in).
+pub fn defer_context: String {
+  "a deferred block"
+}
+
+// The refusal of what would leave a deferred block.
+pub fn defer_exit_message(what: String): String {
+  way = "a loop or a lambda inside it may use them for itself"
+  if what == "postfix ?" {
+    way = "handle the failure there with if-assign or ??"
+  }
+  "${what} inside a deferred block: the block runs on the way out of the block around the defer and cannot leave it (return, ?, and a break or continue of a loop outside the deferred block are refused there); ${way}"
+}
+
 pub class Checker {
   source: Source
   pub program: Program
@@ -99,7 +113,7 @@ pub class Checker {
   pub cfun_index: Hash(String, Int)
   pub lib_names: Hash(String, Int)
   pub c_symbols: Hash(String, String)
-  pub reserved: Hash(String, Int)
+  pub reserved: Set(String)
   pub scopes: Array(Scope)
   failed: Bool = false
   pub err: CompileError? = nil
@@ -131,21 +145,9 @@ pub class Checker {
   // Set while a constructor's arguments are matched against initialize:
   // its messages name the call as written, T.new.
   pub in_new: Bool = false
-  // `avant format --calls`: a method call written without parentheses is
-  // noted (its file, the offset where `()` goes, its name) and accepted,
-  // so the formatter can write the parentheses in.
-  pub calls_migrate: Bool = false
-  // `avant format --lambdas` (compiler/migrate.av): the blocks in pipes a
-  // builtin inlines as a loop, by "path|offset" of their `{`, with the
-  // builtin's kind ("array each", "hash each", "set each", "array any",
-  // "mutex with", "array build", ...).
-  pub inline_kinds: Hash(String, String)
-  pub lambdas_migrate: Bool = false
-  pub bare_locs: Array(Location) = []
   // The target of the assignment being checked: `x.name = v` with name a
   // method is refused as an assignment, not taken for a call.
   pub target_expr: Expr? = nil
-  pub bare_names: Array(String) = []
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
@@ -169,23 +171,40 @@ pub class Checker {
   pub type_vis: Hash(String, Int)
   pub type_list: Hash(String, String)
   pub type_multi: Hash(String, Int)
+  // Each type alias's type by type_slot(module, name), resolved once where
+  // it is declared (check_aliases); an alias whose body failed is absent.
+  pub alias_tys: Hash(String, Ty)
   pub lib_mod: Hash(String, String)
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
+  // The last names of the imports that have a dot (std.time: time), so a
+  // name that is none of them is not looked at twice (qualify_last_name).
+  pub last_names: Hash(String, Int)
   // The module constants (checker/consts.av), and each one's index
   // there by module and name (const_slot).
   pub const_list: Array(ConstVal)
   pub const_vals: Hash(String, Int)
+  // The start-up order of the constant whose value is being checked
+  // (checker/const_values.av), -1 elsewhere.
+  pub const_checking: Int = -1
   pub current_fn: Function? = nil
   // The `Mutex(T).new(name)` calls of the function being checked, whose
   // names they consume (checker/guard.av check_consumes).
   pub consumes: Array(Expr) = []
+  // For each, the name it consumes, the type it is taken as and where
+  // (a spawn's: the class moved into the task, and the block's first use
+  // of the name).
+  pub consume_names: Array(String) = []
+  pub consume_tys: Array(Ty) = []
+  pub consume_locs: Array(Location) = []
   // The types `Mutex(T).new` guards and where, checked once the whole
   // program is (checker/guard.av check_guarded_types), and the types
   // already found fit.
   pub guarded: Array(Ty) = []
   pub guarded_at: Array(Location) = []
-  pub guarded_ok: Hash(String, Int) = Hash(String, Int).new()
+  // "spawn" for a class a spawn takes by move, else "".
+  pub guarded_by: Array(String) = []
+  pub guarded_ok: Set(String) = Set(String).new()
   // The method calls on an element of an Array a running task reads
   // (`xs[0].bump`), in a spawn block (1), in the sender (2) or in a
   // `.parallel` body (3), with the
@@ -195,6 +214,13 @@ pub class Checker {
   pub elem_calls: Array(Expr) = []
   pub elem_roots: Array(String) = []
   pub elem_sides: Array(Int) = []
+  // The classes of Mutex and Channel fields that crossed a task as a
+  // handle, where, and the name or value that crossed: refused once the
+  // whole program is checked if a field of one is assigned outside its
+  // initialize (checker/spawn.av check_handle_classes).
+  pub handle_tys: Array(Ty) = []
+  pub handle_at: Array(Location) = []
+  pub handle_what: Array(String) = []
   pub lam_exprs: Array(Expr)
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
@@ -273,7 +299,7 @@ pub class Checker {
   // result type is inferred: branches that all give nothing make it a
   // statement (Void) rather than an error.
   pub if_void_ok: Bool = false
-  // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
+  // Inside the block of `Array(T).new(n, (i) { ... })` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
   // The calls whose defaults name an earlier parameter, counted
@@ -376,15 +402,18 @@ pub class Checker {
     self.type_list = tl
     tmu = Hash(String, Int).new()
     self.type_multi = tmu
+    ats = Hash(String, Ty).new()
+    self.alias_tys = ats
     lm = Hash(String, String).new()
     self.lib_mod = lm
     lv = Hash(String, Int).new()
     self.lib_vis = lv
     km = Hash(String, Int).new()
     self.known_mods = km
+    lnm = Hash(String, Int).new()
+    self.last_names = lnm
     self.const_list = []
     self.const_vals = Hash(String, Int).new()
-    self.inline_kinds = Hash(String, String).new()
     self.lam_exprs = []
     self.lam_scopes = []
     self.lambda_infer = false
@@ -462,7 +491,7 @@ pub class Checker {
 
   pub fn names_missing(message: String): Bool {
     for w in ["unknown name ", "unknown function ", "unknown type ", "unknown module "] {
-      if message.size > w.size && str_slice(message, 0, w.size) == w {
+      if message.size > w.size && message.starts_with(w) {
         return true
       }
     }
@@ -543,9 +572,7 @@ pub class Checker {
     }
     if self.ready_adopt && !self.in_adopt {
       saved: Array(String) = []
-      for tparam_name in self.resolver.tparam_names {
-        saved.push(tparam_name)
-      }
+      saved.concat(self.resolver.tparam_names)
       self.resolver.clear_tparams()
       self.adopt_new_types()
       self.resolver.set_tparams(saved)
@@ -829,17 +856,62 @@ pub class Checker {
     }
     self.current_fn = fnn
     saved_consumes = self.consumes
+    saved_cn = self.consume_names
+    saved_ct = self.consume_tys
+    saved_cl = self.consume_locs
     self.consumes = []
+    self.consume_names = []
+    self.consume_tys = []
+    self.consume_locs = []
     check_body(fnn.body, ret, true)
     if self.consumes.size > 0 && !self.has_err() {
       check_consumes(fnn.body)
     }
     self.consumes = saved_consumes
+    self.consume_names = saved_cn
+    self.consume_tys = saved_ct
+    self.consume_locs = saved_cl
     self.current_fn = nil
     self.pop_scope()
     self.self_ty = nil
     self.self_name = ""
     self.current_module = saved_mod
+  }
+
+  // The value of a module constant computed before main
+  // (checker/const_values.av), checked as the body of fnn, a function
+  // with no parameters whose result is the value's type: the state a
+  // function's check starts from, the value checked with no type
+  // expected. Its type, or nil after an error.
+  pub fn check_const_value(fnn: Function, value: Expr): Ty? {
+    self.clear_poison()
+    saved_mod = self.current_module
+    self.current_module = fnn.mod_name
+    self.return_type = t_void()
+    self.pending_handles = []
+    self.pending_arrays = []
+    memo = self.facts.reach_memo
+    self.facts = FlowFacts.new()
+    self.facts.reach_memo = memo
+    self.entry_void = false
+    self.self_ty = nil
+    self.self_name = ""
+    self.for_names = []
+    self.for_scopes = []
+    self.for_kinds = []
+    self.clear_places()
+    self.walk_texts = []
+    self.push_scope()
+    self.current_fn = fnn
+    mark = self.err_count()
+    got = check_expr(value)
+    self.current_fn = nil
+    self.pop_scope()
+    self.current_module = saved_mod
+    if new_err_since(mark) || self.has_err() {
+      return nil
+    }
+    got
   }
 
   // A result of a lambda whose result type is inferred: the first one
@@ -896,12 +968,6 @@ pub class Checker {
     "break inside a lambda given to ${builtin}: the lambda has no loop of its own to leave; ${way}"
   }
 
-  pub fn note_inline(b: Block, kind: String) {
-    if self.lambdas_migrate && !b.paren {
-      self.inline_kinds["${b.loc.path}|${b.loc.offset()}"] = kind
-    }
-  }
-
   pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
     while i < body.size {
@@ -934,6 +1000,40 @@ pub class Checker {
     self.pop_scope()
     self.poisoned = saved_poison
     self.weak_at = saved_weak
+  }
+
+  // `defer { body }`: the body runs later, on the way out of the block
+  // around it, so it is checked where it is written without the flow
+  // facts of the code around it (a size or a bound proven there may not
+  // hold by then), as a block that cannot leave: `return`, `?`, and a
+  // `break` or `continue` of a loop outside it are refused (try_in and
+  // loop_depth, which a lambda or a task inside it sets for itself).
+  // What the body changes reaches the code around it as a statement's
+  // changes do: the loop around it reads the containers it shrinks, and
+  // the names its lambdas assign carry no fact after it.
+  pub fn check_defer(stmt: Stmt) {
+    saved_try = self.try_in
+    saved_loops = self.loop_depth
+    outer = self.facts
+    inner = FlowFacts.new()
+    inner.reach_memo = outer.reach_memo
+    inner.lam_written.concat(outer.lam_written)
+    known = inner.lam_written.size
+    self.facts = inner
+    self.try_in = defer_context()
+    self.loop_depth = 0
+    check_block(stmt.body, t_void(), false)
+    self.try_in = saved_try
+    self.loop_depth = saved_loops
+    self.facts = outer
+    outer.kill_cont.concat(inner.kill_cont)
+    if inner.lam_written.size > known {
+      written: Array(String) = []
+      for wi in known..inner.lam_written.size {
+        written.push(inner.lam_written[wi])
+      }
+      lambda_writes(written)
+    }
   }
 
   pub fn fallthrough(body: Array(Stmt)): Bool {
@@ -971,6 +1071,10 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
+      if self.try_in == defer_context() {
+        fail(stmt.loc, defer_exit_message("return"))
+        return
+      }
       if self.try_in == "a spawn block" || self.try_in == "a parallel block" {
         // A spawn or `.parallel` block cannot return: its value is its
         // last expression. Before, its statements were checked against
@@ -1110,6 +1214,10 @@ pub class Checker {
       }
       return
     }
+    if k == st_defer() {
+      check_defer(stmt)
+      return
+    }
     if k == st_hold() {
       check_hold(stmt)
       check_block(stmt.body, expected, false)
@@ -1133,6 +1241,9 @@ pub class Checker {
       return
     }
     if k == st_while() {
+      if stmt.for_kind == range_kind_pending() {
+        resolve_range_step(stmt)
+      }
       has_pre = stmt.pre.size > 0
       saved_for = self.for_names.size
       walk_problem = ""
@@ -1144,7 +1255,7 @@ pub class Checker {
           annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison()
           check_stmt(stmt.pre[pi], t_void(), false)
-          if stmt.for_kind == 2 && pi == 0 {
+          if stmt.for_kind == 2 && pi == 0 && !hash_for_walk(stmt) {
             set_for_operand(stmt.pre[0])
             walk_problem = for_walk_operand(stmt)
           }
@@ -1229,10 +1340,12 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        if self.inline_what.size > 0 {
+        if self.try_in == defer_context() {
+          fail(stmt.loc, defer_exit_message("break"))
+        } else if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("break", self.inline_what))
         } else if self.in_build > 0 {
-          fail(stmt.loc, "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
+          fail(stmt.loc, "break inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "break is only valid inside a loop")
         }
@@ -1244,10 +1357,12 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        if self.inline_what.size > 0 {
+        if self.try_in == defer_context() {
+          fail(stmt.loc, defer_exit_message("continue"))
+        } else if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("continue", self.inline_what))
         } else if self.in_build > 0 {
-          fail(stmt.loc, "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
+          fail(stmt.loc, "continue inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "continue is only valid inside a loop")
         }
@@ -1359,6 +1474,7 @@ pub class Checker {
       if stmt.loop_head && stmt.else_bind.size == 0 && !self.has_err() {
         loop_drops_error(got, cond.loc)
       }
+      refuse_bind_outer_name(stmt, stmt.loc)
       self.push_scope()
       bind(stmt.bind, success)
       if stmt.for_kind == 7 {
@@ -1406,6 +1522,15 @@ pub class Checker {
   // has none.
   pub fn check_else_bind(stmt: Stmt): Ty? {
     n = stmt.else_bind
+    if n != "_" && !n.starts_with("__") {
+      if old = lookup(n) {
+        // As the condition's own binding: the else block's name is that
+        // block's own, so an existing name would be hidden in it.
+        form = if stmt.loop_head { "while" } else { "if" }
+        fail(stmt.loc, "${form} ... else ${n}: ${n} already names a variable here; the name an else binds is its block's own and ends with it (it would hide ${n} there): give the failure a new name")
+        return nil
+      }
+    }
     if stmt.pre.size > 0 {
       fail(stmt.loc, "else ${n} reads the failure of an if-assign's one binding, and this condition has several elements: bind them one by one, or switch over the value")
       return nil
@@ -1653,6 +1778,7 @@ pub class Checker {
         if el.loop_head && el.else_bind.size == 0 && !self.has_err() {
           loop_drops_error(got, cond.loc)
         }
+        refuse_bind_outer_name(el, el.loc)
         bind(el.bind, success)
       } else if !got.is_bool() {
         fail(cond.loc, "if condition must be Bool, got ${got.show()}")
@@ -2057,7 +2183,7 @@ pub class Checker {
         if value.kind == ex_int() {
           if stmt.op == tk_plus_eq() {
             s = fact_any_slack(target.ident)
-            if s >= 0 && value.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && value.int_bits <= s.to_u64() + 1 {
               stmt.proven = true
             }
           }
@@ -2105,6 +2231,9 @@ pub class Checker {
 
   pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
+    if k == ex_name() || k == ex_field() || k == ex_call() {
+      qualify_last_name(expr)
+    }
     // Only the expression a C array's reader names directly may be one.
     carray_flag = self.carray_ok
     self.carray_ok = false
@@ -2132,6 +2261,12 @@ pub class Checker {
     if k == ex_name() {
       return check_name(expr, has_want, want)
     }
+    if k == ex_enum_lit() {
+      return check_enum_lit(expr, has_want, want)
+    }
+    if k == ex_const_ref() {
+      return const_ref_ty(expr)
+    }
     if k == ex_lambda() {
       return check_lambda(expr, has_want, want)
     }
@@ -2154,6 +2289,9 @@ pub class Checker {
     if k == ex_field() {
       if inline_const(expr) {
         return check_expr_core(expr, has_want, want)
+      }
+      if ct = const_read(expr) {
+        return ct
       }
       if got = check_module_fn_value(expr, has_want, want) {
         return got
@@ -2250,6 +2388,12 @@ pub class Checker {
     if guard.ident.size == 0 {
       fail(guard.loc, "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`")
       return left
+    }
+    if guard.ident != "_" && !guard.ident.starts_with("__") {
+      if old = lookup(guard.ident) {
+        fail(guard.loc, "else ${guard.ident}: ${guard.ident} already names a variable here; the name an else guard binds is its block's own and ends with it (it would hide ${guard.ident} there): give the failure a new name")
+        return left
+      }
     }
     payload = left
     if fty = else_failure(left, guard.loc, "else ${guard.ident}") {
@@ -2383,6 +2527,10 @@ pub class Checker {
   // function, and the failure was whichever member the result type
   // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.try_in == defer_context() {
+      fail(loc, defer_exit_message("postfix ?"))
+      return t_int()
+    }
     if self.try_in == "a spawn block" || self.try_in == "a parallel block" || self.try_in == "a lambda given to parallel" {
       // A spawn block's `?` ends the task with the failure, which the
       // join gives: the block's value becomes a union with it (a
@@ -2401,6 +2549,20 @@ pub class Checker {
       return t_int()
     }
     if self.inline_what.size > 0 {
+      // A lambda in parentheses whose written result type holds every
+      // failure (`m.with((x): Int | ParseError { parse(x)? })`): `?`
+      // ends this run of its body with the failure as the lambda's
+      // value, as `return` would (inline_try_returns); any other is
+      // refused, with the way out.
+      if inline_try_returns(got) {
+        if t = self.inline_target {
+          t.returns = true
+        }
+        if success = failure_split(got, loc, "postfix ?") {
+          return success
+        }
+        return t_int()
+      }
       fail(loc, inline_exit_message("?", self.inline_what))
       return t_int()
     }
@@ -2452,6 +2614,30 @@ pub class Checker {
       }
     }
     t_int()
+  }
+
+  // Whether `?` on got, in a lambda a builtin inlines, returns its
+  // failure from the lambda: the lambda's result type is written and is
+  // a union that holds every failure of got (an error union, or an
+  // optional for a nil), and got has a success value.
+  pub fn inline_try_returns(got: Ty): Bool {
+    ret = self.return_type
+    if ret.is_var() || ret.is_void() || !ret.is_union() {
+      return false
+    }
+    if !got.is_union() || !ty_has_success(got) {
+      return false
+    }
+    fails = ty_failures(got)
+    if fails.size == 0 {
+      return false
+    }
+    for f in fails {
+      if !ty_assignable(f, ret) {
+        return false
+      }
+    }
+    true
   }
 
   pub fn check_interp(expr: Expr): Ty {
@@ -2646,18 +2832,24 @@ pub class Checker {
   pub fn builtin_method(expr: Expr, object: Ty): Ty {
     if object.is_array() || object.is_hash() || object.is_set() {
       absorb_lambda_arg(expr, object)
-      if b = expr.block {
-        kind = "array"
-        if object.is_hash() {
-          kind = "hash"
-        } else if object.is_set() {
-          kind = "set"
-        }
-        note_inline(b, "${kind} ${expr.callee}")
-      }
     }
     if got = check_shared_verb(expr, object) {
       return got
+    }
+    // `n.to_s(base)`: the formatting part's function (prelude_src.av
+    // fmt_prelude_source), called as written.
+    if expr.callee == "to_s" && object.is_integer() && expr.args.size == 1 && expr.field_exprs.size == 0 {
+      if b0 = expr.block {
+      } else if recv = expr.receiver {
+        base = expr.args[0]
+        parts: Array(Expr) = []
+        parts.push(recv)
+        parts.push(base)
+        expr.receiver = nil
+        expr.callee = "__avant_to_s_base"
+        expr.args = parts
+        return check_call(expr, false, t_int())
+      }
     }
     // One text for every scalar.
     if expr.callee == "to_s" && (object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
@@ -2700,6 +2892,14 @@ pub class Checker {
       // `Float64.pi`), written in place as its literal.
       return false
     }
+    if expr.kind == ex_call() && expr.callee == "message" && expr.args.size == 0 {
+      // An error's message is read as `e.message` on every type marked
+      // Error, whether the type keeps it in a field or computes it in a
+      // method: the one thing every error has, spelled one way.
+      if recv = expr.receiver, rt = recv.ty, rt.error_mark {
+        return false
+      }
+    }
     if expr.kind != ex_field() {
       return true
     }
@@ -2709,6 +2909,11 @@ pub class Checker {
     if obj = expr.object, ot = obj.ty, is_builtin_property(ot, expr.ident) {
       return false
     }
+    if expr.ident == "message" {
+      if obj2 = expr.object, ot2 = obj2.ty, ot2.error_mark {
+        return false
+      }
+    }
     true
   }
 
@@ -2716,20 +2921,14 @@ pub class Checker {
   // name the name as written: the check may have renamed the call) is
   // refused: every method call takes them, and a name without them is a
   // field or one of the builtin read-only properties (`size` of a String,
-  // Bytes, Buf, Array or Hash; `bytes` of a String). Under `avant format
-  // --calls` it is noted instead, for the formatter to write the
-  // parentheses. Not in a statement that already has an error: a failed
+  // Bytes, Buf, Array or Hash; `bytes` of a String). Not in a statement
+  // that already has an error: a failed
   // receiver reads as an Int, whose members are all methods.
   pub fn bare_call(expr: Expr, at: Location, name: String) {
     if self.has_err() {
       return
     }
     if t = self.target_expr, t.loc.line() == expr.loc.line() && t.loc.column() == expr.loc.column() && t.loc.path == expr.loc.path {
-      return
-    }
-    if self.calls_migrate {
-      self.bare_locs.push(at)
-      self.bare_names.push(name)
       return
     }
     fail(at, "a method call takes parentheses: write ${name}()")
@@ -2783,11 +2982,11 @@ pub class Checker {
       return nil
     }
     expr.object = nil
-    if f == "max" || min == 0u64 {
+    if f == "max" || min == 0 {
       expr.kind = ex_int()
       expr.int_bits = max
       if f == "min" {
-        expr.int_bits = 0u64
+        expr.int_bits = 0
       }
       return ty
     }
@@ -3150,14 +3349,17 @@ pub class Checker {
       }
     }
     if ty.is_union() {
+      if !ty_walk_enter(ty, wk_clayout()) {
+        return ""
+      }
+      found = ""
       i = 0
-      while i < ty.members.size {
-        name = clayout_value_name(ty.members[i])
-        if name.size > 0 {
-          return name
-        }
+      while i < ty.members.size && found.size == 0 {
+        found = clayout_value_name(ty.members[i])
         i += 1
       }
+      ty_walk_leave(ty, wk_clayout())
+      return found
     }
     ""
   }
@@ -3182,7 +3384,7 @@ pub class Checker {
     if has_zero {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
-      if sig = match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show(), "", no_int_literals()) {
+      if sig = match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show_bare(), "", no_int_literals()) {
         if sig.node.params.size > 0 {
           return paren_call_of(expr)
         }
@@ -3306,9 +3508,7 @@ pub class Checker {
     if e.kind == ex_name() && e.type_args.size > 0 {
       tn2 = TypeName.new(e.loc, e.ident)
       tn2.mod_name = e.mod_name
-      for ta in e.type_args {
-        tn2.args.push(ta)
-      }
+      tn2.args.concat(e.type_args)
       return tn2
     }
     if e.kind == ex_call() && e.args.size == 1 {
@@ -3334,6 +3534,16 @@ pub class Checker {
     got
   }
 
+  // Whether the method ms (its owner's name already matched) takes a
+  // receiver of type object: a Ptr's owner name does not say which
+  // module's C layout it points to, its receiver's type does.
+  pub fn ptr_method_of(ms: FuncSig, object: Ty): Bool {
+    if r = ms.node.receiver {
+      return recv_ty_of(ms.node).same_as(object)
+    }
+    true
+  }
+
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
     owner = method_owner_name(object)
     pointee = object
@@ -3342,16 +3552,18 @@ pub class Checker {
     }
     if pointee.is_clayout() {
       if field_ty = pointee.field_named(expr.ident) {
-        if sig = find_method(owner, expr.ident) {
-          fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
-          return ty_c_view(field_ty)
+        for ms0 in self.methods {
+          if ms0.owner == owner && ms0.name == expr.ident && ptr_method_of(ms0, object) {
+            fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
+            return ty_c_view(field_ty)
+          }
         }
         return ty_c_view(field_ty)
       }
     }
     has_zero = false
     for ms in self.methods {
-      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) {
+      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && ptr_method_of(ms, object) {
         has_zero = true
       }
     }
@@ -3535,13 +3747,13 @@ pub class Checker {
       // object that can change, the elements would share that object
       // (a grid built this way had one row). `nil` shares nothing.
       if !self.has_err() && expr.elems[0].kind != ex_nil() && type.ty_holds_mutable_ref(elem) {
-        fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n) { |i| ... }")
+        fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n, (i) { ... })")
       }
     } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
       // The way out it names must exist: a reference type's elements
       // are built one by one, any other type's take a value.
       if type.ty_holds_mutable_ref(elem) {
-        fail(expr.loc, "Array(${elem.show()}).new(n) needs its elements built: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n) { |i| ... }, or start from [] and push")
+        fail(expr.loc, "Array(${elem.show()}).new(n) needs its elements built: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n, (i) { ... }), or start from [] and push")
       } else {
         fail(expr.loc, "Array(${elem.show()}).new(n) needs an element value: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n, value), or start from [] and push")
       }
@@ -3549,7 +3761,7 @@ pub class Checker {
     ty_array(elem)
   }
 
-  // `Array(T).new(n) { |i| ... }`: the block is run once per index, 0 to
+  // `Array(T).new(n, (i) { ... })`: the block is run once per index, 0 to
   // n - 1 in order, and its value is that element. The parser hands it
   // over as a call named "Array.new" with n as its argument and T as its
   // elem_type. The block is inlined like those of `each` and `any` (a
@@ -3571,9 +3783,8 @@ pub class Checker {
       }
     }
     if b = expr.block {
-      note_inline(b, "array build")
       if b.params.size != 1 {
-        fail(b.loc, "Array(T).new(n) { |i| ... } takes one block parameter, the index")
+        fail(b.loc, "Array(T).new(n, (i) { ... }) takes a lambda of one parameter, the index")
         return ty_array(elem)
       }
       refuse_block_param_outer(b, "Array.new")
@@ -3595,7 +3806,7 @@ pub class Checker {
       self.loop_depth = saved_loops
       self.pop_scope()
       if !self.has_err() && !ty_assignable(bt, elem) {
-        fail(b.body[b.body.size - 1].loc, "the block of Array(${elem.show()}).new(n) { |i| ... } must end with a ${elem.show()}, got ${bt.show()}")
+        fail(b.body[b.body.size - 1].loc, "the lambda of Array(${elem.show()}).new(n, (i) { ... }) must end with a ${elem.show()}, got ${bt.show()}")
       }
     }
     ty_array(elem)
@@ -3746,6 +3957,13 @@ pub class Checker {
       return t_int()
     }
     key_fns(key, expr.loc)
+    if x = expr.size_expr {
+      cap = check_expr_as(x, t_int())
+      if !cap.is_int() {
+        fail(x.loc, "Hash(K, V).new's capacity must be Int, got ${cap.show()}")
+        return t_int()
+      }
+    }
     ty_hash(key, val)
   }
 
@@ -3770,6 +3988,28 @@ pub class Checker {
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.derived {
+      if tn = expr.elem_type {
+        // A literal the typed decode wrote (checker/json_codec.av): its
+        // type is carried, pinned.
+        drop_struct_defaults(expr)
+        ty = resolve_in_module(tn)
+        self.pull_resolve()
+        if self.has_err() {
+          return t_int()
+        }
+        return check_struct_fields(expr, ty, true)
+      }
+    }
+    if expr.mod_name.size == 0 && expr.type_args.size == 0 {
+      // A struct literal through a type alias (`type P = geo.Point`,
+      // `P { x: 1, y: 2 }`) builds the type the alias names.
+      if t = alias_value_target(expr.type_name, expr.loc) {
+        expr.type_name = t.name
+        expr.mod_name = t.mod_name
+        expr.type_args = t.args
+      }
+    }
     drop_struct_defaults(expr)
     if expr.type_name == "Hasher" && expr.mod_name.size == 0 {
       fail(expr.loc, hasher_made_text())
@@ -3778,9 +4018,7 @@ pub class Checker {
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
-      for type_arg in expr.type_args {
-        tn.args.push(type_arg)
-      }
+      tn.args.concat(expr.type_args)
       ty = resolve_in_module(tn)
       self.pull_resolve()
       if self.has_err() {
@@ -3873,6 +4111,17 @@ pub class Checker {
     for sdef in self.program.structs {
       if sdef.name == ty.name && sdef.mod_name == ty.mod_name {
         for f in sdef.fields {
+          if f.name == name {
+            return f.default
+          }
+        }
+      }
+    }
+    // A class literal (one the checker writes, Expr.derived) leaves out
+    // the fields with a default as a struct literal does.
+    for cdef in self.program.classes {
+      if cdef.name == ty.name && cdef.mod_name == ty.mod_name {
+        for f in cdef.fields {
           if f.name == name {
             return f.default
           }
@@ -4225,6 +4474,10 @@ pub class Checker {
     if inline_const(expr) {
       return check_expr_core(expr, has_want, want)
     }
+    // One computed before main: a read of its slot.
+    if ct = const_read(expr) {
+      return ct
+    }
     if has_want && want.is_fn() {
       return check_fn_ref(expr, want)
     }
@@ -4246,6 +4499,18 @@ pub class Checker {
         return t_int()
       }
     }
+    if expr.type_args.size > 0 && expr.mod_name.size == 0 && (expr.ident == "Array" || expr.ident == "Hash" || expr.ident == "Set") {
+      // A builtin collection's type written as a value (parser.av
+      // type_as_argument): json.decode reads one, nothing else does.
+      shown = "Array(T)"
+      if expr.ident == "Hash" {
+        shown = "Hash(K, V)"
+      } else if expr.ident == "Set" {
+        shown = "Set(T)"
+      }
+      fail(expr.loc, "${shown} only supports .new")
+      return t_int()
+    }
     if is_generic_template(expr.ident) {
       fail(expr.loc, "${expr.ident} needs type arguments")
       return t_int()
@@ -4255,6 +4520,11 @@ pub class Checker {
         fail(expr.loc, "a field default cannot read another field (${expr.ident} of ${owner.show()}): defaults are evaluated before initialize, in declaration order; compute it in initialize instead")
         return t_int()
       }
+    }
+    spelled = std_type_bare_spelling(expr.ident)
+    if spelled.size > 0 {
+      fail(expr.loc, "${expr.ident} needs its module's name: write ${spelled}; a std module's types are not named bare")
+      return t_int()
     }
     fail_hint(expr.loc, "unknown name ${expr.ident}", name_hint(expr.ident))
     t_int()
@@ -4285,15 +4555,15 @@ pub class Checker {
   // reach the minimum, max + 1).
   pub fn literal_int_max(ty: Ty): UInt64 {
     if ty.is_uint64() {
-      return 18446744073709551615u64
+      return 18446744073709551615
     }
     if ty.is_int32() {
-      return 2147483647u64
+      return 2147483647
     }
     if ty.is_uint32() {
-      return 4294967295u64
+      return 4294967295
     }
-    9223372036854775807u64
+    9223372036854775807
   }
 
   pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
@@ -4339,7 +4609,7 @@ pub class Checker {
       lit.ty = ty
       return ty
     }
-    if lit.int_bits > literal_int_max(ty) + 1u64 {
+    if lit.int_bits > literal_int_max(ty) + 1 {
       if lit.value_str.size > 0 {
         fail(expr.loc, "${lit.value_str} does not fit in ${ty.show()}")
       } else {
@@ -4408,7 +4678,42 @@ pub class Checker {
   // Whether a `[]` or `[:]` argument (its stand-in t) fits a parameter of
   // type p: an array or a Set parameter takes `[]`, a hash parameter `[:]`.
   pub fn empty_fits(t: Ty, p: Ty): Bool {
+    if t.is_enum() {
+      // `:name`: a parameter whose enum has that member.
+      if et = enum_lit_target(p) {
+        return et.enum_index(t.name.slice(1)) >= 0
+      }
+      return false
+    }
     (t.is_array() && (p.is_array() || p.is_set())) || (t.is_hash() && p.is_hash() && !p.is_set())
+  }
+
+  // The stand-in type of a `:name` argument before its parameter is
+  // known: an enum without members named `:name`, which no value has.
+  pub fn enum_lit_arg_ty(name: String): Ty {
+    t = Ty.new(tyk_enum())
+    t.name = ":${name}"
+    t
+  }
+
+  // The enum a `:name` stands for where p is expected: p itself, or the
+  // one enum among a union's members (an optional enum); nil otherwise.
+  pub fn enum_lit_target(p: Ty): Ty? {
+    if p.is_enum() && !p.name.starts_with(":") {
+      return p
+    }
+    if p.is_union() {
+      found: Array(Ty) = []
+      for m in p.members {
+        if m.is_enum() {
+          found.push(m)
+        }
+      }
+      if found.size == 1 {
+        return found[0]
+      }
+    }
+    nil
   }
 
   // The stand-in type of a `[]` argument before its parameter is known
@@ -4418,6 +4723,9 @@ pub class Checker {
   }
 
   pub fn is_empty_array_ty(t: Ty): Bool {
+    if t.is_enum() && t.name.starts_with(":") {
+      return true
+    }
     if t.is_array() {
       if e = t.inner {
         return e.is_void()
@@ -4434,6 +4742,10 @@ pub class Checker {
   // A call's argument, checked before the call picks its function: a bare
   // integer literal may be above Int's range (the parameter decides).
   pub fn check_call_arg(e: Expr): Ty {
+    if e.kind == ex_enum_lit() {
+      // `:name` takes its parameter's enum (fit_call_arg).
+      return enum_lit_arg_ty(e.ident)
+    }
     if is_empty_array(e) {
       // `[]` takes its parameter's type (fit_call_arg); until the call
       // picks its function it stands for an array of any element (`[:]`
@@ -4482,9 +4794,7 @@ pub class Checker {
     if r = e.right {
       out.push(r)
     }
-    for x in e.elems {
-      out.push(x)
-    }
+    out.concat(e.elems)
     out
   }
 
@@ -4619,7 +4929,7 @@ pub class Checker {
       top = 31u64
     }
     if neg {
-      if lit.int_bits != 0u64 {
+      if lit.int_bits != 0 {
         fail(loc, "shift amount -${lit.int_bits} out of range for ${left.show()} (0..${top})")
       }
       return
@@ -4733,6 +5043,17 @@ pub class Checker {
         }
         fail(expr.loc, "|| expects Bool operands")
         return t_bool()
+      }
+      // `t == :write`: the short member takes the other operand's enum.
+      if (op == tk_eq_eq() || op == tk_not_eq()) && (l.kind == ex_enum_lit()) != (r.kind == ex_enum_lit()) {
+        known = if l.kind == ex_enum_lit() { r } else { l }
+        short = if l.kind == ex_enum_lit() { l } else { r }
+        kt = check_expr(known)
+        st = check_expr_as(short, kt)
+        if l.kind == ex_enum_lit() {
+          return binary_typed(expr, l, r, op, st, kt)
+        }
+        return binary_typed(expr, l, r, op, kt, st)
       }
       // An integer literal on the left adopts the right operand's
       // integer type, as one on the right adopts the left's (`1 + x`
@@ -4902,13 +5223,13 @@ pub class Checker {
         if op == tk_plus() {
           if l.kind == ex_name() && r.kind == ex_int() {
             s = fact_any_slack(l.ident)
-            if s >= 0 && r.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && r.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
           if r.kind == ex_name() && l.kind == ex_int() {
             s = fact_any_slack(r.ident)
-            if s >= 0 && l.int_bits <= s.to_u64() + 1u64 {
+            if s >= 0 && l.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
@@ -4954,8 +5275,9 @@ pub class Checker {
         fail(expr.loc, nil_compare_text(r, right))
         return t_bool()
       }
-      // Two arrays, or two optionals, of one type (checker/equality.av).
-      if left.same_as(right) && (left.is_array() || left.is_nilable()) {
+      // Two arrays, hashes, sets or optionals of one type
+      // (checker/equality.av).
+      if left.same_as(right) && (left.is_array() || left.is_nilable() || left.is_hash() || left.is_set()) {
         seen: Array(String) = []
         missing = eq_missing(left, seen)
         if missing.size > 0 {
@@ -5013,9 +5335,7 @@ pub class Checker {
       // would be, so no other error follows from the refusal.
       stash_names = expr.field_names
       stash = expr.field_exprs
-      for v in stash {
-        expr.args.push(v)
-      }
+      expr.args.concat(stash)
       expr.field_names = []
       expr.field_exprs = []
       got0 = check_call_parts(expr, has_want, want)
@@ -5051,7 +5371,8 @@ pub class Checker {
     } else if existing = lookup(expr.callee), existing.is_fn() {
       return false
     }
-    if expr.callee == "new" {
+    if expr.callee == "new" || expr.callee == "decode" {
+      // json.decode's options are named (checker/json_codec.av).
       return true
     }
     if fn_indices_named(expr.callee).size > 0 || method_indices_named(expr.callee).size > 0 {
@@ -5106,6 +5427,10 @@ pub class Checker {
       fail(expr.loc, "type argument expected")
       return t_int()
     }
+    if self.current_module == "std.json" && json_codec_callee(expr.callee) {
+      // std.json's own calls of its typed encode (JsonBuilder.value).
+      return check_json_call(expr)
+    }
     if existing = lookup(expr.callee), existing.is_fn() {
       note_capture(expr.callee, existing, expr.loc)
       expr.indirect = true
@@ -5120,11 +5445,17 @@ pub class Checker {
       expr.receiver = r
       return check_method_call(expr, r, has_want, want)
     }
+    if refuse_moved_io(expr) {
+      return t_int()
+    }
     if expr.callee == "puts" || expr.callee == "print" || expr.callee == "eputs" || expr.callee == "eprint" {
       return check_output_call(expr)
     }
     if expr.callee == "exit" {
       return check_exit_call(expr)
+    }
+    if expr.callee == "panic" {
+      return check_panic_call(expr)
     }
     if expr.callee == "spawn" {
       return check_spawn(expr)
@@ -5247,7 +5578,19 @@ pub class Checker {
         }
         return t_buf()
       }
-      fail(expr.loc, "buf_new takes an optional Int capacity")
+      if expr.args.size == 2 {
+        // `Buf.new(n, byte)`: n bytes, each byte.
+        size = check_expr_as(expr.args[0], t_int())
+        if !size.is_int() {
+          fail(expr.args[0].loc, "size must be Int")
+        }
+        byte = check_expr_as(expr.args[1], t_int())
+        if !byte.is_int() {
+          fail(expr.args[1].loc, "byte must be Int")
+        }
+        return t_buf()
+      }
+      fail(expr.loc, "Buf.new takes an optional Int capacity, or a size and a byte")
       return t_buf()
     }
     expected: Ty? = nil
@@ -5293,6 +5636,9 @@ pub class Checker {
   }
 
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
+    if expr.kind == ex_enum_lit() {
+      return check_expr_as(expr, want)
+    }
     if got.lit_arr && expr.kind == ex_array() {
       if lit_set_fits(got, want) {
         return adopt_set_literal(expr, want)
@@ -5386,20 +5732,20 @@ pub class Checker {
       return t_int()
     }
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
-      // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
-      // (before, "unknown type Buf").
+      // `Buf.new`, `Buf.new(cap)` and `Buf.new(n, byte)` are `buf_new()`,
+      // `buf_new(cap)` and `buf_new(n, byte)` (before, "unknown type
+      // Buf").
       expr.callee = "buf_new"
+      expr.derived = true
       expr.receiver = nil
       return check_call(expr, has_want, want)
     }
     if recv.kind == ex_name() {
-      if cdef = find_class_template(recv.ident, recv.mod_name) {
+      if cdef = find_class_template(recv.ident, recv.mod_name), recv.mod_name.size > 0 || cdef.mod_name == self.current_module || !cdef.mod_name.starts_with("std.") {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
-          for type_arg in recv.type_args {
-            tn.args.push(type_arg)
-          }
+          tn.args.concat(recv.type_args)
           ty = resolve_in_module(tn)
           self.pull_resolve()
           if !self.has_err() {
@@ -5509,11 +5855,7 @@ pub class Checker {
       if has_init {
         arg_tys: Array(Ty) = []
         if has_pre {
-          i = 0
-          while i < pre.size {
-            arg_tys.push(pre[i])
-            i += 1
-          }
+          arg_tys.concat(pre)
         } else {
           ai = 0
           while ai < expr.args.size {
@@ -5745,11 +6087,7 @@ pub class Checker {
       call.receiver = path
     }
     if recv.args.size == recv.type_args.size {
-      i = 0
-      while i < recv.args.size {
-        call.args.push(recv.args[i])
-        i += 1
-      }
+      call.args.concat(recv.args)
       return call
     }
     for type_arg in recv.type_args {
@@ -5839,6 +6177,25 @@ pub class Checker {
     recv
   }
 
+  // A receiver naming an alias of a generic type with type arguments
+  // (`type Mutex = sync.Mutex`, then `Mutex(Int).new(1)`) is rewritten
+  // in place to the generic's own name and module.
+  pub fn expand_generic_alias_recv(recv: Expr) {
+    if recv.kind != ex_name() || recv.type_args.size == 0 {
+      return
+    }
+    tn = TypeName.new(recv.loc, recv.ident)
+    tn.mod_name = recv.mod_name
+    saved = self.resolver.scope_mod
+    self.resolver.scope_mod = self.current_module
+    got = self.resolver.generic_alias_target(tn)
+    self.resolver.scope_mod = saved
+    if g = got {
+      recv.ident = g.name
+      recv.mod_name = g.mod_name
+    }
+  }
+
   pub fn flatten_type_chain(recv: Expr): Expr {
     segs: Array(String) = []
     if ident_chain(recv, segs) && segs.size > 2 {
@@ -5882,10 +6239,53 @@ pub class Checker {
 
   pub fn check_method_call_of(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_module_receiver(recv)
+    if recv.kind == ex_name() && recv.mod_name.size == 0 && recv.type_args.size == 0 {
+      // A type alias used as a value stands for the type it names.
+      if t = alias_value_target(recv.ident, recv.loc) {
+        if t.mod_name.size > 0 && t.args.size == 0 {
+          // Written as the qualified name it stands for (`regex.Regex`).
+          m = Expr.new(ex_name(), recv.loc)
+          m.ident = t.mod_name
+          q = Expr.new(ex_field(), recv.loc)
+          q.object = m
+          q.ident = t.name
+          recv = q
+        } else {
+          recv.ident = t.name
+          recv.mod_name = t.mod_name
+          recv.type_args = t.args
+        }
+      } else {
+        why = alias_not_value_text(recv.ident, recv.loc)
+        if why.size > 0 {
+          fail(recv.loc, why)
+          return t_int()
+        }
+      }
+    }
     if expr.callee == "new" {
       recv = flatten_type_chain(recv)
     }
     expr.receiver = recv
+    expand_generic_alias_recv(recv)
+    if recv.kind == ex_name() && recv.type_args.size > 0 && recv.mod_name.size == 0 {
+      // A std module's generic type named bare (`Mutex(Int).new`): the
+      // program's own or an import's is meant, else the qualified
+      // spelling is asked for (`sync.Mutex(Int).new`).
+      sm = self.resolver.std_owner_of(recv.ident, self.current_module)
+      if sm.size > 0 && self.resolver.template_in(sm, recv.ident) {
+        saved_scope = self.resolver.scope_mod
+        self.resolver.scope_mod = self.current_module
+        owners = self.resolver.template_owners(recv.ident)
+        self.resolver.scope_mod = saved_scope
+        if owners.size == 1 {
+          recv.mod_name = owners[0]
+        } else if owners.size == 0 {
+          fail(recv.loc, self.resolver.std_bare_text(recv.ident, sm))
+          return t_int()
+        }
+      }
+    }
     if recv.kind == ex_name() && recv.type_args.size > 0 {
       if is_generic_template_in(recv.ident, recv.mod_name) {
         take_type_app(recv)
@@ -5905,8 +6305,10 @@ pub class Checker {
             clash = clash_message(recv.ident, self.current_module)
             if clash.size > 0 {
               fail(recv.loc, clash)
+            } else if recv.mod_name.size > 0 {
+              fail(recv.loc, "unknown type ${recv.mod_name}.${recv.ident}")
             } else {
-              fail(recv.loc, "unknown type ${recv.ident}")
+              fail(recv.loc, unknown_type_text(recv.ident))
             }
             return t_int()
           }
@@ -5934,12 +6336,22 @@ pub class Checker {
             if lib_is_visible(recv.ident, self.current_module) {
               return check_lib_call(expr, recv.ident)
             }
-            fail(recv.loc, "unknown name ${recv.ident}")
+            spelled = std_type_bare_spelling(recv.ident)
+            if spelled.size > 0 {
+              fail(recv.loc, "${recv.ident} needs its module's name: write ${spelled}; a std module's types are not named bare")
+            } else {
+              fail(recv.loc, "unknown name ${recv.ident}")
+            }
             return t_int()
           }
           if k = self.known_mods.get(recv.ident), qualifier_ok(recv.ident, self.current_module) {
             if module_is_method(recv.ident, recv.loc) {
               return t_int()
+            }
+            if recv.ident == "std.json" && json_codec_callee(expr.callee) {
+              // The typed decode and encode (checker/json_codec.av).
+              expr.receiver = nil
+              return check_json_call(expr)
             }
             return dispatch_qualified_call(expr, recv.ident)
           }
@@ -6079,18 +6491,12 @@ pub class Checker {
     if expr.callee == "with" {
       if is_mutex_ty(object) {
         absorb_lambda_arg(expr, object)
-        if b = expr.block {
-          note_inline(b, "mutex with")
-        }
         return check_mutex_with(expr, object)
       }
     }
     if expr.callee == "try_with" {
       if is_mutex_ty(object) {
         absorb_lambda_arg(expr, object)
-        if b = expr.block {
-          note_inline(b, "mutex try_with")
-        }
         // `with` that gives the block's value, or a MutexError when the
         // mutex is poisoned (a task trapped holding it): T | MutexError.
         got = check_mutex_with(expr, object)
@@ -6242,7 +6648,7 @@ pub class Checker {
         fail(cond.loc, "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got ${ct.show()}")
       }
     }
-    covered = Hash(Int, Int).new()
+    covered = Set(Int).new()
     seen = Hash(Int, Int).new()
     seen_str = Hash(String, Int).new()
     // An integer switch's labels, for the overlaps of its ranges.
@@ -6291,7 +6697,7 @@ pub class Checker {
           }
         }
         seen[lab] = 1
-        covered[lab] = 1
+        covered.add(lab)
       }
     }
     if has_range && !self.has_err() {
@@ -6433,9 +6839,9 @@ pub class Checker {
       if label.kind == lb_member() {
         return check_const_label(label, disc)
       }
-      if label.kind == lb_int() && !label.neg && label.bits <= 1u64 {
+      if label.kind == lb_int() && !label.neg && label.bits <= 1 {
         word = "false"
-        if label.bits == 1u64 {
+        if label.bits == 1 {
           word = "true"
         }
         fail(label.loc, "a case label of a switch over Bool is true or false: write `case ${word}`")
@@ -6600,7 +7006,7 @@ pub class Checker {
 
   // An integer label as written (its sign and magnitude).
   pub fn int_label_text(label: CaseLabel): String {
-    if label.neg && label.bits != 0u64 {
+    if label.neg && label.bits != 0 {
       return "-${label.bits}"
     }
     "${label.bits}"
@@ -6612,13 +7018,13 @@ pub class Checker {
     if !disc.is_integer() {
       return true
     }
-    if label.neg && disc.is_unsigned() && label.bits != 0u64 {
+    if label.neg && disc.is_unsigned() && label.bits != 0 {
       fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show()}")
       return false
     }
     max = literal_int_max(disc)
     if label.neg {
-      max = max + 1u64
+      max = max + 1
     }
     if label.bits > max {
       fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show()}")
@@ -6750,19 +7156,19 @@ pub class Checker {
   // The countable cases of a discriminant type that the labels in
   // covered (by value) leave out, in declaration order (an enum's
   // members, a union's members, Bool's true and false).
-  pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
+  pub fn switch_missing_cases(disc: Ty, covered: Set(Int)): Array(String) {
     missing: Array(String) = []
     if disc.is_bool() {
-      if !covered.has_key(1) {
+      if !covered.has(1) {
         missing.push("true")
       }
-      if !covered.has_key(0) {
+      if !covered.has(0) {
         missing.push("false")
       }
     }
     if disc.is_union() {
       for ui in 0..disc.members.size {
-        if !covered.has_key(ui) {
+        if !covered.has(ui) {
           missing.push(union_case_name(disc, ui))
         }
       }
@@ -6771,7 +7177,7 @@ pub class Checker {
       names = disc.enum_names()
       vals = disc.enum_vals()
       for i in 0..names.size {
-        if covered.has_key(vals[i]) {
+        if covered.has(vals[i]) {
           continue
         }
         missing.push(names[i])
@@ -6827,13 +7233,11 @@ pub class Checker {
         // A `?` in the block: the join gives the value or the failure.
         parts: Array(Ty) = []
         parts.push(result)
-        for f in fails {
-          parts.push(f)
-        }
+        parts.concat(fails)
         result = ty_union_build(parts)
       }
-      if !self.has_err() && ty_holds_ptr(result) {
-        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it does not cross to another task")
+      if !self.has_err() && ty_holds_ptr(result) && !ptrs_cross_here(result) {
+        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it crosses to another task only in the module whose lib block declares its C type")
       }
       collect_spawn_captures(expr, b.body)
       return ty_join(result)
@@ -7062,12 +7466,12 @@ pub class Checker {
 
   pub fn check_mutex_with(expr: Expr, object: Ty): Ty {
     if expr.args.size != 0 {
-      fail(expr.loc, "Mutex.with takes a block")
+      fail(expr.loc, "sync.Mutex.with takes a block")
       return t_void()
     }
     if b = expr.block {
       if b.params.size != 1 {
-        fail(b.loc, "Mutex.with { |x| } takes one block parameter")
+        fail(b.loc, "sync.Mutex.with takes a lambda of one parameter: m.with (x) { ... }")
         return t_void()
       }
       if object.ty_args.size != 1 {
@@ -7100,7 +7504,7 @@ pub class Checker {
         // it, which here cannot return (a spawn or parallel block, a
         // field default): refused there as before.
         if leaves_by_return(b.body) {
-          fail(b.loc, "return or ? inside Mutex.with inside ${self.try_in}: ${self.try_in} cannot return")
+          fail(b.loc, "return or ? inside sync.Mutex.with inside ${self.try_in}: ${self.try_in} cannot return")
           return t_void()
         }
       }
@@ -7117,6 +7521,20 @@ pub class Checker {
         res = t_void()
         if !dropped {
           res = inline_result(b)
+        } else if rt = b.ret_type {
+          // A statement drops the value, so its lambda gives none: a
+          // written result would only make every `return` with a value
+          // and the last expression read as errors of their own.
+          written = inline_result(b)
+          if !written.is_void() && !self.has_err() {
+            who = "m"
+            if o = expr.object, o.kind == ex_name() {
+              who = o.ident
+            }
+            fail(b.loc, "this ${expr.callee}'s value is unused: it is a statement, and its lambda declares the result ${written.show()}; to drop the value, write `_ = ${who}.${expr.callee}(...)`, or remove the result type")
+            self.pop_scope()
+            return t_void()
+          }
         }
         s = inline_enter(b, expr.callee, res)
         result = check_with_body(b, !dropped)
@@ -7134,15 +7552,15 @@ pub class Checker {
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out
       // this way and lost updates).
-      if !self.has_err() && !result.is_void() && !leaves_mutex_with(result) {
-        fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show()}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
+      if !self.has_err() && !result.is_void() && !leaves_mutex_with(result) && !with_value_leaves(b) {
+        fail(b.body[b.body.size - 1].loc, "sync.Mutex.with's value cannot be ${result.show()}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex), a clone (x.clone()) or a new object built from those (a constructor call or a literal)")
       }
       // Nor may a statement hand the guarded value out
       // (checker/guard.av).
       guard_with_block(b.params[0], b, !dropped)
       return result
     }
-    fail(expr.loc, "Mutex.with needs a block")
+    fail(expr.loc, "sync.Mutex.with needs a block")
     t_void()
   }
 
@@ -7153,7 +7571,7 @@ pub class Checker {
     // The gates are std.sync's: a name of `std` modules only, not of
     // a program's.
     if str_slice(self.current_module, 0, 4) != "std." {
-      fail(expr.loc, "${expr.callee} is internal to the standard library: use Channel(T) and Mutex(T) from std.sync (import std.sync)")
+      fail(expr.loc, "${expr.callee} is internal to the standard library: use sync.Channel(T) and sync.Mutex(T) from std.sync (import std.sync)")
       return t_void()
     }
     if expr.callee == "avant_gate_new" {
@@ -7316,7 +7734,7 @@ pub class Checker {
   // An `if` used as a value: the condition (a list, bindings in scope
   // for the then-block), then each branch's value; the branches' types
   // join as a value switch's do. nil when every branch leaves (return,
-  // break, continue).
+  // break, continue, exit, panic).
   pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
     void_ok = self.if_void_ok
     self.if_void_ok = false
@@ -7431,7 +7849,7 @@ pub class Checker {
       st = body[i]
       if i == body.size - 1 {
         k = st.kind
-        if k == st_expr() {
+        if k == st_expr() && !ast_stmt_exits(st) {
           if e = st.expr {
             use_want = false
             use_ty = t_int()
@@ -7447,7 +7865,7 @@ pub class Checker {
           result = check_if_value(st, has_want, want)
         } else {
           check_block_stmt(st, self.return_type, false)
-          if k == st_return() || k == st_break() || k == st_continue() {
+          if k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(st) {
             result = nil
           }
         }

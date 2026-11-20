@@ -1,21 +1,21 @@
 // std.sync: what tasks share.
 //
-//   Channel(T)   passes values from task to task. Channel(T).new is a
-//                rendezvous channel (a send waits for its receive);
+//   Channel(T)   passes values from task to task. Channel(T).new() is
+//                a rendezvous channel (a send waits for its receive);
 //                Channel(T).new(n) holds up to n values. send(value)
-//                sends, recv returns T? (nil once the channel is closed
-//                and empty, so `while v = ch.recv { ... }` drains it),
-//                close closes it. send returns whether the value went
+//                sends, recv() returns T? (nil once the channel is closed
+//                and empty, so `while v = ch.recv() { ... }` drains it),
+//                close() closes it. send returns whether the value went
 //                into the channel: on a closed channel it returns false
 //                at once, buffered or not, full or not, and a send
 //                waiting for room or for its receiver returns false when
 //                the channel closes. The values sent before
 //                the close stay for the receivers to drain.
-//   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
-//                for the block, x naming the guarded value; the form is
+//   Mutex(T)     guards one value. `m.with((x) { ... })` holds the lock
+//                for the lambda, x naming the guarded value; the form is
 //                the compiler's (checker.av check_mutex_with, the
 //                lowering in mir/lower_task.av), on this class's two
-//                fields, and its rules (what may leave the block, as
+//                fields, and its rules (what may leave the lambda, as
 //                its value or by a statement) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
@@ -169,7 +169,7 @@ pub class Mutex(T) {
 
   // A `with` or `try_with` that finds the mutex poisoned calls this under
   // the lock (the lowering, mir/lower_task.av): with a recover function
-  // the value is rebuilt and the poison cleared, and the block runs;
+  // the value is rebuilt and the poison cleared, and the lambda runs;
   // without one it returns false, and the lock traps or gives the error.
   // A trap inside the recover function leaves the mutex poisoned.
   pub fn __avant_heal: Bool {
@@ -196,9 +196,9 @@ class MutexHeal(T) {
   }
 }
 
-// What `m.try_with { }` gives on a poisoned mutex without a recover
-// function.
-pub class MutexError: Error {
+// What `m.try_with((x) { ... })` gives on a poisoned mutex without a recover function.
+pub enum MutexError: Error {
+  poisoned
   pub fn message: String {
     "the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed"
   }
@@ -206,21 +206,21 @@ pub class MutexError: Error {
 
 // The value `try_with` gives on a poisoned mutex (the lowering calls it).
 pub fn __avant_mutex_poisoned: MutexError {
-  MutexError.new()
+  MutexError.poisoned
 }
 
 // The thread pool's size: at most this many tasks run at once, and
-// Http.listen without loops: runs this many event loops. It is
+// http.listen without loops: runs this many event loops. It is
 // --avant-threads=N when the program was started with it, else the CPUs
 // the process may use. set_pool_size(n) sets it, 1 to 1024, so a program
 // that has its own option (--threads, a config file) passes the number
 // on. The size is fixed once the pool starts (the first spawn or
-// .parallel) or Http.listen without loops: reads it; a set after that
+// .parallel) or http.listen without loops: reads it; a set after that
 // traps, as does a size out of range, so a program never runs on a size
 // it did not get (runtime/avant_task.c, avant_set_pool_size).
 lib pool_rt {
   fun avant_chosen_threads: Int
-  fun avant_set_pool_size(n: Int)
+  fun avant_set_pool_size(n: Int): Int
 }
 
 pub fn pool_size: Int {
@@ -228,5 +228,10 @@ pub fn pool_size: Int {
 }
 
 pub fn set_pool_size(n: Int) {
-  pool_rt.avant_set_pool_size(n)
+  if n < 1 || n > 1024 {
+    panic("sync.set_pool_size(${n}): the thread pool's size is from 1 to 1024")
+  }
+  if pool_rt.avant_set_pool_size(n) != 0 {
+    panic("sync.set_pool_size(${n}) after the thread pool's size was fixed: it is fixed when the pool starts (the first spawn or .parallel) or when http.listen without loops: takes its loop count from it")
+  }
 }

@@ -31,9 +31,17 @@ static void buf_grow(AvantBuf *b, int64_t need) {
   /* AVANT_GC_VERIFY=1: storage C has seen (avant_buf_bytes moved it to
    * its own pages) keeps its own pages, so the growth after this one can
    * protect it too. */
+  /* Large storage grows in place when the pages after it are free. */
+  if (b->data && b->size > 0 && avant_gc_large_extend(b->data, (uint64_t)ncap, 1)) {
+    b->cap = ncap;
+    return;
+  }
   uint8_t *ndata = (uint8_t *)avant_gc_verify_paged(b->data, (uint64_t)ncap, 0);
   if (!ndata) {
-    ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
+    /* Not zeroed: the bytes below the size are copied in now, and the
+     * capacity past it is written before the size covers it (a push, or
+     * a C writer that fills it and then sets the size). */
+    ndata = (uint8_t *)avant_alloc_bytes_room((uint64_t)ncap);
   }
   uint8_t *odata = b->data;
   if (odata && b->size > 0) {
@@ -60,6 +68,11 @@ static void buf_reserve(AvantBuf *b, int64_t extra) {
   }
 }
 
+/* A Buf of size 0 with room for CAP bytes. The room is not zeroed (a
+ * large one is left as its pages were): nothing reads a Buf's bytes past
+ * its size, and every way of raising the size writes the bytes it
+ * covers first (a push, `Buf.new(n, byte)`, a C writer that fills the
+ * capacity and then calls avant_buf_set_size). */
 void *avant_buf_new(avant_int cap) {
   AvantBuf *b = (AvantBuf *)avant_alloc(sizeof(AvantBuf), AVANT_TYPE_BUF);
   if (cap > 0) {
@@ -67,10 +80,37 @@ void *avant_buf_new(avant_int cap) {
     /* RC1: the fresh Buf is a handle across its data's allocation. */
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &b);
-    uint8_t *data = (uint8_t *)avant_alloc((uint64_t)cap, AVANT_TYPE_BYTES);
+    uint8_t *data = (uint8_t *)avant_alloc_bytes_room((uint64_t)cap);
     avant_barrier(b);
     b->data = data;
     b->cap = (int32_t)cap;
+  }
+  return b;
+}
+
+/* `Buf.new(n, byte)`: a Buf of N bytes, each BYTE (the generated code
+ * checks that N is not negative and BYTE is a byte, naming the call). Its
+ * storage is written once: zero bytes come from a zeroed allocation
+ * (pages fresh from the kernel are zero already and are not written),
+ * any other byte from an unzeroed one that the fill writes whole. */
+void *avant_buf_new_filled(avant_int n, avant_int byte) {
+  AvantBuf *b = (AvantBuf *)avant_alloc(sizeof(AvantBuf), AVANT_TYPE_BUF);
+  if (n > 0) {
+    avant_size_check((uint64_t)n, AVANT_SIZE_BUF);
+    /* RC1: the fresh Buf is a handle across its data's allocation. */
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &b);
+    uint8_t *data;
+    if (byte == 0) {
+      data = (uint8_t *)avant_alloc((uint64_t)n, AVANT_TYPE_BYTES);
+    } else {
+      data = (uint8_t *)avant_alloc_bytes_room((uint64_t)n);
+      memset(data, (int)(uint8_t)byte, (size_t)n);
+    }
+    avant_barrier(b);
+    b->data = data;
+    b->size = (int32_t)n;
+    b->cap = (int32_t)n;
   }
   return b;
 }
@@ -200,11 +240,8 @@ void avant_buf_push_fmt_f(void *buf, double v, avant_int prec) {
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_i(void *buf, avant_int n) {
-  char tmp[32];
-  int k = snprintf(tmp, sizeof(tmp), "%lld", (long long)n);
-  if (k < 0) {
-    return;
-  }
+  char tmp[24];
+  int k = avant_fmt_int_text(tmp, n);
   avant_buf_append(buf, tmp, k);
 }
 

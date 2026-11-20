@@ -1,0 +1,233 @@
+// The constants computed before main (checker/const_values.av).
+//
+// Each lives in a global slot of its value's type (MGlobal), written
+// once by the start-up function and read by every use: a use is the
+// slot's address, a constant, and one load (lower_const_ref), with no
+// test that the value is ready and no lock. The start-up function
+// (consts_symbol) computes the values in their order, the first call
+// of main after the runtime's own start; before each it tells the
+// runtime which constant it computes (avant_const_begin), so a trap
+// meanwhile names it. A value whose type is a union with failures stops
+// the program on a failure (avant_trap_const), naming the constant; its
+// success is stored. avant_const_ready then freezes, for good, every
+// Array and Hash the value reaches and copies the value into the
+// constants' region outside the collected heap, rewriting the slot
+// (runtime/avant_gc_roots.c). A program with no such
+// constant has no slot, no start-up function and no call of it.
+
+import location
+import source
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_fn
+import mir.lower_arr
+import mir.lower_union
+
+pub fn (lw: MirLower) consts_symbol: String {
+  "av.${mir_module_part(lw.lw_prog.root_module)}/__consts"
+}
+
+// The constant a read names (by its slot's symbol), or nil.
+pub fn (lw: MirLower) const_def(e: Expr): ConstDef? {
+  for d in lw.lw_prog.startup_consts {
+    if d.slot == e.resolved {
+      return d
+    }
+  }
+  nil
+}
+
+// The MIR type of d's slot, noted once in the module's globals; -1
+// after refusing.
+pub fn (lw: MirLower) const_global(d: ConstDef): Int {
+  if t = d.ty {
+    for g in lw.lw_m.globals {
+      if g.symbol == d.slot {
+        return g.ty
+      }
+    }
+    mt = lw.ty_at(t, d.loc, "a constant")
+    if mt < 0 {
+      return -1
+    }
+    lw.lw_m.globals.push(MGlobal.new(d.slot, mt, d.name))
+    return mt
+  }
+  lw.refuse(d.loc, "the constant ${d.name} (no checked type)")
+  -1
+}
+
+// A read of a constant computed before main: one load from its slot.
+pub fn (lw: MirLower) lower_const_ref(e: Expr): MOperand {
+  b = lw.lw_b
+  if d = lw.const_def(e) {
+    mt = lw.const_global(d)
+    if mt < 0 {
+      return b.c_i32(0)
+    }
+    a = b.temp(b.addr_of(mt))
+    b.assign(b.pl(a), b.rv_use(b.c_global(d.slot, mt)))
+    return lw.tmp(mt, b.rv_use(b.copy(b.deref(b.pl(a)))))
+  }
+  lw.refuse(e.loc, "the constant ${e.ident} here")
+  b.c_i32(0)
+}
+
+// Whether the program has constants computed before main: main calls
+// their start-up.
+pub fn (lw: MirLower) has_startup_consts: Bool {
+  lw.lw_prog.startup_consts.size > 0
+}
+
+// Before any function is lowered: a constant that holds an Array makes
+// the element stores test the freeze (lower_arr.av frozen_check).
+pub fn (lw: MirLower) note_startup_consts {
+  for d in lw.lw_prog.startup_consts {
+    if t = d.ty {
+      seen = Set(String).new()
+      if mir_const_holds_array(t, seen) {
+        lw.lw_m.const_arrays = true
+      }
+    }
+  }
+}
+
+pub fn mir_const_holds_array(t: Ty, seen: Set(String)): Bool {
+  if t.is_array() {
+    return true
+  }
+  if t.is_hash() {
+    if v = t.val {
+      return mir_const_holds_array(v, seen)
+    }
+    return false
+  }
+  if t.is_union() {
+    for m in t.members {
+      if mir_const_holds_array(m, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() || t.is_class() {
+    if !seen.add("${t.mod_name}.${t.show()}") {
+      return false
+    }
+    for f in t.fields {
+      if mir_const_holds_array(f.ty, seen) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// The lambdas of the values get their symbols with the functions'.
+pub fn (lw: MirLower) prewalk_startup_consts {
+  for d in lw.lw_prog.startup_consts {
+    if f = d.init {
+      lw.prewalk_function(f)
+    }
+  }
+}
+
+// The start-up function: every value in its order, stored in its slot.
+pub fn (lw: MirLower) lower_const_inits {
+  p = lw.lw_prog
+  if p.startup_consts.size == 0 || lw.failed() {
+    return
+  }
+  first = p.startup_consts[0]
+  lw.begin_at(first.loc)
+  lw.lw_main = false
+  lw.lw_ret = mt_void()
+  lw.lw_ret_ty = nil
+  b = lw.lw_b
+  none: Array(Int) = []
+  b.begin_fn(lw.consts_symbol(), b.sig(none, mt_void(), false), lw.mloc(first.loc), "constants")
+  for d in p.startup_consts {
+    if lw.failed() {
+      return
+    }
+    if f = d.init, t = d.ty, vt = d.value.ty {
+      lw.reset_closures()
+      lw.lw_fn_loc = d.loc
+      lw.lw_cl.base = lw.lam_base(f)
+      no_names: Array(String) = []
+      no_tys: Array(Ty) = []
+      lw.begin_boxes(f.box_names, no_names, no_tys, 0)
+      mt = lw.const_global(d)
+      if mt < 0 {
+        return
+      }
+      lw.at(d.loc)
+      where = "${lw.rel_path(d.loc.path)}:${d.loc.line()}:${d.loc.column()}"
+      b.call(-1, "avant_const_begin", lw.one(b.str_const("the constant ${d.name} (${where})")))
+      v = lw.lower_expr(d.value)
+      if lw.failed() {
+        return
+      }
+      lw.at(d.loc)
+      fails = ty_failures(vt)
+      if fails.size > 0 {
+        src = lw.hold(v, lw.ety(d.value))
+        bfail = b.block()
+        bok = b.block()
+        if fails.size == 1 {
+          c = lw.tag_is(src, vt, vt.tag_of(fails[0]), true)
+          b.branch(c, bfail, bok)
+        } else {
+          lw.branch_failure(src, vt, fails, bfail, bok)
+        }
+        b.at(bfail)
+        shown: Array(String) = []
+        for fl in fails {
+          shown.push(fl.show())
+        }
+        b.call(-1, "avant_trap_const", lw.one(b.str_const("the constant ${d.name} has no value: computed before main, its value is a failure (${shown.join(" or ")})")))
+        b.unreachable()
+        b.at(bok)
+        lw.at(d.loc)
+        success = t
+        if sp = ty_success_part(vt) {
+          success = sp
+        }
+        v = lw.coerce(lw.unwrap(src, vt, success, d.loc), success, t, d.loc)
+      }
+      a = b.temp(b.addr_of(mt))
+      b.assign(b.pl(a), b.rv_use(b.c_global(d.slot, mt)))
+      if lw.lw_m.types.ref_carrying(mt) {
+        b.barrier_at(a)
+      }
+      b.assign(b.deref(b.pl(a)), b.rv_use(v))
+      refs: Array(Int) = []
+      roots: Array(Int) = []
+      lw.lw_m.types.words(mt, 0, refs, roots)
+      if refs.size > 0 {
+        mask = 0u64
+        for w in refs {
+          if w >= 64 {
+            lw.refuse(d.loc, "a constant whose value holds a reference past its 64th word")
+            return
+          }
+          mask = mask | (1u64 << w.to_u64())
+        }
+        slot = MOperand.new(mok_global(), mt_ptr())
+        slot.text = d.slot
+        b.call(-1, "avant_const_ready", lw.two(slot, b.c_u64(mask.wrap_i())))
+      }
+    }
+  }
+  none2: Array(MOperand) = []
+  b.call(-1, "avant_const_end", none2)
+  b.ret()
+  b.end_fn()
+}

@@ -1,5 +1,5 @@
 // The lowering of the concurrency constructs: `spawn { }` and
-// `JoinHandle`, `.parallel { |x| }` on arrays, `Mutex.with { |x| }`,
+// `JoinHandle`, `.parallel (x) { }` on arrays, `Mutex.with (x) { }`,
 // and the gate builtins (`avant_gate_*`, which `Channel(T)` is written
 // in), with the old back end's representations and runtime calls
 // (calls.av:451-1116).
@@ -241,7 +241,7 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
 pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   b = lw.lw_b
   sym = e.spawn_thunk
-  if !str_starts(sym, "av.") {
+  if !sym.starts_with("av.") {
     lw.refuse(e.loc, "a spawn the pre-walk did not name (internal)")
     return b.c_i32(0)
   }
@@ -249,7 +249,10 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   if got = lw.lw_task.index.get(sym) {
     idx = got
   }
-  lw.lw_task.pending.push(MirTask.new(e, sym, false, idx))
+  if !lw.lw_task.queued.has(sym) {
+    lw.lw_task.queued.add(sym)
+    lw.lw_task.pending.push(MirTask.new(e, sym, false, idx))
+  }
   arg = b.c_null(mt_ref())
   if e.cap_names.size > 0 {
     l = lw.task_layout(e, sym, false)
@@ -517,7 +520,7 @@ pub fn (lw: MirLower) join_result_sym: String {
 
 // ---- .parallel
 
-// `xs.parallel { |x| ... }` (calls.av emit_parallel): the receiver once,
+// `xs.parallel (x) { ... }` (calls.av emit_parallel): the receiver once,
 // its size n, the result array (a zeroed buffer of n elements and its
 // header, as Array(T).new(n)), the context with the input, the result,
 // and the captures, then `avant_parallel_for(n, thunk, ctx)`, which roots
@@ -527,7 +530,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   sym = e.spawn_thunk
-  if !str_starts(sym, "av.") {
+  if !sym.starts_with("av.") {
     lw.refuse(e.loc, "a .parallel the pre-walk did not name (internal)")
     return zero
   }
@@ -535,7 +538,10 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   if got = lw.lw_task.index.get(sym) {
     idx = got
   }
-  lw.lw_task.pending.push(MirTask.new(e, sym, true, idx))
+  if !lw.lw_task.queued.has(sym) {
+    lw.lw_task.queued.add(sym)
+    lw.lw_task.pending.push(MirTask.new(e, sym, true, idx))
+  }
   aty = lw.ety(recv)
   oty = lw.ety(e)
   if lw.failed() {
@@ -866,6 +872,24 @@ pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
 // emit_parallel_thunk, emit_mutex_with: the last value is not a counted
 // statement).
 pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
+  mark = lw.lw_ffi.pins.size
+  got = lw.task_value_in(bl, want)
+  if lw.lw_ffi.pins.size == mark || lw.failed() {
+    return got
+  }
+  // The block's deferred blocks run once its value is computed.
+  if v = got, !want.is_void() && lw.open_now() {
+    ty = lw.ty_at(want, bl.loc, "a block's value")
+    if lw.failed() {
+      return nil
+    }
+    return lw.scope_value(v, ty, mark)
+  }
+  lw.scope_end(mark)
+  got
+}
+
+pub fn (lw: MirLower) task_value_in(bl: Block, want: Ty): MOperand? {
   if bl.paren && bl.returns {
     mty = mt_void()
     if !want.is_void() {
@@ -1177,7 +1201,7 @@ pub fn (lw: MirLower) gate_args(h: Int, gi: Int): Array(MOperand) {
   lw.two(b.copy_local(h), b.c_u64(off))
 }
 
-// `m.with { |x| ... }` (calls.av emit_mutex_with): the mutex once into
+// `m.with (x) { ... }` (calls.av emit_mutex_with): the mutex once into
 // a local, `avant_gate_lock(&m.gate)`, the block in place with x naming
 // `m.cell` (reads, assignments behind the barrier, field stores through
 // it), the value kept, `avant_gate_unlock(&m.gate)`.
@@ -1188,7 +1212,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   gi = lw.field_of(rt, "gate", e.loc)
   ci = lw.field_of(rt, "cell", e.loc)
   if lw.failed() || bl.params.size != 1 {
-    lw.refuse(e.loc, "this Mutex.with")
+    lw.refuse(e.loc, "this sync.Mutex.with")
     return zero
   }
   o = lw.lower_expr(recv)
@@ -1211,7 +1235,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   if recovers {
     heal = lw.mutex_heal_sym(rt)
     if heal.size == 0 {
-      lw.refuse(e.loc, "Mutex.with without std.sync's __avant_heal (internal)")
+      lw.refuse(e.loc, "sync.Mutex.with without std.sync's __avant_heal (internal)")
       return zero
     }
   }
@@ -1235,7 +1259,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     if et = e.ty, me = mir_mutex_error(et) {
       sym = lw.mutex_error_sym()
       if sym.size == 0 {
-        lw.refuse(e.loc, "Mutex.try_with without std.sync's MutexError (internal)")
+        lw.refuse(e.loc, "sync.Mutex.try_with without std.sync's MutexError (internal)")
         return zero
       }
       none0: Array(MOperand) = []
@@ -1351,7 +1375,7 @@ pub fn (lw: MirLower) mutex_heal_sym(rt: Ty): String {
 // The MutexError member of try_with's union, or nil.
 pub fn mir_mutex_error(t: Ty): Ty? {
   for m in t.members {
-    if m.is_class() && m.mod_name == "std.sync" && m.name == "MutexError" {
+    if m.is_enum() && m.mod_name == "std.sync" && m.name == "MutexError" {
       return m
     }
   }

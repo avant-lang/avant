@@ -1,9 +1,9 @@
 // Hashes, Buf, and Bytes on the new back end: Hash(String, Int),
 // Hash(String, String), Hash(Int, Int) stores, has, `h[k] ?? d`, inc
-// (with and without a step), delete, inc_slice, keys, values, size,
+// (with and without a step), delete, inc by a slice, keys, values, size,
 // clear; Buf construction, every push form, starts_with, to_s,
 // to_bytes, index reads and stores (plain and compound), size, clear;
-// Bytes.to_buf; hash_last_key. A function that touches a hash through
+// Bytes.to_buf. A function that touches a hash through
 // a setter is a frame (the setters collect;
 // before, they were quiet rows and such a function a quiet leaf).
 
@@ -58,7 +58,7 @@ fn hashes {
   puts(hk("recv3", h).inc("one", say("by", 10)))
   h.delete("two")
   puts(h.has("two"))
-  puts(h.inc_slice("xxonexx", 2, 5))
+  puts(h.inc("xxonexx"[2..5]))
   puts(join(h.keys().sorted()))
   puts(ints(h.values().sorted()))
   h.clear()
@@ -92,7 +92,7 @@ fn hashes {
 }
 
 fn bufs {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("head:")
   b.push_byte(65)
   b.push_slice("abcdef", 2, 4)
@@ -107,7 +107,7 @@ fn bufs {
   b[5] = 97
   b[6] += 1
   puts(bytes_to_str_len(b.to_bytes()))
-  c = buf_new(4)
+  c = Buf.new(4)
   i = 0
   while i < 300 {
     c.push_byte(48 + i % 10)

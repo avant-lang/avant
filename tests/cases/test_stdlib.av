@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 struct StdItem {
   key: Int
@@ -9,10 +11,10 @@ fn std_expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: St
   src = "${scratch()}/stdlib-wavee-${stamp}-${tag}.av"
   bin = "${scratch()}/stdlib-wavee-${stamp}-${tag}.bin"
   log = "${scratch()}/stdlib-wavee-${stamp}-${tag}.log"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  if err = file_read(log) {
+  if err = fs.read(log) {
     c.expect(err.contains(needle), "${tag} reports ${needle}")
   } else {
     c.expect(false, "${tag} log readable")
@@ -171,7 +173,7 @@ fn test_stdlib(c: Checks) {
     c.expect(false, "from_utf8 valid")
   }
 
-  bad_buf = buf_new()
+  bad_buf = Buf.new()
   bad_buf.push_byte(104)
   bad_buf.push_byte(255)
   bad = bad_buf.to_bytes()
@@ -181,7 +183,7 @@ fn test_stdlib(c: Checks) {
     c.expect(true, "from_utf8 invalid nil")
   }
 
-  bb = buf_new()
+  bb = Buf.new()
   bb.push_bytes("hi".bytes)
   bb.push_byte(33)
   c.eq_str(bb.to_s(), "hi!", "Buf push_bytes")
@@ -193,7 +195,7 @@ fn test_stdlib(c: Checks) {
   c.expect(same_a == same_b, "Bytes equality")
   c.expect(same_a != "diff".bytes, "Bytes inequality")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     std_expect_err(c, compiler, stamp, "sort-unsorted", "struct P {\n  x: Int\n}\nfn main {\n  xs: Array(P) = [P { x: 1 }]\n  xs.sort\n}\n", "Array.sort needs an ordered element type or a comparator block")
     std_expect_err(c, compiler, stamp, "sum-string", "fn main {\n  xs: Array(String) = [\"a\"]\n  puts(xs.sum)\n}\n", "Array.sum needs a numeric element type")

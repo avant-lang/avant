@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // A module program that compiles and prints want.
 fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String, tag: String) {
@@ -9,7 +11,7 @@ fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String
   c.eq_int(code, 0, "${tag} compiles")
   chmod_x(bin)
   run_av_bin(bin, out)
-  if got = file_read(out) {
+  if got = fs.read(out) {
     c.eq_str(got, want, tag)
   } else {
     c.expect(false, tag)
@@ -22,8 +24,8 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
   log = "${dir}/${name}.log"
   code = compile_av(compiler, "${dir}/${name}.av", bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  c.expect(!file_exists(bin), "${tag} bin absent")
-  if err = file_read(log) {
+  c.expect(!fs.exists(bin), "${tag} bin absent")
+  if err = fs.read(log) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -38,7 +40,7 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
 fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   write_av(dir, "fa", "pub fn helper: Int { 1 }\nfn secret: Int { 7 }\npub fn pick(s: String): Int { s.size }\npub fn twice(f: fn(Int): Int): Int { f(f(1)) }\n")
   write_av(dir, "fb", "pub fn helper: Int { 2 }\npub fn pick(n: Int): Int { n }\npub fn twice(f: fn(Int): Int): Int { f(1) }\n")
-  write_av(dir, "fboth", "import fa\nimport fb\nfn helper: Int { 3 }\nfn main {\n  puts(fa.helper() + fb.helper() * 10 + fboth.helper() * 100)\n  puts(pick(\"abc\") + pick(40))\n  puts(fa.twice { |x| x + 5 })\n  puts(fb.twice { |x| x + 5 })\n}\n")
+  write_av(dir, "fboth", "import fa\nimport fb\nfn helper: Int { 3 }\nfn main {\n  puts(fa.helper() + fb.helper() * 10 + fboth.helper() * 100)\n  puts(pick(\"abc\") + pick(40))\n  puts(fa.twice (x) { x + 5 })\n  puts(fb.twice (x) { x + 5 })\n}\n")
   mod_runs(c, compiler, dir, "fboth", "321\n43\n11\n6\n", "same pub fn in two modules, qualified")
   write_av(dir, "funused", "import fa\nimport fb\nfn main {\n  puts(5)\n}\n")
   mod_runs(c, compiler, dir, "funused", "5\n", "same pub fn in two modules, unused")
@@ -46,7 +48,7 @@ fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   mod_fails(c, compiler, dir, "famb", "ambiguous call to helper: fa.helper and fb.helper both match; write fa.helper() or fb.helper()", "two imports ambiguous at the call")
   write_av(dir, "fown", "import fa\nfn helper: Int { 3 }\nfn main {\n  puts(helper())\n}\n")
   mod_fails(c, compiler, dir, "fown", "write fa.helper() or fown.helper()", "own and imported ambiguous, as for types")
-  write_av(dir, "flam", "import fa\nimport fb\nfn main {\n  twice { |x| x + 1 }\n}\n")
+  write_av(dir, "flam", "import fa\nimport fb\nfn main {\n  twice (x) { x + 1 }\n}\n")
   mod_fails(c, compiler, dir, "flam", "ambiguous call to twice: fa.twice and fb.twice both match", "block argument ambiguous at the call")
   write_av(dir, "fpriv", "import fa\nfn main {\n  puts(fa.secret())\n}\n")
   mod_fails(c, compiler, dir, "fpriv", "function fa.secret is private to its module; mark it pub", "qualified call to a private function")
@@ -65,14 +67,14 @@ fn fake_fetched(dir: String, project: String, name: String) {
   sha = "58a9ab1a2db9803a031edf34adb9e16c74f9d126"
   git = "https://example.invalid/${name}.git"
   mkdir_p("${dir}/deps/${name}/.git")
-  _ = file_write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
-  _ = file_write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
-  _ = file_write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
+  _ = fs.write("${dir}/avant.toml", "[package]\nname = \"${project}\"\nversion = \"0.1.0\"\n\n[dependencies]\n${name} = { git = \"${git}\", rev = \"v1\" }\n")
+  _ = fs.write("${dir}/avant.lock", "version = 1\n\n[[package]]\nname = \"${name}\"\nsource = \"git+${git}#${sha}\"\nrev = \"v1\"\n")
+  _ = fs.write("${dir}/deps/${name}/.git/HEAD", "${sha}\n")
 }
 
 fn test_modules(c: Checks) {
   c.suite("tests/cases/test_modules.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     dir = "${scratch()}/modules-${stamp}"
     mkdir_p(dir)
@@ -84,11 +86,11 @@ fn test_modules(c: Checks) {
     out = "${dir}/ok.out"
     code = compile_av(compiler, "${dir}/main.av", bin, log)
     c.eq_int(code, 0, "import pub names")
-    c.expect(file_exists(bin), "import pub names bin")
+    c.expect(fs.exists(bin), "import pub names bin")
     chmod_x(bin)
     run_code = run_av_bin(bin, out)
     c.eq_int(run_code, 0, "import pub names run")
-    if got = file_read(out) {
+    if got = fs.read(out) {
       c.eq_str(got, "0\n", "imported origin")
     } else {
       c.expect(false, "imported origin")
@@ -100,8 +102,8 @@ fn test_modules(c: Checks) {
     hide_log = "${dir}/hide.log"
     hide_code = compile_av(compiler, "${dir}/hide.av", hide_bin, hide_log)
     c.expect(hide_code != 0, "private helper exits non-zero")
-    c.expect(!file_exists(hide_bin), "private helper bin absent")
-    if err = file_read(hide_log) {
+    c.expect(!fs.exists(hide_bin), "private helper bin absent")
+    if err = fs.read(hide_log) {
       c.expect(err.contains("unknown function hidden"), "private helper hidden")
     } else {
       c.expect(false, "private helper hidden")
@@ -114,8 +116,8 @@ fn test_modules(c: Checks) {
     cycle_log = "${dir}/cycle.log"
     cycle_code = compile_av(compiler, "${dir}/cycle.av", cycle_bin, cycle_log)
     c.expect(cycle_code != 0, "cycle exits non-zero")
-    c.expect(!file_exists(cycle_bin), "cycle bin absent")
-    if err = file_read(cycle_log) {
+    c.expect(!fs.exists(cycle_bin), "cycle bin absent")
+    if err = fs.read(cycle_log) {
       c.expect(err.contains("import cycle"), "import cycle")
     } else {
       c.expect(false, "import cycle")
@@ -131,7 +133,7 @@ fn test_modules(c: Checks) {
     c.eq_int(clash_code, 0, "two Box types compile")
     chmod_x(clash_bin)
     run_av_bin(clash_bin, clash_out)
-    if got = file_read(clash_out) {
+    if got = fs.read(clash_out) {
       c.eq_str(got, "1\n", "two Box types unused")
     } else {
       c.expect(false, "two Box types unused")
@@ -141,8 +143,8 @@ fn test_modules(c: Checks) {
     bare_log = "${dir}/bare.log"
     bare_code = compile_av(compiler, "${dir}/bare.av", bare_bin, bare_log)
     c.expect(bare_code != 0, "bare Box exits non-zero")
-    c.expect(!file_exists(bare_bin), "bare Box bin absent")
-    if err = file_read(bare_log) {
+    c.expect(!fs.exists(bare_bin), "bare Box bin absent")
+    if err = fs.read(bare_log) {
       c.expect(err.contains("Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
     } else {
       c.expect(false, "bare Box ambiguous")
@@ -155,7 +157,7 @@ fn test_modules(c: Checks) {
     c.eq_int(qb_code, 0, "qualified Box types")
     chmod_x(qb_bin)
     run_av_bin(qb_bin, qb_out)
-    if got = file_read(qb_out) {
+    if got = fs.read(qb_out) {
       c.eq_str(got, "1\n12\n", "qualified Box draw")
     } else {
       c.expect(false, "qualified Box draw")
@@ -171,7 +173,7 @@ fn test_modules(c: Checks) {
     c.eq_int(over_code, 0, "pub overloads")
     chmod_x(over_bin)
     run_av_bin(over_bin, over_out)
-    if got = file_read(over_out) {
+    if got = fs.read(over_out) {
       c.eq_str(got, "7\n2\n", "merged pub overloads")
     } else {
       c.expect(false, "merged pub overloads")
@@ -187,7 +189,7 @@ fn test_modules(c: Checks) {
     c.eq_int(qual_code, 0, "qualify clash")
     chmod_x(qual_bin)
     run_av_bin(qual_bin, qual_out)
-    if got = file_read(qual_out) {
+    if got = fs.read(qual_out) {
       c.eq_str(got, "1\n2\n", "qualified clash")
     } else {
       c.expect(false, "qualified clash")
@@ -203,7 +205,7 @@ fn test_modules(c: Checks) {
     c.eq_int(apply_code, 0, "external method")
     chmod_x(apply_bin)
     run_av_bin(apply_bin, apply_out)
-    if got = file_read(apply_out) {
+    if got = fs.read(apply_out) {
       c.eq_str(got, "2\n6\n", "doubled")
     } else {
       c.expect(false, "doubled")
@@ -212,10 +214,10 @@ fn test_modules(c: Checks) {
     proj = "${dir}/proj"
     mkdir_p("${proj}/tests/math")
     mkdir_p("${proj}/http")
-    _ = file_write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${proj}/vec.av", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
-    _ = file_write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
-    _ = file_write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new()\n  puts(v.x)\n  puts(s.port())\n}\n")
+    _ = fs.write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${proj}/vec.av", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
+    _ = fs.write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
+    _ = fs.write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new()\n  puts(v.x)\n  puts(s.port())\n}\n")
     nest_bin = "${dir}/nest.bin"
     nest_log = "${dir}/nest.log"
     nest_out = "${dir}/nest.out"
@@ -223,7 +225,7 @@ fn test_modules(c: Checks) {
     c.eq_int(nest_code, 0, "nested import from tests/")
     chmod_x(nest_bin)
     run_av_bin(nest_bin, nest_out)
-    if got = file_read(nest_out) {
+    if got = fs.read(nest_out) {
       c.eq_str(got, "1\n80\n", "unqualified nested names")
     } else {
       c.expect(false, "unqualified nested names")
@@ -232,9 +234,9 @@ fn test_modules(c: Checks) {
     dep_app = "${dir}/depapp"
     mkdir_p("${dep_app}/deps/greeter/http")
     fake_fetched(dep_app, "depapp", "greeter")
-    _ = file_write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
-    _ = file_write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
+    _ = fs.write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
+    _ = fs.write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
     dep_bin = "${dir}/dep.bin"
     dep_log = "${dir}/dep.log"
     dep_out = "${dir}/dep.out"
@@ -242,7 +244,7 @@ fn test_modules(c: Checks) {
     c.eq_int(dep_code, 0, "dep nested import")
     chmod_x(dep_bin)
     run_av_bin(dep_bin, dep_out)
-    if got = file_read(dep_out) {
+    if got = fs.read(dep_out) {
       c.eq_str(got, "7\n", "dep nested listen")
     } else {
       c.expect(false, "dep nested listen")
@@ -250,16 +252,16 @@ fn test_modules(c: Checks) {
 
     sh = "${dir}/shadow"
     mkdir_p("${sh}/nest")
-    _ = file_write("${sh}/avant.toml", "[package]\nname = \"shadow\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${sh}/vec.av", "pub fn from_root: Int { 1 }\n")
-    _ = file_write("${sh}/nest/vec.av", "pub fn from_nest: Int { 2 }\n")
-    _ = file_write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
+    _ = fs.write("${sh}/avant.toml", "[package]\nname = \"shadow\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${sh}/vec.av", "pub fn from_root: Int { 1 }\n")
+    _ = fs.write("${sh}/nest/vec.av", "pub fn from_nest: Int { 2 }\n")
+    _ = fs.write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
     sh_bin = "${dir}/shadow.bin"
     sh_log = "${dir}/shadow.log"
     sh_code = compile_av(compiler, "${sh}/nest/main.av", sh_bin, sh_log)
     c.expect(sh_code != 0, "shadow exits non-zero")
-    c.expect(!file_exists(sh_bin), "shadow bin absent")
-    if err = file_read(sh_log) {
+    c.expect(!fs.exists(sh_bin), "shadow bin absent")
+    if err = fs.read(sh_log) {
       c.expect(err.contains("import vec is ambiguous"), "shadow names both")
       c.expect(err.contains("nest/vec.av"), "shadow beside path")
       c.expect(err.contains("/vec.av"), "shadow manifest path")
@@ -269,16 +271,16 @@ fn test_modules(c: Checks) {
 
     cyc = "${dir}/cyc"
     mkdir_p("${cyc}/sub")
-    _ = file_write("${cyc}/avant.toml", "[package]\nname = \"cyc\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${cyc}/a.av", "import sub.b\npub fn from_a: Int { 1 }\n")
-    _ = file_write("${cyc}/sub/b.av", "import a\npub fn from_b: Int { from_a() }\n")
-    _ = file_write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
+    _ = fs.write("${cyc}/avant.toml", "[package]\nname = \"cyc\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${cyc}/a.av", "import sub.b\npub fn from_a: Int { 1 }\n")
+    _ = fs.write("${cyc}/sub/b.av", "import a\npub fn from_b: Int { from_a() }\n")
+    _ = fs.write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
     cyc_bin = "${dir}/cyc.bin"
     cyc_log = "${dir}/cyc.log"
     cyc_code = compile_av(compiler, "${cyc}/main.av", cyc_bin, cyc_log)
     c.expect(cyc_code != 0, "cross-dir cycle exits non-zero")
-    c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
-    if err = file_read(cyc_log) {
+    c.expect(!fs.exists(cyc_bin), "cross-dir cycle bin absent")
+    if err = fs.read(cyc_log) {
       c.expect(err.contains("import cycle"), "cross-dir cycle")
     } else {
       c.expect(false, "cross-dir cycle")
@@ -286,16 +288,16 @@ fn test_modules(c: Checks) {
 
     tw = "${dir}/twice"
     mkdir_p("${tw}/http")
-    _ = file_write("${tw}/avant.toml", "[package]\nname = \"twice\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${tw}/http/server.av", "pub fn listen: Int { 1 }\n")
-    _ = file_write("${tw}/http/client.av", "import server\nimport http.server\npub fn go: Int { listen() }\n")
-    _ = file_write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${tw}/avant.toml", "[package]\nname = \"twice\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${tw}/http/server.av", "pub fn listen: Int { 1 }\n")
+    _ = fs.write("${tw}/http/client.av", "import server\nimport http.server\npub fn go: Int { listen() }\n")
+    _ = fs.write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
     tw_bin = "${dir}/twice.bin"
     tw_log = "${dir}/twice.log"
     tw_code = compile_av(compiler, "${tw}/main.av", tw_bin, tw_log)
     c.expect(tw_code != 0, "two spellings exits non-zero")
-    c.expect(!file_exists(tw_bin), "two spellings bin absent")
-    if err = file_read(tw_log) {
+    c.expect(!fs.exists(tw_bin), "two spellings bin absent")
+    if err = fs.read(tw_log) {
       c.expect(err.contains("open the same file"), "two spellings")
     } else {
       c.expect(false, "two spellings")
@@ -304,11 +306,11 @@ fn test_modules(c: Checks) {
     rootp = "${dir}/rootprobe"
     mkdir_p("${rootp}/compiler/checker")
     mkdir_p("${rootp}/compiler/codegen")
-    _ = file_write("${rootp}/avant.toml", "[package]\nname = \"rootprobe\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${rootp}/compiler/loader.av", "pub fn answer: Int { 4 }\n")
-    _ = file_write("${rootp}/compiler/codegen/calls.av", "pub fn ring: Int { 3 }\n")
-    _ = file_write("${rootp}/compiler/checker/use.av", "import codegen.calls\nimport loader\npub fn go: Int { ring() + answer() }\n")
-    _ = file_write("${rootp}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${rootp}/avant.toml", "[package]\nname = \"rootprobe\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${rootp}/compiler/loader.av", "pub fn answer: Int { 4 }\n")
+    _ = fs.write("${rootp}/compiler/codegen/calls.av", "pub fn ring: Int { 3 }\n")
+    _ = fs.write("${rootp}/compiler/checker/use.av", "import codegen.calls\nimport loader\npub fn go: Int { ring() + answer() }\n")
+    _ = fs.write("${rootp}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
     rp_bin = "${dir}/rootprobe.bin"
     rp_log = "${dir}/rootprobe.log"
     rp_out = "${dir}/rootprobe.out"
@@ -316,7 +318,7 @@ fn test_modules(c: Checks) {
     c.eq_int(rp_code, 0, "compilation root probe")
     chmod_x(rp_bin)
     run_av_bin(rp_bin, rp_out)
-    if got = file_read(rp_out) {
+    if got = fs.read(rp_out) {
       c.eq_str(got, "7\n", "nested import under compiled file")
     } else {
       c.expect(false, "nested import under compiled file")
@@ -324,17 +326,17 @@ fn test_modules(c: Checks) {
 
     both = "${dir}/bothroot"
     mkdir_p("${both}/src/nest")
-    _ = file_write("${both}/avant.toml", "[package]\nname = \"bothroot\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${both}/vec.av", "pub fn from_manifest: Int { 1 }\n")
-    _ = file_write("${both}/src/vec.av", "pub fn from_root: Int { 2 }\n")
-    _ = file_write("${both}/src/nest/use.av", "import vec\npub fn go: Int { 1 }\n")
-    _ = file_write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${both}/avant.toml", "[package]\nname = \"bothroot\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${both}/vec.av", "pub fn from_manifest: Int { 1 }\n")
+    _ = fs.write("${both}/src/vec.av", "pub fn from_root: Int { 2 }\n")
+    _ = fs.write("${both}/src/nest/use.av", "import vec\npub fn go: Int { 1 }\n")
+    _ = fs.write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
     both_bin = "${dir}/bothroot.bin"
     both_log = "${dir}/bothroot.log"
     both_code = compile_av(compiler, "${both}/src/main.av", both_bin, both_log)
     c.expect(both_code != 0, "root and manifest exits non-zero")
-    c.expect(!file_exists(both_bin), "root and manifest bin absent")
-    if err = file_read(both_log) {
+    c.expect(!fs.exists(both_bin), "root and manifest bin absent")
+    if err = fs.read(both_log) {
       c.expect(err.contains("import vec is ambiguous"), "root and manifest")
       c.expect(err.contains("src/vec.av"), "root path")
       c.expect(err.contains("bothroot/vec.av"), "manifest path")
@@ -344,16 +346,16 @@ fn test_modules(c: Checks) {
 
     spell = "${dir}/spell"
     mkdir_p("${spell}/compiler/checker")
-    _ = file_write("${spell}/avant.toml", "[package]\nname = \"spell\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${spell}/compiler/checker/facts.av", "pub fn n: Int { 1 }\n")
-    _ = file_write("${spell}/compiler/checker/use.av", "import facts\nimport checker.facts\npub fn go: Int { n() }\n")
-    _ = file_write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${spell}/avant.toml", "[package]\nname = \"spell\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${spell}/compiler/checker/facts.av", "pub fn n: Int { 1 }\n")
+    _ = fs.write("${spell}/compiler/checker/use.av", "import facts\nimport checker.facts\npub fn go: Int { n() }\n")
+    _ = fs.write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
     spell_bin = "${dir}/spell.bin"
     spell_log = "${dir}/spell.log"
     spell_code = compile_av(compiler, "${spell}/compiler/main.av", spell_bin, spell_log)
     c.expect(spell_code != 0, "root two spellings exits non-zero")
-    c.expect(!file_exists(spell_bin), "root two spellings bin absent")
-    if err = file_read(spell_log) {
+    c.expect(!fs.exists(spell_bin), "root two spellings bin absent")
+    if err = fs.read(spell_log) {
       c.expect(err.contains("open the same file"), "root two spellings")
     } else {
       c.expect(false, "root two spellings")
@@ -362,16 +364,16 @@ fn test_modules(c: Checks) {
     seal = "${dir}/seal"
     mkdir_p("${seal}/deps/lib")
     fake_fetched(seal, "seal", "lib")
-    _ = file_write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
-    _ = file_write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
-    _ = file_write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
-    _ = file_write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
+    _ = fs.write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
+    _ = fs.write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
+    _ = fs.write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
     seal_bin = "${dir}/seal.bin"
     seal_log = "${dir}/seal.log"
     seal_code = compile_av(compiler, "${seal}/main.av", seal_bin, seal_log)
     c.expect(seal_code != 0, "dep does not see consumer exits non-zero")
-    c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
-    if err = file_read(seal_log) {
+    c.expect(!fs.exists(seal_bin), "dep does not see consumer bin absent")
+    if err = fs.read(seal_log) {
       c.expect(err.contains("cannot find hidden.av"), "dep does not see consumer")
     } else {
       c.expect(false, "dep does not see consumer")
@@ -379,31 +381,31 @@ fn test_modules(c: Checks) {
 
     kw = "${dir}/kw"
     mkdir_p("${kw}/pkg")
-    _ = file_write("${kw}/pkg/spawn.av", "pub struct Node {\n  pub n: Int\n}\npub fn from_spawn: Int { 3 }\n")
-    _ = file_write("${kw}/other.av", "pub struct Node {\n  pub n: Int\n}\n")
-    _ = file_write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
+    _ = fs.write("${kw}/pkg/spawn.av", "pub struct Node {\n  pub n: Int\n}\npub fn from_spawn: Int { 3 }\n")
+    _ = fs.write("${kw}/other.av", "pub struct Node {\n  pub n: Int\n}\n")
+    _ = fs.write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
     kw_bin = "${dir}/kw.bin"
     kw_log = "${dir}/kw.log"
     kw_out = "${dir}/kw.out"
     kw_code = compile_av(compiler, "${kw}/main.av", kw_bin, kw_log)
     c.eq_int(kw_code, 0, "keyword after a dot")
-    c.expect(file_exists(kw_bin), "keyword after a dot bin")
+    c.expect(fs.exists(kw_bin), "keyword after a dot bin")
     chmod_x(kw_bin)
     run_av_bin(kw_bin, kw_out)
-    if got = file_read(kw_out) {
+    if got = fs.read(kw_out) {
       c.eq_str(got, "1\n2\n3\n", "keyword segment and qualifier")
     } else {
       c.expect(false, "keyword segment and qualifier")
     }
 
     member = "${dir}/member.av"
-    _ = file_write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
+    _ = fs.write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
     member_bin = "${dir}/member.bin"
     member_log = "${dir}/member.log"
     member_code = compile_av(compiler, member, member_bin, member_log)
     c.expect(member_code != 0, "keyword member exits non-zero")
-    c.expect(!file_exists(member_bin), "keyword member bin absent")
-    if err = file_read(member_log) {
+    c.expect(!fs.exists(member_bin), "keyword member bin absent")
+    if err = fs.read(member_log) {
       c.expect(err.contains("no field for"), "keyword member is a name")
       c.expect(!err.contains("expected a name"), "keyword member is not a parse error")
     } else {
@@ -411,39 +413,39 @@ fn test_modules(c: Checks) {
     }
 
     lead = "${dir}/lead.av"
-    _ = file_write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
+    _ = fs.write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
     lead_bin = "${dir}/lead.bin"
     lead_log = "${dir}/lead.log"
     lead_code = compile_av(compiler, lead, lead_bin, lead_log)
     c.expect(lead_code != 0, "leading keyword import exits non-zero")
-    c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
-    if err = file_read(lead_log) {
+    c.expect(!fs.exists(lead_bin), "leading keyword import bin absent")
+    if err = fs.read(lead_log) {
       c.expect(err.contains("expected a name, found `spawn`"), "leading keyword import")
     } else {
       c.expect(false, "leading keyword import")
     }
 
     decl = "${dir}/decl.av"
-    _ = file_write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
+    _ = fs.write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
     decl_bin = "${dir}/decl.bin"
     decl_log = "${dir}/decl.log"
     decl_code = compile_av(compiler, decl, decl_bin, decl_log)
     c.expect(decl_code != 0, "keyword function name exits non-zero")
-    c.expect(!file_exists(decl_bin), "keyword function name bin absent")
-    if err = file_read(decl_log) {
+    c.expect(!fs.exists(decl_bin), "keyword function name bin absent")
+    if err = fs.read(decl_log) {
       c.expect(err.contains("expected function name"), "keyword function name")
     } else {
       c.expect(false, "keyword function name")
     }
 
     label = "${dir}/label.av"
-    _ = file_write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
+    _ = fs.write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
     label_bin = "${dir}/label.bin"
     label_log = "${dir}/label.log"
     label_code = compile_av(compiler, label, label_bin, label_log)
     c.expect(label_code != 0, "keyword field label exits non-zero")
-    c.expect(!file_exists(label_bin), "keyword field label bin absent")
-    if err = file_read(label_log) {
+    c.expect(!fs.exists(label_bin), "keyword field label bin absent")
+    if err = fs.read(label_log) {
       c.expect(err.contains("expected an expression, found `{`"), "keyword field label")
     } else {
       c.expect(false, "keyword field label")
@@ -457,7 +459,7 @@ fn test_modules(c: Checks) {
     c.eq_int(solo_code, 0, "single file")
     chmod_x(solo_bin)
     run_av_bin(solo_bin, solo_out)
-    if got = file_read(solo_out) {
+    if got = fs.read(solo_out) {
       c.eq_str(got, "1\n", "single file no import")
     } else {
       c.expect(false, "single file no import")
@@ -470,6 +472,11 @@ fn test_modules(c: Checks) {
     test_same_name_methods(c, compiler, dir)
     test_same_name_derived(c, compiler, dir)
     test_c_binding_twice(c, compiler, dir)
+    test_ptr_crossing(c, compiler, dir)
+    test_layout_twins(c, compiler, dir)
+    test_opaque_twins(c, compiler, dir)
+    test_last_name(c, compiler, dir)
+    test_std_qualified(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -506,21 +513,27 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, dir, "pfwalk", "4\n", "comptime walk from another module sees the pub fields")
   write_av(dir, "pfwalk2", "import acct\ncomptime {\n  for f in Secret.fields {\n    quote {\n      fn #(f.name)(s: Secret): #(f.type) {\n        s.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(kept(secret(4)))\n}\n")
   mod_fails(c, compiler, dir, "pfwalk2", "unknown function kept", "comptime walk from another module skips private fields")
+  // Over a generic type the walk from another module sees the pub fields
+  // too, each instance with its own field types.
+  write_av(dir, "pfgwalk", "import gbox\ncomptime {\n  for f in Holder.fields {\n    quote {\n      fn #(f.name)(h: Holder(T)): #(f.type) {\n        h.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(tag(Holder.new(\"x\")) + tag(Holder.new(2.5)))\n}\n")
+  mod_runs(c, compiler, dir, "pfgwalk", "2\n", "comptime walk over a generic type from another module sees the pub fields")
+  write_av(dir, "pfgwalk2", "import gbox\ncomptime {\n  for f in Holder.fields {\n    quote {\n      fn #(f.name)(h: Holder(T)): #(f.type) {\n        h.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(item(Holder.new(\"x\")))\n}\n")
+  mod_fails(c, compiler, dir, "pfgwalk2", "unknown function item", "comptime walk over a generic type from another module skips private fields")
   write_av(dir, "pfquote", "struct P {\n  pub quote {\n  }\n}\nfn main {\n  puts(1)\n}\n")
   mod_fails(c, compiler, dir, "pfquote", "pub in a type body prefixes fn or a field", "pub before a quote")
 
   boot = "${dir}/boot"
   mkdir_p("${boot}/compiler")
   mkdir_p("${boot}/runtime")
-  _ = file_write("${boot}/runtime/build.sh", "true\n")
-  _ = file_write("${boot}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
-  _ = file_write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
+  _ = fs.write("${boot}/runtime/build.sh", "true\n")
+  _ = fs.write("${boot}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
+  _ = fs.write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
   boot_bin = "${dir}/boot.bin"
   boot_log = "${dir}/boot.log"
   boot_code = compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
   c.expect(boot_code != 0, "a checkout's compiler/main.av is not exempt: exits non-zero")
-  c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
-  if err = file_read(boot_log) {
+  c.expect(!fs.exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
+  if err = fs.read(boot_log) {
     c.expect(err.contains("field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")
@@ -539,7 +552,7 @@ fn test_default_modules(c: Checks, compiler: String, dir: String) {
   write_av(dir, "dlib", "fn secret: Int {\n  7\n}\n\npub fn pick(n: Int = secret()): Int {\n  n\n}\n\npub fn span(a: Int, b: Int = a + secret()): Int {\n  a * 100 + b\n}\n\npub fn same(a: String, b: String = a): String {\n  \"\${a}\${b}\"\n}\n\npub class Box {\n  pub v: Int = 0\n\n  fn initialize(v: Int = secret()) {\n    self.v = v\n  }\n\n  pub fn plus(k: Int = secret()): Int {\n    v + k\n  }\n\n  pub fn self.make(k: Int = secret()): Int {\n    k\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far(k: Int = secret()): Int {\n    x + k\n  }\n}\n\npub fn (s: String) pad(k: Int = secret()): Int {\n  s.size + k\n}\n")
   write_av(dir, "dplain", "import dlib\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new()\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus())\n  puts(Box.make())\n  puts(Box.make())\n  p = Pt { x: 1 }\n  puts(p.far())\n  puts(\"ab\".pad())\n}\n")
   mod_runs(c, compiler, dir, "dplain", "7\n7\n7\n14\n14\n7\n7\n8\n9\n", "a default names a function private to its module: every call form")
-  write_av(dir, "dsame", "import dlib\n\nfn secret: Int {\n  1000\n}\n\nfn mine: Int {\n  3\n}\n\nclass User {\n  n: Int = 0\n\n  fn secret: Int {\n    5000\n  }\n\n  fn go: Int {\n    pick() + Box.new().plus()\n  }\n}\n\nfn wrap(x: T): Int {\n  pick() + Box.new().v\n}\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new()\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus())\n  puts(Box.make())\n  puts(Box.make())\n  puts(User.new().go())\n  puts(wrap(1) + wrap(\"s\"))\n  secret = { |k: Int| k + 90000 }\n  puts(pick() + secret(1))\n  x = 4\n  puts(span(x + mine()))\n  puts(span(1, 2))\n  puts(same(\"ab\"))\n  puts(dsame.secret())\n}\n")
+  write_av(dir, "dsame", "import dlib\n\nfn secret: Int {\n  1000\n}\n\nfn mine: Int {\n  3\n}\n\nclass User {\n  n: Int = 0\n\n  fn secret: Int {\n    5000\n  }\n\n  fn go: Int {\n    pick() + Box.new().plus()\n  }\n}\n\nfn wrap(x: T): Int {\n  pick() + Box.new().v\n}\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new()\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus())\n  puts(Box.make())\n  puts(Box.make())\n  puts(User.new().go())\n  puts(wrap(1) + wrap(\"s\"))\n  secret = (k: Int) { k + 90000 }\n  puts(pick() + secret(1))\n  x = 4\n  puts(span(x + mine()))\n  puts(span(1, 2))\n  puts(same(\"ab\"))\n  puts(dsame.secret())\n}\n")
   mod_runs(c, compiler, dir, "dsame", "7\n7\n7\n14\n14\n7\n7\n21\n28\n90008\n714\n102\nabab\n1000\n", "the calling module's function, method and local of the same name do not capture a default")
 }
 
@@ -556,9 +569,9 @@ fn test_default_modules(c: Checks, compiler: String, dir: String) {
 // struct, a type-level function, a generic function's instance.
 fn test_default_once(c: Checks, compiler: String, dir: String) {
   write_av(dir, "olib", "pub class Tally {\n  pub n: Int = 0\n}\n\npub fn tick(t: Tally): Int {\n  t.n += 1\n  t.n\n}\n\npub fn pair(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\npub fn triple(a: Int, b: Int = a + 1, c: Int = a + b): Int {\n  a * 10000 + b * 100 + c\n}\n\npub fn outer(a: Int, b: Int = pair(a)): Int {\n  a * 100000 + b\n}\n\npub class Box {\n  pub v: Int\n  pub w: Int\n\n  pub fn initialize(v: Int, w: Int = v * 2) {\n    self.v = v\n    self.w = w\n  }\n\n  pub fn add(a: Int, b: Int = a + 100): Int {\n    self.v + a * 1000 + b\n  }\n\n  pub fn self.make(a: Int, b: Int = a + 100): Int {\n    a * 1000 + b\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn shift(a: Int, b: Int = a + 100): Int {\n    self.x + a * 1000 + b\n  }\n}\n\npub fn same(a: T, b: T = a): T {\n  b\n}\n")
-  write_av(dir, "oeval", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new()\n  puts(\"unqualified \${pair2(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"imported \${pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"qualified \${olib.pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"two defaults \${triple(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  b = Box.new(tick(t))\n  puts(\"constructor \${b.v} \${b.w} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"method \${b.add(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"type-level \${Box.make(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  p = Pt { x: 5 }\n  puts(\"struct method \${p.shift(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"generic \${same(tick(t))} ticks \${t.n}\")\n  puts(\"literal \${pair2(7)} string \${text(\"abc\")}\")\n  t = Tally.new()\n  puts(\"both written \${pair2(tick(t), tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"lambda \${apply(tick(t) * 10)} ticks \${t.n}\")\n}\n")
+  write_av(dir, "oeval", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = (x) { x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = (a) { a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new()\n  puts(\"unqualified \${pair2(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"imported \${pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"qualified \${olib.pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"two defaults \${triple(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  b = Box.new(tick(t))\n  puts(\"constructor \${b.v} \${b.w} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"method \${b.add(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"type-level \${Box.make(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  p = Pt { x: 5 }\n  puts(\"struct method \${p.shift(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"generic \${same(tick(t))} ticks \${t.n}\")\n  puts(\"literal \${pair2(7)} string \${text(\"abc\")}\")\n  t = Tally.new()\n  puts(\"both written \${pair2(tick(t), tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"lambda \${apply(tick(t) * 10)} ticks \${t.n}\")\n}\n")
   mod_runs(c, compiler, dir, "oeval", "unqualified 1101 ticks 1\nimported 1101 ticks 1\nqualified 1101 ticks 1\ntwo defaults 10203 ticks 1\nconstructor 1 2 ticks 1\nmethod 1102 ticks 1\ntype-level 1101 ticks 1\nstruct method 1106 ticks 1\ngeneric 1 ticks 1\nliteral 7107 string 3\nboth written 1002 ticks 2\nlambda 23 ticks 1\n", "an argument a default names is evaluated once on every call path")
-  write_av(dir, "odecl", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new()\n  puts(\"nested \${outer(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"optional \${opt(tick(t))} \${opt(nil)} ticks \${t.n}\")\n  t = Tally.new()\n  run: fn(Int): Int = { |k|\n    apply(tick(t) * 10) + k\n  }\n  puts(\"inside a lambda \${run(1000)} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"lambda through a default \${twice(tick(t) * 10)} ticks \${t.n}\")\n  a = 99\n  puts(\"a block's own parameter \${shadow(5)}; the caller's a \${apply(3)} \${a}\")\n}\n")
+  write_av(dir, "odecl", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = (x) { x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = (a) { a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new()\n  puts(\"nested \${outer(tick(t))} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"optional \${opt(tick(t))} \${opt(nil)} ticks \${t.n}\")\n  t = Tally.new()\n  run: fn(Int): Int = (k) {\n    apply(tick(t) * 10) + k\n  }\n  puts(\"inside a lambda \${run(1000)} ticks \${t.n}\")\n  t = Tally.new()\n  puts(\"lambda through a default \${twice(tick(t) * 10)} ticks \${t.n}\")\n  a = 99\n  puts(\"a block's own parameter \${shadow(5)}; the caller's a \${apply(3)} \${a}\")\n}\n")
   mod_runs(c, compiler, dir, "odecl", "nested 101101 ticks 1\noptional 1 7 ticks 1\ninside a lambda 1023 ticks 1\nlambda through a default 33 ticks 1\na block's own parameter 12; the caller's a 9 99\n", "a default reads its earlier parameter as declared: optional, through another default, in a lambda")
 }
 
@@ -571,9 +584,9 @@ fn test_default_once(c: Checks, compiler: String, dir: String) {
 // private type of another module is refused as an argument, an
 // element type, or a part of a union or a function type.
 fn test_generic_modules(c: Checks, compiler: String, dir: String) {
-  write_av(dir, "gbx", "pub class Box(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn get: T {\n    item\n  }\n\n  pub fn set(v: T) {\n    self.item = v\n  }\n\n  pub fn pair: Duo(T, Int) {\n    Duo { a: item, b: 2 }\n  }\n\n  pub fn many(n: Int): Array(T) {\n    Array(T).new(n) { |i| item }\n  }\n}\n\npub struct Duo(A, B) {\n  pub a: A\n  pub b: B\n\n  pub fn first: A {\n    a\n  }\n}\n\npub fn wrap(x: T): Box(T) {\n  Box.new(x)\n}\n\npub fn firsts(xs: Array(T)): T {\n  xs[0]\n}\n\npub fn twice(x: T, f: fn(T): T): T {\n  f(f(x))\n}\n")
+  write_av(dir, "gbx", "pub class Box(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn get: T {\n    item\n  }\n\n  pub fn set(v: T) {\n    self.item = v\n  }\n\n  pub fn pair: Duo(T, Int) {\n    Duo { a: item, b: 2 }\n  }\n\n  pub fn many(n: Int): Array(T) {\n    Array(T).new(n, (i) { item })\n  }\n}\n\npub struct Duo(A, B) {\n  pub a: A\n  pub b: B\n\n  pub fn first: A {\n    a\n  }\n}\n\npub fn wrap(x: T): Box(T) {\n  Box.new(x)\n}\n\npub fn firsts(xs: Array(T)): T {\n  xs[0]\n}\n\npub fn twice(x: T, f: fn(T): T): T {\n  f(f(x))\n}\n")
   write_av(dir, "gtag", "import gbx\n\npub struct Tag {\n  pub name: String\n}\n\nstruct Hidden {\n  pub n: Int\n}\n\npub fn tagged(name: String): Box(Tag) {\n  Box.new(Tag { name: name })\n}\n\npub fn hidden_n: Int {\n  h = Box.new(Hidden { n: 41 })\n  d = Duo { a: Hidden { n: 1 }, b: h.get() }\n  d.first().n + d.b.n\n}\n")
-  write_av(dir, "gmain", "import gbx\n\npub struct Point {\n  x: Int\n  y: Int\n}\n\nstruct Local {\n  n: Int\n}\n\nclass Node {\n  v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main {\n  b = Box(Point).new(Point { x: 1, y: 2 })\n  puts(b.item.x)\n  c = Box.new(Point { x: 3, y: 4 })\n  puts(c.get().y)\n  l = Box(Local).new(Local { n: 5 })\n  l.set(Local { n: 6 })\n  puts(l.get().n)\n  n = Box.new(Node.new(7))\n  puts(n.item.v)\n  d = Duo(Point, Local) { a: Point { x: 8, y: 0 }, b: Local { n: 9 } }\n  puts(d.first().x + d.b.n)\n  puts(l.pair().a.n + l.pair().b)\n  puts(l.many(3).size)\n  w = wrap(Local { n: 10 })\n  puts(w.get().n)\n  puts(firsts([Point { x: 11, y: 0 }]).x)\n  tw = twice(Local { n: 3 }) { |v| Local { n: v.n * 2 } }\n  puts(tw.n)\n  nested = Box(Box(Local)).new(Box.new(Local { n: 13 }))\n  puts(nested.get().get().n)\n  arr = Box(Array(Point)).new([Point { x: 14, y: 0 }])\n  puts(arr.item[0].x)\n  opt = Box(Local?).new(nil)\n  opt.set(Local { n: 15 })\n  if o = opt.get() {\n    puts(o.n)\n  }\n}\n")
+  write_av(dir, "gmain", "import gbx\n\npub struct Point {\n  x: Int\n  y: Int\n}\n\nstruct Local {\n  n: Int\n}\n\nclass Node {\n  v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main {\n  b = Box(Point).new(Point { x: 1, y: 2 })\n  puts(b.item.x)\n  c = Box.new(Point { x: 3, y: 4 })\n  puts(c.get().y)\n  l = Box(Local).new(Local { n: 5 })\n  l.set(Local { n: 6 })\n  puts(l.get().n)\n  n = Box.new(Node.new(7))\n  puts(n.item.v)\n  d = Duo(Point, Local) { a: Point { x: 8, y: 0 }, b: Local { n: 9 } }\n  puts(d.first().x + d.b.n)\n  puts(l.pair().a.n + l.pair().b)\n  puts(l.many(3).size)\n  w = wrap(Local { n: 10 })\n  puts(w.get().n)\n  puts(firsts([Point { x: 11, y: 0 }]).x)\n  tw = twice(Local { n: 3 }, (v) { Local { n: v.n * 2 } })\n  puts(tw.n)\n  nested = Box(Box(Local)).new(Box.new(Local { n: 13 }))\n  puts(nested.get().get().n)\n  arr = Box(Array(Point)).new([Point { x: 14, y: 0 }])\n  puts(arr.item[0].x)\n  opt = Box(Local?).new(nil)\n  opt.set(Local { n: 15 })\n  if o = opt.get() {\n    puts(o.n)\n  }\n}\n")
   mod_runs(c, compiler, dir, "gmain", "1\n4\n6\n7\n17\n8\n3\n10\n11\n12\n13\n14\n15\n", "an imported generic class, struct and function take types of the importing module, pub and private")
   write_av(dir, "gthree", "import gbx\nimport gtag\n\nstruct Local {\n  n: Int\n}\n\nfn main {\n  t = tagged(\"a\")\n  puts(t.get().name)\n  u = Box(Tag).new(Tag { name: \"b\" })\n  puts(u.item.name)\n  both = Duo(Tag, Local) { a: Tag { name: \"c\" }, b: Local { n: 1 } }\n  puts(\"\${both.a.name}\${both.b.n}\")\n  puts(hidden_n())\n  puts(wrap(Tag { name: \"d\" }).get().name)\n}\n")
   mod_runs(c, compiler, dir, "gthree", "a\nb\nc1\n42\nd\n", "three modules: a generic of one, a type of another, a type of the root")
@@ -604,7 +617,7 @@ fn test_generic_modules(c: Checks, compiler: String, dir: String) {
 fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
   write_av(dir, "sna", "pub class Item {\n  pub v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n\n  pub fn label: String {\n    \"a\${v}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.v += n\n    v\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(v + o.v)\n  }\n\n  pub fn equals(o: Item): Bool {\n    v == o.v\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(v)\n  }\n\n  pub fn self.zero: Item {\n    Item.new(0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far: Int {\n    x + 100\n  }\n\n  pub fn grow(k: Int) {\n    self.x += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-a\${i.v}\"\n}\n\npub fn make_a(v: Int): Item {\n  Item.new(v)\n}\n")
   write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn equals(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn hash(h: Hasher) {\n    h.add(name)\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
-  write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label())\n  puts(b.label())\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext())\n  puts(b.ext())\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero().v)\n  puts(snb.Item.zero().name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label()} \${d.label()}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label())\n  }\n  bs.each { |i| puts(i.label()) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far()} \${q.far()}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far())\n}\n")
+  write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label())\n  puts(b.label())\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext())\n  puts(b.ext())\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero().v)\n  puts(snb.Item.zero().name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label()} \${d.label()}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label())\n  }\n  bs.each (i) { puts(i.label()) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far()} \${q.far()}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far())\n}\n")
   mod_runs(c, compiler, dir, "snmain", "a1\nb-x\na1\nb-x\n6\n2\next-a6\next-bx\n16\nxy 10\ntrue\ntrue\n0\nzero\np\n4\na9 b-q\na6\na9\nb-x\nb-q\n101 6\n2 4\n35\n", "two modules declare a class and a struct of one name with methods of the same names")
 }
 
@@ -625,11 +638,115 @@ fn test_same_name_derived(c: Checks, compiler: String, dir: String) {
 // beside std.sync's, and two modules' bindings; each call goes through its
 // own. Before, the second was refused as already bound.
 fn test_c_binding_twice(c: Checks, compiler: String, dir: String) {
-  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == pool_size())\n}\n")
+  write_av(dir, "cbsync", "// The program binds the runtime's avant_chosen_threads itself, as\n// std.sync does, with the same signature.\nimport std.sync\n\nlib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main {\n  puts(task.avant_chosen_threads() == sync.pool_size())\n}\n")
   mod_runs(c, compiler, dir, "cbsync", "true\n", "a program binds a C function std.sync binds, with its signature")
   write_av(dir, "cbother", "lib oc {\n  fun abs(n: Int32): Int32\n}\n\npub fn mag(n: Int): Int {\n  oc.abs(n.to_i32()).to_i()\n}\n")
   write_av(dir, "cbmain", "// Two modules of the program bind one C function, each with the same\n// signature.\nimport cbother\n\nlib c {\n  fun abs(n: Int32): Int32\n}\n\nfn main {\n  puts(\"\${c.abs(-3)} \${cbother.mag(-4)}\")\n}\n")
   mod_runs(c, compiler, dir, "cbmain", "3 4\n", "two modules bind one C function with one signature")
+}
+
+// A Ptr to a C layout crosses a task only in the module whose lib block
+// declares it: a program that imports the package cannot capture one.
+fn test_ptr_crossing(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "xpkg", "// A package that binds C memory and shares it with its own tasks: a\n// Ptr to a C layout this module's lib block declares crosses here.\nlib ptrpkg {\n  struct Cell {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Cell)\n  fun free(p: Ptr(Cell))\n  fun malloc(n: Int): Ptr(Void)\n}\n\npub fn shared_sum(k: Int): Int {\n  p = ptrpkg.calloc(1, Cell.size)\n  p.n = 41\n  h = spawn { p.n.to_i() + k }\n  r = h.join() ?? -1\n  ptrpkg.free(p)\n  r\n}\n\npub fn handed: Ptr(Cell) {\n  q = ptrpkg.calloc(1, Cell.size)\n  q.n = 7\n  h = spawn { q }\n  h.join() ?? q\n}\n")
+  write_av(dir, "xuser", "import xpkg\n\nfn main {\n  p = xpkg.handed()\n  h = spawn { p.n.to_i() }\n  puts(h.join() ?? -1)\n}\n")
+  mod_fails(c, compiler, dir, "xuser", "spawn cannot capture p: its type, Ptr(Cell), holds C memory, which crosses to another task only in the module whose lib block declares its C type", "a Ptr crosses a task only in its lib's module")
+}
+
+// Opaque C types are their module's, as C layouts are: two packages that
+// both write Ptr(Ctx) have two types, so one's handle is not the other's;
+// a module without a lib block that writes Ctx means the one package's
+// Ctx, and with two such packages it names the module (Ptr(opqpa.Ctx)).
+fn test_opaque_twins(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "opqpa", "lib opqa {\n  fun malloc(n: Int): Ptr(Ctx)\n  fun free(p: Ptr(Ctx))\n}\n\npub fn open: Ptr(Ctx) {\n  opqa.malloc(8)\n}\n\npub fn close(p: Ptr(Ctx)) {\n  opqa.free(p)\n}\n")
+  write_av(dir, "opqpb", "lib opqb {\n  fun calloc(n: Int, size: Int): Ptr(Ctx)\n}\n\npub fn open: Ptr(Ctx) {\n  opqb.calloc(1, 16)\n}\n\npub fn close(p: Ptr(Ctx)) {\n}\n")
+  write_av(dir, "opqmix", "import opqpa\nimport opqpb\n\nfn main {\n  p = opqpa.open()\n  opqpb.close(p)\n  puts(\"closed by the other package\")\n}\n")
+  mod_fails(c, compiler, dir, "opqmix", "argument 1 of close is Ptr(opqpa.Ctx), expected Ptr(opqpb.Ctx)", "one package's opaque handle is not another's")
+  write_av(dir, "opqone", "import opqpa\n\nfn keep(p: Ptr(Ctx)): Ptr(Ctx) {\n  p\n}\n\nfn main {\n  p = keep(opqpa.open())\n  opqpa.close(p)\n  puts(\"ok\")\n}\n")
+  mod_runs(c, compiler, dir, "opqone", "ok\n", "a client's Ptr(Ctx) is the one package's")
+  write_av(dir, "opqtwo", "import opqpa\nimport opqpb\n\nfn keep(p: Ptr(opqpa.Ctx)): Ptr(opqpa.Ctx) {\n  p\n}\n\nfn bad(p: Ptr(Ctx)) {\n}\n\nfn main {\n  opqpa.close(keep(opqpa.open()))\n  opqpb.close(opqpb.open())\n  puts(\"ok\")\n}\n")
+  mod_fails(c, compiler, dir, "opqtwo", "Ctx is an opaque C type of modules opqpa and opqpb, each its own: write the module's name (Ptr(module.Ctx))", "a client's Ptr(Ctx) beside two packages names the module")
+  write_av(dir, "opqqual", "import opqpa\nimport opqpb\n\nfn keep(p: Ptr(opqpa.Ctx)): Ptr(opqpa.Ctx) {\n  p\n}\n\nfn main {\n  opqpa.close(keep(opqpa.open()))\n  opqpb.close(opqpb.open())\n  puts(\"ok\")\n}\n")
+  mod_runs(c, compiler, dir, "opqqual", "ok\n", "Ptr(opqpa.Ctx) names one package's opaque type")
+  write_av(dir, "opqcross", "import opqpa\n\nlib cm {\n  fun getpid: Ptr(Ctx)\n}\n\nfn main {\n  p = opqpa.open()\n  h = spawn {\n    opqpa.close(p)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n")
+  mod_fails(c, compiler, dir, "opqcross", "spawn cannot capture p: its type, Ptr(Ctx), holds C memory, which crosses to another task only in the module whose lib block declares its C type", "another module's opaque type of a name this module's lib block writes does not cross here")
+}
+
+// Two modules' C layouts of one name: a method of one module's Ptr(Pair)
+// is not the other's.
+fn test_layout_twins(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "tla", "lib twina {\n  struct Pair {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twina.calloc(1, Pair.size)\n  p.n = 5\n  p\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n.to_i()\n}\n\npub fn (p: Ptr(Pair)) twice: Int {\n  p.n.to_i() * 2\n}\n")
+  write_av(dir, "tlb", "lib twinb {\n  struct Pair {\n    k: Int32\n    j: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  p = twinb.malloc(Pair.size)\n  p.k = 7\n  p.j = 8\n  p\n}\n\npub fn (p: Ptr(Pair)) n: Int {\n  99\n}\n\npub fn read(p: Ptr(Pair)): Int {\n  p.n()\n}\n")
+  write_av(dir, "tlmain", "import tla\nimport tlb\n\nfn main {\n  q = tlb.make()\n  puts(q.twice())\n}\n")
+  mod_fails(c, compiler, dir, "tlmain", "no method twice on Ptr(Pair)", "a method of one module's Ptr(Pair) is not another module's")
+  // One C function bound by two modules with their own layouts of one
+  // name: the two signatures read the same, so each layout is named with
+  // its module.
+  write_av(dir, "tlc", "lib twinc {\n  struct Pair {\n    n: Int32\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  twinc.calloc(1, Pair.size)\n}\n")
+  write_av(dir, "tld", "lib twind {\n  struct Pair {\n    k: Int\n  }\n  fun calloc(n: Int, size: Int): Ptr(Pair)\n}\n\npub fn make: Ptr(Pair) {\n  twind.calloc(1, Pair.size)\n}\n")
+  write_av(dir, "tlcd", "import tlc\nimport tld\n\nfn main {\n  p = tlc.make()\n  q = tld.make()\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "tlcd", "C function calloc is already bound as twinc.calloc(Int, Int): Ptr(tlc.Pair) in tlc; a second binding of it must declare the same signature, not (Int, Int): Ptr(tld.Pair)", "a second binding's layout of another module is named with its module")
+}
+
+// A module's last name qualifies its names, as its whole name does
+// (`import std.time`, then `time.now()`), in calls, function values,
+// constants, types and struct literals. A local or a field of that name
+// is the local or the field; a module named in whole by the name is that
+// module; two imports ending in the name make it an error naming both.
+fn test_last_name(c: Checks, compiler: String, dir: String) {
+  mkdir_p("${dir}/ln/a")
+  mkdir_p("${dir}/ln/b")
+  write_av(dir, "ln/a/util", "pub const width = 3\n\npub fn who: Int {\n  1\n}\n\npub struct Box {\n  pub v: Int\n}\n\npub fn twice(x: Int): Int {\n  x * 2\n}\n")
+  write_av(dir, "ln/b/util", "pub fn who: Int {\n  2\n}\n")
+  write_av(dir, "ln/b/tool", "pub fn who: Int {\n  5\n}\n")
+  write_av(dir, "ln/one", "import a.util\n\nfn get(x: util.Box): Int {\n  x.v\n}\n\nfn main {\n  b = util.Box { v: 4 }\n  f = util.twice\n  puts(util.who() + util.width + get(b) + f(10) + a.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "one", "29\n", "last name: util qualifies a.util's call, constant, type, literal and function value")
+  write_av(dir, "ln/local", "import a.util\n\nfn main {\n  util = 7\n  puts(util)\n  puts(a.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "local", "7\n1\n", "last name: a local of the name is the local")
+  write_av(dir, "ln/tool", "pub fn who: Int {\n  9\n}\n")
+  write_av(dir, "ln/whole", "import tool\nimport b.tool\n\nfn main {\n  puts(tool.who() + b.tool.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "whole", "14\n", "last name: a module named tool in whole is tool; b.tool keeps its whole name")
+  write_av(dir, "ln/clash", "import a.util\nimport b.util\n\nfn main {\n  puts(util.who())\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "clash", "clash.av:5:8", "last name clash: the error points at the name")
+  mod_fails(c, compiler, "${dir}/ln", "clash", "util is the last name of both a.util and b.util: write the whole name (a.util.… or b.util.…)", "last name clash: a call asks for the whole name")
+  write_av(dir, "ln/clashty", "import a.util\nimport b.util\n\nfn f(x: util.Box): Int {\n  x.v\n}\n\nfn main {\n  puts(0)\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "clashty", "util is the last name of both a.util and b.util", "last name clash: a type asks for the whole name")
+  write_av(dir, "ln/bothok", "import a.util\nimport b.util\n\nfn main {\n  puts(a.util.who() + b.util.who())\n}\n")
+  mod_runs(c, compiler, "${dir}/ln", "bothok", "3\n", "last name clash: the whole names still work")
+  write_av(dir, "ln/unimported", "import a.util\n\nfn main {\n  puts(tool.who())\n}\n")
+  mod_fails(c, compiler, "${dir}/ln", "unimported", "unknown name tool", "last name: a module not imported is not reached")
+}
+
+// A std module's functions are written with its name only (fs.read,
+// std.fs.is_dir): a program's own function of the same name beside the
+// import is its own, and a bare use of the module's is refused with the
+// qualified spelling, at a call and as a function value.
+fn test_std_qualified(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "stdown", "import std.fs\n\nfn read(path: String): String {\n  \"own \${path}\"\n}\n\nfn main {\n  puts(read(\"x\"))\n  puts(fs.read(\"/no/such/file\") ?? \"none\")\n  puts(std.fs.is_dir(\"/\"))\n  f = read\n  puts(f(\"y\"))\n  g = fs.is_dir\n  puts(g(\"/\"))\n}\n")
+  mod_runs(c, compiler, dir, "stdown", "own x\nnone\ntrue\nown y\ntrue\n", "std qualifier: a program's own read beside import std.fs is its own; fs.read is the module's")
+  write_av(dir, "stdbare", "import std.fs\n\nfn main {\n  puts(read(\"/\") ?? \"?\")\n}\n")
+  mod_fails(c, compiler, dir, "stdbare", "stdbare.av:4:8", "std qualifier: the error points at the bare name")
+  mod_fails(c, compiler, dir, "stdbare", "read needs its module's name: write fs.read; a std module's functions are not named bare", "std qualifier: a bare call is refused with fs.read")
+  write_av(dir, "stdbareval", "import std.fs\n\nfn main {\n  f = is_dir\n  puts(f(\"/\"))\n}\n")
+  mod_fails(c, compiler, dir, "stdbareval", "is_dir needs its module's name: write fs.is_dir", "std qualifier: a bare function value is refused")
+  write_av(dir, "stdbareproc", "import std.process\n\nfn main {\n  puts(args().size)\n}\n")
+  mod_fails(c, compiler, dir, "stdbareproc", "args needs its module's name: write process.args", "std qualifier: process.args, not a bare args")
+  write_av(dir, "stdbaresync", "import std.sync\n\nfn main {\n  puts(pool_size())\n}\n")
+  mod_fails(c, compiler, dir, "stdbaresync", "pool_size needs its module's name: write sync.pool_size", "std qualifier: sync.pool_size, not a bare pool_size")
+  // A std module's types are named with its name too: a program's own
+  // type of the same name beside the import is its own.
+  write_av(dir, "stdowntype", "import std.fs\nimport std.sync\n\nclass Reader {\n  pub n: Int = 3\n}\n\nclass Mutex {\n  pub held: Bool = false\n}\n\nfn main {\n  r = Reader.new()\n  puts(r.n)\n  puts(Mutex.new().held)\n  m = sync.Mutex(Int).new(4)\n  puts(m.with((v) { v }))\n  if f = fs.open(\"/no/such/file\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.op)\n  }\n}\n")
+  mod_runs(c, compiler, dir, "stdowntype", "3\nfalse\n4\nopen\n", "std qualifier: a program's own Reader and Mutex beside import std.fs and std.sync are its own")
+  write_av(dir, "stdtypequal", "import std.json\nimport std.sync\nimport std.regex\nimport std.time\n\nstruct Holder {\n  m: sync.Mutex(Int)\n  ch: sync.Channel(String)\n}\n\nfn total(m: sync.Mutex(Int)): Int {\n  m.with((n) { n })\n}\n\nfn main {\n  h = Holder { m: sync.Mutex(Int).new(5), ch: sync.Channel(String).new(2) }\n  puts(total(h.m))\n  if j = json.Json.parse(\"[1,2]\") {\n    puts(\"parsed\")\n  }\n  if r = regex.Regex.compile(\"a+\") {\n    puts(r.count(\"caab\"))\n  }\n  t: time.Time = time.Time { sec: 0, nsec: 0 }\n  puts(t.iso())\n  xs: Array(sync.Mutex(Int)) = [h.m]\n  puts(xs.size)\n}\n")
+  mod_runs(c, compiler, dir, "stdtypequal", "5\nparsed\n1\n1970-01-01T00:00:00Z\n1\n", "std qualifier: sync.Mutex(Int), json.Json, regex.Regex and time.Time as types, constructors and type-level calls")
+  write_av(dir, "stdbarefield", "import std.sync\n\nstruct Holder {\n  m: Mutex(Int)\n}\n\nfn main {\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "stdbarefield", "Mutex needs its module's name: write sync.Mutex; a std module's types are not named bare", "std qualifier: a bare std type in a field")
+  write_av(dir, "stdbarector", "import std.sync\n\nfn main {\n  m = Mutex(Int).new(5)\n  puts(m.with((v) { v }))\n}\n")
+  mod_fails(c, compiler, dir, "stdbarector", "Mutex needs its module's name: write sync.Mutex; a std module's types are not named bare", "std qualifier: a bare generic constructor")
+  write_av(dir, "stdbaretypefn", "import std.json\n\nfn main {\n  if j = Json.parse(\"[1]\") {\n    puts(\"ok\")\n  }\n}\n")
+  mod_fails(c, compiler, dir, "stdbaretypefn", "Json needs its module's name: write json.Json; a std module's types are not named bare", "std qualifier: a bare type-level call")
+  write_av(dir, "stdbareparam", "import std.regex\n\nfn first(r: Regex): Int {\n  1\n}\n\nfn main {\n  puts(2)\n}\n")
+  mod_fails(c, compiler, dir, "stdbareparam", "Regex needs its module's name: write regex.Regex; a std module's types are not named bare", "std qualifier: a bare std type in a signature")
 }
 
 fn main: Int {

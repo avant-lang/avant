@@ -1,5 +1,6 @@
 import harness
 import backends
+import std.process
 
 // The collector's checks and the small defects.
 //
@@ -22,7 +23,7 @@ import backends
 // AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, AVANT_NURSERY=0,
 // AVANT_GC_STRESS=1); once the join freed the task, a second join freed it again.
 //
-// heap/inc_slice_mature.av and heap/array_reserve_mature.av (the
+// heap/inc_by_slice_mature.av and heap/array_reserve_mature.av (the
 // array_grow barrier) under AVANT_GC_STRESS=1 (the minimal
 // stress mode: a young collection at every outermost defer entry
 // and at every runtime C allocation): the known stdout, no stderr.
@@ -52,7 +53,7 @@ import backends
 // under AVANT_YOUNG_MB=1.
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["limit_defer", "task_pins", "task_records", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
+  names = ["limit_defer", "task_pins", "task_records", "inc_by_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -111,8 +112,8 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     wants.push("array: 26602720 26602720 26602720\nfield: 374755 374755\nlocal: 42 42 42\nloop: 2980\nbad: 0\npins left: 0\n")
     e += 1
   }
-  progs.push("inc_slice_mature")
-  keys.push("inc_slice_mature.stress")
+  progs.push("inc_by_slice_mature")
+  keys.push("inc_by_slice_mature.stress")
   envs.push("-u AVANT_GC_VERIFY AVANT_GC_STRESS=1")
   wants.push("0\n0\n0\n")
   progs.push("array_reserve_mature")
@@ -186,8 +187,8 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
   for p in parts {
-    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
-      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
     }
   }
   -1
@@ -550,8 +551,9 @@ fn test_late_starts(c: Checks, compiler: String, root: String, dir: String) {
 // class-field defaults, nested, and 20,000 of them kept across
 // collections and then filled: every environment prints what a compiler
 // that gave each empty array a buffer printed, with no stderr. And the
-// program allocates 1,280,144 bytes where it allocated 1,600,320: each of
-// its 20,011 empty arrays is 24 bytes, not 24 and 16.
+// program allocates 772,200 bytes where it allocated 1,600,320: each of
+// its 20,011 empty arrays is 24 bytes, not 24 and 16 (1,280,144), and the
+// array that keeps them grows its large buffer in place.
 fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/empty_arrays.av", "${dir}/empty_arrays", "${dir}/empty_arrays.log"))
@@ -575,7 +577,7 @@ fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/empty_arrays.g${e}.out"), want, "empty_arrays.av ${what}: every operation on an array with no buffer gives what it gave on an empty buffer")
     c.eq_str(log_text("${dir}/empty_arrays.g${e}.err"), "", "empty_arrays.av ${what}: no stderr")
   }
-  c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 1280144, "empty_arrays.av: an empty array is one object of 24 bytes (1,280,144 bytes allocated; 1,600,320 with a buffer each)")
+  c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 772200, "empty_arrays.av: an empty array is one object of 24 bytes, and the kept arrays' holder grows in place (772,200 bytes allocated; 1,280,144 with a growth by copy, 1,600,320 with a buffer each)")
 }
 
 // Under AVANT_GC_STRESS=1 a full
@@ -656,7 +658,7 @@ fn test_stress_held(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
     test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
     test_stress_inline(c, compiler, avant_test_root(), scratch_dir())

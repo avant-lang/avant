@@ -1,0 +1,825 @@
+// Module constants whose value is not a scalar computed when compiling.
+//
+// `const names = ["a", "b"]`, `const schema = Schema.new().str("body")`:
+// a constant whose value is not made of literals, other such constants
+// and operators (const_folds) is computed once, before `main`, and each
+// use reads it from a global slot (one load: no test that it is ready,
+// no lock). The values are computed in the start-up order: a module's
+// after those of the modules it imports, a module's own in the order
+// they are written (Program.startup_consts). A value that reads one
+// computed after it, directly or through the functions it calls, is a
+// compile error naming both (two that read each other are a cycle).
+// A value whose type is a union with failures (nil, an error) is its
+// success: a failure stops the program before `main`, naming the
+// constant.
+//
+// The value never changes, at any depth (the freeze), so any task reads
+// it without a lock:
+// - its type holds no Mutex or Channel (they are for values that
+//   change), no Buf, C pointer, function value or task handle: a
+//   compile error at the declaration naming the field;
+// - a class it holds has no field assigned outside its initialize,
+//   anywhere in the program (a class's field could otherwise change
+//   through any reference to its object): a compile error at the
+//   declaration naming the field and the assignment;
+// - a change written through the constant (`k.n = 1`, `k.items.push(x)`,
+//   `k[0] = v`, `h.delete(x)`, a method that changes its receiver or the
+//   arrays and hashes its object holds) is a compile error at the use,
+//   naming the constant;
+// - the arrays and hashes it holds are frozen when it is computed (the
+//   freeze a task's capture takes, for good), so a change through
+//   another path (a local holding one of its arrays, a function it is
+//   passed to) stops the program, naming the operation.
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import typed_ir
+import checker.names
+import checker
+import checker.spawn
+import receiver_writes
+
+// ---- which constants are computed before main
+
+// The constant e names written in module m, without a message (the
+// fold reports what is wrong): its own or the pub one of a module it
+// imports; `module.name`.
+pub fn (checker_self: Checker) const_quiet(e: Expr, m: String): ConstVal? {
+  if e.kind == ex_name() && e.type_args.size == 0 {
+    if cv = checker_self.const_at(m, e.ident) {
+      return cv
+    }
+    for info in checker_self.program.mods {
+      if info.name == m {
+        for imp in info.imports {
+          if cv2 = checker_self.const_at(imp, e.ident), d = cv2.def, d.vis {
+            return cv2
+          }
+        }
+      }
+    }
+    return nil
+  }
+  if e.kind == ex_field() {
+    if obj = e.object, obj.kind == ex_name() {
+      return checker_self.const_at(obj.ident, e.ident)
+    }
+  }
+  nil
+}
+
+pub fn const_fold_op(op: Int): Bool {
+  for k in [tk_plus(), tk_minus(), tk_star(), tk_slash(), tk_percent(), tk_less_less(), tk_greater_greater(), tk_amp(), tk_pipe(), tk_caret(), tk_eq_eq(), tk_not_eq(), tk_less(), tk_less_eq(), tk_greater(), tk_greater_eq(), tk_amp_amp(), tk_pipe_pipe()] {
+    if op == k {
+      return true
+    }
+  }
+  false
+}
+
+// Whether e, written in module m, is a scalar constant's value: literals,
+// such constants and the operators a constant's value folds. A constant
+// asked again while it is being asked is a cycle, which the fold names.
+pub fn (checker_self: Checker) const_folds(e: Expr, m: String): Bool {
+  k = e.kind
+  if k == ex_int() || k == ex_float() || k == ex_bool() {
+    return true
+  }
+  if k == ex_unary() {
+    if inner = e.inner, e.op == tk_minus() || e.op == tk_bang() || e.op == tk_tilde() {
+      return checker_self.const_folds(inner, m)
+    }
+    return false
+  }
+  if k == ex_binary() {
+    if l = e.left, r = e.right, const_fold_op(e.op) {
+      return checker_self.const_folds(l, m) && checker_self.const_folds(r, m)
+    }
+    return false
+  }
+  if k == ex_name() || k == ex_field() {
+    if cv = checker_self.const_quiet(e, m) {
+      return checker_self.const_shape(cv)
+    }
+  }
+  false
+}
+
+// Whether cv is a scalar computed when compiling (memoized in cv.shape).
+pub fn (checker_self: Checker) const_shape(cv: ConstVal): Bool {
+  if cv.shape == 1 || cv.shape == 2 {
+    return true
+  }
+  if cv.shape == 3 {
+    return false
+  }
+  if d = cv.def {
+    cv.shape = 1
+    if checker_self.const_folds(d.value, d.mod_name) {
+      cv.shape = 2
+      return true
+    }
+    cv.shape = 3
+    d.startup = true
+    return false
+  }
+  true
+}
+
+// The modules in start-up order: each after the modules it imports (a
+// cycle of imports keeps the order the walk meets them in), the root
+// module last; a module no import reaches after them.
+pub fn (checker_self: Checker) const_module_order: Array(String) {
+  out: Array(String) = []
+  seen = Set(String).new()
+  checker_self.const_order_visit(checker_self.program.root_module, seen, out)
+  for info in checker_self.program.mods {
+    checker_self.const_order_visit(info.name, seen, out)
+  }
+  for d in checker_self.program.consts {
+    if !seen.has(d.mod_name) {
+      seen.add(d.mod_name)
+      out.push(d.mod_name)
+    }
+  }
+  out
+}
+
+pub fn (checker_self: Checker) const_order_visit(m: String, seen: Set(String), out: Array(String)) {
+  if !seen.add(m) {
+    return
+  }
+  for info in checker_self.program.mods {
+    if info.name == m {
+      for imp in info.imports {
+        checker_self.const_order_visit(imp, seen, out)
+      }
+    }
+  }
+  out.push(m)
+}
+
+// The global slot's symbol of the constant name of module m.
+pub fn const_slot_symbol(m: String, name: String): String {
+  "av.const.${m}.${name}"
+}
+
+// ---- the values, checked before every function's body
+
+pub fn (checker_self: Checker) check_const_inits {
+  if checker_self.const_list.size == 0 {
+    return
+  }
+  any = false
+  for d in checker_self.program.consts {
+    if d.startup {
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  n = 0
+  for m in checker_self.const_module_order() {
+    for d2 in checker_self.program.consts {
+      if d2.startup && d2.mod_name == m && d2.order < 0 {
+        d2.order = n
+        n += 1
+        d2.slot = const_slot_symbol(d2.mod_name, d2.name)
+        checker_self.program.startup_consts.push(d2)
+      }
+    }
+  }
+  for d3 in checker_self.program.startup_consts {
+    checker_self.check_const_init(d3)
+  }
+}
+
+pub fn (checker_self: Checker) check_const_init(d: ConstDef) {
+  fnn = Function.new(d.loc, "const ${d.name}")
+  fnn.mod_name = d.mod_name
+  fnn.emit_name = d.slot
+  fnn.body.push(stmt_expr(d.loc, d.value))
+  d.init = fnn
+  checker_self.const_checking = d.order
+  got = checker_self.check_const_value(fnn, d.value)
+  checker_self.const_checking = -1
+  if t = got {
+    checker_self.clear_poison()
+    vt = t
+    if t.is_union() {
+      if sp = ty_success_part(t) {
+        vt = sp
+      } else if !ty_has_success(t) {
+        checker_self.fail(d.loc, "the value of constant ${d.name} is a ${t.show()}, which holds no value but a failure")
+        return
+      }
+    }
+    if vt.is_void() || vt.is_nil() {
+      checker_self.fail(d.loc, "the value of constant ${d.name} gives nothing: a constant names a value")
+      return
+    }
+    seen = Set(String).new()
+    why = checker_self.const_type_problem(vt, d.name, seen)
+    if why.size > 0 {
+      checker_self.fail(d.loc, "the constant ${d.name} never changes, so it cannot hold ${why}")
+      return
+    }
+    d.ty = vt
+  }
+}
+
+// What of type t (reached as path) a constant cannot hold, or "": a
+// Mutex or a Channel (they are for values that change), a Buf, a C
+// pointer or layout, a function value, a task handle, an interface.
+pub fn (checker_self: Checker) const_type_problem(t: Ty, path: String, seen: Set(String)): String {
+  if checker_self.is_sync_ty(t, "Mutex") || checker_self.is_sync_ty(t, "Channel") {
+    return "a ${t.show()} (${path}): a Mutex or a Channel is for a value that changes"
+  }
+  if t.is_buf() {
+    return "a Buf (${path}), which changes in place: use Bytes"
+  }
+  if t.is_ptr() || t.is_clayout() || t.is_carray() || t.is_opaque() {
+    return "a C value (${path}: ${t.show()}), which C code may change"
+  }
+  if t.is_fn() {
+    return "a function value (${path}: ${t.show()})"
+  }
+  if t.is_join() || t.is_hasher() || t.is_iface() || t.is_module() {
+    return "a ${t.show()} (${path})"
+  }
+  if t.is_array() {
+    if e = t.inner {
+      return checker_self.const_type_problem(e, "an element of ${path}", seen)
+    }
+    return ""
+  }
+  if t.is_hash() {
+    if k = t.key {
+      why = checker_self.const_type_problem(k, "a key of ${path}", seen)
+      if why.size > 0 {
+        return why
+      }
+    }
+    if v = t.val {
+      return checker_self.const_type_problem(v, "a value of ${path}", seen)
+    }
+    return ""
+  }
+  if t.is_union() {
+    for m in t.members {
+      why2 = checker_self.const_type_problem(m, path, seen)
+      if why2.size > 0 {
+        return why2
+      }
+    }
+    return ""
+  }
+  if t.is_struct() || t.is_class() {
+    if !seen.add("${t.mod_name}.${t.show()}") {
+      return ""
+    }
+    for f in t.fields {
+      why3 = checker_self.const_type_problem(f.ty, "${path}.${f.name}", seen)
+      if why3.size > 0 {
+        return why3
+      }
+    }
+  }
+  ""
+}
+
+// The classes a value of type t holds, at any depth (each once).
+pub fn const_classes(t: Ty, seen: Set(String), out: Array(Ty)) {
+  if t.is_array() {
+    if e = t.inner {
+      const_classes(e, seen, out)
+    }
+    return
+  }
+  if t.is_hash() {
+    if k = t.key {
+      const_classes(k, seen, out)
+    }
+    if v = t.val {
+      const_classes(v, seen, out)
+    }
+    return
+  }
+  if t.is_union() {
+    for m in t.members {
+      const_classes(m, seen, out)
+    }
+    return
+  }
+  if t.is_struct() || t.is_class() {
+    if !seen.add("${t.mod_name}.${t.show()}") {
+      return
+    }
+    if t.is_class() {
+      out.push(t)
+    }
+    for f in t.fields {
+      const_classes(f.ty, seen, out)
+    }
+  }
+}
+
+// Whether a value of type t holds an Array or a Hash (a Set), which the
+// start-up freezes.
+pub fn const_holds_container(t: Ty, seen: Set(String)): Bool {
+  if t.is_array() || t.is_hash() {
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if const_holds_container(m, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() || t.is_class() {
+    if !seen.add("${t.mod_name}.${t.show()}") {
+      return false
+    }
+    for f in t.fields {
+      if const_holds_container(f.ty, seen) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// ---- a use
+
+// The startup constant e names where it stands, or nil.
+pub fn (checker_self: Checker) startup_const_named(e: Expr): ConstDef? {
+  if cv = checker_self.const_named(e), d = cv.def, d.startup {
+    return d
+  }
+  nil
+}
+
+// A read of a constant computed before main: e becomes its slot's read
+// (ex_const_ref), of the value's type; nil when e names none.
+pub fn (checker_self: Checker) const_read(e: Expr): Ty? {
+  if checker_self.const_list.size == 0 {
+    return nil
+  }
+  if d = checker_self.startup_const_named(e) {
+    if checker_self.const_checking >= 0 && d.order >= checker_self.const_checking {
+      if d.order == checker_self.const_checking {
+        checker_self.fail(e.loc, "the value of constant ${d.name} reads ${d.name} itself")
+      } else {
+        checker_self.fail(e.loc, "this value reads the constant ${d.name}, which is computed after it (${checker_self.const_where(d)}): constants are computed in the order they are written, a module's after those of the modules it imports")
+      }
+      return checker_self.t_int()
+    }
+    e.kind = ex_const_ref()
+    e.ident = d.name
+    e.mod_name = d.mod_name
+    e.resolved = d.slot
+    e.object = nil
+    if t = d.ty {
+      return t
+    }
+    // Its value was refused: what reads it adds nothing.
+    checker_self.read_failed_name()
+    return checker_self.t_int()
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) const_where(d: ConstDef): String {
+  "declared at ${d.loc.show()}"
+}
+
+// The type of a read already made (a node checked again).
+pub fn (checker_self: Checker) const_ref_ty(e: Expr): Ty {
+  for d in checker_self.program.startup_consts {
+    if d.slot == e.resolved {
+      if t = d.ty {
+        return t
+      }
+    }
+  }
+  checker_self.read_failed_name()
+  checker_self.t_int()
+}
+
+// ---- after every body: the freeze and the order
+
+// The constant at the root of a place or a value read from it (`k`,
+// `k.a.b`, `k[i].c`, `k.items[0]`), or nil.
+pub fn (checker_self: Checker) const_root(e: Expr): ConstDef? {
+  x = e
+  while true {
+    if x.kind == ex_const_ref() {
+      for d in checker_self.program.startup_consts {
+        if d.slot == x.resolved {
+          return d
+        }
+      }
+      return nil
+    }
+    if x.kind == ex_field() && !x.method_call {
+      if o = x.object {
+        x = o
+        continue
+      }
+    }
+    if x.kind == ex_index() {
+      if l = x.left {
+        x = l
+        continue
+      }
+    }
+    return nil
+  }
+  nil
+}
+
+// Every statement and expression of a body, lambdas' included.
+pub fn const_flat(body: Array(Stmt), stmts: Array(Stmt), exprs: Array(Expr)) {
+  for st in body {
+    stmts.push(st)
+    for e in [st.expr, st.cond, st.target, st.value] {
+      if x = e {
+        const_flat_expr(x, stmts, exprs)
+      }
+    }
+    const_flat(st.pre, stmts, exprs)
+    const_flat(st.then_body, stmts, exprs)
+    const_flat(st.else_body, stmts, exprs)
+    const_flat(st.body, stmts, exprs)
+  }
+}
+
+pub fn const_flat_expr(e: Expr, stmts: Array(Stmt), exprs: Array(Expr)) {
+  exprs.push(e)
+  if b = e.block {
+    const_flat(b.body, stmts, exprs)
+  }
+  for cs in e.cases {
+    const_flat(cs.body, stmts, exprs)
+  }
+  const_flat(e.else_body, stmts, exprs)
+  for x in [e.inner, e.left, e.right, e.object, e.receiver, e.cond, e.size_expr] {
+    if y = x {
+      const_flat_expr(y, stmts, exprs)
+    }
+  }
+  for a in e.args {
+    const_flat_expr(a, stmts, exprs)
+  }
+  for a2 in e.elems {
+    const_flat_expr(a2, stmts, exprs)
+  }
+  for a3 in e.field_exprs {
+    const_flat_expr(a3, stmts, exprs)
+  }
+  for p in e.parts {
+    if y2 = p.expr {
+      const_flat_expr(y2, stmts, exprs)
+    }
+  }
+}
+
+// The checks once every body is: the changes written through a
+// constant, the classes' fields, and the order of the values.
+pub fn (checker_self: Checker) check_const_values(fns: Array(Function)) {
+  if checker_self.program.startup_consts.size == 0 || checker_self.any_err() {
+    return
+  }
+  all: Array(Function) = []
+  for f in fns {
+    if !f.generic {
+      all.push(f)
+    }
+  }
+  all.concat(checker_self.pending)
+  by_name = Hash(String, Int).new()
+  for i in 0..all.size {
+    if all[i].emit_name.size > 0 && !by_name.has(all[i].emit_name) {
+      by_name[all[i].emit_name] = i
+    }
+  }
+  bodies: Array(Function) = []
+  bodies.concat(all)
+  for d in checker_self.program.startup_consts {
+    if f = d.init {
+      bodies.push(f)
+    }
+  }
+  rw = ReceiverWrites.new()
+  for f2 in all {
+    rw.add(f2)
+  }
+  changes = Hash(String, Int).new()
+  for fb in bodies {
+    stmts: Array(Stmt) = []
+    exprs: Array(Expr) = []
+    const_flat(fb.body, stmts, exprs)
+    for st in stmts {
+      if st.kind == st_assign() {
+        if t = st.target, d2 = checker_self.const_root(t) {
+          checker_self.clear_poison()
+          checker_self.fail(t.loc, "this changes the constant ${d2.name}: a constant's value never changes, at any depth (change a copy: clone())")
+        }
+      }
+    }
+    for e in exprs {
+      checker_self.const_change_call(e, rw, all, by_name, changes)
+    }
+  }
+  if checker_self.any_err() {
+    return
+  }
+  checker_self.check_const_classes(all)
+  if checker_self.any_err() {
+    return
+  }
+  checker_self.check_const_order(all, by_name)
+}
+
+// A call (or a mutator written without parentheses) that changes what
+// its receiver, rooted at a constant, holds: an Array's or a Hash's
+// mutator, a struct method that writes its receiver, a class method that
+// changes its object's arrays or hashes.
+pub fn (checker_self: Checker) const_change_call(e: Expr, rw: ReceiverWrites, all: Array(Function), by_name: Hash(String, Int), changes: Hash(String, Int)) {
+  recv: Expr? = nil
+  name = ""
+  if e.kind == ex_call() {
+    if r = e.receiver {
+      recv = r
+      name = e.callee
+    } else if verb_template_mutator(e.callee) && e.args.size > 0 {
+      recv = e.args[0]
+      name = e.callee
+    }
+  } else if e.kind == ex_field() && e.method_call {
+    if o = e.object {
+      recv = o
+      name = e.ident
+    }
+  }
+  if r2 = recv, rt = r2.ty, d = checker_self.const_root(r2) {
+    hit = false
+    if rt.is_array() && (checker_self.array_mutator(name) || verb_template_mutator(name)) {
+      hit = true
+    } else if rt.is_hash() && hash_mutator(name) {
+      hit = true
+    } else if e.resolved.size > 0 && rt.is_struct() && rw.writes(e.resolved) {
+      hit = true
+    } else if e.resolved.size > 0 && rt.is_class() && checker_self.method_changes(e.resolved, all, by_name, changes) {
+      hit = true
+    }
+    if hit {
+      checker_self.clear_poison()
+      checker_self.fail(e.loc, "${name} would change the constant ${d.name}: a constant's value never changes, at any depth (change a copy: clone())")
+    }
+  }
+}
+
+// Whether the class method sym changes what its object holds: a mutator
+// call on an Array or a Hash reached from self, or a call of such a
+// method on self or an object reached from it (memoized in changes: 1
+// changes, 2 does not, 3 being asked).
+pub fn (checker_self: Checker) method_changes(sym: String, all: Array(Function), by_name: Hash(String, Int), changes: Hash(String, Int)): Bool {
+  if got = changes.get(sym) {
+    return got == 1
+  }
+  ix = by_name.get(sym) ?? return false
+  f = all[ix]
+  if f.owner.size == 0 || f.type_method {
+    changes[sym] = 2
+    return false
+  }
+  changes[sym] = 3
+  recv = fn_self_name(f)
+  stmts: Array(Stmt) = []
+  exprs: Array(Expr) = []
+  const_flat(f.body, stmts, exprs)
+  hit = false
+  for e in exprs {
+    if hit {
+      break
+    }
+    r: Expr? = nil
+    name = ""
+    if e.kind == ex_call() {
+      if rr = e.receiver {
+        r = rr
+        name = e.callee
+      } else if verb_template_mutator(e.callee) && e.args.size > 0 {
+        r = e.args[0]
+        name = e.callee
+      }
+    } else if e.kind == ex_field() && e.method_call {
+      if o = e.object {
+        r = o
+        name = e.ident
+      }
+    }
+    if r2 = r, rt = r2.ty, const_self_rooted(r2, recv) {
+      if rt.is_array() && (checker_self.array_mutator(name) || verb_template_mutator(name)) {
+        hit = true
+      } else if rt.is_hash() && hash_mutator(name) {
+        hit = true
+      } else if e.resolved.size > 0 && (rt.is_class() || rt.is_struct()) && e.resolved != sym && checker_self.method_changes(e.resolved, all, by_name, changes) {
+        hit = true
+      }
+    }
+  }
+  if !hit {
+    // An element store or a hash store through self's places.
+    for st in stmts {
+      if st.kind == st_assign() {
+        if t = st.target, t.kind == ex_index() {
+          if l = t.left, const_self_rooted(l, recv) {
+            hit = true
+          }
+        }
+      }
+    }
+  }
+  if hit {
+    changes[sym] = 1
+  } else {
+    changes[sym] = 2
+  }
+  hit
+}
+
+// Whether e is the receiver named recv (or a bare field of it) or a
+// value reached from it by fields and indexes.
+pub fn const_self_rooted(e: Expr, recv: String): Bool {
+  x = e
+  while true {
+    if x.kind == ex_name() {
+      return x.ident == recv || x.implicit_field
+    }
+    if x.kind == ex_field() && !x.method_call {
+      if o = x.object {
+        x = o
+        continue
+      }
+    }
+    if x.kind == ex_index() {
+      if l = x.left {
+        x = l
+        continue
+      }
+    }
+    return false
+  }
+  false
+}
+
+// A class a constant holds keeps its fields once made: no field of it
+// is assigned outside its initialize, anywhere.
+pub fn (checker_self: Checker) check_const_classes(all: Array(Function)) {
+  cls: Array(Ty) = []
+  owners: Array(ConstDef) = []
+  seen = Set(String).new()
+  for d in checker_self.program.startup_consts {
+    if t = d.ty {
+      got: Array(Ty) = []
+      const_classes(t, seen, got)
+      for c in got {
+        cls.push(c)
+        owners.push(d)
+      }
+    }
+  }
+  if cls.size == 0 {
+    return
+  }
+  for fnn in all {
+    in_init = ""
+    if fnn.name == "initialize" && fnn.owner.size > 0 {
+      om = fnn.owner_mod
+      if om.size == 0 {
+        om = fnn.mod_name
+      }
+      in_init = "${om}.${fnn.owner}"
+    }
+    stmts: Array(Stmt) = []
+    exprs: Array(Expr) = []
+    const_flat(fnn.body, stmts, exprs)
+    for st in stmts {
+      if st.kind != st_assign() {
+        continue
+      }
+      if t = st.target {
+        ot: Ty? = nil
+        self_store = false
+        if t.kind == ex_field() {
+          if obj = t.object {
+            ot = obj.ty
+            self_store = obj.kind == ex_name() && obj.ident == "self"
+          }
+        } else if t.kind == ex_name() && t.implicit_field {
+          ot = checker_self.const_owner_of(fnn)
+          self_store = true
+        }
+        if o = ot, o.is_class() {
+          for i in 0..cls.size {
+            c = cls[i]
+            if o.name == c.name && o.mod_name == c.mod_name && !(self_store && in_init == "${c.mod_name}.${c.name}") {
+              checker_self.clear_poison()
+              checker_self.fail(owners[i].loc, "the constant ${owners[i].name} never changes, so it cannot hold a ${c.show()}: its field ${t.ident} is assigned at ${t.loc.show()}, outside initialize; set the field in initialize, or build the value from a struct")
+              return
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) const_owner_of(fnn: Function): Ty? {
+  if fnn.owner.size == 0 {
+    return nil
+  }
+  if fnn.owner_mod.size > 0 {
+    if o = checker_self.resolver.get_named_in(fnn.owner_mod, fnn.owner) {
+      return o
+    }
+  }
+  checker_self.resolver.get_named(fnn.owner)
+}
+
+// Each value reads only values computed before it: the constants its
+// expression reads, and those the functions it calls read, at any depth
+// (a constructor's initialize and its fields' defaults included).
+pub fn (checker_self: Checker) check_const_order(all: Array(Function), by_name: Hash(String, Int)) {
+  for d in checker_self.program.startup_consts {
+    if f = d.init {
+      todo: Array(Function) = []
+      via: Array(String) = []
+      seen = Set(String).new()
+      todo.push(f)
+      via.push("")
+      i = 0
+      while i < todo.size {
+        g = todo[i]
+        how = via[i]
+        i += 1
+        stmts: Array(Stmt) = []
+        exprs: Array(Expr) = []
+        const_flat(g.body, stmts, exprs)
+        for e in exprs {
+          if e.kind == ex_const_ref() {
+            for d2 in checker_self.program.startup_consts {
+              if d2.slot == e.resolved && d2.order >= d.order {
+                checker_self.clear_poison()
+                if d2.order == d.order {
+                  checker_self.fail(d.loc, "the value of constant ${d.name} reads ${d.name} itself (through ${how})")
+                } else {
+                  checker_self.fail(d.loc, "the value of constant ${d.name} reads the constant ${d2.name} through ${how}, and ${d2.name} is computed after it (${checker_self.const_where(d2)}): constants are computed in the order they are written, a module's after those of the modules it imports")
+                }
+                return
+              }
+            }
+          }
+          callees: Array(String) = []
+          if e.resolved.size > 0 && e.kind != ex_const_ref() {
+            callees.push(e.resolved)
+          }
+          if e.kind == ex_call() && e.callee == "new" {
+            if t = e.ty, t.is_class() || t.is_struct() {
+              for g2 in all {
+                if g2.name == "initialize" && g2.owner == t.name && (g2.owner_mod == t.mod_name || g2.mod_name == t.mod_name) {
+                  callees.push(g2.emit_name)
+                }
+              }
+            }
+          }
+          for c in callees {
+            if seen.add(c) {
+              if ix = by_name.get(c) {
+                todo.push(all[ix])
+                shown = all[ix].name
+                if all[ix].owner.size > 0 {
+                  shown = "${all[ix].owner}.${all[ix].name}"
+                }
+                if how.size > 0 {
+                  via.push("${how}, ${shown}")
+                } else {
+                  via.push(shown)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

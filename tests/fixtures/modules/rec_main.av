@@ -1,0 +1,47 @@
+import rec_data
+
+// A recursive alias across modules, kept alive while the program
+// allocates: every tree must read back the same after collections.
+
+type Doc = rec_data.Data
+
+class Junk {
+  pub v: Int = 0
+}
+
+fn churn(n: Int): Int {
+  s = 0
+  for i in 0..n {
+    j = Junk.new()
+    j.v = i
+    s = s &+ j.v
+  }
+  s
+}
+
+fn main {
+  keep: Array(Doc) = []
+  sums: Array(Int) = []
+  for i in 0..40 {
+    t = rec_data.tree(4, i)
+    keep.push(t)
+    sums.push(rec_data.sum(t))
+    churn(5000)
+  }
+  churn(200000)
+  wrong = 0
+  for i in 0..keep.size {
+    if rec_data.sum(keep[i]) != sums[i] {
+      wrong += 1
+    }
+  }
+  puts(wrong)
+  deep: Doc = 0
+  for i in 0..5000 {
+    one: Array(Doc) = [deep, "d${i}"]
+    deep = one
+  }
+  churn(100000)
+  puts(rec_data.sum(deep))
+  puts(sums[7])
+}

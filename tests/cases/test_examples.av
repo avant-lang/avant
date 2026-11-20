@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn expect_example(c: Checks, compiler: String, root: String, stamp: Int, stem: String, extra: Array(String)) {
   src = "${root}/examples/${stem}.av"
@@ -6,8 +8,8 @@ fn expect_example(c: Checks, compiler: String, root: String, stamp: Int, stem: S
   log = "${scratch()}/examples-${stamp}-${stem}.txt"
   code = run_av_cmd_flags(compiler, src, log, extra)
   c.eq_int(code, 0, "run ${stem}.av")
-  if got = file_read(log) {
-    if want = file_read(want_path) {
+  if got = fs.read(log) {
+    if want = fs.read(want_path) {
       c.eq_str(got, want, "${stem}.av stdout")
     } else {
       c.expect(false, "expected ${stem}.out")
@@ -19,7 +21,7 @@ fn expect_example(c: Checks, compiler: String, root: String, stamp: Int, stem: S
 
 fn test_examples(c: Checks) {
   c.suite("tests/cases/test_examples.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
     none: Array(String) = []
@@ -40,7 +42,7 @@ fn test_examples(c: Checks) {
     zlog = "${scratch()}/examples-${stamp}-zlib.txt"
     zcode = run_av_cmd_flags(compiler, zsrc, zlog, zflags)
     c.eq_int(zcode, 0, "run zlib.av")
-    if zgot = file_read(zlog) {
+    if zgot = fs.read(zlog) {
       line = nth_line(zgot, 0)
       if line.size > 0 {
         digit = false
@@ -69,7 +71,7 @@ fn test_examples(c: Checks) {
     mat_log = "${scratch()}/examples-${stamp}-matmul.txt"
     mcode = run_av_cmd(compiler, "${root}/examples/matmul.av", mat_log)
     c.eq_int(mcode, 0, "run matmul.av")
-    if mout = file_read(mat_log) {
+    if mout = fs.read(mat_log) {
       c.eq_int(count_lines(mout), 4, "matmul four lines")
       a = nth_line(mout, 0)
       b = nth_line(mout, 1)

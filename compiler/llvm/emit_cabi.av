@@ -208,9 +208,7 @@ fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
   }
   for v in plan.args {
     if v.kind == cabi_parts() {
-      for pt in v.parts {
-        out.push(pt)
-      }
+      out.concat(v.parts)
     } else if v.kind == cabi_memory() {
       out.push("ptr byval(${ll_type_text(ts, v.ty)}) align 8")
     } else if v.kind == cabi_direct() {
@@ -294,7 +292,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   ptypes: Array(String) = []
   for t in ptexts {
     short = t
-    if str_starts(t, "ptr ") {
+    if t.starts_with("ptr ") {
       short = "ptr"
     } else if t == "i1 zeroext" {
       short = "i1"

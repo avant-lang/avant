@@ -231,6 +231,7 @@ Block *gc_new_block(uint8_t space) {
     }
     b = gc_block_take();
     gc_heap.heap_bytes += BLOCK_SIZE;
+    gc_note_cycle_peak();
     gc_note_peak();
   }
   /* Block memory is not pre-zeroed. Every allocation zeroes its own
@@ -625,7 +626,10 @@ static __attribute__((noinline)) void inline_walk(uint8_t *lo, uint8_t *hi) {
   uint64_t n = 0;
   while (p < hi) {
     const AvantHeader *h = (const AvantHeader *)p;
-    if (check && (h->flags != (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) || h->size == 0)) {
+    /* The runtime's own inline strings are born with their tag
+     * (avant_rt.h, avant_alloc_try_inline). */
+    uint16_t fl = h->type_id == AVANT_TYPE_BYTES ? (uint16_t)(h->flags & ~AVANT_FLAG_STRMETA) : h->flags;
+    if (check && (fl != (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) || h->size == 0)) {
       gc_die("avant gc verify: the inline allocation sequence left a header that is not a fresh young object's");
     }
     if (check) {
@@ -1477,6 +1481,51 @@ __attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uin
     avant_since_gc += total;
   }
   pthread_mutex_unlock(&gc_heap.world);
+  return obj;
+}
+
+/* A large Bytes of NBYTES (SCALAR_LOS_MIN or more) whose payload is
+ * not zeroed: it holds whatever its pages held, for runtime C that
+ * writes every byte it later reads (avant_json_parse's pool: yyjson
+ * writes its text copy and values before it reads them; a Buf's storage
+ * and a buffer of scalars, past their size). Safe for the
+ * collector because a Bytes payload has no reference word: no trace,
+ * fix-up, verifier check or barrier reads its words, the field rule
+ * applies only to words a type map names, and a large object never
+ * moves. Below SCALAR_LOS_MIN the object would be a block object, which
+ * the young copy moves, so the size is the caller's to raise; such a
+ * request gets an ordinary zeroed object. */
+__attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t nbytes) {
+  if (nbytes < SCALAR_LOS_MIN) {
+    return avant_alloc(nbytes, AVANT_TYPE_BYTES);
+  }
+  return avant_alloc_unzeroed(nbytes, AVANT_TYPE_BYTES);
+}
+
+/* An object whose payload need not be zeroed (avant_rt.h): the caller
+ * writes every byte before anything reads it. Only a large object (a run
+ * of whole pages, which no collector moves) of a type with no reference
+ * word is left unzeroed (take_run and the spare read los_nozero; the one
+ * large-object allocation avant_alloc makes is this object's, a
+ * collection it runs first allocates none): the collector, the verifier
+ * and the barriers read every reference word a type map names, and a
+ * stale one would name a dead object, so any other type is zeroed as
+ * avant_alloc zeroes it (Bytes and the element buffers of scalars are
+ * type 0). A block object is zeroed too: the check modes' walk of the
+ * young cursor's run (inline_check) would read a hole's poison in a
+ * payload left as it was, and zeroing a few kilobytes in the cache costs
+ * little. Generated code calls it for `Array(T).new(n, value)` of
+ * scalars, whose fill writes every element, and the runtime for a Buf's
+ * storage past its size. */
+void *avant_alloc_unzeroed(uint64_t nbytes, uint32_t type_id) {
+  void *obj;
+  if (type_id != AVANT_TYPE_BYTES) {
+    return avant_alloc(nbytes, type_id);
+  }
+  gc_init();
+  gc_thread.los_nozero = 1;
+  obj = avant_alloc(nbytes, type_id);
+  gc_thread.los_nozero = 0;
   return obj;
 }
 

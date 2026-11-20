@@ -10,8 +10,9 @@
 # in LADIR/args/SLUG. Each program (every one in LADIR/args, or the SLUGs
 # given) is compiled by ROOT's C' from that directory with its arguments,
 # then run once from it under `perf stat -x, -e instructions:u` with an
-# empty environment but PATH and HOME (an AVANT_* variable would change
-# the collector's work). OUT.tsv gets one line per program, sorted:
+# empty environment but PATH, HOME and AVANT_HASH_SEED=0 (another AVANT_*
+# variable would change the collector's work; the fixed hash seed makes
+# every run probe its hashes alike, so the count repeats). OUT.tsv gets one line per program, sorted:
 #
 #   SLUG <TAB> INSTRUCTIONS <TAB> MD5 <TAB> STATUS <TAB> FIRST LINE
 #
@@ -32,7 +33,7 @@ if [ "${1:-}" = --one ]; then
   if ! (cd "$LAC_SRC" && env -u AVANT_ROOT timeout -k 10 300 "$LAC_ROOT/bin/avant-c-llvm" compile "$s.av" "$t" "$@" < /dev/null > "$t.compile.log" 2>&1); then
     printf '%s\tcompile-failed\t-\t-\t-\n' "$s"; exit 0
   fi
-  (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
+  (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
   rc=$?
   n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
   printf '%s\t%s\t%s\t%s\t%s\n' "$s" "${n:--}" "$(md5sum < "$t.out" | cut -c1-12)" "$rc" "$(head -n 1 "$t.out" | cut -c1-60)"

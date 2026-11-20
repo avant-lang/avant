@@ -1,0 +1,45 @@
+// A class whose fields are only a Mutex and a Channel, set in its
+// initialize and never assigned again, crosses as a handle: captured by
+// spawn and .parallel, held in an Array they capture, sent on a Channel.
+import std.sync
+
+class Store {
+  m: sync.Mutex(Hash(String, Int)) = sync.Mutex(Hash(String, Int)).new(Hash(String, Int).new())
+  done: sync.Channel(Int)
+
+  fn initialize(n: Int) {
+    self.done = sync.Channel(Int).new(n)
+  }
+
+  pub fn put(k: String, v: Int) {
+    m.with((h) { h[k] = v })
+  }
+
+  pub fn get(k: String): Int {
+    m.with((h) { h[k] ?? -1 })
+  }
+}
+
+fn main {
+  s = Store.new(4)
+  hs: Array(JoinHandle(Void)) = []
+  for i in 0..4 {
+    hs.push(spawn {
+      s.put("k${i}", i * 10)
+      _ = s.done.send(i)
+    })
+  }
+  for h in hs {
+    _ = h.join()
+  }
+  puts(s.get("k3"))
+  stores = [s, Store.new(1)]
+  r = [0, 1].parallel((i) { stores[i].get("k1") })
+  puts(r[0])
+  puts(r[1])
+  ch = sync.Channel(Store).new(1)
+  _ = ch.send(s)
+  if got = ch.recv() {
+    puts(got.get("k2"))
+  }
+}

@@ -1,8 +1,10 @@
 import harness
+import std.fs
+import std.process
 
 fn test_safepoints(c: Checks) {
   c.suite("tests/cases/test_safepoints.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/safepoints-${stamp}-churn.av"
     bin = "${scratch()}/safepoints-${stamp}-churn"
@@ -10,25 +12,25 @@ fn test_safepoints(c: Checks) {
     rlog = "${scratch()}/safepoints-${stamp}-run.log"
     slog = "${scratch()}/safepoints-${stamp}-stats.log"
     body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  if l = n.left {\n    if r = n.right {\n      return check(l, depth - 1) + check(r, depth - 1) + n.item\n    }\n  }\n  n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
-    c.wrote(file_write(src, body), "write nursery churn")
+    c.wrote(fs.write(src, body), "write nursery churn")
     cc = compile_av(compiler, src, bin, clog)
     c.eq_int(cc, 0, "compile nursery churn")
-    if clogt = file_read(clog) {
+    if clogt = fs.read(clog) {
       c.expect(!clogt.contains("DT_TEXTREL"), "compile has no TEXTREL warning")
       c.expect(!clogt.contains("llvm_stackmaps"), "compile has no stackmap reloc warning")
     } else {
       c.expect(true, "compile has no TEXTREL warning")
       c.expect(true, "compile has no stackmap reloc warning")
     }
-    if file_exists(bin) {
+    if fs.exists(bin) {
       chmod_x(bin)
       cap: Array(String) = []
       cap.push("AVANT_NURSERY=1")
       cap.push("AVANT_HEAP_MAX_MB=3")
       cap.push(bin)
-      rcode = process_run_out("/usr/bin/env", cap, rlog) ?? -1
+      rcode = run_out("/usr/bin/env", cap, rlog) ?? -1
       c.eq_int(rcode, 0, "churn under 3MiB heap")
-      if out = file_read(rlog) {
+      if out = fs.read(rlog) {
         c.eq_str(out, "251535360\n", "churn checksum")
       } else {
         c.expect(false, "read churn stdout")
@@ -39,9 +41,9 @@ fn test_safepoints(c: Checks) {
       st.push("AVANT_YOUNG_MB=1")
       st.push("AVANT_GC_STATS=1")
       st.push(bin)
-      scode = process_run_out("/usr/bin/env", st, slog) ?? -1
+      scode = run_out("/usr/bin/env", st, slog) ?? -1
       c.eq_int(scode, 0, "churn with gc stats")
-      if stats = file_read(slog) {
+      if stats = fs.read(slog) {
         c.expect(stats.contains("young="), "gc stats printed")
         c.expect(!stats.contains("young=0 full"), "copying nursery ran")
         // Candidate E copies survivors, candidate S promotes them in
@@ -56,9 +58,9 @@ fn test_safepoints(c: Checks) {
       disc.push("AVANT_NURSERY=1")
       disc.push("AVANT_HEAP_MAX_MB=3")
       disc.push(bin)
-      dcode = process_run_out("/usr/bin/env", disc, dlog) ?? -1
+      dcode = run_out("/usr/bin/env", disc, dlog) ?? -1
       c.eq_int(dcode, 0, "churn with from-space discarded")
-      if dout = file_read(dlog) {
+      if dout = fs.read(dlog) {
         c.eq_str(dout, "251535360\n", "churn checksum after discard")
       } else {
         c.expect(false, "read discard stdout")
@@ -69,18 +71,18 @@ fn test_safepoints(c: Checks) {
       blog = "${scratch()}/safepoints-${stamp}-barrier-cc.log"
       brun = "${scratch()}/safepoints-${stamp}-barrier-run.log"
       bbody = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
-      c.wrote(file_write(bsrc, bbody), "write old-object store")
+      c.wrote(fs.write(bsrc, bbody), "write old-object store")
       bcc = compile_av(compiler, bsrc, bbin, blog)
       c.eq_int(bcc, 0, "compile old-object store")
-      if file_exists(bbin) {
+      if fs.exists(bbin) {
         chmod_x(bbin)
         benv: Array(String) = []
         benv.push("AVANT_NURSERY=1")
         benv.push("AVANT_HEAP_MAX_MB=3")
         benv.push(bbin)
-        bcode = process_run_out("/usr/bin/env", benv, brun) ?? -1
+        bcode = run_out("/usr/bin/env", benv, brun) ?? -1
         c.eq_int(bcode, 0, "old object survives later collections")
-        if bout = file_read(brun) {
+        if bout = fs.read(brun) {
           c.eq_str(bout, "42\n", "stored field is 42 after collection")
         } else {
           c.expect(false, "read barrier stdout")
@@ -95,11 +97,11 @@ fn test_safepoints(c: Checks) {
       brun2 = "${scratch()}/safepoints-${stamp}-bump-run.log"
       bdump = "${scratch()}/safepoints-${stamp}-bump.mir"
       bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  n = Node.new(item)\n  if depth > 0 {\n    shift = 1 << (depth - 1)\n    if l = make_tree(item - shift, depth - 1) {\n      if r = make_tree(item + shift, depth - 1) {\n        n.left = l\n        n.right = r\n        return n\n      }\n    }\n    return nil\n  }\n  n\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
-      c.wrote(file_write(bsrc2, bbody2), "write bump tree")
+      c.wrote(fs.write(bsrc2, bbody2), "write bump tree")
       // The MIR (the old back end's IR until it retired).
       dcode2 = dump_av(compiler, bsrc2, bdump)
       c.eq_int(dcode2, 0, "dump bump tree")
-      if ir2 = file_read(bdump) {
+      if ir2 = fs.read(bdump) {
         // The tree that used the bump constructor and nursery_reclaim,
         // with ordinary allocation (both removed).
         c.expect(!ir2.contains("#bump") && !ir2.contains("avant_bump_alloc") && !ir2.contains("nursery_reclaim"), "no bump constructor or nursery reclaim")
@@ -109,11 +111,11 @@ fn test_safepoints(c: Checks) {
       }
       bcc2 = compile_av(compiler, bsrc2, bbin2, blog2)
       c.eq_int(bcc2, 0, "compile bump tree")
-      if file_exists(bbin2) {
+      if fs.exists(bbin2) {
         chmod_x(bbin2)
         bcode2 = run_av_bin(bbin2, brun2)
         c.eq_int(bcode2, 0, "bump tree runs")
-        if bout2 = file_read(brun2) {
+        if bout2 = fs.read(brun2) {
           c.eq_str(bout2, "2540\n", "bump tree sum")
         } else {
           c.expect(false, "read bump tree stdout")
@@ -126,7 +128,7 @@ fn test_safepoints(c: Checks) {
       // DT_TEXTREL on that log). This file keeps the small-program checks.
     } else {
       c.expect(false, "churn binary exists")
-      if err = file_read(clog) {
+      if err = fs.read(clog) {
         puts(err)
       }
     }

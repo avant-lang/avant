@@ -1,6 +1,6 @@
 // The lowering of calls and scalar members: direct calls of the
-// program's plain functions, the builtins `puts`, `puts_u`, `now_ms`,
-// `now_us`, `sqrt`, `exp`, and the conversions and members of the
+// program's plain functions, the builtins `puts`, `now_ms`,
+// `now_us`, and the conversions and members of the
 // integer types (`to_f to_i to_u64 abs`) and Float64
 // (`to_i abs floor sqrt exp`), in their field (`x.to_f`) and call
 // (`x.to_f()`) forms.
@@ -234,9 +234,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   c = e.callee
-  if c == "puts" || c == "puts_u" {
+  if c == "puts" {
     if e.args.size == 1 {
-      return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
+      return lw.lower_puts(e.args[0], false, e.loc)
     }
   }
   if (c == "puts" || c == "eputs") && e.args.size == 0 {
@@ -255,9 +255,10 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if c == "exit" && e.args.size == 1 && !e.indirect {
     return lw.lower_exit(e)
   }
-  // The 64-bit clock: monotonic milliseconds and microseconds as Int
-  // (avant_now_ms and avant_now_us, the Int readings that wrapped,
-  // stay for the seed v0.40.0's compiler).
+  if c == "panic" && e.args.size == 1 && !e.indirect {
+    return lw.lower_panic(e)
+  }
+  // The 64-bit clock: monotonic milliseconds and microseconds as Int.
   if c == "now_ms" || c == "now_us" {
     lw.at(e.loc)
     none: Array(MOperand) = []
@@ -266,17 +267,6 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       unit = "us"
     }
     return lw.call_to(mt_i64(), "avant_clock_${unit}", none)
-  }
-  if (c == "sqrt" || c == "exp") && e.args.size == 1 {
-    a = lw.lower_expr(e.args[0])
-    if lw.failed() {
-      return zero
-    }
-    lw.at(e.loc)
-    if c == "sqrt" {
-      return lw.call_f64("sqrt", a)
-    }
-    return lw.call_f64("exp", a)
   }
   if mir_str_builtin_arity(c) == e.args.size {
     return lw.lower_str_builtin(e, c)
@@ -316,7 +306,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
 // Int32 widened by its sign) or avant_puts_u64 (UInt64, UInt32 widened
 // by zero), each of which checks stdout after its write (it was printf,
 // whose failed write was found only later).
-// puts_u prints the bits unsigned at their own width.
+// unsigned prints the bits unsigned at their own width.
 pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)
@@ -420,6 +410,20 @@ pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
   }
   st = lw.exit_status(v, e.loc)
   b.call(-1, "avant_exit", lw.one(st))
+  b.unreachable()
+  b.c_i32(0)
+}
+
+// panic(message): the trap expect raises on nil, with the message and the
+// call's site; it never returns, and the block ends there.
+pub fn (lw: MirLower) lower_panic(e: Expr): MOperand {
+  b = lw.lw_b
+  v = lw.lower_expr(e.args[0])
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  b.call(-1, "avant_trap_expect", lw.one(v))
   b.unreachable()
   b.c_i32(0)
 }

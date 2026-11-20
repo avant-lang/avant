@@ -37,7 +37,7 @@ pub class ReceiverWrites {
   recv: String = "self"
 
   pub fn add(f: Function) {
-    if f.emit_name.size > 0 && !self.index.has_key(f.emit_name) {
+    if f.emit_name.size > 0 && !self.index.has(f.emit_name) {
       self.fns.push(f)
       self.index[f.emit_name] = self.fns.size - 1
     }
@@ -49,10 +49,10 @@ pub class ReceiverWrites {
     if a = self.answer.get(sym) {
       return a == 1
     }
-    seen = Hash(String, Int).new()
+    seen = Set(String).new()
     todo: Array(String) = []
     todo.push(sym)
-    seen[sym] = 1
+    seen.add(sym)
     found = false
     i = 0
     while i < todo.size && !found {
@@ -80,8 +80,7 @@ pub class ReceiverWrites {
       j = lo
       while j < hi {
         c = self.calls[j]
-        if !seen.has_key(c) {
-          seen[c] = 1
+        if seen.add(c) {
           todo.push(c)
         }
         j += 1
@@ -92,7 +91,7 @@ pub class ReceiverWrites {
     } else {
       // Every method reached was read whole and none writes: none of
       // them does (a cycle among them adds no write).
-      for k in seen.keys() {
+      for k in seen {
         self.answer[k] = 2
       }
     }
@@ -101,7 +100,7 @@ pub class ReceiverWrites {
 
   // Reads one method's body once: its direct writes and its calls.
   fn scan(sym: String) {
-    if self.direct.has_key(sym) {
+    if self.direct.has(sym) {
       return
     }
     w = 2
@@ -302,6 +301,14 @@ pub fn ty_may_reach(t: Ty, cty: Ty, seen: Array(String)): Bool {
     return true
   }
   if t.is_union() {
+    if t.rec {
+      // A recursive alias, followed once as a struct is.
+      rkey = mangle_ty(t)
+      if seen.has(rkey) {
+        return false
+      }
+      seen.push(rkey)
+    }
     for m in t.members {
       if ty_may_reach(m, cty, seen) {
         return true
@@ -311,7 +318,7 @@ pub fn ty_may_reach(t: Ty, cty: Ty, seen: Array(String)): Bool {
   }
   if t.is_struct() || t.is_class() || t.is_clayout() {
     key = mangle_ty(t)
-    if seen.contains(key) {
+    if seen.has(key) {
       return false
     }
     seen.push(key)

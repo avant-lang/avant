@@ -123,18 +123,10 @@ fn lv_stmt_copy(st: MStmt): MStmt {
   c.dest = st.dest
   c.callee = st.callee
   c.indirect = st.indirect
-  i = 0
-  while i < st.args.size {
-    c.args.push(st.args[i])
-    i += 1
-  }
+  c.args.concat(st.args)
   c.collects = st.collects
   c.sig = st.sig
-  i = 0
-  while i < st.locals.size {
-    c.locals.push(st.locals[i])
-    i += 1
-  }
+  c.locals.concat(st.locals)
   c
 }
 
@@ -146,16 +138,16 @@ fn lv_stmt_copy(st: MStmt): MStmt {
 pub fn mir_lv_keeps_sizes(name: String): Bool {
   // A key's own hash and == run inside these entries, and the program's
   // code may change any Array there.
-  if str_starts(name, "avant_hash_") && str_ends(name, "_uk") {
+  if name.starts_with("avant_hash_") && name.ends_with("_uk") {
     return false
   }
-  pre = ["avant_str_", "avant_checksum_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_wide_", "avant_now_", "avant_clock_", "avant_puts_", "avant_is_", "avant_hash_", "avant_hasher_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_", "avant_bits_"]
+  pre = ["avant_str_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_clock_", "avant_puts_", "avant_is_", "avant_hash_", "avant_hasher_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_", "avant_bits_"]
   for st in pre {
-    if str_starts(name, st) {
+    if name.starts_with(st) {
       return true
     }
   }
-  exact = ["avant_alloc", "avant_pin", "avant_unpin", "avant_pin_field", "avant_release_range", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_new", "printf", "fabs", "floor", "sqrt", "exp", "ceil", "round", "trunc", "sin", "cos", "tan", "log", "log2", "log10", "pow", "atan2", "__avant_type_maps"]
+  exact = ["avant_alloc", "avant_alloc_unzeroed", "avant_pin", "avant_unpin", "avant_pin_field", "avant_release_range", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_new", "avant_buf_new_filled", "printf", "fabs", "floor", "sqrt", "exp", "ceil", "round", "trunc", "sin", "cos", "tan", "log", "log2", "log10", "pow", "atan2", "__avant_type_maps"]
   for i in 0..exact.size {
     if name == exact[i] {
       return true
@@ -171,7 +163,7 @@ fn lv_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
   while k >= 0 {
     st = blk.stmts[k]
     if mir_stmt_def(st) == h {
-      return st.kind == msk_call() && st.callee == "avant_alloc"
+      return st.kind == msk_call() && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
     }
     k -= 1
   }
@@ -238,7 +230,7 @@ fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): 
   if i = m.func_index.get(st.callee) {
     return keep[i]
   }
-  if str_starts(st.callee, "av.") {
+  if st.callee.starts_with("av.") {
     return false
   }
   mir_lv_keeps_sizes(st.callee)
@@ -1418,11 +1410,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
           }
           c.targets.push(tgt)
         }
-        k = 0
-        while k < t.values.size {
-          c.values.push(t.values[k])
-          k += 1
-        }
+        c.values.concat(t.values)
         dst.term = c
       }
     }

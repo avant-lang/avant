@@ -7,12 +7,13 @@ import type
 import ast
 import resolve
 
-pub fn reserved_c_names: Hash(String, Int) {
-  h = Hash(String, Int).new()
+pub fn reserved_c_names: Set(String) {
+  h = Set(String).new()
   names = [
     "main",
     "avant_alloc",
     "avant_alloc_slow",
+    "avant_alloc_unzeroed",
     "avant_c_str",
     "avant_gc_hold_begin",
     "avant_gc_hold_end",
@@ -36,9 +37,7 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_barrier",
     "avant_barrier_at",
     "avant_str_concat",
-    "avant_str_from_i32_bytes",
     "avant_str_from_int_bytes",
-    "avant_str_cat_i32",
     "avant_str_cat_int",
     "avant_str_repeat_byte",
     "avant_str_slice",
@@ -56,11 +55,9 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_str_parse_u64",
     "avant_str_parse_f64",
     "avant_str_parse_f64_slice",
-    "avant_checksum_str",
-    "avant_checksum_f64",
-    "avant_wide_op",
-    "avant_wide_hi",
     "avant_buf_new",
+    "avant_buf_new_filled",
+    "avant_hash_reserve",
     "avant_buf_push_byte",
     "avant_buf_push_str",
     "avant_buf_push_slice",
@@ -72,18 +69,18 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_buf_clear",
     "avant_buf_starts",
     "avant_buf_ensure",
-    "avant_crc32_bytes",
-    "avant_sha256_word0",
     "avant_sha256",
     "avant_hash_size",
-    "avant_hash_del",
-    "avant_hash_del_i32k",
     "avant_hash_del_sk",
     "avant_hash_del_ik",
-    "avant_hash_inc_slice",
-    "avant_hash_last_key",
     "avant_hash_get_str_slice",
     "avant_hash_get_concat",
+    "avant_hash_find_sk_part",
+    "avant_hash_find_bk_part",
+    "avant_hash_upsert_sk_part",
+    "avant_hash_upsert_bk_part",
+    "avant_hash_slot_sk_part",
+    "avant_hash_slot_bk_part",
     "avant_hash_create",
     "avant_hash_find_ik",
     "avant_hash_find_sk",
@@ -97,6 +94,11 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_hash_take_sk",
     "avant_hash_keys",
     "avant_hash_values",
+    "avant_hash_walk",
+    "avant_hash_walk_key",
+    "avant_hash_walk_val",
+    "avant_hash_walk_ok",
+    "avant_hash_walk_delete",
     "avant_hash_create_typed",
     "avant_hash_find_xk",
     "avant_hash_put_xk",
@@ -195,8 +197,6 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_gate_wait",
     "avant_gate_signal",
     "avant_gate_broadcast",
-    "avant_now_ms",
-    "avant_now_us",
     "avant_puts_f64",
     "avant_puts_bool",
     "avant_puts_str",
@@ -210,7 +210,7 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_cov_hit"
   ]
   for name in names {
-    h[name] = 1
+    h.add(name)
   }
   h
 }
@@ -298,6 +298,13 @@ pub fn binary_op_method_name(op: Int): String {
 }
 
 pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
+  if ty.rec {
+    // A recursive alias by its name, in its module.
+    rn = TypeName.new(loc, ty.name)
+    rn.mod_name = ty.mod_name
+    rn.pinned = true
+    return rn
+  }
   if ty.is_union() {
     if ty.is_nilable() {
       inner = ty_without_nil(ty)
@@ -455,6 +462,9 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
   }
   if a.kind != b.kind {
     return false
+  }
+  if a.rec || b.rec {
+    return a.same_as(b)
   }
   if a.is_fn() {
     if a.members.size != b.members.size {

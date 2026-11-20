@@ -1,0 +1,27 @@
+// A new object, and a clone, move into a task: the spawn takes the
+// local by move (no copy), the task changes it, and the sender's
+// original of the clone is untouched.
+class Box {
+  pub n: Int = 0
+  pub items: Array(Int) = []
+}
+
+fn main {
+  b = Box.new()
+  b.n = 5
+  b.items.push(7)
+  h = spawn {
+    b.items.push(1)
+    b.n + b.items.size
+  }
+  src = Box.new()
+  src.n = 3
+  c = src.clone()
+  h2 = spawn {
+    c.n += 1
+    c.n
+  }
+  puts(h.join() ?? -1)
+  puts(h2.join() ?? -1)
+  puts(src.n)
+}

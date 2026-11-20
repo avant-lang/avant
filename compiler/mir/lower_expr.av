@@ -96,6 +96,9 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   if k == ex_name() {
     return lw.lower_name(e)
   }
+  if k == ex_const_ref() {
+    return lw.lower_const_ref(e)
+  }
   if k == ex_unary() {
     return lw.lower_unary(e)
   }
@@ -107,6 +110,12 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   }
   if k == ex_field() {
     return lw.lower_field(e)
+  }
+  if k == ex_enum_lit() {
+    // `:name`: the member of the enum the checker found, a constant.
+    if t = e.ty, t.is_enum() {
+      return lw.enum_const(t, e.ident)
+    }
   }
   if k == ex_switch() {
     return lw.lower_switch(e)

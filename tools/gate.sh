@@ -13,8 +13,8 @@
 # compiler/main.av, `avant __emit-ll`, from C' and from D', byte for byte)
 # and C' = D' byte for byte. Between the default suites and the GC passes
 # it runs the README checks on C' (tools/readme-check.sh, every ```avant
-# block compiled and run, and tools/readme-links.sh), on README.md and on
-# CONTRIBUTING.md, and `avant format
+# block compiled and run, and tools/readme-links.sh), on README.md,
+# CONTRIBUTING.md and DESIGN.md, and `avant format
 # --check` over every tracked source
 # (tools/format-check.sh): a red one fails the
 # gate. Before the builds it runs the runtime-C rooting lint
@@ -27,7 +27,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.46.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.47.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -298,11 +298,14 @@ for L in b $C; do
   suite_pass "$L" "$L" "$keep $SUITE_ENV"
 done
 
-# The programs and links of README.md and CONTRIBUTING.md, on C' and
-# alone (a few seconds): every ```avant block compiled and run against
-# what the file says it prints (tools/readme-check.sh), and every
-# heading, anchor and relative link (tools/readme-links.sh). A red check
-# fails the gate; the repository and /tmp are snapshotted around them.
+# The programs and links of README.md, CONTRIBUTING.md and DESIGN.md, on
+# C' and alone (a few seconds): every ```avant block compiled and run
+# against what the file says it prints (tools/readme-check.sh; DESIGN.md
+# only once it holds a block, the check refusing a file without one), and
+# every heading, anchor and relative link (tools/readme-links.sh: a
+# README anchor that DESIGN.md links and a rename removed is caught). A
+# red check fails the gate; the repository and /tmp are snapshotted
+# around them.
 readme_checks() {
   snap "$out/before-readme"
   env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" timeout -k 10 900 sh tools/readme-check.sh > "$out/readme-check.log" 2>&1 < /dev/null
@@ -317,6 +320,14 @@ readme_checks() {
   timeout -k 10 300 sh tools/readme-links.sh CONTRIBUTING.md > "$out/contributing-links.log" 2>&1 < /dev/null
   rc=$?
   [ $rc -eq 0 ] || fail "CONTRIBUTING links: $(tail -1 "$out/contributing-links.log") (rc=$rc, contributing-links.log)"
+  if grep -q '^```' DESIGN.md; then
+    env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" timeout -k 10 900 sh tools/readme-check.sh DESIGN.md > "$out/design-check.log" 2>&1 < /dev/null
+    rc=$?
+    [ $rc -eq 0 ] || fail "DESIGN check: $(tail -1 "$out/design-check.log") (rc=$rc, design-check.log)"
+  fi
+  timeout -k 10 300 sh tools/readme-links.sh DESIGN.md > "$out/design-links.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "DESIGN links: $(tail -1 "$out/design-links.log") (rc=$rc, design-links.log)"
   snap "$out/after-readme"
   LC_ALL=C comm -3 "$out/before-readme.tmp" "$out/after-readme.tmp" > "$out/litter-readme.tmp"
   LC_ALL=C comm -3 "$out/before-readme.repo" "$out/after-readme.repo" > "$out/litter-readme.repo"

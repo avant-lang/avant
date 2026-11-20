@@ -3,6 +3,9 @@
 //   AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/bless_goldens.av
 // The run goldens (tests/goldens/runs/) are tools/run-goldens.sh --bless.
 
+import std.fs
+import std.process
+
 lib bless_rt {
   fun avant_tmp_dir: String
 }
@@ -13,7 +16,7 @@ fn scratch: String {
 }
 
 fn avant_test_root: String {
-  if v = env_get("AVANT_ROOT") {
+  if v = process.env("AVANT_ROOT") {
     return v
   }
   "."
@@ -23,7 +26,7 @@ fn mkdir_p(path: String) {
   args: Array(String) = []
   args.push("-p")
   args.push(path)
-  _ = process_run("/bin/mkdir", args)
+  _ = process.run("/bin/mkdir", args)
 }
 
 // The back end's IR, the MIR `avant dump` prints
@@ -35,7 +38,7 @@ fn dump_av(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // A hidden front-end dump of the compiler under test: flag is
@@ -45,7 +48,7 @@ fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 fn bless_fail(msg: String) {
@@ -57,12 +60,12 @@ fn bless_layer(compiler: String, flag: String, src: String, dest: String, tag: S
   code = dump_layer(compiler, flag, src, dest)
   if code != 0 {
     bless_fail("dump ${tag} exited ${code}")
-    if err = file_read(dest) {
+    if err = fs.read(dest) {
       puts(err)
     }
     return false
   }
-  if file_exists(dest) {
+  if fs.exists(dest) {
     return true
   }
   bless_fail("dump ${tag} wrote nothing")
@@ -73,12 +76,12 @@ fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
   code = dump_av(compiler, src, dest)
   if code != 0 {
     bless_fail("dump ${tag} exited ${code}")
-    if err = file_read(dest) {
+    if err = fs.read(dest) {
       puts(err)
     }
     return false
   }
-  if file_exists(dest) {
+  if fs.exists(dest) {
     return true
   }
   bless_fail("dump ${tag} wrote nothing")
@@ -88,10 +91,10 @@ fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
 // The library directory a compiler built by tools/letters.sh reads
 // (the `lib: PATH` line of COMPILER.versions.txt), "" without one.
 fn lib_dir_of(compiler: String): String {
-  if t = file_read("${compiler}.versions.txt") {
+  if t = fs.read("${compiler}.versions.txt") {
     for line in t.split("\n") {
-      if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
-        return str_slice(line, 5, line.size)
+      if line.size > 5 && line[..5] == "lib: " {
+        return line[5..]
       }
     }
   }
@@ -105,10 +108,10 @@ fn lib_relative(text: String, libdir: String): String {
     return text
   }
   prefix = "${libdir}/"
-  out = buf_new()
+  out = Buf.new()
   i = 0
   while i < text.size {
-    if i + prefix.size <= text.size && str_slice(text, i, i + prefix.size) == prefix {
+    if i + prefix.size <= text.size && text[i..i + prefix.size] == prefix {
       out.push_str("lib/")
       i += prefix.size
     } else {
@@ -128,10 +131,10 @@ fn bless_mir(compiler: String, src: String, dest: String, tag: String): Bool {
   }
   libdir = lib_dir_of(compiler)
   if libdir.size > 0 {
-    if text = file_read(dest) {
+    if text = fs.read(dest) {
       rel = lib_relative(text, libdir)
       if rel != text {
-        if (file_write(dest, rel) ?? -1) != rel.size {
+        if (fs.write(dest, rel) ?? -1) != rel.size {
           bless_fail("cannot write ${dest}")
           return false
         }
@@ -180,18 +183,18 @@ fn path_dirname(p: String): String {
   if at <= 0 {
     return "."
   }
-  str_slice(p, 0, at)
+  p[..at]
 }
 
 fn main {
-  if compiler = env_get("AVANT_COMPILER") {
-    if !file_exists(compiler) {
+  if compiler = process.env("AVANT_COMPILER") {
+    if !fs.exists(compiler) {
       bless_fail("AVANT_COMPILER does not exist: ${compiler}")
       return
     }
     root = avant_test_root()
     list = "${root}/tests/goldens/list.txt"
-    if text = file_read(list) {
+    if text = fs.read(list) {
       n = 0
       for line in text.split("\n") {
         if line.size == 0 || line[0] == 35 {
@@ -220,4 +223,15 @@ fn main {
   } else {
     bless_fail("AVANT_COMPILER is not set")
   }
+}
+
+// Runs the program with its stdout and stderr both written to the file
+// out, in the order it wrote them (through sh's redirection, which is
+// what the file then holds): the exit status, or the failure to start sh.
+fn run_out(program: String, args: Array(String), out: String): Int | ProcessError {
+  sh_args = ["-c", "out=$1; shift; exec \"$@\" > \"$out\" 2>&1", "sh", out, program]
+  for a in args {
+    sh_args.push(a)
+  }
+  process.run("/bin/sh", sh_args)
 }

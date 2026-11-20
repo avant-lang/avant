@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Arrays, hashes, Buf, and Bytes on the new back end
 // (AVANT_BACKEND=llvm). For every program of the heap subset:
@@ -37,7 +39,10 @@ fn other_progs: Array(String) {
   xs.push("tests/fixtures/heap/trap_loop.av")
   xs.push("tests/fixtures/heap/trap_loop_str.av")
   xs.push("tests/fixtures/heap/trap_pop.av")
+  xs.push("tests/fixtures/heap/sort_merge.av")
+  xs.push("tests/fixtures/heap/trap_sort.av")
   xs.push("tests/fixtures/heap/each_delete.av")
+  xs.push("tests/fixtures/heap/hash_churn.av")
   xs.push("tests/fixtures/heap/hash_types.av")
   xs.push("tests/fixtures/heap/hash_keys.av")
   xs.push("tests/fixtures/heap/hash_values.av")
@@ -53,6 +58,7 @@ fn other_progs: Array(String) {
   xs.push("tests/fixtures/heap/empty_payload.av")
   xs.push("examples/sieve.av")
   xs.push("tests/fixtures/modules/main.av")
+  xs.push("tests/fixtures/modules/rec_main.av")
   xs.push("tests/fixtures/part3/buf.av")
   xs.push("tests/fixtures/part3/pop.av")
   xs
@@ -63,11 +69,11 @@ fn golden_of(rel: String): String {
   i = 0
   while i < rel.size {
     if rel[i] == 47 {
-      base = str_slice(rel, i + 1, rel.size)
+      base = rel[i + 1..]
     }
     i += 1
   }
-  "tests/goldens/heap/${str_slice(base, 0, base.size - 3)}.mir"
+  "tests/goldens/heap/${base[..base.size - 3]}.mir"
 }
 
 fn gc_envs: Array(String) {
@@ -112,7 +118,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
     j = jobs[base + i]
     c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
     want = "(no golden)"
-    if t = file_read("${root}/${golden_of(gp[i])}") {
+    if t = fs.read("${root}/${golden_of(gp[i])}") {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
@@ -167,7 +173,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_heap.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_heap(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

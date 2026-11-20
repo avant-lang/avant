@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Equality and printing, the derived clone, entry points that fail, type names. Each program is
 // compiled in parallel; a refused one must leave no binary, say the
@@ -56,7 +58,7 @@ fn cases: Array(RCase) {
   // == and the order
   pt = "struct P {\n  x: Int\n  y: Int\n}\n"
   xs.push(accepted("struct-eq", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == P { x: 1, y: 2 })\n  puts(a != P { x: 1, y: 3 })\n}\n", "true\ntrue\n"))
-  xs.push(refused("struct-hash-field", "struct Bag {\n  n: Int\n  h: Hash(String, Int)\n}\nfn main {\n  a = Bag { n: 1, h: Hash(String, Int).new() }\n  puts(a == a)\n}\n", "cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn equals(other: Bag): Bool on Bag", "7:10"))
+  xs.push(accepted("struct-hash-field", "struct Bag {\n  n: Int\n  h: Hash(String, Int)\n}\nfn main {\n  a = Bag { n: 1, h: Hash(String, Int).new() }\n  puts(a == a)\n}\n", "true\n"))
   xs.push(refused("struct-fn-field", "struct Cb {\n  f: fn(Int): Int\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb { f: same }\n  puts(c == c)\n}\n", "cannot compare Cb: fn(Int): Int (the field Cb.f) has no ==; define fn equals(other: Cb): Bool on Cb", "9:10"))
   xs.push(refused("struct-other-type", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == 1)\n}\n", "cannot compare P with Int: == compares two values of one type", "7:10"))
   xs.push(refused("struct-no-order", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a < a)\n}\n", "P has no order: define fn compare(other: P): Int on it (negative, zero or positive: <, <=, >, >=, sort, min and max use it)", "7:10"))
@@ -64,13 +66,13 @@ fn cases: Array(RCase) {
   xs.push(accepted("derived-order", "struct M {\n  c: Int\n  fn compare(o: M): Int { c - o.c }\n}\nfn main {\n  a = M { c: 1 }\n  b = M { c: 2 }\n  puts(\"\${a < b} \${a > b} \${a <= b} \${a >= b} \${b <= b} \${b >= b}\")\n}\n", "true false true false true true\n"))
   xs.push(accepted("class-identity", "class C {\n  n: Int = 0\n}\nfn main {\n  a = C.new()\n  b = C.new()\n  c = a\n  puts(\"\${a == b} \${a == c} \${a != b}\")\n}\n", "false true true\n"))
   xs.push(accepted("array-eq", "fn main {\n  puts([1, 2] == [1, 2])\n  puts([1, 2] != [2, 1])\n  puts([\"a\"] == [\"b\"])\n  puts([[1], [2]] == [[1], [2]])\n  puts([0.0 / 0.0] == [0.0 / 0.0])\n}\n", "true\ntrue\nfalse\ntrue\nfalse\n"))
-  xs.push(refused("array-hash-elems", "fn main {\n  a = [Hash(String, Int).new()]\n  puts(a == a)\n}\n", "cannot compare Array(Hash(String, Int)): Hash(String, Int) has no ==", "3:10"))
+  xs.push(accepted("array-hash-elems", "fn main {\n  a = [Hash(String, Int).new()]\n  puts(a == a)\n}\n", "true\n"))
   xs.push(refused("array-order", "fn main {\n  puts([1] < [2])\n}\n", "Array(Int) has no order: <, <=, > and >= compare numbers and Strings", "2:12"))
   xs.push(accepted("optional-eq", "fn main {\n  a: Int? = 1\n  b: Int? = 1\n  n: Int? = nil\n  puts(\"\${a == b} \${a == n} \${n == n} \${n != a}\")\n}\n", "true false true true\n"))
   xs.push(refused("optional-with-value", "fn main {\n  a: Int? = 1\n  puts(a == 1)\n}\n", "cannot compare Int? with Int: == compares two values of one type; open it with", "3:10"))
   xs.push(refused("optional-with-nil", "fn main {\n  a: Int? = 1\n  puts(a == nil)\n}\n", "a is Int? and an optional is never compared with nil", "3:10"))
   xs.push(refused("union-eq", "fn f(n: Int): Int | String {\n  if n > 0 {\n    return n\n  }\n  \"x\"\n}\nfn main {\n  puts(f(1) == f(2))\n}\n", "Int | String has no ==: take it apart with switch and compare its members", "8:13"))
-  xs.push(refused("hash-eq", "fn main {\n  h = Hash(String, Int).new()\n  puts(h == h)\n}\n", "Hash(String, Int) has no ==", "3:10"))
+  xs.push(accepted("hash-eq", "fn main {\n  h = Hash(String, Int).new()\n  puts(h == h)\n}\n", "true\n"))
   xs.push(refused("string-int", "fn main {\n  puts(\"a\" == 1)\n}\n", "cannot compare String with Int: == compares two values of one type", "2:12"))
   // An integer and a Float64 neither compare nor mix: the conversion is written
   xs.push(refused("int-float-eq", "fn main {\n  n = 3\n  x = 3.0\n  puts(n == x)\n}\n", "cannot compare Int with Float64: == compares two values of one type; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
@@ -81,21 +83,22 @@ fn cases: Array(RCase) {
   xs.push(accepted("int-float-converted", "fn main {\n  n = 3\n  x = 2.5\n  w: Int32 = 2\n  puts(n.to_f() * x)\n  puts(n == x.to_i())\n  puts(x == 2)\n  puts(1 + 2.5)\n  puts(w + x.to_i().to_i32())\n}\n", "7.5\nfalse\nfalse\n3.5\n4\n"))
   xs.push(refused("bool-int", "fn main {\n  puts(true == 1)\n}\n", "cannot compare Bool with Int: == compares two values of one type", "2:13"))
   xs.push(accepted("eq-witness", "interface Eq(T) {\n  fn equals(other: T): Bool\n}\nstruct Id: Eq(Id) {\n  n: Int\n}\nfn same(a: T, b: T: Eq(T)): Bool {\n  a == b\n}\nfn main {\n  puts(same(Id { n: 1 }, Id { n: 1 }))\n  puts(same(Id { n: 1 }, Id { n: 2 }))\n}\n", "true\nfalse\n"))
-  xs.push(refused("eq-witness-missing", "interface Eq(T) {\n  fn equals(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", "Bag does not implement Eq(Bag): missing equals", "4:1"))
+  xs.push(accepted("eq-witness-missing", "interface Eq(T) {\n  fn equals(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", ""))
   xs.push(accepted("equals-compare", "struct Ver {\n  major: Int\n  minor: Int\n\n  fn equals(other: Ver): Bool {\n    major == other.major && minor == other.minor\n  }\n\n  fn hash(h: Hasher) {\n    h.add(major)\n    h.add(minor)\n  }\n\n  fn compare(other: Ver): Int {\n    if major != other.major {\n      return major - other.major\n    }\n    minor - other.minor\n  }\n}\nfn main {\n  a = Ver { major: 1, minor: 2 }\n  b = Ver { major: 1, minor: 10 }\n  puts(\"\${a == b} \${a != b} \${a.equals(Ver { major: 1, minor: 2 })} \${a.compare(b) < 0}\")\n  puts(\"\${a < b} \${a <= b} \${a > b} \${a >= b} \${b >= b}\")\n  vs = [b, a, Ver { major: 0, minor: 9 }]\n  vs.sort()\n  lo = vs.min() ?? a\n  hi = vs.max() ?? a\n  puts(\"\${vs[0].minor} \${vs[2].minor} \${lo.minor} \${hi.minor} \${vs.has(a)} \${vs.index_of(b) ?? -1}\")\n}\n", "false true true true\ntrue true false false true\n9 10 9 10 true 2\n"))
   xs.push(accepted("ordered-bound", "interface Ordered(T) {\n  fn compare(other: T): Int\n}\ninterface Eq(T) {\n  fn equals(other: T): Bool\n}\nstruct M: Ordered(M) + Eq(M) {\n  c: Int\n\n  fn compare(o: M): Int {\n    c - o.c\n  }\n}\nfn least(xs: Array(T), seed: T: Ordered(T)): T {\n  m = seed\n  for x in xs {\n    if x < m {\n      m = x\n    }\n  }\n  m\n}\nfn count_of(xs: Array(T), w: T: Eq(T)): Int {\n  n = 0\n  for x in xs {\n    if x == w {\n      n += 1\n    }\n  }\n  n\n}\nfn main {\n  ms = [M { c: 4 }, M { c: 2 }, M { c: 4 }]\n  puts(\"\${least(ms, M { c: 9 }).c} \${count_of(ms, M { c: 4 })}\")\n}\n", "2 2\n"))
   xs.push(accepted("min-max-sort", "struct M {\n  c: Int\n  fn compare(o: M): Int { c - o.c }\n}\nfn main {\n  ms = [M { c: 3 }, M { c: 1 }, M { c: 2 }]\n  lo = ms.min() ?? M { c: 0 }\n  hi = ms.max() ?? M { c: 0 }\n  s = ms.sorted()\n  ms.sort()\n  puts(\"\${lo.c} \${hi.c} \${s[0].c}\${s[1].c}\${s[2].c} \${ms[0].c}\${ms[2].c}\")\n}\n", "1 3 123 13\n"))
   // contains and index_of compare by the element's ==
   xs.push(accepted("contains-by-eq", "struct P {\n  x: Int\n  y: Int\n}\n\nclass Name {\n  pub s: String\n\n  fn initialize(s: String) {\n    self.s = s\n  }\n\n  fn equals(o: Name): Bool {\n    s == o.s\n  }\n\n  fn hash(h: Hasher) {\n    h.add(s)\n  }\n}\n\nenum Tok { a, b, c }\n\nfn main {\n  ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  puts(\"\${ps.has(P { x: 3, y: 4 })} \${ps.has(P { x: 4, y: 3 })} \${ps.index_of(P { x: 3, y: 4 }) ?? -1}\")\n  ns = [Name.new(\"ada\"), Name.new(\"bo\")]\n  puts(\"\${ns.has(Name.new(\"bo\"))} \${ns.index_of(Name.new(\"cy\")) ?? -1}\")\n  grid = [[1, 2], [3]]\n  puts(\"\${grid.has([3])} \${grid.index_of([1, 2]) ?? -1}\")\n  opts: Array(Int?) = [nil, 5]\n  puts(\"\${opts.has(5)} \${opts.index_of(nil) ?? -1}\")\n  ts = [Tok.c, Tok.a]\n  puts(\"\${ts.has(Tok.a)} \${ts.has(Tok.b)} \${ts.index_of(Tok.a) ?? -1}\")\n  bs = [\"ab\".bytes, \"cd\".bytes]\n  puts(\"\${bs.has(\"cd\".bytes)} \${bs.index_of(\"ab\".bytes) ?? -1}\")\n  fs = [1.5, 0.0 / 0.0]\n  puts(\"\${fs.has(1.5)} \${fs.has(0.0 / 0.0)}\")\n}\n", "true false 1\ntrue -1\ntrue 0\ntrue 0\ntrue false 1\ntrue 0\ntrue false\n"))
-  xs.push(refused("contains-hash", "fn main {\n  hs = [Hash(String, Int).new()]\n  puts(hs.has(Hash(String, Int).new()))\n}\n", "has compares the elements with ==: Hash(String, Int) has no ==", "3:10"))
-  xs.push(refused("index-of-struct-hash-field", "struct Bag {\n  h: Hash(String, Int)\n}\nfn main {\n  bs = [Bag { h: Hash(String, Int).new() }]\n  puts(bs.index_of(bs[0]) ?? -1)\n}\n", "index_of compares the elements with ==: cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn equals(other: Bag): Bool on Bag", "6:10"))
+  xs.push(accepted("contains-hash", "fn main {\n  hs = [Hash(String, Int).new()]\n  puts(hs.has(Hash(String, Int).new()))\n}\n", "true\n"))
+  xs.push(accepted("index-of-struct-hash-field", "struct Bag {\n  h: Hash(String, Int)\n}\nfn main {\n  bs = [Bag { h: Hash(String, Int).new() }]\n  puts(bs.index_of(bs[0]) ?? -1)\n}\n", "0\n"))
   xs.push(refused("contains-buf", "fn main {\n  bs = [Buf.new()]\n  puts(bs.has(bs[0]))\n}\n", "has compares the elements with ==: Buf has no ==", "3:10"))
   // String order
   xs.push(accepted("string-order", "fn main {\n  puts(\"\${\"a\" < \"b\"} \${\"b\" < \"a\"} \${\"ab\" < \"abc\"} \${\"abc\" <= \"abc\"} \${\"B\" < \"a\"} \${\"z\" >= \"a\"} \${\"\" < \"a\"}\")\n}\n", "true false true true true true true\n"))
   xs.push(refused("string-minus", "fn main {\n  puts(\"a\" - \"b\")\n}\n", "unsupported operator on String (+ joins two Strings; ==, !=, <, <=, > and >= compare them)", "2:12"))
   // Printing
   xs.push(accepted("to-s", "fn main {\n  n: Int32 = -5\n  u: UInt64 = 18446744073709551615u64\n  puts(3.to_s() + n.to_s() + u.to_s() + 2.5.to_s() + true.to_s() + \"s\".to_s())\n}\n", "3-5184467440737095516152.5trues\n"))
-  xs.push(refused("to-s-args", "fn main {\n  puts(3.to_s(2))\n}\n", "Int.to_s takes no arguments", "2:9"))
+  xs.push(refused("to-s-args", "fn main {\n  puts(3.to_s(2, 8))\n}\n", "Int.to_s takes no arguments, or one base (n.to_s(16))", "2:9"))
+  xs.push(refused("to-s-args-float", "fn main {\n  puts(3.5.to_s(2))\n}\n", "Float64.to_s takes no arguments", "2:11"))
   xs.push(accepted("union-text", "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn f(n: Int): Int | String | Oops {\n  if n == 0 {\n    return 5\n  }\n  if n == 1 {\n    return \"five\"\n  }\n  Oops.new(\"no\")\n}\nfn main {\n  puts(\"\${f(0)} \${f(1)} \${f(2)}\")\n}\n", "5 five no\n"))
   xs.push(refused("union-text-struct", "${pt}fn f(n: Int): Int | P {\n  if n > 0 {\n    return n\n  }\n  P { x: 1, y: 2 }\n}\nfn main {\n  puts(\"\${f(1)}\")\n}\n", "cannot interpolate Int | P: its member P has no text", "12:11"))
   xs.push(refused("optional-text", "fn main {\n  a: Int? = 1\n  puts(\"\${a}\")\n}\n", "cannot interpolate Int?: it holds nil; open it with `if v = a`", "3:11"))
@@ -120,8 +123,9 @@ fn cases: Array(RCase) {
   // clone: the derived deep copy, its refusals by field, and no clone of a type's own
   xs.push(refused("clone-fn-field", "class Cb {\n  f: fn(Int): Int\n  fn initialize(self.f) {\n  }\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb.new(same)\n  d = c.clone()\n}\n", "cannot clone Cb: a function value (Cb.f) may capture mutable state, which the copy would share", "11:8"))
   xs.push(refused("clone-join-elem", "class Job {\n  h: JoinHandle(Int)?\n}\nfn main {\n  j = Job.new()\n  k = [j].clone()\n}\n", "cannot clone Array(Job): a JoinHandle (Job.h) is one task's result, waited for once", "6:10"))
-  xs.push(refused("clone-union", "class Box {\n  n: Int = 0\n}\nclass Holder {\n  v: Int | Box = 0\n}\nfn main {\n  h = Holder.new()\n  g = h.clone()\n}\n", "cannot clone Holder: a union of several types that holds something to copy (Holder.v), Box | Int, is not copied yet", "9:8"))
-  xs.push(refused("clone-buf", "class W {\n  b: Buf = buf_new()\n}\nfn main {\n  w = W.new()\n  x = w.clone()\n}\n", "cannot clone W: a Buf (W.b) is not copied yet", "6:8"))
+  xs.push(accepted("clone-union", "class Box {\n  pub n: Int = 0\n}\n\nclass Holder {\n  pub v: Int | Box = 0\n}\n\nfn n_of(v: Int | Box): Int {\n  switch v {\n    case b: Box { b.n }\n    case n: Int { n }\n  }\n}\n\nfn main {\n  h = Holder.new()\n  b = Box.new()\n  b.n = 1\n  h.v = b\n  g = h.clone()\n  b.n = 7\n  puts(\"\${n_of(h.v)} \${n_of(g.v)}\")\n}\n", "7 1\n"))
+  xs.push(accepted("clone-recursive-alias", "import std.sync\n\ntype Json = Bool | Int | String | Array(Json) | Hash(String, Json)\n\nclass Box {\n  pub n: Int = 0\n}\n\nclass Holder {\n  pub v: Int | Box = 0\n  pub doc: Json = 0\n}\n\nfn text(j: Json): String {\n  switch j {\n    case b: Bool { \"\${b}\" }\n    case n: Int { \"\${n}\" }\n    case s: String { s }\n    case xs: Array(Json) {\n      parts: Array(String) = []\n      for x in xs {\n        parts.push(text(x))\n      }\n      \"[\${parts.join(\",\")}]\"\n    }\n    case h: Hash(String, Json) {\n      parts: Array(String) = []\n      for k, v in h {\n        parts.push(\"\${k}:\${text(v)}\")\n      }\n      \"{\${parts.join(\",\")}}\"\n    }\n  }\n}\n\nfn main {\n  b = Box.new()\n  u: Int | Box = b\n  c = u.clone()\n  b.n = 5\n  switch c {\n    case x: Box { puts(x.n) }\n    case n: Int { puts(n) }\n  }\n  w: Nil | Int | Array(Int) = [1, 2]\n  w2 = w.clone()\n  if xs = w {\n    switch xs {\n      case a: Array(Int) { a.push(3) }\n      else { }\n    }\n  }\n  switch w2 {\n    case a: Array(Int) { puts(a.size) }\n    else { puts(\"?\") }\n  }\n  inner: Array(Json) = [1, \"a\"]\n  h = Hash(String, Json).new()\n  h[\"xs\"] = inner\n  doc: Json = h\n  copy = doc.clone()\n  inner.push(true)\n  h[\"new\"] = 9\n  puts(text(doc))\n  puts(text(copy))\n  arr: Array(Json) = [doc, copy]\n  arr2 = arr.clone()\n  puts(arr2.size)\n  o = Holder.new()\n  o.v = Box.new()\n  o.doc = copy\n  o2 = o.clone()\n  switch o2.v {\n    case x: Box { puts(x.n) }\n    case n: Int { puts(n) }\n  }\n  m = sync.Mutex(Json).new(doc.clone())\n  out = m.with((d) { d.clone() })\n  puts(text(out))\n}\n", "0\n2\n{xs:[1,a,true],new:9}\n{xs:[1,a]}\n2\n0\n{xs:[1,a,true],new:9}\n"))
+  xs.push(refused("clone-buf", "class W {\n  b: Buf = Buf.new()\n}\nfn main {\n  w = W.new()\n  x = w.clone()\n}\n", "cannot clone W: a Buf (W.b) is not copied yet", "6:8"))
   xs.push(refused("clone-own", "class C {\n  n: Int = 0\n\n  fn clone: C {\n    self\n  }\n}\nfn main { }\n", "clone is derived for every type, a deep copy that shares nothing mutable with the original: a method cannot replace it; give the method another name", "4:3"))
   xs.push(refused("clone-own-external", "struct P {\n  x: Int\n}\nfn (p: P) clone: P {\n  p\n}\nfn main { }\n", "clone is derived for every type", "4:1"))
   xs.push(refused("clone-argument", "class C {\n  n: Int = 0\n}\nfn main {\n  c = C.new()\n  d = c.clone(1)\n}\n", "clone takes no arguments", "6:8"))
@@ -141,7 +145,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/eq-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/eq-${f.tag}.bin", "${dir}/eq-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -163,7 +167,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/eq-${f3.tag}.run.err"), f3.err, "${f3.tag}: stderr")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/eq-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/eq-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("eq-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -174,14 +178,14 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 // through the runtime; a derived == written once.
 fn check_ll(c: Checks, compiler: String, dir: String) {
   plain = "${dir}/eq-ll-plain.av"
-  _ = file_write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
+  _ = fs.write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
   c.eq_int(emit_ll(compiler, plain, "${dir}/eq-ll-plain.ll", "${dir}/eq-ll-plain.log"), 0, "ll-plain: emits")
   ll = log_text("${dir}/eq-ll-plain.ll")
   c.expect(!ll.contains("__avant_eq"), "ll-plain: no written ==")
   c.expect(ll.contains("@avant_puts_i64("), "ll-plain: an integer's puts is the runtime's")
   c.expect(!ll.contains("@printf("), "ll-plain: no printf")
   twice = "${dir}/eq-ll-twice.av"
-  _ = file_write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
+  _ = fs.write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
   c.eq_int(emit_ll(compiler, twice, "${dir}/eq-ll-twice.ll", "${dir}/eq-ll-twice.log"), 0, "ll-twice: emits")
   ll2 = log_text("${dir}/eq-ll-twice.ll")
   defs = 0
@@ -192,7 +196,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   }
   c.eq_int(defs, 1, "ll-twice: one derived == for P")
   scal = "${dir}/eq-ll-search.av"
-  _ = file_write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.has(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
+  _ = fs.write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.has(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, scal, "${dir}/eq-ll-search.ll", "${dir}/eq-ll-search.log"), 0, "ll-search: emits")
   ll3 = log_text("${dir}/eq-ll-search.ll")
   c.expect(ll3.contains("@avant_array_contains_i64(") && ll3.contains("@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
@@ -202,7 +206,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // numbers copied by the runtime's buffer copy, with no loop written.
   c.expect(!ll.contains("clone"), "ll-plain: no clone written")
   cl = "${dir}/eq-ll-clone.av"
-  _ = file_write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
+  _ = fs.write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
   c.eq_int(emit_ll(compiler, cl, "${dir}/eq-ll-clone.ll", "${dir}/eq-ll-clone.log"), 0, "ll-clone: emits")
   ll4 = log_text("${dir}/eq-ll-clone.ll")
   cdefs = 0
@@ -217,7 +221,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_equality.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_ll(c, compiler, scratch_dir())
   } else {

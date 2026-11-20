@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 import std.zlib
 
 fn test_std_zlib(c: Checks) {
@@ -13,12 +15,13 @@ fn test_std_zlib(c: Checks) {
   plain = "nope".bytes
   if ignored = plain.uncompress() {
     c.expect(false, "plain text is not zlib")
-  } else {
-    c.expect(true, "plain text is not zlib")
+  } else e {
+    c.expect(e == zlib.ZlibError.invalid_data, "plain text is not zlib: the kind invalid_data")
+    c.eq_str("${e}", "invalid zlib data", "plain text is not zlib: the message")
   }
-  dst = buf_new(64)
+  dst = Buf.new(64)
   if err = raw.compress_into(dst) {
-    c.expect(false, "compress_into ${err.message}")
+    c.expect(false, "compress_into ${err}")
   } else {
     if back2 = dst.to_bytes().uncompress() {
       text2 = String.from_utf8(back2) ?? ""
@@ -27,12 +30,37 @@ fn test_std_zlib(c: Checks) {
       c.expect(false, "compress_into")
     }
   }
-  udst = buf_new(64)
+  udst = Buf.new(64)
   if err2 = raw.compress().uncompress_into(udst) {
-    c.expect(false, "uncompress_into ${err2.message}")
+    c.expect(false, "uncompress_into ${err2}")
   } else {
     text3 = String.from_utf8(udst.to_bytes()) ?? ""
     c.eq_str(text3, "hello", "uncompress_into")
+  }
+}
+
+// Memory running out inside zlib (its compressor's state cannot be
+// allocated) stops the program as any allocation of the runtime does: it
+// is not a failure of the data, so no ZlibError (too_large before) names
+// it. The program runs under the LD_PRELOAD shim
+// tests/fixtures/http/malloc_fail.c, which fails the large mallocs (zlib's
+// 64 KiB window) once the program sets AVANT_TEST_MALLOC_FAIL.
+fn out_of_memory_cases(c: Checks, root: String) {
+  if compiler = process.env("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "${scratch()}/zlib-oom-${stamp}.av"
+    _ = fs.write(src, "import std.process\nimport std.zlib\n\nfn main {\n  raw = \"hello\".bytes\n  puts(raw.compress().size > 0)\n  process.env_set(\"AVANT_TEST_MALLOC_FAIL\", \"65536\")\n  switch raw.compress_into(Buf.new()) {\n    case e: zlib.ZlibError { puts(\"error \${e}\") }\n    case nil { puts(\"compressed\") }\n  }\n}\n")
+    bin = "${scratch()}/zlib-oom-${stamp}.bin"
+    so = "${scratch()}/zlib-oom-${stamp}.so"
+    c.eq_int(compile_av(compiler, src, bin, "${scratch()}/zlib-oom-${stamp}.clog"), 0, "the out-of-memory program compiles")
+    cargs = ["-shared", "-fPIC", "-o", so, "${root}/tests/fixtures/http/malloc_fail.c"]
+    c.eq_int(run_out("cc", cargs, "${scratch()}/zlib-oom-${stamp}.cclog") ?? -1, 0, "the malloc-fail shim builds")
+    log = "${scratch()}/zlib-oom-${stamp}.log"
+    code = run_out("/usr/bin/env", ["LD_PRELOAD=${so}", bin], log) ?? -1
+    c.eq_int(code, 1, "zlib out of memory: status 1")
+    c.eq_str(fs.read(log) ?? "", "true\navant runtime: out of memory: zlib's compress could not allocate its state\n", "zlib out of memory: the runtime's stop, after the program's output")
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the out-of-memory test")
   }
 }
 
@@ -43,5 +71,6 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_std_zlib(c)
+  out_of_memory_cases(c, avant_test_root())
   c.finish()
 }

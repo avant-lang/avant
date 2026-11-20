@@ -44,6 +44,8 @@ import checker
 import checker.receiver
 import checker.facts
 import receiver_writes
+import parser
+import checker.consts
 
 pub fn (checker_self: Checker) clear_places {
   checker_self.place_roots = Hash(String, String).new()
@@ -120,7 +122,7 @@ pub fn (checker_self: Checker) refuse_for_outer_name(stmt: Stmt) {
     }
     if stmt.pre.size > 1 {
       // `for i, x in xs`: the position is the loop's own too.
-      if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+      if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
         checker_self.refuse_for_name(stmt, pi.ident)
       }
     }
@@ -147,8 +149,126 @@ pub fn (checker_self: Checker) refuse_for_name(stmt: Stmt, name: String) {
   }
 }
 
+// The name an `if` or `while` condition binds (`if v = x`, `while v =
+// it.next()`, each binding of a condition list) is the then-block's own,
+// as a loop's variable is the loop's: a name that already exists here is
+// refused. Binding it would assign the existing variable and leave the
+// value there after the block (an outer `v` would read 5 after
+// `if v = o { }`). `_` binds nothing; a `for` over `next` is refused by
+// the loop's own check.
+pub fn (checker_self: Checker) refuse_bind_outer_name(st: Stmt, at: Location) {
+  name = st.bind
+  if name.size == 0 || name == "_" || st.for_kind == 7 || name.starts_with("__") {
+    return
+  }
+  if old = checker_self.lookup(name) {
+    form = if st.loop_head { "while" } else { "if" }
+    checker_self.fail(at, "${form} ${name} = ...: ${name} already names a variable here; the name a condition binds is its block's own and ends with it (binding ${name} would assign it and leave the value there): give the bound value a new name")
+  }
+}
+
+// A range `for` whose step names a module constant (`by step`, `by
+// -m.step`): the constant's value, known here, makes it the loop a
+// literal step makes (the same code as `by 4`); zero is refused, a
+// negative value steps down. A name that is no Int constant is refused,
+// and the loop is then built with step 1 so its body is still checked.
+pub fn (checker_self: Checker) resolve_range_step(stmt: Stmt) {
+  var = ""
+  end_name = ""
+  if t0 = stmt.pre[0].target {
+    var = t0.ident
+  }
+  if t1 = stmt.pre[1].target {
+    end_name = t1.ident
+  }
+  incl = stmt.op == tk_dot_dot_eq()
+  down = false
+  by = 1u64
+  if e = stmt.expr {
+    named = e
+    if e.kind == ex_unary() {
+      if inner = e.inner {
+        named = inner
+        down = true
+      }
+    }
+    what = if named.kind == ex_field() { "a module's constant" } else { named.ident }
+    if named.kind == ex_field() {
+      if o = named.object {
+        what = "${o.ident}.${named.ident}"
+      }
+    }
+    if cv = checker_self.const_named(named) {
+      if checker_self.const_value(cv, named.loc) {
+        if cv.kind != cv_int() {
+          checker_self.fail(named.loc, "for ... by ${what}: the step is an Int; the constant ${what} is ${cv_text(cv)}")
+        } else if cv.iv == 0 {
+          checker_self.fail(named.loc, "for ... by ${what}: the constant ${what} is 0, and the loop would never move: the step is a nonzero integer")
+        } else if cv.iv == Int.min {
+          checker_self.fail(named.loc, "for ... by ${what}: the constant ${what} is too large a step")
+        } else if cv.iv < 0 {
+          by = (0 - cv.iv).to_u64()
+          down = !down
+        } else {
+          by = cv.iv.to_u64()
+        }
+      }
+    } else {
+      checker_self.fail(named.loc, "for ... by ${what}: ${what} is not a module constant; the step is fixed when the loop is compiled: write an integer literal or a constant (const step = 4), or use a while loop for a step computed at run time")
+    }
+  }
+  range_build(stmt, stmt.loc, var, end_name, incl, by, down, stmt.body, stmt.latch > 0)
+}
+
+// `:name`, an enum's member written short: the member of the enum the
+// place expects (a parameter, a field, a declared variable, an array's
+// element, an arm's value, the other side of `==`; the one enum of an
+// optional or a union), lowered as the member read `E.name`; it stays
+// `:name` (a default value is checked again at each call). With no enum
+// expected it
+// is refused: there is no free-standing symbol type, so a typo is a
+// compile error, never a run-time string.
+pub fn (checker_self: Checker) check_enum_lit(expr: Expr, has_want: Bool, want: Ty): Ty {
+  name = expr.ident
+  found: Array(Ty) = []
+  if has_want {
+    if want.is_enum() && !want.name.starts_with(":") {
+      found.push(want)
+    } else if want.is_union() {
+      for m in want.members {
+        if m.is_enum() {
+          found.push(m)
+        }
+      }
+    }
+  }
+  if found.size != 1 {
+    what = if !has_want { "no type" } else { want.show() }
+    if found.size > 1 {
+      with: Array(String) = []
+      for f in found {
+        if f.enum_index(name) >= 0 {
+          with.push("${f.show()}.${name}")
+        }
+      }
+      hint = if with.size > 0 { with.join(" or ") } else { "E.${name}" }
+      checker_self.fail(expr.loc, ":${name} names an enum's member, and ${what} holds several enums: write the member with its enum's name (${hint})")
+    } else {
+      checker_self.fail(expr.loc, ":${name} names a member of the enum expected where it stands, and ${what} is expected here: write a value of the type, or the member with its enum's name (E.${name})")
+    }
+    return t_int()
+  }
+  et = found[0]
+  if et.enum_index(name) < 0 {
+    checker_self.fail(expr.loc, "${et.show()} has no member ${name}; its members are ${et.enum_names().join(", ")}")
+    return et
+  }
+  expr.ty = et
+  et
+}
+
 // A builtin block's parameters (`each`, `any`, `all`, a comparator, a
-// Hash's or a Set's `each`, `Array(T).new(n) { |i| }`, `Mutex.with`,
+// Hash's or a Set's `each`, `Array(T).new(n, (i) { })`, `Mutex.with`,
 // `.parallel`) are the block's own, as a `for` variable is the loop's: a
 // name that already exists here is refused (an inlined block's parameter
 // would otherwise be that variable, assigned at every step and left with
@@ -414,7 +534,7 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
       return ""
     }
     pos = ""
-    if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+    if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
       pos = pi.ident
     }
     if pty.is_array() && pos.size == 0 {
@@ -466,7 +586,7 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
           for bs in inner {
             checker_self.cap_collect_assigned_stmt(bs, assigned)
           }
-          if !assigned.contains(v0.ident) {
+          if !assigned.has(v0.ident) {
             // A class value in a local the body does not assign: called
             // by its own name, as the loop written by hand does, with no
             // copy held (a struct is copied, as `it = e` copies it).
@@ -496,6 +616,149 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
     }
   }
   ""
+}
+
+// A `for` over a Hash or a Set walks it in place, as its `each` does
+// (the parser's loop of for_kind 2, once its operand is checked):
+//   for k, v in h       each key with its value
+//   for k in h.keys()   the keys, with no array of them
+//   for v in h.values() the values, likewise
+//   for v in s          a Set's elements
+// The loop becomes the walk `__forN_xs.each (k, v) { body }` over the
+// operand held once (a block in braces with pipes is a loop body: break,
+// continue and return mean what they mean in the for), followed by a
+// break of the one-step loop around it (for_kind 12); the hidden name
+// of an unread key or value is not loaded. A position (`for i, v in s`,
+// `for i, k in h.keys()`) still walks the array of the elements. True
+// when the loop was rewritten, or refused with its own error.
+pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
+  if stmt.pre.size < 2 || stmt.body.size < 2 {
+    return false
+  }
+  pre0 = stmt.pre[0]
+  pt0 = pre0.target
+  pi0 = stmt.pre[1].target
+  el0 = stmt.body[0].target
+  v0 = pre0.value
+  if pt = pt0, pi = pi0, el = el0, v = v0, pty = checker_self.lookup(pt.ident) {
+    if checker_self.name_failed(pt.ident) {
+      return false
+    }
+    pos = ""
+    if !pi.ident.starts_with("__for") {
+      pos = pi.ident
+    }
+    base = str_slice(pt.ident, 0, pt.ident.size - 2)
+    params: Array(String) = []
+    if pos.size > 0 && pty.is_struct() && pty.mod_name == "std.http" && (pty.origin == "Headers" || pty.name == "Headers") {
+      checker_self.headers_for_walk(stmt, pt.ident, pi.ident, pos, el.ident, base)
+      return true
+    }
+    if pty.is_set() {
+      if pos.size > 0 {
+        return false
+      }
+      params.push(el.ident)
+    } else if pty.is_hash() {
+      if pos.size == 0 {
+        checker_self.fail(stmt.loc, "for ${el.ident} in a Hash: a hash's walk names its key and its value (for k, v in h); for the keys alone, for k in h.keys(); for the values, for v in h.values()")
+        checker_self.mark_failed(pt.ident)
+        return true
+      }
+      params.push(pos)
+      params.push(el.ident)
+    } else if pty.is_array() && pos.size == 0 && v.kind == ex_call() && v.args.size == 0 && (v.callee == "keys" || v.callee == "values") {
+      if b0 = v.block {
+        return false
+      }
+      if r = v.receiver, rt = r.ty, rt.is_hash() && !rt.is_set() {
+        if v.callee == "keys" {
+          params.push(el.ident)
+          params.push("${base}v")
+        } else {
+          params.push("${base}k")
+          params.push(el.ident)
+        }
+        pre0.value = r
+        pt.ty = rt
+        checker_self.bind(pt.ident, rt)
+      } else {
+        return false
+      }
+    } else {
+      return false
+    }
+    inner: Array(Stmt) = []
+    for bi in 1..stmt.body.size - 1 {
+      inner.push(stmt.body[bi])
+    }
+    bl = Block.new(stmt.loc)
+    bl.params = params
+    bl.body = for_unadvance(inner, pi.ident)
+    at = stmt.loc
+    call = Expr.new(ex_call(), at)
+    call.callee = "each"
+    recv = Expr.new(ex_name(), at)
+    recv.ident = pt.ident
+    call.receiver = recv
+    call.block = bl
+    walk = Stmt.new(st_expr(), at)
+    walk.expr = call
+    body: Array(Stmt) = []
+    body.push(walk)
+    body.push(Stmt.new(st_break(), at))
+    stmt.body = body
+    stmt.cond = nil
+    stmt.pre.pop()
+    stmt.for_kind = 12
+    return true
+  }
+  false
+}
+
+// `for name, value in req.headers()` over std.http's Headers: each header
+// in wire order, duplicates included, as the loop written by hand over
+// its positions reads them:
+//   while i < hs.count { p = i; i += 1; name = hs.name_at(p) ?? ""; value = hs.value_at(p) ?? ""; body }
+// The counter steps first, so a `continue` goes straight to the next
+// header; name and value are this step's copies (they cannot be
+// assigned).
+pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter: String, name: String, value: String, base: String) {
+  loc = stmt.loc
+  ix = "${base}i"
+  at = "${base}p"
+  inner: Array(Stmt) = []
+  for bi in 1..stmt.body.size - 1 {
+    inner.push(stmt.body[bi])
+  }
+  stmt.pre[1] = fw_assign(loc, ix, fw_int(loc, 0))
+  count = Expr.new(ex_call(), loc)
+  count.callee = "count"
+  count.receiver = fw_name(loc, xs)
+  stmt.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), count)
+  body: Array(Stmt) = []
+  body.push(fw_assign(loc, at, fw_name(loc, ix)))
+  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
+  for part in [0, 1] {
+    read = Expr.new(ex_call(), loc)
+    read.callee = "name_at"
+    target = name
+    if part == 1 {
+      read.callee = "value_at"
+      target = value
+    }
+    read.receiver = fw_name(loc, xs)
+    read.args.push(fw_name(loc, at))
+    empty = Expr.new(ex_string(), loc)
+    st = fw_assign(loc, target, fw_bin(loc, tk_question_question(), read, empty))
+    st.for_kind = 11
+    body.push(st)
+  }
+  for x in for_unadvance(inner, counter) {
+    body.push(x)
+  }
+  stmt.body = body
+  stmt.for_kind = 13
 }
 
 // `s.fields()` on a String: the string, else nil.
@@ -546,6 +809,7 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
     body.push(fw_scan(loc, xs, ix, cn, true))
     cut = Expr.new(ex_call(), loc)
     cut.callee = "str_slice"
+    cut.derived = true
     cut.args.push(fw_name(loc, xs))
     cut.args.push(fw_name(loc, sn))
     cut.args.push(fw_name(loc, ix))
@@ -609,7 +873,7 @@ pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): 
   at.right = fw_name(loc, ix)
   w.body.push(fw_assign(loc, cn, at))
   test: Expr? = nil
-  for b in [32u64, 9u64, 10u64, 13u64] {
+  for b in [32u64, 9, 10, 13] {
     op = tk_not_eq()
     join = tk_amp_amp()
     if space {
@@ -627,7 +891,7 @@ pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): 
   stop.cond = test
   stop.then_body.push(Stmt.new(st_break(), loc))
   w.body.push(stop)
-  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1u64))))
+  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
   w
 }
 
@@ -722,7 +986,7 @@ pub fn (checker_self: Checker) note_for_position(stmt: Stmt) {
   if stmt.for_kind != 2 || stmt.pre.size < 2 {
     return
   }
-  if pi = stmt.pre[1].target, !str_starts(pi.ident, "__for") {
+  if pi = stmt.pre[1].target, !pi.ident.starts_with("__for") {
     i = checker_self.for_names.size - 1
     while i >= 0 {
       if checker_self.for_names[i] == pi.ident {

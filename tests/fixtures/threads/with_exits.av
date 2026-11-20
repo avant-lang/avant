@@ -1,7 +1,8 @@
-// Every way out of `Mutex.with` releases the lock: a block that
-// ends, one that returns from its function, a `?` that returns a
-// failure, a `break` and a `continue` out of the loop around it, and
-// a block used as a statement that ends without a value. Eight tasks
+// Every way out of `Mutex.with` releases the lock: a lambda that
+// ends, one that returns early with its value, a `?` that returns a
+// failure from it, a `break` and a `continue` of the loop around it
+// that an early return asks for, and a lambda used as a statement that
+// ends without a value. Eight tasks
 // take each way out many times on one counter; a lock that one way
 // out kept would hang the next `with` (the suite's timeout), and a
 // lost update would show in the totals printed after the joins.
@@ -12,49 +13,57 @@ class Odd: Error {
   pub message: String = "odd"
 }
 
-fn plain(m: Mutex(Int), times: Int) {
+fn plain(m: sync.Mutex(Int), times: Int) {
   for i in 0..times {
     m.with (n) { n += 1 }
   }
 }
 
-// Returns from inside the block on every other call.
-fn by_return(m: Mutex(Int), i: Int): Int {
-  m.with { |n|
+// Returns early from inside the lambda on every other call.
+fn by_return(m: sync.Mutex(Int), i: Int): Int {
+  m.with((n): Int {
     n += 1
     if i % 2 == 0 {
       return 1
     }
-  }
-  0
+    0
+  })
 }
 
-// Leaves the loop from inside the block.
-fn by_break(m: Mutex(Int), times: Int): Int {
+// Leaves the loop when the lambda returns early.
+fn by_break(m: sync.Mutex(Int), times: Int): Int {
   k = 0
   while true {
-    m.with { |n|
+    stop = m.with((n): Bool {
       n += 1
       k += 1
       if k == times {
-        break
+        return true
       }
+      false
+    })
+    if stop {
+      break
     }
   }
   k
 }
 
-// Skips the rest of the body from inside the block.
-fn by_continue(m: Mutex(Int), times: Int): Int {
+// Skips the rest of the loop's body when the lambda returns early.
+fn by_continue(m: sync.Mutex(Int), times: Int): Int {
   skipped = 0
   for i in 0..times {
-    m.with { |n|
+    skip = m.with((n): Bool {
       n += 1
       if i % 3 == 0 {
         skipped += 1
-        continue
+        return true
       }
       n += 0
+      false
+    })
+    if skip {
+      continue
     }
   }
   skipped
@@ -67,18 +76,18 @@ fn check(i: Int): Int | Odd {
   i
 }
 
-// A `?` inside the block returns the failure.
-fn by_try(m: Mutex(Int), i: Int): Int | Odd {
-  m.with { |n|
+// A `?` inside the lambda returns the failure from it.
+fn by_try(m: sync.Mutex(Int), i: Int): Int | Odd {
+  m.with((n): Int | Odd {
     n += 1
     v = check(i)?
     n += v - v
-  }
-  0
+    0
+  })
 }
 
 fn main {
-  m = Mutex(Int).new(0)
+  m = sync.Mutex(Int).new(0)
   times = 500
   hs: Array(JoinHandle(Int)) = []
   for t in 0..8 {

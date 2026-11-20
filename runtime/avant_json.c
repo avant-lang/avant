@@ -15,13 +15,22 @@
  * dropped. Accessors report a missing key or a wrong kind through the
  * thread-local status, in the zlib/base64 shape. */
 
-/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
+/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure,
+ * 3 nested deeper than the parse's max_depth, 4 more values than its
+ * max_entries. */
 static __thread int32_t g_json_status;
 /* Why the last parse on this thread failed:
  * yyjson's message (a static string) and the byte offset it names. */
 static __thread const char *g_json_err_msg;
 static __thread int64_t g_json_err_pos;
 static __thread char *g_json_pool;
+/* The last parse refused for a limit (status 3 to 5): what it measured
+ * (values, bytes) and the limit. */
+static __thread int64_t g_json_count;
+static __thread int64_t g_json_limit;
+
+/* yyjson.c's Avant patch: the deepest nesting a read takes (0: none). */
+extern __thread size_t yyjson_avant_max_depth;
 static __thread int g_json_pool_rooted;
 
 static void set_status(int32_t code) {
@@ -42,13 +51,17 @@ char *avant_json_take_pool(void) {
   return pool ? pool : avant_str_empty();
 }
 
+/* The smallest pool: a Bytes this large is a large object (the
+ * collector's SCALAR_LOS_MIN), which never moves. */
+#define AVANT_JSON_POOL_MIN 6144
+
 /* The document's allocator: a bump over the
  * pool. yyjson allocates the text's copy and then the values, which it
  * grows by realloc at the end, so a reallocation of the last block grows
  * it in place and a free of the last block takes the bump back. After
  * the parse the document is the pool's first `top` bytes and the rest
  * goes back to the heap at once (avant_gc_large_trim): the pool is sized
- * for the worst case (24 bytes per text byte, 96 on the retry), and its
+ * for the worst case (yyjson's bound, 13 bytes per text byte), and its
  * unused tail used to stay a live young object as long as the Json did,
  * filling the young budget (Json::ParseMapping: 241 young collections). */
 typedef struct {
@@ -98,12 +111,25 @@ static void bump_free(void *ctx, void *ptr) {
  * yyjson reads it after the allocation and allocates
  * only from its pool, never from the collector, so the parse itself
  * needs no no-GC region. */
-void *avant_json_parse(const char *s) {
+/* The limits (std.json's Json.parse; -1 for none, else 1 or more):
+ * max_depth, the deepest nesting of arrays and objects (the root's is 1),
+ * checked by the reader as it goes (an increment and a compare per
+ * container: yyjson.c's Avant patch); max_bytes, the text's size, before
+ * anything is allocated (status 5); max_entries, the most values (each
+ * member's name counted as one, as yyjson counts them), against the
+ * parsed document's count (status 4). */
+void *avant_json_parse(const char *s, avant_int max_depth, avant_int max_bytes, avant_int max_entries) {
   size_t n = avant_str_n(s);
   int attempt;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
   set_status(0);
+  if (max_bytes >= 0 && (int64_t)n > (int64_t)max_bytes) {
+    g_json_count = (int64_t)n;
+    g_json_limit = (int64_t)max_bytes;
+    set_status(5);
+    return NULL;
+  }
   /* The pool waits in g_json_pool until avant_json_take_pool hands it to
    * the Json value: a runtime root of this thread meanwhile (without
    * it, a full collection between the two calls could free it). */
@@ -113,7 +139,18 @@ void *avant_json_parse(const char *s) {
   }
   g_json_pool = NULL;
   for (attempt = 0; attempt < 2; attempt++) {
-    size_t pool_n = n * (attempt == 0 ? 24 : 96) + 8192;
+    /* yyjson's own bound for a text of n bytes (13 bytes a text byte
+     * and 256: the text's copy, then values of 16 bytes, at most one a
+     * two text bytes, grown by half each time), with room for this
+     * bump's two 16-byte alignments; at least a large object's size,
+     * since a smaller Bytes would be a block object the young copy
+     * moves, and yyjson's pointers into the pool must stay put. The
+     * retry, after an allocation failure (none is expected), takes
+     * 96 bytes a text byte. */
+    size_t pool_n = attempt == 0 ? yyjson_read_max_memory_usage(n, 0) + 64 : n * 96 + 8192;
+    if (pool_n < (size_t)AVANT_JSON_POOL_MIN) {
+      pool_n = (size_t)AVANT_JSON_POOL_MIN;
+    }
     yyjson_alc alc;
     JsonBump bump;
     yyjson_read_err err;
@@ -131,7 +168,11 @@ void *avant_json_parse(const char *s) {
     /* The previous document's pool is usually dead by now: let the due
      * young collection free it before this one exists. */
     avant_gc_young_before((uint64_t)pool_n);
-    pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
+    /* Not zeroed: yyjson writes every byte of the pool it reads (its
+     * text copy, its values), and a Bytes payload holds no reference the
+     * collector reads (avant_alloc_bytes_unzeroed). Zeroing it was most
+     * of a small document's parse. */
+    pool = (char *)avant_alloc_bytes_unzeroed((uint64_t)pool_n);
     bump.base = (uint8_t *)pool;
     bump.cap = pool_n;
     bump.top = 0;
@@ -140,7 +181,17 @@ void *avant_json_parse(const char *s) {
     alc.realloc = bump_realloc;
     alc.free = bump_free;
     alc.ctx = &bump;
+    yyjson_avant_max_depth = max_depth > 0 ? (size_t)max_depth : 0;
     doc = yyjson_read_opts((char *)(s ? s : ""), n, 0, &alc, &err);
+    yyjson_avant_max_depth = 0;
+    if (doc && max_entries >= 0 && (int64_t)yyjson_doc_get_val_count(doc) > (int64_t)max_entries) {
+      /* The pool is young and not yet rooted (g_json_pool): it dies
+       * with the document. */
+      g_json_count = (int64_t)yyjson_doc_get_val_count(doc);
+      g_json_limit = (int64_t)max_entries;
+      set_status(4);
+      return NULL;
+    }
     if (doc) {
       /* The pool is rooted (g_json_pool) before the trim, whose lock
        * wait may let another thread collect; it is large and stays put. */
@@ -151,7 +202,8 @@ void *avant_json_parse(const char *s) {
     if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
       g_json_err_msg = err.msg;
       g_json_err_pos = (int64_t)err.pos;
-      set_status(1);
+      g_json_limit = (int64_t)max_depth;
+      set_status(err.code == YYJSON_READ_ERROR_AVANT_DEPTH ? 3 : 1);
       return NULL;
     }
   }
@@ -258,6 +310,19 @@ void *avant_json_first(void *nodep) {
   return NULL;
 }
 
+/* The first member's name of an object (a string node; the node after it
+ * is that member's value, and the node after the value the next name),
+ * or NULL for an empty object and any other value: the typed decode
+ * walks a Hash's members and an object's unknown names with it, in one
+ * pass, where at(i) and key_at(i) each walk from the start. */
+void *avant_json_first_key(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v) || yyjson_obj_size(v) == 0) {
+    return NULL;
+  }
+  return unsafe_yyjson_get_first(v);
+}
+
 /* One sibling step. Only meaningful while a next sibling exists; the
  * Avant iterator tracks the element count, so it never steps past. */
 void *avant_json_next(void *nodep) {
@@ -280,6 +345,25 @@ avant_int avant_json_len(void *nodep) {
     return (int32_t)yyjson_obj_size(v);
   }
   return 0;
+}
+
+/* The member count of an object, the element count of an array, -1 for
+ * any other value: the typed decode tells the kind and reads the size
+ * in one call. */
+avant_int avant_json_obj_size(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v)) {
+    return -1;
+  }
+  return (avant_int)yyjson_obj_size(v);
+}
+
+avant_int avant_json_arr_size(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_arr(v)) {
+    return -1;
+  }
+  return (avant_int)yyjson_arr_size(v);
 }
 
 /* RC1: P (inside a document's pool, or yyjson's malloc'ed text, which a
@@ -440,16 +524,232 @@ int64_t avant_json_error_offset(void) {
   return g_json_err_pos;
 }
 
-/* A JsonBuilder used against its contract: what says how. A trap: inside
- * a task or an HTTP handler it fails that task or request alone; anywhere
- * else stdout is flushed first, then the message, status 1. */
-void avant_json_misuse(const char *what) {
-  /* The program's String as it is (this call never collects): its bytes
-   * by length, terminated in a buffer as long as a trap's text, then the
-   * trap path. */
-  char text[1024];
+/* What the last parse refused for a limit measured (values or bytes),
+ * and that limit. */
+int64_t avant_json_error_count(void) {
+  return g_json_count;
+}
+
+int64_t avant_json_error_limit(void) {
+  return g_json_limit;
+}
+
+
+/* ---- The typed encode's writers ----
+ *
+ * json.encode and a JsonBuilder write a string and a float straight into
+ * the Buf: a string is scanned once for the bytes that need an escape
+ * and its runs copied whole (the Avant loop it replaced pushed byte by
+ * byte), a float's text is formed on the stack, with no String made for
+ * it. */
+
+/* The bytes a string's byte takes in JSON text: 1, 2 for ", \ and the
+ * escapes \n, \r, \t, 6 for any other byte below 0x20 (\u00XX). */
+static const uint8_t json_esc_len[256] = {
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 2, 2, 6, 6, 2, 6, 6,
+  6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+  1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+};
+
+/* s as a JSON string, quoted, appended to buf: " and \ escaped, \n, \r
+ * and \t by their short escapes, any other byte below 0x20 as \u00XX in
+ * lower case, every other byte (UTF-8 included) as it is. The escaped
+ * size is counted first, so the Buf grows at most once. */
+void avant_json_write_str(void *buf, const char *s) {
+  static const char hex[] = "0123456789abcdef";
   size_t n;
-  const char *d = avant_str_bytes(what, &n);
-  snprintf(text, sizeof text, "%.*s", (int)(n < sizeof text ? n : sizeof text - 1), d);
-  avant_trap_text(text);
+  size_t i;
+  size_t out_n = 2;
+  const uint8_t *p;
+  int32_t at;
+  uint8_t *dst;
+  uint8_t *o;
+  if (!buf) {
+    return;
+  }
+  p = (const uint8_t *)avant_str_bytes(s ? s : AVANT_STR_EMPTY, &n);
+  for (i = 0; i < n; i++) {
+    out_n += json_esc_len[p[i]];
+  }
+  at = (int32_t)avant_buf_size(buf);
+  if (out_n > (size_t)INT32_MAX - (size_t)at) {
+    avant_size_check((uint64_t)at + (uint64_t)out_n, AVANT_SIZE_BUF);
+  }
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
+  avant_buf_ensure(buf, (avant_int)at + (avant_int)out_n);
+  p = (const uint8_t *)avant_str_bytes(s ? s : AVANT_STR_EMPTY, &n);
+  dst = avant_buf_bytes(buf);
+  if (!dst) {
+    return;
+  }
+  o = dst + at;
+  *o++ = '"';
+  if (out_n == n + 2) {
+    memcpy(o, p, n);
+    o += n;
+  } else {
+    size_t run = 0;
+    for (i = 0; i < n; i++) {
+      uint8_t c = p[i];
+      if (json_esc_len[c] == 1) {
+        continue;
+      }
+      if (i > run) {
+        memcpy(o, p + run, i - run);
+        o += i - run;
+      }
+      run = i + 1;
+      *o++ = '\\';
+      if (c == '"' || c == '\\') {
+        *o++ = c;
+      } else if (c == '\n') {
+        *o++ = 'n';
+      } else if (c == '\r') {
+        *o++ = 'r';
+      } else if (c == '\t') {
+        *o++ = 't';
+      } else {
+        *o++ = 'u';
+        *o++ = '0';
+        *o++ = '0';
+        *o++ = (uint8_t)hex[c >> 4];
+        *o++ = (uint8_t)hex[c & 15];
+      }
+    }
+    if (n > run) {
+      memcpy(o, p + run, n - run);
+      o += n - run;
+    }
+  }
+  *o++ = '"';
+  avant_buf_set_size(buf, (avant_int)(o - dst));
+}
+
+/* v's text (the language's one float text) appended to buf; 1 without
+ * writing anything for NaN and the infinities, which JSON has no text
+ * for, else 0. */
+/* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
+avant_int avant_json_write_f64(void *buf, double v) {
+  char tmp[48];
+  int k;
+  if (v - v != 0.0) {
+    return 1;
+  }
+  k = avant_fmt_float_text(tmp, v);
+  avant_buf_append(buf, tmp, (int32_t)k);
+  return 0;
+}
+
+/* ---- The typed decode's ordered reads ----
+ *
+ * A decoded type's fields are read in their declared order, and a
+ * document written from that type (or by most writers of that shape)
+ * has its members in the same order: each read first tries the member
+ * after the one the last read took, one name comparison, and searches
+ * the object only when that member has another name. The cursor is the
+ * thread's: avant_json_ord_begin sets it on an object, each read that
+ * takes the member at it steps it on, a search leaves it where it is (so
+ * the member at it is always the first of its name: every member before
+ * it was taken by an earlier field, and fields have distinct names), and
+ * a read on another object than the cursor's searches. A nested decode
+ * begins its own object; the caller takes the cursor before it
+ * (avant_json_ord_mark) and puts it back after (avant_json_ord_resume).
+ * No pointer here is read unless the object it came from is the one
+ * read: the cursor only points inside the object it was set on. */
+static __thread yyjson_val *g_ord_obj;
+static __thread yyjson_val *g_ord_cur;
+static __thread yyjson_val *g_ord_end;
+
+/* The member count of an object, -1 for any other value (as
+ * avant_json_obj_size), the cursor set at its first member. */
+avant_int avant_json_ord_begin(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v)) {
+    g_ord_obj = NULL;
+    return -1;
+  }
+  g_ord_obj = v;
+  g_ord_cur = unsafe_yyjson_get_first(v);
+  g_ord_end = unsafe_yyjson_get_next(v);
+  return (avant_int)yyjson_obj_size(v);
+}
+
+static yyjson_val *ord_get(void *nodep, const char *key) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  const char *k;
+  size_t n;
+  if (!v || !key) {
+    return NULL;
+  }
+  k = avant_str_bytes(key, &n);
+  if (v == g_ord_obj && g_ord_cur < g_ord_end) {
+    yyjson_val *cur = g_ord_cur;
+    if (unsafe_yyjson_get_len(cur) == n && memcmp(unsafe_yyjson_get_str(cur), k, n) == 0) {
+      yyjson_val *val = cur + 1;
+      g_ord_cur = unsafe_yyjson_get_next(val);
+      return val;
+    }
+  }
+  if (!yyjson_is_obj(v)) {
+    return NULL;
+  }
+  return yyjson_obj_getn(v, k, n);
+}
+
+void *avant_json_ord_get(void *nodep, const char *key) {
+  return ord_get(nodep, key);
+}
+
+avant_int avant_json_ord_int(void *nodep, const char *key) {
+  return node_int(ord_get(nodep, key));
+}
+
+double avant_json_ord_f64(void *nodep, const char *key) {
+  return node_f64_or_nan(ord_get(nodep, key));
+}
+
+avant_int avant_json_ord_bool(void *nodep, const char *key) {
+  return node_bool(ord_get(nodep, key));
+}
+
+char *avant_json_ord_str(void *nodep, const char *key) {
+  return node_str(ord_get(nodep, key));
+}
+
+/* The cursor, when it is on this object (else NULL), and the cursor put
+ * back on it after a nested decode moved it (NULL: no cursor, every read
+ * searches). */
+void *avant_json_ord_mark(void *nodep) {
+  if (nodep && (yyjson_val *)nodep == g_ord_obj) {
+    return g_ord_cur;
+  }
+  return NULL;
+}
+
+void avant_json_ord_resume(void *nodep, void *cur) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !cur || !yyjson_is_obj(v)) {
+    g_ord_obj = NULL;
+    return;
+  }
+  g_ord_obj = v;
+  g_ord_cur = (yyjson_val *)cur;
+  g_ord_end = unsafe_yyjson_get_next(v);
 }

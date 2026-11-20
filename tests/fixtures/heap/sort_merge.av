@@ -1,0 +1,262 @@
+// The comparator sort (`sort`, `sorted` with a lambda) and `sort_by`: each
+// result is in order, stable (equal keys keep their first order) and a
+// permutation of the input, for sizes 0, 1, 2, 16, 17, 100, 1000 and
+// 100,000 (the Ints; 3,000 for the others) and inputs in order, reversed, all equal, random, with few
+// distinct keys, a sawtooth, an organ pipe and a sorted run with a random
+// tail; the number of comparisons is printed for each (n - 1 on input in
+// order, strictly reversed or all equal; at most about n log2 n
+// otherwise). The elements are Ints, a struct holding a String, a class
+// and Strings; the struct's comparator allocates now and then, so a
+// collection runs inside the sort, while some elements are held only in
+// its scratch. A comparator that is no order still leaves a permutation.
+// sort_by computes each key once.
+
+struct Rec {
+  key: Int
+  id: Int
+  tag: String
+}
+
+class Obj {
+  pub key: Int = 0
+  pub id: Int = 0
+}
+
+fn lcg(s: Int): Int {
+  ((s &* 6364136223846793005) &+ 1442695040888963407) & 9223372036854775807
+}
+
+// The key of element i of an input of n: the patterns.
+fn key_of(pattern: Int, i: Int, n: Int, r: Int): Int {
+  if pattern == 0 {
+    return i
+  }
+  if pattern == 1 {
+    return n - i
+  }
+  if pattern == 2 {
+    return 7
+  }
+  if pattern == 3 {
+    return (r >> 17) % (n + 1)
+  }
+  if pattern == 4 {
+    return (r >> 17) % 4
+  }
+  if pattern == 5 {
+    return i % 50
+  }
+  if pattern == 6 {
+    if i < n / 2 {
+      return i
+    }
+    return n - i
+  }
+  if i < n - n / 20 {
+    return i
+  }
+  (r >> 17) % (n + 1)
+}
+
+fn pattern_name(p: Int): String {
+  names = ["sorted", "reversed", "equal", "random", "few", "saw", "organ", "tail"]
+  names[p]
+}
+
+// ks[i] keys, ids[i] the element's first place: in order by key, ties
+// by id, and every id once.
+fn check(ks: Array(Int), ids: Array(Int), what: String): Bool {
+  n = ks.size
+  seen = Array(Bool).new(n)
+  for i in 0..n {
+    if ids[i] < 0 || ids[i] >= n || seen[ids[i]] {
+      puts("${what}: not a permutation at ${i}")
+      return false
+    }
+    seen[ids[i]] = true
+    if i > 0 {
+      if ks[i - 1] > ks[i] {
+        puts("${what}: out of order at ${i}")
+        return false
+      }
+      if ks[i - 1] == ks[i] && ids[i - 1] > ids[i] {
+        puts("${what}: not stable at ${i}")
+        return false
+      }
+    }
+  }
+  true
+}
+
+fn run_ints(n: Int, p: Int): String {
+  r = 12345 + n * 31 + p
+  xs: Array(Int) = []
+  for i in 0..n {
+    r = lcg(r)
+    // The id in the low bits, the key above: the comparator reads the key
+    // only, so stability shows in the ids.
+    xs.push(key_of(p, i, n, r) * 1048576 + i)
+  }
+  cmps = 0
+  xs.sort((a, b) {
+    cmps += 1
+    a >> 20 < b >> 20
+  })
+  ks = Array(Int).new(n, (i) { xs[i] >> 20 })
+  ids = Array(Int).new(n, (i) { xs[i] & 1048575 })
+  ok = check(ks, ids, "int ${pattern_name(p)} ${n}")
+  "${cmps}${if ok { "" } else { "!" }}"
+}
+
+fn run_recs(n: Int, p: Int, every: Int): String {
+  r = 777 + n * 17 + p
+  xs: Array(Rec) = []
+  tags: Array(String) = []
+  for i in 0..n {
+    r = lcg(r)
+    tags.push("r${i}")
+    xs.push(Rec { key: key_of(p, i, n, r), id: i, tag: tags[i] })
+  }
+  cmps = 0
+  junk = 0
+  xs.sort((a, b) {
+    cmps += 1
+    if cmps % every == 0 {
+      s = "${a.tag}/${b.tag}"
+      junk += s.size
+    }
+    a.key < b.key
+  })
+  ok = true
+  for i in 0..n {
+    if xs[i].tag != tags[xs[i].id] {
+      ok = false
+    }
+  }
+  ks = Array(Int).new(n, (i) { xs[i].key })
+  ids = Array(Int).new(n, (i) { xs[i].id })
+  ok = check(ks, ids, "rec ${pattern_name(p)} ${n}") && ok && junk >= 0
+  "${cmps}${if ok { "" } else { "!" }}"
+}
+
+fn run_objs(n: Int, p: Int): String {
+  r = 4242 + n * 13 + p
+  xs: Array(Obj) = []
+  for i in 0..n {
+    r = lcg(r)
+    o = Obj.new()
+    o.key = key_of(p, i, n, r)
+    o.id = i
+    xs.push(o)
+  }
+  cmps = 0
+  ys = xs.sorted((a, b) {
+    cmps += 1
+    if a.key < b.key {
+      return true
+    }
+    false
+  })
+  ks = Array(Int).new(n, (i) { ys[i].key })
+  ids = Array(Int).new(n, (i) { ys[i].id })
+  ok = check(ks, ids, "obj ${pattern_name(p)} ${n}") && xs.size == n
+  // The input is unchanged.
+  for i in 0..n {
+    if xs[i].id != i {
+      ok = false
+    }
+  }
+  "${cmps}${if ok { "" } else { "!" }}"
+}
+
+fn run_strs(n: Int, p: Int): String {
+  r = 99 + n * 7 + p
+  xs: Array(String) = []
+  for i in 0..n {
+    r = lcg(r)
+    // A key's length is the key mod 37; the text after the dash names the
+    // id.
+    xs.push("${"k".repeat(key_of(p, i, n, r) % 37)}-${i}")
+  }
+  cmps = 0
+  xs.sort((a, b) {
+    cmps += 1
+    (a.index_of("-") ?? 0) < (b.index_of("-") ?? 0)
+  })
+  ks = Array(Int).new(n, (i) { xs[i].index_of("-") ?? 0 })
+  ids = Array(Int).new(n, (i) { xs[i][(xs[i].index_of("-") ?? 0) + 1..].to_i() ?? -1 })
+  ok = check(ks, ids, "str ${pattern_name(p)} ${n}")
+  "${cmps}${if ok { "" } else { "!" }}"
+}
+
+fn main {
+  sizes = [0, 1, 2, 16, 17, 100, 1000, 100000]
+  for p in 0..8 {
+    line = pattern_name(p)
+    for n in sizes {
+      line += " ${n}:${run_ints(n, p)}"
+    }
+    puts(line)
+  }
+  small = [0, 1, 2, 16, 17, 100, 1000, 3000]
+  for p in 0..8 {
+    line = "rec ${pattern_name(p)}"
+    for n in small {
+      line += " ${run_recs(n, p, 97)}"
+    }
+    line += " | obj"
+    for n in small {
+      line += " ${run_objs(n, p)}"
+    }
+    line += " | str"
+    for n in [0, 1, 2, 16, 17, 100, 1000] {
+      line += " ${run_strs(n, p)}"
+    }
+    puts(line)
+  }
+  // A comparator that is no order (one that answers at random, one that
+  // says <=): the result is still a permutation of the input.
+  for n in [17, 1000, 100000] {
+    zs = Array(Int).new(n, (i) { i })
+    q = 3
+    zs.sort((a, b) {
+      q = lcg(q)
+      (q >> 30) & 1 == 1 && a != b
+    })
+    ws2 = Array(Int).new(n, (i) { (i * 7) % 13 })
+    ws2.sort((a, b) { a <= b })
+    seen = Array(Bool).new(n)
+    perm = true
+    for z in zs {
+      if seen[z] {
+        perm = false
+      }
+      seen[z] = true
+    }
+    sum = 0
+    for w in ws2 {
+      sum += w
+    }
+    want = 0
+    for i in 0..n {
+      want += (i * 7) % 13
+    }
+    puts("no order ${n} ${perm} ${sum == want}")
+  }
+  // sort_by: one key a element, stable.
+  n = 100000
+  ws: Array(Int) = []
+  r = 5
+  for i in 0..n {
+    r = lcg(r)
+    ws.push(((r >> 17) % 1000) * 1048576 + i)
+  }
+  calls = 0
+  ws.sort_by((w) {
+    calls += 1
+    w >> 20
+  })
+  ks = Array(Int).new(n, (i) { ws[i] >> 20 })
+  ids = Array(Int).new(n, (i) { ws[i] & 1048575 })
+  puts("sort_by ${calls} ${check(ks, ids, "sort_by")}")
+}

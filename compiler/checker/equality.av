@@ -9,7 +9,10 @@
 //     `interface Eq(T)` included;
 //   - an array is equal to another of its type when the sizes are equal
 //     and the elements are, in order; an optional, when both are nil or
-//     both hold equal values: generic functions the checker writes once
+//     both hold equal values; a Hash, when the sizes are equal and each
+//     key of one is a key of the other with an equal value (in any
+//     order); a Set, when the sizes are equal and each element of one is
+//     in the other: generic functions the checker writes once
 //     (eq_template) and instantiates for each element type;
 //   - a Float64 compares by IEEE (NaN equals nothing, itself included),
 //     so an array or struct holding NaN is not equal to itself;
@@ -17,8 +20,8 @@
 //     which the checker writes < (derive_orders); >, <= and >= are
 //     b < a, !(b < a) and !(a < b);
 //   - two values of different types do not compare (a compile error),
-//     an optional is never compared with nil, and a Hash, a
-//     function or a union of several types has no ==.
+//     an optional is never compared with nil, and a function or a union
+//     of several types has no ==.
 //
 // Nothing here runs for a program that compares no such values: the
 // methods and functions exist only once a comparison asks for them.
@@ -67,7 +70,7 @@ pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: St
     }
     return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty_seen_key(ty)) {
+  if seen.has(ty_seen_key(ty)) {
     return ""
   }
   seen.push(ty_seen_key(ty))
@@ -135,7 +138,7 @@ pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
 // compares it by its type's methods (the runtime's _uk entries): ty, or a
 // struct among its fields at any depth, defines its own ==.
 pub fn (checker_self: Checker) key_by_methods(ty: Ty, seen: Array(String)): Bool {
-  if !ty.is_struct() || seen.contains(ty_seen_key(ty)) {
+  if !ty.is_struct() || seen.has(ty_seen_key(ty)) {
     return false
   }
   if checker_self.own_op(ty, "==") {
@@ -194,7 +197,7 @@ pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): St
   if checker_self.own_op(ty, "==") {
     return "${ty.show()} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
-  if seen.contains(ty_seen_key(ty)) {
+  if seen.has(ty_seen_key(ty)) {
     return ""
   }
   seen.push(ty_seen_key(ty))
@@ -395,7 +398,7 @@ pub fn (checker_self: Checker) derive_lt_method(sty: Ty, loc: Location) {
   o.ident = "other"
   call.args.push(o)
   zero = Expr.new(ex_int(), loc)
-  zero.int_bits = 0u64
+  zero.int_bits = 0
   lt = Expr.new(ex_binary(), loc)
   lt.op = tk_less()
   lt.left = call
@@ -496,7 +499,7 @@ pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
     return ""
   }
   if ty.is_struct() {
-    if checker_self.user_op(ty, "==") || seen.contains(ty_seen_key(ty)) {
+    if checker_self.user_op(ty, "==") || seen.has(ty_seen_key(ty)) {
       return ""
     }
     seen.push(ty_seen_key(ty))
@@ -518,6 +521,16 @@ pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
   }
   if ty.is_nilable() {
     return checker_self.eq_missing(ty_without_nil(ty), seen)
+  }
+  if ty.is_set() {
+    // An element is a key: it has == by the key rule.
+    return ""
+  }
+  if ty.is_hash() {
+    if v = ty.val {
+      return checker_self.eq_missing(v, seen)
+    }
+    return ""
   }
   ty.show()
 }
@@ -626,6 +639,12 @@ pub fn eq_template_source(name: String): String {
   if name == "__avant_eq_array" {
     return "fn __avant_eq_array(a: Array(T), b: Array(T)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  i = 0\n  while i < a.size {\n    if a[i] != b[i] {\n      return false\n    }\n    i += 1\n  }\n  true\n}\n"
   }
+  if name == "__avant_eq_hash" {
+    return "fn __avant_eq_hash(a: Hash(K, V), b: Hash(K, V)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  for k, v in a {\n    if w = b[k] {\n      if v != w {\n        return false\n      }\n    } else {\n      return false\n    }\n  }\n  true\n}\n"
+  }
+  if name == "__avant_eq_set" {
+    return "fn __avant_eq_set(a: Set(T), b: Set(T)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  for v in a {\n    if !b.has(v) {\n      return false\n    }\n  }\n  true\n}\n"
+  }
   if name == "__avant_min" || name == "__avant_max" {
     test = "xs[i] < m"
     if name == "__avant_max" {
@@ -677,14 +696,28 @@ pub fn (checker_self: Checker) eq_template(name: String): FuncSig? {
 pub fn (checker_self: Checker) eq_by_function(expr: Expr, ty: Ty): Bool {
   name = "__avant_eq_opt"
   arg = ty_without_nil(ty)
+  subst: Array(Ty) = []
   if ty.is_array() {
     name = "__avant_eq_array"
     if e = ty.inner {
       arg = e
     }
+  } else if ty.is_set() {
+    name = "__avant_eq_set"
+    if k = ty.key {
+      arg = k
+    }
+  } else if ty.is_hash() {
+    name = "__avant_eq_hash"
+    if k = ty.key {
+      arg = k
+    }
+    if v = ty.val {
+      subst.push(arg)
+      arg = v
+    }
   }
   if sig = checker_self.eq_template(name) {
-    subst: Array(Ty) = []
     subst.push(arg)
     if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
       expr.resolved = inst.node.emit_name

@@ -1,0 +1,31 @@
+// A table that deletes as much as it inserts compacts at its size, where
+// it is: integer keys (the open layout) with String values, String keys
+// (the compact layout) with Array values; every entry keeps its own key
+// and value and the order of insertion, across the collector's moves.
+
+fn main {
+  h = Hash(Int, String).new()
+  g = Hash(String, Array(Int)).new()
+  for i in 0..3000 {
+    h[i] = "v${i}"
+    g["k${i}"] = [i, i + 1]
+  }
+  for i in 0..60000 {
+    _ = h.delete(i)
+    h[i + 3000] = "v${i + 3000}"
+    _ = g.delete("k${i}")
+    g["k${i + 3000}"] = [i + 3000, i + 3001]
+  }
+  bad = 0
+  for k, v in h {
+    if v != "v${k}" {
+      bad += 1
+    }
+  }
+  for k, v in g {
+    if k != "k${v[0]}" || v[1] != v[0] + 1 {
+      bad += 1
+    }
+  }
+  puts("${h.size} ${g.size} ${bad}")
+}

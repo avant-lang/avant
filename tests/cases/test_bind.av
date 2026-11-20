@@ -1,14 +1,16 @@
 import harness
+import std.fs
+import std.process
 
 fn invoke(compiler: String, cmd: String, log: String, flags: Array(String)): Int {
   args: Array(String) = []
   args.push(cmd)
   args.concat(flags)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
-fn read(path: String): String {
-  if text = file_read(path) {
+fn read_text(path: String): String {
+  if text = fs.read(path) {
     return text
   }
   ""
@@ -18,7 +20,7 @@ fn body(text: String): String {
   i = 0
   while i < text.size {
     if text[i] == 10 {
-      return str_slice(text, i + 1, text.size)
+      return text[i + 1..]
     }
     i += 1
   }
@@ -27,14 +29,14 @@ fn body(text: String): String {
 
 fn head(text: String): String {
   if text.size > 240 {
-    return str_slice(text, 0, 240)
+    return text[..240]
   }
   text
 }
 
 fn has_lib(text: String): Bool {
   if text.size >= 4 {
-    if str_slice(text, 0, 4) == "lib " {
+    if text[..4] == "lib " {
       return true
     }
   }
@@ -43,8 +45,8 @@ fn has_lib(text: String): Bool {
 
 fn test_bind(c: Checks) {
   c.suite("tests/cases/test_bind.av")
-  if compiler = env_get("AVANT_COMPILER") {
-    c.expect(file_exists(compiler), "AVANT_COMPILER exists")
+  if compiler = process.env("AVANT_COMPILER") {
+    c.expect(fs.exists(compiler), "AVANT_COMPILER exists")
     root = avant_test_root()
     stamp = now_ms()
     none: Array(String) = []
@@ -54,7 +56,7 @@ fn test_bind(c: Checks) {
     abs_compiler = compiler_abs("bind", compiler)
     here = cwd_here()
     real_helper = "${here}/runtime/build/avant-bind"
-    if !file_exists(real_helper) {
+    if !fs.exists(real_helper) {
       // Every check below runs the helper: without it they would all fail
       // for a reason none of them names.
       c.expect(false, "avant-bind was not built: runtime/build.sh skips ${real_helper} when llvm-config-20 or libclang 20 is missing (sudo apt install llvm-20 libclang-20-dev, then sh runtime/build.sh); its notice is in the runtime build's output")
@@ -68,9 +70,9 @@ fn test_bind(c: Checks) {
     mkdir_p("${lay}/co/bin")
     mkdir_p("${lay}/co/runtime/build")
     copy_file(abs_compiler, "${lay}/co/bin/avant")
-    _ = file_write("${lay}/co/runtime/build/avant_rt.o", "")
+    _ = fs.write("${lay}/co/runtime/build/avant_rt.o", "")
     copy_file(real_helper, "${lay}/co/runtime/build/avant-bind")
-    _ = file_write("${lay}/co/bin/avant-bind", "#!/bin/sh\necho STALE\nexit 3\n")
+    _ = fs.write("${lay}/co/bin/avant-bind", "#!/bin/sh\necho STALE\nexit 3\n")
     chmod_x("${lay}/co/bin/avant-bind")
     mkdir_p("${lay}/none")
     copy_file(abs_compiler, "${lay}/none/avant")
@@ -91,8 +93,8 @@ fn test_bind(c: Checks) {
       la.push("bind")
       la.push(abs_h)
       la_log = "${lay}/run-${k}.log"
-      lay_codes.push(process_run_out("/usr/bin/env", la, la_log) ?? -1)
-      lay_texts.push(read(la_log))
+      lay_codes.push(run_out("/usr/bin/env", la, la_log) ?? -1)
+      lay_texts.push(read_text(la_log))
       k += 1
     }
     c.expect(lay_codes[0] == 0 && lay_texts[0].contains("lib add {"), "a release layout finds avant-bind beside the compiler")
@@ -107,7 +109,7 @@ fn test_bind(c: Checks) {
     add_flags.push(add_h)
     add_code = invoke(compiler, "bind", add_log, add_flags)
     c.eq_int(add_code, 0, "bind add.h exits 0")
-    add_txt = read(add_log)
+    add_txt = read_text(add_log)
     c.expect(add_txt.contains("lib add {"), "default lib name is the header stem (${head(add_txt)})")
     c.expect(add_txt.contains("fun avant_add(a: Int32, b: Int32): Int32"), "avant_add")
     c.expect(add_txt.contains("fun avant_sentinel: Ptr(Void)"), "avant_sentinel")
@@ -121,7 +123,7 @@ fn test_bind(c: Checks) {
     over_flags.push(add_h)
     over_code = invoke(compiler, "b", over_log, over_flags)
     c.eq_int(over_code, 0, "b --lib exits 0")
-    over_txt = read(over_log)
+    over_txt = read_text(over_log)
     c.expect(over_txt.contains("lib math {"), "--lib overrides the name")
     c.expect(!over_txt.contains("lib add {"), "--lib replaces the stem")
 
@@ -131,7 +133,7 @@ fn test_bind(c: Checks) {
     eq_flags.push("${root}/examples/c/zlib_version.h")
     eq_code = invoke(compiler, "bind", eq_log, eq_flags)
     c.eq_int(eq_code, 0, "--lib= exits 0")
-    eq_txt = read(eq_log)
+    eq_txt = read_text(eq_log)
     c.expect(eq_txt.contains("lib z {"), "--lib= name")
     c.expect(eq_txt.contains("fun zlibVersion: String?"), "zlibVersion")
 
@@ -140,8 +142,8 @@ fn test_bind(c: Checks) {
     lay_flags.push("${root}/examples/c/layout.h")
     lay_code = invoke(compiler, "bind", lay_log, lay_flags)
     c.eq_int(lay_code, 0, "bind layout.h exits 0")
-    lay_txt = read(lay_log)
-    if lay_src = file_read("${root}/examples/layout.av") {
+    lay_txt = read_text(lay_log)
+    if lay_src = fs.read("${root}/examples/layout.av") {
       c.expect(lay_src.contains(body(lay_txt)), "layout.h body matches examples/layout.av")
     } else {
       c.expect(false, "read examples/layout.av")
@@ -152,7 +154,7 @@ fn test_bind(c: Checks) {
     anon_flags.push("${root}/examples/c/layout_anon.h")
     anon_code = invoke(compiler, "bind", anon_log, anon_flags)
     c.eq_int(anon_code, 0, "anon exits 0")
-    anon_txt = read(anon_log)
+    anon_txt = read_text(anon_log)
     c.expect(anon_txt.contains("struct Pair {"), "anonymous struct takes the typedef name")
     c.expect(anon_txt.contains("fun pair_ok: Int"), "anon function stays")
 
@@ -161,7 +163,7 @@ fn test_bind(c: Checks) {
     pack_flags.push("${root}/examples/c/layout_pack.h")
     pack_code = invoke(compiler, "bind", pack_log, pack_flags)
     c.eq_int(pack_code, 0, "packed exits 0")
-    pack_txt = read(pack_log)
+    pack_txt = read_text(pack_log)
     c.expect(pack_txt.contains("packed"), "packed diagnostic")
     c.expect(pack_txt.contains("fun pack_f: Int"), "packed function stays")
     c.expect(!pack_txt.contains("struct Pack"), "packed record is skipped")
@@ -171,7 +173,7 @@ fn test_bind(c: Checks) {
     bit_flags.push("${root}/examples/c/layout_bit.h")
     bit_code = invoke(compiler, "bind", bit_log, bit_flags)
     c.eq_int(bit_code, 0, "bitfield exits 0")
-    bit_txt = read(bit_log)
+    bit_txt = read_text(bit_log)
     c.expect(bit_txt.contains("bitfield"), "bitfield diagnostic")
     c.expect(bit_txt.contains("fun bits_f: Int"), "bitfield function stays")
     c.expect(!bit_txt.contains("struct Bits"), "bitfield record is skipped")
@@ -181,7 +183,7 @@ fn test_bind(c: Checks) {
     two_flags.push("${root}/examples/c/layout_two.h")
     two_code = invoke(compiler, "bind", two_log, two_flags)
     c.eq_int(two_code, 0, "two typedefs exits 0")
-    two_txt = read(two_log)
+    two_txt = read_text(two_log)
     c.expect(two_txt.contains("two typedefs"), "two typedefs diagnostic")
     c.expect(two_txt.contains("fun amb_f: Int"), "ambiguous function stays")
     c.expect(!two_txt.contains("struct "), "two typedefs skip the record")
@@ -191,7 +193,7 @@ fn test_bind(c: Checks) {
     raw_flags.push("${root}/examples/c/layout_uchar.h")
     raw_code = invoke(compiler, "bind", raw_log, raw_flags)
     c.eq_int(raw_code, 0, "unsigned char exits 0")
-    raw_txt = read(raw_log)
+    raw_txt = read_text(raw_log)
     // An `unsigned char *` field is bytes, not a C string: Ptr(UInt8),
     // read with p[i] (before, the record was skipped).
     c.expect(raw_txt.contains("struct Raw {\n    p: Ptr(UInt8)\n  }"), "unsigned char* field maps to Ptr(UInt8)")
@@ -202,7 +204,7 @@ fn test_bind(c: Checks) {
     by_flags.push("${root}/examples/c/layout_byval.h")
     by_code = invoke(compiler, "bind", by_log, by_flags)
     c.eq_int(by_code, 1, "by-value exits non-zero")
-    by_txt = read(by_log)
+    by_txt = read_text(by_log)
     c.expect(by_txt.contains("C struct passed by value is not supported"), "by-value diagnostic")
     c.expect(!by_txt.contains("struct Point"), "by-value hides the partial lib")
     c.expect(!has_lib(by_txt), "by-value prints no lib")
@@ -212,7 +214,7 @@ fn test_bind(c: Checks) {
     miss_flags.push("${scratch()}/bind-${stamp}-missing.h")
     miss_code = invoke(compiler, "bind", miss_log, miss_flags)
     c.eq_int(miss_code, 0, "missing header exits 0")
-    miss_txt = read(miss_log)
+    miss_txt = read_text(miss_log)
     c.expect(miss_txt.contains("header is missing"), "missing header diagnostic")
     c.expect(!has_lib(miss_txt), "missing header prints no lib")
 
@@ -222,14 +224,14 @@ fn test_bind(c: Checks) {
     flag_flags.push(add_h)
     flag_code = invoke(compiler, "bind", flag_log, flag_flags)
     c.eq_int(flag_code, 0, "unknown flag exits 0")
-    flag_txt = read(flag_log)
+    flag_txt = read_text(flag_log)
     c.expect(flag_txt.contains("unknown bind argument --nope"), "unknown flag diagnostic")
     c.expect(!has_lib(flag_txt), "unknown flag prints no lib")
 
     none_log = "${scratch()}/bind-${stamp}-none.log"
     none_code = invoke(compiler, "bind", none_log, none)
     c.eq_int(none_code, 0, "no header exits 0")
-    none_txt = read(none_log)
+    none_txt = read_text(none_log)
     c.expect(none_txt.contains("bind needs a C header"), "bind needs a header")
     c.expect(none_txt.contains("avant bind"), "usage lists bind")
 
@@ -238,7 +240,7 @@ fn test_bind(c: Checks) {
     need_flags.push("--lib")
     need_code = invoke(compiler, "b", need_log, need_flags)
     c.eq_int(need_code, 0, "--lib without a name exits 0")
-    need_txt = read(need_log)
+    need_txt = read_text(need_log)
     c.expect(need_txt.contains("--lib needs a name"), "--lib needs a name")
 
     many_log = "${scratch()}/bind-${stamp}-many.log"
@@ -247,7 +249,7 @@ fn test_bind(c: Checks) {
     many_flags.push("${root}/examples/c/layout.h")
     many_code = invoke(compiler, "bind", many_log, many_flags)
     c.eq_int(many_code, 0, "two headers exits 0")
-    many_txt = read(many_log)
+    many_txt = read_text(many_log)
     c.expect(many_txt.contains("bind takes one header"), "one header")
     c.expect(!has_lib(many_txt), "two headers print no lib")
 
@@ -255,35 +257,35 @@ fn test_bind(c: Checks) {
     // Avant type (UInt32, Int8 ... Float32); before, one unsigned int,
     // float or uint8_t failed the whole header.
     u32_h = "${scratch()}/avant_bind_${stamp}_u32.h"
-    _ = file_write(u32_h, "unsigned int widen(unsigned int x);\nint add(int a, int b);\n")
+    _ = fs.write(u32_h, "unsigned int widen(unsigned int x);\nint add(int a, int b);\n")
     u32_log = "${scratch()}/bind-${stamp}-u32.log"
     u32_flags: Array(String) = []
     u32_flags.push(u32_h)
     u32_code = invoke(compiler, "bind", u32_log, u32_flags)
     c.eq_int(u32_code, 0, "unsigned 32-bit fun exits 0")
-    u32_txt = read(u32_log)
+    u32_txt = read_text(u32_log)
     c.expect(u32_txt.contains("fun widen(x: UInt32): UInt32"), "unsigned 32-bit maps to UInt32")
     c.expect(u32_txt.contains("fun add(a: Int32, b: Int32): Int32"), "the rest of the header binds")
 
     u32f_h = "${scratch()}/avant_bind_${stamp}_u32f.h"
-    _ = file_write(u32f_h, "struct Counter { unsigned int n; int tag; };\nint get_tag(struct Counter *c);\n")
+    _ = fs.write(u32f_h, "struct Counter { unsigned int n; int tag; };\nint get_tag(struct Counter *c);\n")
     u32f_log = "${scratch()}/bind-${stamp}-u32f.log"
     u32f_flags: Array(String) = []
     u32f_flags.push(u32f_h)
     u32f_code = invoke(compiler, "bind", u32f_log, u32f_flags)
     c.eq_int(u32f_code, 0, "unsigned 32-bit field exits 0")
-    u32f_txt = read(u32f_log)
+    u32f_txt = read_text(u32f_log)
     c.expect(u32f_txt.contains("struct Counter {\n    n: UInt32\n    tag: Int32\n  }"), "unsigned 32-bit field maps to UInt32")
 
     mkdir_p("${scratch()}/bind-${stamp}-cs")
     sc_h = "${scratch()}/bind-${stamp}-cs/hdr_cs.h"
-    _ = file_write(sc_h, "#include <stdint.h>\ntypedef struct CsPix {\n  uint8_t r;\n  uint8_t g;\n  uint16_t w;\n  int16_t h;\n  int8_t tag;\n  uint32_t id;\n  float gain;\n} CsPix;\nint8_t cs_neg_i8(int8_t x);\nunsigned char cs_inc_u8(unsigned char x);\nshort cs_neg_i16(short x);\nunsigned short cs_dbl_u16(unsigned short x);\nuint32_t cs_inc_u32(uint32_t x);\nfloat cs_half_f32(float x);\ndouble cs_sum(signed char a, uint8_t b, int16_t c, uint16_t d, uint32_t e, float f);\nCsPix *cs_pix_new(void);\nvoid cs_pix_fill(CsPix *p);\ndouble cs_pix_total(const CsPix *p);\n")
+    _ = fs.write(sc_h, "#include <stdint.h>\ntypedef struct CsPix {\n  uint8_t r;\n  uint8_t g;\n  uint16_t w;\n  int16_t h;\n  int8_t tag;\n  uint32_t id;\n  float gain;\n} CsPix;\nint8_t cs_neg_i8(int8_t x);\nunsigned char cs_inc_u8(unsigned char x);\nshort cs_neg_i16(short x);\nunsigned short cs_dbl_u16(unsigned short x);\nuint32_t cs_inc_u32(uint32_t x);\nfloat cs_half_f32(float x);\ndouble cs_sum(signed char a, uint8_t b, int16_t c, uint16_t d, uint32_t e, float f);\nCsPix *cs_pix_new(void);\nvoid cs_pix_fill(CsPix *p);\ndouble cs_pix_total(const CsPix *p);\n")
     sc_log = "${scratch()}/bind-${stamp}-cs.log"
     sc_flags: Array(String) = []
     sc_flags.push(sc_h)
     sc_code = invoke(compiler, "bind", sc_log, sc_flags)
     c.eq_int(sc_code, 0, "C scalar types: bind exits 0")
-    sc_txt = read(sc_log)
+    sc_txt = read_text(sc_log)
     c.expect(sc_txt.contains("struct CsPix {\n    r: UInt8\n    g: UInt8\n    w: UInt16\n    h: Int16\n    tag: Int8\n    id: UInt32\n    gain: Float32\n  }"), "C scalar fields map to their exact types")
     c.expect(sc_txt.contains("fun cs_sum(a: Int8, b: UInt8, c: Int16, d: UInt16, e: UInt32, f: Float32): Float64"), "C scalar parameters map to their exact types")
     c.expect(sc_txt.contains("fun cs_half_f32(x: Float32): Float32"), "float maps to Float32")
@@ -293,12 +295,12 @@ fn test_bind(c: Checks) {
     // with &x and p[i].
     mkdir_p("${scratch()}/bind-${stamp}-pt")
     pt_h = "${scratch()}/bind-${stamp}-pt/hdr_pt.h"
-    _ = file_write(pt_h, "#include <stdint.h>\ntypedef struct PtPair { int a; int b; } PtPair;\ntypedef struct PtWrap { int *count; PtPair **items; char **names; unsigned char *bytes; void **slots; } PtWrap;\nint pt_out_int(int *out);\nint pt_out_pair(PtPair **out, int which);\nvoid pt_out_u8(unsigned char *b);\nint32_t *pt_ints_at(void);\nint pt_names(char **argv, void **slots);\ntypedef struct PtErr { uint32_t domain; uint32_t code; char message[504]; } PtErr;\nPtErr *pt_err_at(void);\n")
+    _ = fs.write(pt_h, "#include <stdint.h>\ntypedef struct PtPair { int a; int b; } PtPair;\ntypedef struct PtWrap { int *count; PtPair **items; char **names; unsigned char *bytes; void **slots; } PtWrap;\nint pt_out_int(int *out);\nint pt_out_pair(PtPair **out, int which);\nvoid pt_out_u8(unsigned char *b);\nint32_t *pt_ints_at(void);\nint pt_names(char **argv, void **slots);\ntypedef struct PtErr { uint32_t domain; uint32_t code; char message[504]; } PtErr;\nPtErr *pt_err_at(void);\n")
     pt_log = "${scratch()}/bind-${stamp}-pt.log"
     pt_flags: Array(String) = []
     pt_flags.push(pt_h)
     c.eq_int(invoke(compiler, "bind", pt_log, pt_flags), 0, "pointers: bind exits 0")
-    pt_txt = read(pt_log)
+    pt_txt = read_text(pt_log)
     c.expect(pt_txt.contains("struct PtWrap {\n    count: Ptr(Int32)\n    items: Ptr(Ptr(PtPair)?)\n    names: Ptr(Ptr(Int8)?)\n    bytes: Ptr(UInt8)\n    slots: Ptr(Ptr(Void)?)\n  }"), "pointer fields map to Ptr of their pointee (${pt_txt})")
     c.expect(pt_txt.contains("fun pt_out_int(out: Ptr(Int32)): Int32"), "int * maps to Ptr(Int32)")
     c.expect(pt_txt.contains("struct PtErr {\n    domain: UInt32\n    code: UInt32\n    message: Int8[504]\n  }"), "a fixed array field maps to T[N]")
@@ -306,45 +308,45 @@ fn test_bind(c: Checks) {
     c.expect(pt_txt.contains("fun pt_out_u8(b: Ptr(UInt8))"), "unsigned char * maps to Ptr(UInt8)")
     c.expect(pt_txt.contains("fun pt_names(argv: Ptr(Ptr(Int8)?), slots: Ptr(Ptr(Void)?)): Int32"), "char ** and void ** map to Ptr(Ptr(Int8)?) and Ptr(Ptr(Void)?)")
     pt_src = "${scratch()}/bind-${stamp}-pt.av"
-    _ = file_write(pt_src, "${pt_txt}\nfn main {\n  n: Int32 = 1\n  _ = hdr_pt.pt_out_int(&n)\n  found: Ptr(PtPair)? = nil\n  _ = hdr_pt.pt_out_pair(&found, 1)\n  if q = found {\n    puts(\"\${n} \${q.b}\")\n  }\n  b = 21\n  hdr_pt.pt_out_u8(&b)\n  xs = hdr_pt.pt_ints_at()\n  puts(\"\${b} \${xs[0]}\")\n  e = hdr_pt.pt_err_at()\n  puts(\"\${e.code} \${e.message.to_s()} \${PtErr.size}\")\n}\n")
+    _ = fs.write(pt_src, "${pt_txt}\nfn main {\n  n: Int32 = 1\n  _ = hdr_pt.pt_out_int(&n)\n  found: Ptr(PtPair)? = nil\n  _ = hdr_pt.pt_out_pair(&found, 1)\n  if q = found {\n    puts(\"\${n} \${q.b}\")\n  }\n  b = 21\n  hdr_pt.pt_out_u8(&b)\n  xs = hdr_pt.pt_ints_at()\n  puts(\"\${b} \${xs[0]}\")\n  e = hdr_pt.pt_err_at()\n  puts(\"\${e.code} \${e.message.to_s()} \${PtErr.size}\")\n}\n")
     pt_bin = "${scratch()}/bind-${stamp}-pt.bin"
     pt_cc: Array(String) = []
     pt_cc.push("--cc")
     pt_cc.push("${root}/tests/fixtures/ffi/ffi.c")
     c.eq_int(compile_av_flags(compiler, pt_src, pt_bin, "${scratch()}/bind-${stamp}-pt-cc.log", pt_cc), 0, "the bound pointer header compiles")
-    if file_exists(pt_bin) {
+    if fs.exists(pt_bin) {
       chmod_x(pt_bin)
       pt_rlog = "${scratch()}/bind-${stamp}-pt-run.log"
       c.eq_int(run_av_bin(pt_bin, pt_rlog), 0, "the bound pointer program runs")
-      c.eq_str(read(pt_rlog), "42 4\n42 10\n2 bad json at 3 512\n", "the bound pointer program reads what C wrote")
+      c.eq_str(read_text(pt_rlog), "42 4\n42 10\n2 bad json at 3 512\n", "the bound pointer program reads what C wrote")
     } else {
       c.expect(false, "the bound pointer program runs")
     }
     ld_h = "${scratch()}/avant_bind_${stamp}_ld.h"
-    _ = file_write(ld_h, "long double half(long double x);\n")
+    _ = fs.write(ld_h, "long double half(long double x);\n")
     ld_log = "${scratch()}/bind-${stamp}-ld.log"
     ld_flags: Array(String) = []
     ld_flags.push(ld_h)
     ld_code = invoke(compiler, "bind", ld_log, ld_flags)
     c.eq_int(ld_code, 1, "long double has no Avant type: bind exits 1")
-    c.expect(read(ld_log).contains("unsupported C type long double"), "long double diagnostic")
+    c.expect(read_text(ld_log).contains("unsupported C type long double"), "long double diagnostic")
     // The generated text compiles against the C it describes and runs.
     sc_src = "${scratch()}/bind-${stamp}-cs.av"
-    sc_buf = buf_new()
+    sc_buf = Buf.new()
     sc_buf.push_str(sc_txt)
     sc_buf.push_str("\nfn main {\n  puts(hdr_cs.cs_neg_i8(-127))\n  puts(hdr_cs.cs_inc_u8(254))\n  puts(hdr_cs.cs_inc_u32(4294967294))\n  puts(hdr_cs.cs_half_f32(5.0))\n  puts(hdr_cs.cs_sum(-1, 2, -3, 4, 5, 0.5))\n  p = hdr_cs.cs_pix_new()\n  hdr_cs.cs_pix_fill(p)\n  puts(\"\${p.r} \${p.w} \${p.h} \${p.tag} \${p.id} \${p.gain}\")\n}\n")
-    _ = file_write(sc_src, sc_buf.to_s())
+    _ = fs.write(sc_src, sc_buf.to_s())
     sc_bin = "${scratch()}/bind-${stamp}-cs.bin"
     sc_clog = "${scratch()}/bind-${stamp}-cs-cc.log"
     sc_cc: Array(String) = []
     sc_cc.push("--cc")
     sc_cc.push("${root}/tests/fixtures/ffi/ffi.c")
     c.eq_int(compile_av_flags(compiler, sc_src, sc_bin, sc_clog, sc_cc), 0, "the bound C scalar header compiles")
-    if file_exists(sc_bin) {
+    if fs.exists(sc_bin) {
       chmod_x(sc_bin)
       sc_rlog = "${scratch()}/bind-${stamp}-cs-run.log"
       c.eq_int(run_av_bin(sc_bin, sc_rlog), 0, "the bound C scalar program runs")
-      c.eq_str(read(sc_rlog), "127\n255\n4294967295\n2.5\n7.5\n250 65535 -300 -5 4000000000 0.25\n", "the bound C scalar program reads C's values")
+      c.eq_str(read_text(sc_rlog), "127\n255\n4294967295\n2.5\n7.5\n250 65535 -300 -5 4000000000 0.25\n", "the bound C scalar program reads C's values")
     } else {
       c.expect(false, "the bound C scalar program runs")
     }
@@ -361,7 +363,7 @@ fn test_bind(c: Checks) {
     en_flags: Array(String) = []
     en_flags.push(en_h)
     c.eq_int(invoke(compiler, "bind", en_log, en_flags), 0, "C enums: bind exits 0")
-    en_txt = read(en_log)
+    en_txt = read_text(en_log)
     c.expect(en_txt.contains("  enum Color {\n    red = 0\n    green = 5\n    blue = 6\n  }"), "C enums: a typedef'd anonymous enum takes the typedef's name, CamelCase without _t")
     c.expect(en_txt.contains("  enum HttpMethod {\n    http_get = 0\n    http_head = 1\n    http_post = 2\n    // HTTP_ALIAS is an alias of http_head (1); dropped\n  }"), "C enums: a tagged enum in CamelCase, its constants lower-cased, an alias dropped")
     c.expect(en_txt.contains("}\n\n// the constants of the header's anonymous enums\npub const flag_a = 1\npub const flag_b = 2\npub const flag_c = 4\n// flag_a is the constant flag_a again after lower-casing; skipped\npub const limit = 4000000000\n"), "C enums: an anonymous enum's constants are module constants after the lib block, lower-cased, a repeated name left out (${en_txt})")
@@ -378,85 +380,85 @@ fn test_bind(c: Checks) {
     en_cc.push("--cc")
     en_cc.push("${root}/tests/fixtures/ffi/cenum.c")
     en_src = "${scratch()}/bind-${stamp}-enum.av"
-    _ = file_write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i())\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n  puts(cenum.clash_value(flag_a))\n  wide: UInt64 = limit\n  puts(\"\${flag_b | flag_c} \${wide}\")\n}\n")
+    _ = fs.write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i())\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n  puts(cenum.clash_value(flag_a))\n  wide: UInt64 = limit\n  puts(\"\${flag_b | flag_c} \${wide}\")\n}\n")
     en_bin = "${scratch()}/bind-${stamp}-enum.bin"
     c.eq_int(compile_av_flags(compiler, en_src, en_bin, "${scratch()}/bind-${stamp}-enum-cc.log", en_cc), 0, "C enums: the bound program compiles")
-    if file_exists(en_bin) {
+    if fs.exists(en_bin) {
       chmod_x(en_bin)
       en_rlog = "${scratch()}/bind-${stamp}-enum-run.log"
       c.eq_int(run_av_bin(en_bin, en_rlog), 0, "C enums: the bound program runs")
-      c.eq_str(read(en_rlog), "blue\nred\n102\nhttp_head\n5\n7\n1\nhttp_post blue 3\n100\ncallback blue\nnot get\n1\n6 4000000000\n", "C enums: values cross both ways, the constants of an anonymous enum included")
+      c.eq_str(read_text(en_rlog), "blue\nred\n102\nhttp_head\n5\n7\n1\nhttp_post blue 3\n100\ncallback blue\nnot get\n1\n6 4000000000\n", "C enums: values cross both ways, the constants of an anonymous enum included")
     } else {
       c.expect(false, "C enums: the bound program runs")
     }
     tr_src = "${scratch()}/bind-${stamp}-enum-ret.av"
-    _ = file_write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  m = cenum.method_of(7)\n  puts(m)\n}\n")
+    _ = fs.write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  m = cenum.method_of(7)\n  puts(m)\n}\n")
     tr_bin = "${scratch()}/bind-${stamp}-enum-ret.bin"
     c.eq_int(compile_av_flags(compiler, tr_src, tr_bin, "${scratch()}/bind-${stamp}-enum-ret-cc.log", en_cc), 0, "C enum trap ret: compiles")
-    if file_exists(tr_bin) {
+    if fs.exists(tr_bin) {
       chmod_x(tr_bin)
       tr_log = "${scratch()}/bind-${stamp}-enum-ret-run.log"
       c.eq_int(run_av_bin(tr_bin, tr_log), 1, "C enum trap ret: exit 1")
-      tr_txt = read(tr_log)
+      tr_txt = read_text(tr_log)
       c.expect(tr_txt.contains("avant runtime: 7 is not a member of HttpMethod at ") && tr_txt.contains("bind-${stamp}-enum-ret.av:"), "C enum trap ret: names the enum, the number and where (${tr_txt})")
     } else {
       c.expect(false, "C enum trap ret: runs")
     }
     tr_src = "${scratch()}/bind-${stamp}-enum-ret-gap.av"
-    _ = file_write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.color_of(3)\n  puts(c)\n}\n")
+    _ = fs.write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.color_of(3)\n  puts(c)\n}\n")
     tr_bin = "${scratch()}/bind-${stamp}-enum-ret-gap.bin"
     c.eq_int(compile_av_flags(compiler, tr_src, tr_bin, "${scratch()}/bind-${stamp}-enum-ret-gap-cc.log", en_cc), 0, "C enum trap ret-gap: compiles")
-    if file_exists(tr_bin) {
+    if fs.exists(tr_bin) {
       chmod_x(tr_bin)
       tr_log = "${scratch()}/bind-${stamp}-enum-ret-gap-run.log"
       c.eq_int(run_av_bin(tr_bin, tr_log), 1, "C enum trap ret-gap: exit 1")
-      tr_txt = read(tr_log)
+      tr_txt = read_text(tr_log)
       c.expect(tr_txt.contains("avant runtime: 3 is not a member of Color at ") && tr_txt.contains("bind-${stamp}-enum-ret-gap.av:"), "C enum trap ret-gap: names the enum, the number and where (${tr_txt})")
     } else {
       c.expect(false, "C enum trap ret-gap: runs")
     }
     tr_src = "${scratch()}/bind-${stamp}-enum-field.av"
-    _ = file_write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  r = cenum.req_new()\n  cenum.req_fill(r, 9)\n  puts(r.method)\n}\n")
+    _ = fs.write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  r = cenum.req_new()\n  cenum.req_fill(r, 9)\n  puts(r.method)\n}\n")
     tr_bin = "${scratch()}/bind-${stamp}-enum-field.bin"
     c.eq_int(compile_av_flags(compiler, tr_src, tr_bin, "${scratch()}/bind-${stamp}-enum-field-cc.log", en_cc), 0, "C enum trap field: compiles")
-    if file_exists(tr_bin) {
+    if fs.exists(tr_bin) {
       chmod_x(tr_bin)
       tr_log = "${scratch()}/bind-${stamp}-enum-field-run.log"
       c.eq_int(run_av_bin(tr_bin, tr_log), 1, "C enum trap field: exit 1")
-      tr_txt = read(tr_log)
+      tr_txt = read_text(tr_log)
       c.expect(tr_txt.contains("avant runtime: 9 is not a member of HttpMethod at ") && tr_txt.contains("bind-${stamp}-enum-field.av:"), "C enum trap field: names the enum, the number and where (${tr_txt})")
     } else {
       c.expect(false, "C enum trap field: runs")
     }
     tr_src = "${scratch()}/bind-${stamp}-enum-callback.av"
-    _ = file_write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  cb.call_color(show, 4)\n}\n")
+    _ = fs.write(tr_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  cb.call_color(show, 4)\n}\n")
     tr_bin = "${scratch()}/bind-${stamp}-enum-callback.bin"
     c.eq_int(compile_av_flags(compiler, tr_src, tr_bin, "${scratch()}/bind-${stamp}-enum-callback-cc.log", en_cc), 0, "C enum trap callback: compiles")
-    if file_exists(tr_bin) {
+    if fs.exists(tr_bin) {
       chmod_x(tr_bin)
       tr_log = "${scratch()}/bind-${stamp}-enum-callback-run.log"
       c.eq_int(run_av_bin(tr_bin, tr_log), 1, "C enum trap callback: exit 1")
-      tr_txt = read(tr_log)
+      tr_txt = read_text(tr_log)
       c.expect(tr_txt.contains("avant runtime: 4 is not a member of Color at ") && tr_txt.contains("bind-${stamp}-enum-callback.av:"), "C enum trap callback: names the enum, the number and where (${tr_txt})")
     } else {
       c.expect(false, "C enum trap callback: runs")
     }
 
     u64_h = "${scratch()}/avant_bind_${stamp}_u64.h"
-    _ = file_write(u64_h, "unsigned long long widen64(unsigned long long x);\n")
+    _ = fs.write(u64_h, "unsigned long long widen64(unsigned long long x);\n")
     u64_log = "${scratch()}/bind-${stamp}-u64.log"
     u64_flags: Array(String) = []
     u64_flags.push(u64_h)
     u64_code = invoke(compiler, "bind", u64_log, u64_flags)
     c.eq_int(u64_code, 0, "unsigned 64-bit fun exits 0")
-    u64_txt = read(u64_log)
+    u64_txt = read_text(u64_log)
     c.expect(u64_txt.contains("fun widen64(x: UInt64): UInt64"), "unsigned 64-bit maps to UInt64")
 
     gen_src = "${scratch()}/bind-${stamp}-gen.av"
-    gen_buf = buf_new()
+    gen_buf = Buf.new()
     gen_buf.push_str(add_txt)
     gen_buf.push_str("\nfn main {\n  puts(add.avant_add(20, 22))\n}\n")
-    c.wrote(file_write(gen_src, gen_buf.to_s()), "write generated add program")
+    c.wrote(fs.write(gen_src, gen_buf.to_s()), "write generated add program")
     gen_bin = "${scratch()}/bind-${stamp}-gen.bin"
     gen_clog = "${scratch()}/bind-${stamp}-gen-cc.log"
     gen_cc: Array(String) = []
@@ -464,12 +466,12 @@ fn test_bind(c: Checks) {
     gen_cc.push("${root}/examples/c/add.c")
     gen_ccode = compile_av_flags(compiler, gen_src, gen_bin, gen_clog, gen_cc)
     c.eq_int(gen_ccode, 0, "compile generated add")
-    if file_exists(gen_bin) {
+    if fs.exists(gen_bin) {
       chmod_x(gen_bin)
       gen_rlog = "${scratch()}/bind-${stamp}-gen-run.log"
       gen_rcode = run_av_bin(gen_bin, gen_rlog)
       c.eq_int(gen_rcode, 0, "run generated add")
-      c.eq_str(read(gen_rlog), "42\n", "generated add prints 42")
+      c.eq_str(read_text(gen_rlog), "42\n", "generated add prints 42")
     } else {
       c.expect(false, "generated add binary")
     }
@@ -477,8 +479,8 @@ fn test_bind(c: Checks) {
     ir_log = "${scratch()}/bind-${stamp}-add.mir"
     ir_code = dump_av(compiler, "${root}/examples/add.av", ir_log)
     c.eq_int(ir_code, 0, "dump hand-written lib")
-    if got = file_read(ir_log) {
-      if want = file_read("${root}/tests/goldens/examples/add.mir") {
+    if got = fs.read(ir_log) {
+      if want = fs.read("${root}/tests/goldens/examples/add.mir") {
         c.eq_str(got, want, "hand-written lib MIR dump is unchanged")
       } else {
         c.expect(false, "read add.mir golden")

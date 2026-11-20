@@ -448,6 +448,7 @@ static void lost_root_slot(void **slot) {
 /* Before a full collection (a young one runs the precise half inside
  * gc_verify_remembered's pass over the same roots and fields). */
 void gc_verify_lost(void) {
+  gc_verify_consts();
   vb_ensure();
   verify_each_root(lost_root_slot, 0);
   while (gc_heap.work_n) {
@@ -931,7 +932,7 @@ static void sd_stamp(void) {
  * incremental throughout). Measured on four VERIFY +
  * STRESS rows, the incremental form throughout was not slower than the
  * whole form nor than the priced choice on any of them except
- * inc_slice_mature, where it is within a few percent of both.
+ * inc_by_slice_mature, where it is within a few percent of both.
  * Both forms check the same, so
  * the choice changes the time only, never the reports.
  *
@@ -1628,6 +1629,7 @@ static void vi_fallback(void) {
 }
 
 void gc_verify_remembered(void) {
+  gc_verify_consts();
   if (!(v_incr_now && vi_remembered())) {
     if (v_incr_now) {
       vi_fallback();

@@ -1,3 +1,6 @@
+import std.fs
+import std.process
+
 // The report's lines (runtime/avant_io.c, avant_test_write): all of a
 // line to standard output, or the process stops with the stream and the
 // reason, status 1, as `puts` does (before, a raw write(2) whose
@@ -78,7 +81,7 @@ fn testing_write(s: String) {
 }
 
 fn testing_read(path: String): String {
-  if text = file_read(path) {
+  if text = fs.read(path) {
     return text
   }
   ""
@@ -139,27 +142,27 @@ pub class Test {
     self.rec_ok = []
     self.rec_ms = []
     self.rec_at = now_ms()
-    if v = env_get("AVANT_TEST_ONLY"), v.size > 0 {
+    if v = process.env("AVANT_TEST_ONLY"), v.size > 0 {
       self.mode = 2
       self.only = v
     }
-    if v = env_get("AVANT_TEST_LIST") {
+    if v = process.env("AVANT_TEST_LIST") {
       if v == "1" {
         self.mode = 1
       }
     }
     if self.mode == 0 {
-      if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
+      if v = process.env("AVANT_TEST_NAMES"), v.size > 0 {
         self.names_path = v
       }
       // `avant test --name PATTERN`: only the checks, `test` bodies and
       // `parallel` bodies whose names contain PATTERN run; a selected
       // body runs whole. The runner reads the file AVANT_TEST_MATCHES
       // names to tell a file where nothing matched.
-      if v = env_get("AVANT_TEST_FILTER"), v.size > 0 {
+      if v = process.env("AVANT_TEST_FILTER"), v.size > 0 {
         self.filter = v
       }
-      if v = env_get("AVANT_TEST_MATCHES"), v.size > 0 {
+      if v = process.env("AVANT_TEST_MATCHES"), v.size > 0 {
         self.matches_path = v
       }
     }
@@ -206,7 +209,7 @@ pub class Test {
   }
 
   fn junit_escape(s: String): String {
-    b = buf_new()
+    b = Buf.new()
     i = 0
     while i < s.size {
       c = s[i]
@@ -251,7 +254,7 @@ pub class Test {
       return
     }
     frag = ""
-    if v = env_get("AVANT_JUNIT_FRAGMENT") {
+    if v = process.env("AVANT_JUNIT_FRAGMENT") {
       frag = v
     }
     if frag.size == 0 {
@@ -269,7 +272,7 @@ pub class Test {
         badn += 1
       }
     }
-    b = buf_new()
+    b = Buf.new()
     b.push_str("<testsuite name=\"std.testing\" tests=\"${n}\" failures=\"${badn}\" time=\"${junit_secs(total)}\">\n")
     for i in 0..n {
       b.push_str("  <testcase name=\"${junit_escape(self.rec_name[i])}\" classname=\"std.testing\" time=\"${junit_secs(self.rec_ms[i])}\"")
@@ -284,8 +287,8 @@ pub class Test {
     // not written is a report without this process's checks, so the
     // run fails and says why (the failure was
     // dropped).
-    _ = file_write(frag, b.to_s()) else e {
-      report_lost("the JUnit fragment was not written: ${e.message()}")
+    _ = fs.write(frag, b.to_s()) else e {
+      report_lost("the JUnit fragment was not written: ${e.message}")
       return
     }
   }
@@ -392,7 +395,7 @@ pub class Test {
     if self.names_path.size == 0 {
       return
     }
-    b = buf_new()
+    b = Buf.new()
     i = 0
     while i < self.names.size {
       b.push_str(self.names[i])
@@ -402,8 +405,8 @@ pub class Test {
     // The runner starts the parallel bodies from this file: if it is
     // not written they never run, so the run fails and says why (the
     // failure was dropped).
-    _ = file_write(self.names_path, b.to_s()) else e {
-      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message()}")
+    _ = fs.write(self.names_path, b.to_s()) else e {
+      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message}")
       return
     }
   }
@@ -451,7 +454,7 @@ pub class Test {
     if self.quiet() || !picked(label) {
       return nil
     }
-    if text = file_read(path) {
+    if text = fs.read(path) {
       if text == got {
         pass_line(label)
       } else {
@@ -472,7 +475,7 @@ pub class Test {
       return nil
     }
     compiler = ""
-    if c = env_get("AVANT_COMPILER") {
+    if c = process.env("AVANT_COMPILER") {
       compiler = c
     }
     if compiler.size == 0 {
@@ -488,7 +491,7 @@ pub class Test {
     args.push(program)
     args.push(out)
     args.push("--debug")
-    code = process_run_out(compiler, args, compile_log) ?? -1
+    code = run_out(compiler, args, compile_log) ?? -1
     if code != 0 {
       fail_line(label)
       testing_write("  compile failed")
@@ -501,7 +504,7 @@ pub class Test {
     stderr_path = "${base}.err"
     run_code = testing_run(out, empty, stdout_path, stderr_path)
     got = testing_read(stdout_path)
-    if want_text = file_read(want) {
+    if want_text = fs.read(want) {
       if run_code != 0 {
         fail_line(label)
         testing_write("  exit ${run_code}")
@@ -528,7 +531,7 @@ pub class Test {
       return nil
     }
     compiler = ""
-    if c = env_get("AVANT_COMPILER") {
+    if c = process.env("AVANT_COMPILER") {
       compiler = c
     }
     if compiler.size == 0 {
@@ -565,9 +568,9 @@ pub class Test {
   pub fn finish: Int {
     write_junit()
     if self.matches_path.size > 0 && self.matched > 0 {
-      switch file_write(self.matches_path, "${self.matched}\n") {
+      switch fs.write(self.matches_path, "${self.matched}\n") {
         case Int { }
-        case e: IoError { report_lost("the --name matches were not written: ${e.message()}") }
+        case e: IoError { report_lost("the --name matches were not written: ${e.message}") }
       }
     }
     if self.mode == 1 {
@@ -582,4 +585,15 @@ pub class Test {
     }
     0
   }
+}
+
+// Runs the program with its stdout and stderr both written to the file
+// out, in the order it wrote them (through sh's redirection, which is
+// what the file then holds): the exit status, or the failure to start sh.
+fn run_out(program: String, args: Array(String), out: String): Int | ProcessError {
+  sh_args = ["-c", "out=$1; shift; exec \"$@\" > \"$out\" 2>&1", "sh", out, program]
+  for a in args {
+    sh_args.push(a)
+  }
+  process.run("/bin/sh", sh_args)
 }

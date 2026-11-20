@@ -267,11 +267,7 @@ pub class MTypes {
       return got
     }
     copy: Array(Int) = []
-    k = 0
-    while k < params.size {
-      copy.push(params[k])
-      k += 1
-    }
+    copy.concat(params)
     id = self.sigs.size
     self.sigs.push(MSig.new(copy, ret, varargs, key))
     self.sig_index[key] = id
@@ -284,7 +280,7 @@ pub class MTypes {
     if i = self.index.get(s), i <= mt_addr() {
       return i
     }
-    if str_starts(s, "ptr ") {
+    if s.starts_with("ptr ") {
       inner = parse_text(str_slice(s, 4, s.size))
       if inner >= 0 {
         return ptr_to(inner)
@@ -477,6 +473,10 @@ pub class MTypes {
       return true
     }
     if dst == mt_ptr() && (is_ptr(src) || kind(src) == mk_code()) {
+      return true
+    }
+    // An untyped address parameter (a `peek` row's) takes any address.
+    if dst == mt_addr() && is_addr(src) {
       return true
     }
     if at_call {

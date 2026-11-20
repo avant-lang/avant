@@ -1,34 +1,52 @@
 import harness
 import std.sync
 import std.http
+import std.ws
+import std.fs
+
+type Header = http.Header
+type Request = http.Request
+type Response = http.Response
 
 fn body_text(resp: Response): String {
-  String.from_utf8(resp.body) ?? ""
+  resp.body_text() ?? ""
 }
 
-fn client_round(port: Int, out: Channel(String)): Int {
+fn client_round(port: Int, out: sync.Channel(String)): Int {
   base = "http://127.0.0.1:${port}"
-  if resp = Http.get("${base}/hello") {
+  if resp = http.get("${base}/hello") {
     out.send("hello=${resp.status}:${body_text(resp)}")
   } else {
     out.send("hello=ERR")
   }
-  if resp = Http.get("${base}/q?lang=avant&x=1") {
+  if resp = http.get("${base}/q?lang=avant&x=1") {
     out.send("q=${body_text(resp)}")
   } else {
     out.send("q=ERR")
   }
-  if resp = Http.post("${base}/echo", "abc123") {
+  if resp = http.post("${base}/echo", "abc123") {
     out.send("echo=${body_text(resp)}")
   } else {
     out.send("echo=ERR")
   }
-  if resp = Http.get("${base}/missing") {
+  // http.post took a String and http.request Bytes: each takes either.
+  if resp = http.post("${base}/echo", "bytes ok".bytes) {
+    out.send("echo-bytes=${body_text(resp)}")
+  } else {
+    out.send("echo-bytes=ERR")
+  }
+  none: Array(Header) = []
+  if resp = http.request("POST", "${base}/echo", "text ok", none) {
+    out.send("request-text=${body_text(resp)}")
+  } else {
+    out.send("request-text=ERR")
+  }
+  if resp = http.get("${base}/missing") {
     out.send("missing=${resp.status}")
   } else {
     out.send("missing=ERR")
   }
-  if resp = Http.post("${base}/hello", "x") {
+  if resp = http.post("${base}/hello", "x") {
     out.send("mismatch=${resp.status}")
   } else {
     out.send("mismatch=ERR")
@@ -37,38 +55,68 @@ fn client_round(port: Int, out: Channel(String)): Int {
   hs.push(Header { name: "X-Dup", value: "one" })
   hs.push(Header { name: "X-Dup", value: "two" })
   hs.push(Header { name: "X-One", value: "yes" })
-  if resp = Http.request("GET", "${base}/hdr", "".bytes, hs) {
+  if resp = http.request("GET", "${base}/hdr", "".bytes, hs) {
     out.send("hdr=${body_text(resp)}")
   } else {
     out.send("hdr=ERR")
   }
-  if resp = Http.get("${base}/old") {
+  if resp = http.get("${base}/old") {
     out.send("redir=${resp.status}:${body_text(resp)}")
   } else {
     out.send("redir=ERR")
   }
-  if resp = Http.get("${base}/old", false) {
-    loc = resp.headers.get("Location") ?? ""
+  if resp = http.get("${base}/old", false) {
+    loc = resp.headers().get("Location") ?? ""
     out.send("redir-off=${resp.status}:${loc}")
   } else {
     out.send("redir-off=ERR")
   }
-  if resp = Http.get("${base}/meta") {
-    made = resp.headers.get("X-Made") ?? ""
-    out.send("meta=${resp.status}:${made}")
+  if resp = http.get("${base}/meta") {
+    made = resp.headers().get("X-Made") ?? ""
+    // A Headers value walked by name and value, in wire order.
+    got = resp.headers()
+    walked = ""
+    n = 0
+    for name, value in got {
+      n += 1
+      if name == "X-Made" {
+        walked = "${walked},${name}=${value}"
+      }
+    }
+    out.send("meta=${resp.status}:${made}${walked}:${n == got.count()}")
   } else {
     out.send("meta=ERR")
   }
-  if resp = Http.get("${base}/__stop") {
+  // A Content-Type set by header replaces the one Response.text wrote
+  // (it was a second Content-Type line); an empty one sends none.
+  // The peer's address (a framework's rate limiter keys on it).
+  if resp = http.get("${base}/peer") {
+    out.send("peer=${body_text(resp)}")
+  } else {
+    out.send("peer=ERR")
+  }
+  if resp = http.get("${base}/json") {
+    types = resp.headers().get_all("Content-Type")
+    out.send("json=${types.size}:${types.get(0) ?? ""}")
+  } else {
+    out.send("json=ERR")
+  }
+  if resp = http.get("${base}/untyped") {
+    n = resp.headers().get_all("Content-Type").size
+    out.send("untyped=${resp.status}:${n}")
+  } else {
+    out.send("untyped=ERR")
+  }
+  if resp = http.get("${base}/__stop") {
   }
   0
 }
 
-fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
+fn hammer_round(port: Int, out: sync.Channel(String), rounds: Int): Int {
   base = "http://127.0.0.1:${port}"
   ok = 0
   for i in 0..rounds {
-    if resp = Http.get("${base}/ping"), resp.status == 200 && body_text(resp) == "pong" {
+    if resp = http.get("${base}/ping"), resp.status == 200 && body_text(resp) == "pong" {
       ok += 1
     }
   }
@@ -82,16 +130,16 @@ fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
   args.push(script)
   args.push("${port}")
   args.push(mode)
-  _ = process_run_out("/usr/bin/python3", args, log)
-  if text = file_read(log) {
+  _ = run_out("/usr/bin/python3", args, log)
+  if text = fs.read(log) {
     return nth_line(text, 0)
   }
   ""
 }
 
-fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn limit_round(port: Int, out: sync.Channel(String), script: String, stamp: Int): Int {
   base = "http://127.0.0.1:${port}"
-  if resp = Http.post("${base}/echo", "0123456789abcdefghij") {
+  if resp = http.post("${base}/echo", "0123456789abcdefghij") {
     out.send("big=${resp.status}")
   } else {
     out.send("big=ERR")
@@ -99,19 +147,69 @@ fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int
   out.send(raw_round(port, script, stamp, "keepalive"))
   out.send("chunked=${raw_round(port, script, stamp, "chunked")}")
   out.send("malformed=${raw_round(port, script, stamp, "malformed")}")
-  if resp = Http.get("${base}/__stop") {
+  if resp = http.get("${base}/__stop") {
   }
   0
 }
 
-fn ws_client_round(port: Int, out: Channel(String)): Int {
-  if conn = Ws.connect("ws://127.0.0.1:${port}/shout") {
-    sent = conn.send_text("abc")
+// What a WebSocket send or close answered: "sent", or its WsSendError.
+fn sent_word(r: Void | http.WsSendError): String {
+  switch r {
+    case e: http.WsSendError {
+      switch e {
+        case closed { "closed" }
+        case full { "full" }
+      }
+    }
+    else { "sent" }
+  }
+}
+
+// What a client's recv answered: the text, "nil" for its timeout, or the
+// WsClosed's code, reason and whether a close frame came.
+fn recv_word(r: http.WsMessage? | ws.WsClosed): String {
+  switch r {
+    case m: http.WsMessage { m.text() ?? "binary" }
+    case e: ws.WsClosed { "closed ${e.code} [${e.reason}] ${e.clean}" }
+    else { "nil" }
+  }
+}
+
+// recv's three outcomes: a message, nil when the timeout passes on an
+// open connection, and a WsClosed once the peer closed (1000 "done",
+// with a close frame), again on the next call.
+fn ws_recv_round(port: Int): String {
+  if conn = ws.connect("ws://127.0.0.1:${port}/bye") {
+    quiet = recv_word(conn.recv(100))
+    _ = conn.send_text("x")
+    first = recv_word(conn.recv(5000))
+    again = recv_word(conn.recv(5000))
+    conn.close()
+    return "${quiet}|${first}|${again}|${conn.close_code()}"
+  }
+  "no connection"
+}
+
+fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
+  if conn = ws.connect("ws://127.0.0.1:${port}/shout") {
+    _ = conn.send_text("abc")
     if msg = conn.recv(5000) {
       first = msg.text() ?? ""
-      sent2 = conn.send_bytes("xy".bytes)
+      _ = conn.send_bytes("xy".bytes)
       if msg2 = conn.recv(5000) {
-        out.send("ws-client=${first}:${msg2.is_binary()}:${msg2.body.size}")
+        // send_message keeps a message's kind (the server's WsConn had
+        // it; the client's had not): text back as text, bytes as bytes.
+        _ = conn.send_message(msg)
+        third = "BAD3"
+        if msg3 = conn.recv(5000) {
+          third = msg3.text() ?? "not text"
+        }
+        _ = conn.send_message(msg2)
+        fourth = "BAD4"
+        if msg4 = conn.recv(5000) {
+          fourth = "${msg4.is_binary()}:${msg4.body.size}"
+        }
+        out.send("ws-client=${first}:${msg2.is_binary()}:${msg2.body.size}:${third}:${fourth}")
       } else {
         out.send("ws-client=BAD2")
       }
@@ -120,66 +218,149 @@ fn ws_client_round(port: Int, out: Channel(String)): Int {
     }
     conn.close()
     conn.close()
+    // A send after close: the error says the connection is closed; so
+    // does recv, as a WsClosed.
+    out.send("ws-client-after=${sent_word(conn.send_text("late"))} ${sent_word(conn.send_message(http.WsMessage { is_text: true, body: "x".bytes }))} ${recv_word(conn.recv(100))}")
   } else {
     out.send("ws-client=BAD0")
   }
   0
 }
 
-fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn ws_round(port: Int, out: sync.Channel(String), script: String, stamp: Int, clients: sync.Channel(Int)): Int {
   out.send(raw_round(port, script, stamp, "wsecho"))
   out.send(raw_round(port, script, stamp, "wsproto"))
-  if resp = Http.get("http://127.0.0.1:${port}/__stop") {
+  // The server stops only after the client task's rounds: stopping it
+  // first closes their connections with 1001 (going away), which a slow
+  // machine reached and read as a wrong recv.
+  _ = clients.recv()
+  if resp = http.get("http://127.0.0.1:${port}/__stop") {
   }
   0
 }
 
+fn route_items(req: Request): Response {
+  who = req.header("authorization") ?? "nobody"
+  Response.text("${req.method} ${req.path} ${req.query() ?? "-"} ${who} ${req.body_text() ?? "?"}", 201).header("X-Seen", "1").header("Content-Type", "application/json")
+}
+
+// A request built in memory, handed to a handler as a framework's
+// router or its tests do, and the headers of the response the handler
+// built: neither had a form (Headers had one private field, and a built
+// response kept its header lines private).
+fn in_memory_cases(c: Checks) {
+  hs: Array(Header) = []
+  hs.push(Header { name: "Authorization", value: "Bearer t" })
+  hs.push(Header { name: "X-Dup", value: "a" })
+  hs.push(Header { name: "x-dup", value: "b" })
+  req = Request.build("POST", "/items?x=1&y", hs, "hi".bytes)
+  c.eq_str("${req.method} ${req.path} ${req.query() ?? "-"}", "POST /items x=1&y", "a built request's method, path and query")
+  c.eq_int(req.headers().count(), 3, "a built request's headers")
+  c.eq_int(req.headers().get_all("X-DUP").size, 2, "a built request's repeated header")
+  c.eq_str(req.header("x-dup") ?? "", "a", "a built request's first value")
+  c.eq_str(req.peer(), "", "a built request has no peer")
+  plain = Request.build("GET", "/")
+  c.eq_str("${plain.query() ?? "none"} ${plain.headers().count()} ${plain.body().size}", "none 0 0", "a built request with defaults")
+  resp = route_items(req)
+  c.eq_str(resp.body_text() ?? "", "POST /items x=1&y Bearer t hi", "a handler called with a built request")
+  bad = Buf.new()
+  bad.push_byte(255)
+  c.eq_str("${Request.build("POST", "/", [], bad.to_bytes()).body_text() ?? "nil"} ${Response.bytes(bad.to_bytes()).body_text() ?? "nil"} ${Response.text("é").body_text() ?? "nil"}", "nil nil é", "a body as text: nil when it is not UTF-8")
+  rh = resp.headers()
+  c.eq_int(rh.count(), 2, "a built response's headers: its Content-Type and X-Seen")
+  c.eq_str("${rh.name_at(0) ?? ""}: ${rh.value_at(0) ?? ""}", "Content-Type: application/json", "a built response's Content-Type comes first, as sent")
+  c.eq_str(rh.get("x-seen") ?? "", "1", "a built response's header")
+  c.eq_int(Response.text("x").header("Content-Type", "").headers().count(), 0, "a response without a Content-Type")
+}
+
+// The query string was raw: no parameters and no percent-decoding. A
+// request's params() are the query decoded as a form is
+// (application/x-www-form-urlencoded); Params.parse reads a form body;
+// http.decode_component decodes a path segment.
+fn param_cases(c: Checks) {
+  req = Request.build("GET", "/s?q=caf%C3%A9&tag=a&tag=b&x+y=1+2&empty&&bad=%zz%4&bin=%FF%41&Q=upper&eq=a=b")
+  c.eq_str(req.param("q") ?? "-", "café", "a percent-encoded parameter")
+  c.eq_int(req.params().get_all("tag").size, 2, "a repeated parameter")
+  c.eq_str(req.param("tag") ?? "-", "a", "a repeated parameter's first value")
+  c.eq_str(req.param("x y") ?? "-", "1 2", "a + is a space, in a name and a value")
+  c.eq_str("${req.params().has("empty")} [${req.param("empty") ?? "-"}]", "true []", "a parameter without = has an empty value")
+  c.eq_str(req.param("bad") ?? "-", "%zz%4", "a % without two hex digits is kept")
+  c.eq_str(req.param("bin") ?? "-", "\u{FFFD}A", "a byte that is not UTF-8 reads as U+FFFD")
+  c.eq_str("${req.param("q2") ?? "none"} ${req.param("Q") ?? "-"} ${req.param("q") ?? "-"}", "none upper café", "names are compared exactly")
+  c.eq_str(req.param("eq") ?? "-", "a=b", "the first = separates a name from its value")
+  p = req.params()
+  c.eq_int(p.count(), 9, "empty pieces are skipped")
+  c.eq_str("${p.name_at(3) ?? "-"}=${p.value_at(3) ?? "-"}", "x y=1 2", "parameters keep their order")
+  c.eq_int(Request.build("GET", "/s").params().count(), 0, "no query, no parameters")
+  form = http.Params.parse("name=Ada+Lovelace&lang=%E2%9C%93")
+  c.eq_str("${form.get("name") ?? "-"}|${form.get("lang") ?? "-"}", "Ada Lovelace|✓", "a form body")
+  c.eq_str(http.decode_component("caf%C3%A9+x%2Fy%"), "café+x/y%", "a path segment: %XX decoded, + kept")
+  // An invalid sequence's maximal subpart is one U+FFFD (the WHATWG
+  // decoder's and Python's errors="replace" reading), not one per byte.
+  c.eq_str(http.decode_component("a%E2%82b"), "a\u{FFFD}b", "a truncated three-byte sequence is one U+FFFD")
+  c.eq_str(http.decode_component("%f0%9f%98"), "\u{FFFD}", "a truncated four-byte sequence at the end is one U+FFFD")
+  c.eq_str(http.decode_component("%E0%80%AF"), "\u{FFFD}\u{FFFD}\u{FFFD}", "an overlong form: each byte its own U+FFFD (E0 takes A0 to BF next)")
+  c.eq_str(http.decode_component("%ED%A0%80x"), "\u{FFFD}\u{FFFD}\u{FFFD}x", "a surrogate: each byte its own U+FFFD (ED takes 80 to 9F next)")
+  c.eq_str(http.decode_component("%f4%8f%bf%bf%f4%90"), "\u{10FFFF}\u{FFFD}\u{FFFD}", "the last scalar value, then past it")
+}
+
 fn test_std_http(c: Checks) {
   c.suite("tests/cases/test_std_http.av")
+  in_memory_cases(c)
+  param_cases(c)
 
-  if e = Http.get("https://example.com/") {
+  if e = http.get("https://example.com/") {
     c.expect(false, "https is HttpError")
   } else err {
     c.eq_str(err.message, "https is not supported yet: std.http speaks plain http:// only", "https is HttpError, saying what is supported")
   }
-  if e = Http.get("ftp://example.com/") {
+  if e = http.get("ftp://example.com/") {
     c.expect(false, "ftp is HttpError")
   } else {
     c.expect(true, "ftp is HttpError")
   }
-  if e = Http.get("http://") {
+  if e = http.get("http://") {
     c.expect(false, "empty host is HttpError")
   } else {
     c.expect(true, "empty host is HttpError")
   }
-  if wse = Ws.connect("wss://127.0.0.1:1/echo") {
+  if wse = ws.connect("wss://127.0.0.1:1/echo") {
     c.expect(false, "wss is HttpError")
     wse.close()
   } else werr {
-    c.eq_str(werr.message, "wss is not supported yet: std.http speaks plain ws:// only", "wss is HttpError, saying what is supported")
+    c.eq_str(werr.message, "wss is not supported yet: std.ws speaks plain ws:// only", "wss is HttpError, saying what is supported")
   }
-  if wse2 = Ws.connect("http://127.0.0.1:1/echo") {
+  if wse2 = ws.connect("http://127.0.0.1:1/echo") {
     c.expect(false, "http scheme is HttpError for Ws")
     wse2.close()
   } else {
     c.expect(true, "http scheme is HttpError for Ws")
   }
 
-  if opened = Http.listen(0) {
+  if opened = http.listen(0) {
     server = opened
     server.get("/hello", (req) {
       Response.text("hello http")
     })
     server.get("/q", (req) {
-      Response.text("${req.path}|${req.query ?? ""}")
+      Response.text("${req.path}|${req.query() ?? ""}")
     })
     server.post("/echo", (req) {
-      Response.bytes(req.body)
+      Response.bytes(req.body())
     })
     server.get("/hdr", (req) {
-      dups = req.headers.get_all("X-Dup")
-      first = req.headers.get("x-dup") ?? ""
-      Response.text("${first}/${dups.size}/${req.headers.has("X-One")}")
+      dups = req.headers().get_all("X-Dup")
+      first = req.header("x-dup") ?? ""
+      // The walk over the request's headers, in wire order with the
+      // repeated one twice; the client's own lines are skipped.
+      seen = Buf.new()
+      for name, value in req.headers() {
+        if !name.starts_with("X-") {
+          continue
+        }
+        seen.push_str("${name}:${value},")
+      }
+      Response.text("${first}/${dups.size}/${req.headers().has("X-One")}/${seen.to_s()}")
     })
     server.get("/old", (req) {
       Response.text("", 302).header("Location", "/new")
@@ -190,10 +371,19 @@ fn test_std_http(c: Checks) {
     server.get("/meta", (req) {
       Response.text("created", 201).header("X-Made", "yes")
     })
+    server.get("/peer", (req) {
+      Response.text(req.peer())
+    })
+    server.get("/json", (req) {
+      Response.text("{}").header("X-A", "1").header("content-type", "text/html").header("Content-Type", "application/json")
+    })
+    server.get("/untyped", (req) {
+      Response.bytes("".bytes, 204).header("Content-Type", "")
+    })
     port = server.port()
     c.expect(port > 0, "ephemeral port bound")
 
-    if again = Http.listen(port) {
+    if again = http.listen(port) {
       c.expect(false, "second listen on same port fails")
       again.close()
     } else {
@@ -204,7 +394,7 @@ fn test_std_http(c: Checks) {
       server.close()
       Response.text("bye")
     })
-    out = Channel(String).new(16)
+    out = sync.Channel(String).new(32)
     handle = spawn {
       client_round(port, out)
     }
@@ -214,12 +404,17 @@ fn test_std_http(c: Checks) {
     want.push("hello=200:hello http")
     want.push("q=/q|lang=avant&x=1")
     want.push("echo=abc123")
+    want.push("echo-bytes=bytes ok")
+    want.push("request-text=text ok")
     want.push("missing=404")
     want.push("mismatch=404")
-    want.push("hdr=one/2/true")
+    want.push("hdr=one/2/true/X-Dup:one,X-Dup:two,X-One:yes,")
     want.push("redir=200:landed")
     want.push("redir-off=302:/new")
-    want.push("meta=201:yes")
+    want.push("meta=201:yes,X-Made=yes:true")
+    want.push("peer=127.0.0.1")
+    want.push("json=1:application/json")
+    want.push("untyped=204:0")
     i = 0
     while i < want.size {
       if line = out.recv() {
@@ -233,15 +428,78 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen")
   }
 
+  // An IPv6 peer's address, where the machine has an IPv6 loopback.
+  if opened6 = http.listen(0, "::1", 1048576, 1) {
+    server6 = opened6
+    server6.get("/peer", (req) {
+      server6.close()
+      Response.text(req.peer())
+    })
+    port6 = server6.port()
+    asked = spawn {
+      url6 = "http://[::1]:${port6}/peer"
+      said = "ERR"
+      if resp = http.get(url6) {
+        said = body_text(resp)
+      }
+      said
+    }
+    server6.serve()
+    switch asked.join() {
+      case said: String { c.eq_str(said, "::1", "an IPv6 peer's address") }
+      case TaskError { c.expect(false, "an IPv6 peer's address") }
+    }
+  }
+
+  // Every request no route names, by its path or its method, reaches
+  // the fallback (it answered the server's own 404): a framework's
+  // router gets /messages/42.
+  if opened_fb = http.listen(0, "127.0.0.1", 1048576, 1) {
+    fb = opened_fb
+    fb.get("/a", (req) {
+      Response.text("route a")
+    })
+    fb.fallback((req) {
+      Response.text("fallback ${req.method} ${req.path} ${req.query() ?? "-"}", 404)
+    })
+    fb.get("/__stop", (req) {
+      fb.close()
+      Response.text("bye")
+    })
+    fb_port = fb.port()
+    fb_task = spawn {
+      got = Buf.new()
+      base = "http://127.0.0.1:${fb_port}"
+      for target in ["/a", "/messages/42?x=1"] {
+        u = "${base}${target}"
+        if resp = http.get(u) {
+          got.push_str("${resp.status} ${body_text(resp)}|")
+        }
+      }
+      u = "${base}/a"
+      if resp = http.post(u, "x") {
+        got.push_str("${resp.status} ${body_text(resp)}")
+      }
+      stop_url = "${base}/__stop"
+      _ = http.get(stop_url)
+      got.to_s()
+    }
+    fb.serve()
+    switch fb_task.join() {
+      case got: String { c.eq_str(got, "200 route a|404 fallback GET /messages/42 x=1|404 fallback POST /a -", "the fallback gets what no route names") }
+      case TaskError { c.expect(false, "the fallback task") }
+    }
+  }
+
   stamp = now_ms()
   script = "${scratch()}/http-raw-${stamp}.py"
   py = "import socket, sys\nport = int(sys.argv[1])\nmode = sys.argv[2]\ns = socket.create_connection((\"127.0.0.1\", port))\nif mode == \"chunked\":\n    s.sendall(b\"POST /echo HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r\\n0\\r\\n\\r\\n\")\nelif mode == \"keepalive\":\n    s.sendall(b\"GET /ping HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    s.settimeout(5)\n    data = b\"\"\n    try:\n        while data.count(b\"pong\") < 2:\n            chunk = s.recv(4096)\n            if not chunk:\n                break\n            data += chunk\n    except Exception:\n        pass\n    print(\"keepalive=\" + \",\".join([\"pong\"] * data.count(b\"pong\")))\n    sys.exit(0)\nelse:\n    s.sendall(b\"this is not http\\r\\n\\r\\n\")\ndata = b\"\"\ntry:\n    while True:\n        chunk = s.recv(4096)\n        if not chunk:\n            break\n        data += chunk\nexcept Exception:\n    pass\nprint(data.decode(\"latin1\").split(\"\\r\\n\")[0])\n"
-  _ = file_write(script, py)
+  _ = fs.write(script, py)
 
-  if opened = Http.listen(0, "127.0.0.1", 8) {
+  if opened = http.listen(0, "127.0.0.1", 8) {
     server = opened
     server.post("/echo", (req) {
-      Response.bytes(req.body)
+      Response.bytes(req.body())
     })
     server.get("/ping", (req) {
       Response.text("pong")
@@ -250,7 +508,7 @@ fn test_std_http(c: Checks) {
       server.close()
       Response.text("bye")
     })
-    out = Channel(String).new(8)
+    out = sync.Channel(String).new(8)
     port = server.port()
     handle = spawn {
       limit_round(port, out, script, stamp)
@@ -280,33 +538,43 @@ fn test_std_http(c: Checks) {
   // spoken by a raw-socket Python helper like the cases above.
   wscript = "${scratch()}/ws-raw-${stamp}.py"
   wpy = "import socket,sys,struct\nport=int(sys.argv[1])\nmode=sys.argv[2]\ndef hs(path):\n    s=socket.create_connection((\"127.0.0.1\",port))\n    s.sendall((\"GET %s HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n\" % path).encode())\n    b=b\"\"\n    while b\"\\r\\n\\r\\n\" not in b:\n        b+=s.recv(4096)\n    h,r=b.split(b\"\\r\\n\\r\\n\",1)\n    return s,h.decode(\"latin1\"),r\ndef sf(s,op,payload,fin=True,masked=True):\n    b0=(128 if fin else 0)|op\n    n=len(payload)\n    mb=128 if masked else 0\n    if n<126:\n        head=struct.pack(\"!BB\",b0,mb|n)\n    elif n<=65535:\n        head=struct.pack(\"!BBH\",b0,mb|126,n)\n    else:\n        head=struct.pack(\"!BBQ\",b0,mb|127,n)\n    if masked:\n        m=b\"\\x01\\x02\\x03\\x04\"\n        s.sendall(head+m+bytes(x^m[i&3] for i,x in enumerate(payload)))\n    else:\n        s.sendall(head+payload)\ndef rx(s,buf,n):\n    while len(buf)<n:\n        chunk=s.recv(4096)\n        if not chunk:\n            raise EOFError()\n        buf+=chunk\n    return buf[:n],buf[n:]\ndef rf(s,buf=b\"\"):\n    h,buf=rx(s,buf,2)\n    op=h[0]&15\n    n=h[1]&127\n    if n==126:\n        e,buf=rx(s,buf,2)\n        n=struct.unpack(\"!H\",e)[0]\n    elif n==127:\n        e,buf=rx(s,buf,8)\n        n=struct.unpack(\"!Q\",e)[0]\n    if h[1]&128:\n        m,buf=rx(s,buf,4)\n    else:\n        m=None\n    p,buf=rx(s,buf,n)\n    if m:\n        p=bytes(x^m[i&3] for i,x in enumerate(p))\n    return op,p,buf\nok=True\ntry:\n    if mode==\"wsecho\":\n        s,h,r=hs(\"/echo\")\n        ok=ok and \"101\" in h.split(\"\\r\\n\")[0] and \"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\" in h\n        sf(s,1,b\"hi avant\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hi avant\"\n        sf(s,2,b\"\\x00\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x00\\x01\\x02\"\n        sf(s,9,b\"zz\")\n        op,p,r=rf(s,r)\n        ok=ok and op==10 and p==b\"zz\"\n        sf(s,1,b\"hel\",fin=False)\n        sf(s,0,b\"lo\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hello\"\n        sf(s,8,struct.pack(\"!H\",1000)+b\"bye\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1000)\n        s.close()\n        s,h,r=hs(\"/shout\")\n        sf(s,1,b\"abc\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"text:abc\"\n        sf(s,2,b\"\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x01\\x02\"\n        s.close()\n        s,h,r=hs(\"/work\")\n        sf(s,1,b\"go\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"worked\"\n        s.close()\n        s,h,r=hs(\"/bye\")\n        sf(s,1,b\"x\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p==struct.pack(\"!H\",1000)+b\"done\"\n        s.close()\n        print(\"ws-echo=ok\" if ok else \"ws-echo=BAD\")\n    else:\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"hi\",masked=False)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1002)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"x\"*100)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1009)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"\\xff\\xfe\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1007)\n        s.close()\n        s2=socket.create_connection((\"127.0.0.1\",port))\n        s2.sendall(b\"GET /echo HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 12\\r\\n\\r\\n\")\n        ok=ok and b\"400\" in s2.recv(4096).split(b\"\\r\\n\")[0]\n        s2.close()\n        s,h,r=hs(\"/nope\")\n        ok=ok and \"404\" in h.split(\"\\r\\n\")[0]\n        s.close()\n        print(\"ws-proto=ok\" if ok else \"ws-proto=BAD\")\nexcept Exception as e:\n    print((\"ws-echo=BAD:\" if mode==\"wsecho\" else \"ws-proto=BAD:\") + type(e).__name__)\n"
-  _ = file_write(wscript, wpy)
+  _ = fs.write(wscript, wpy)
 
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 2, 64) {
+  if opened = http.listen(0, "127.0.0.1", 1048576, 2, 64) {
     server = opened
+    byes = sync.Channel(String).new(4)
     server.websocket("/echo", (conn, msg) {
-      sent = conn.send_message(msg)
+      _ = conn.send_message(msg)
     })
     server.websocket("/shout", (conn, msg) {
       if msg.is_text {
-        sent = conn.send_text("text:${msg.text() ?? ""}")
+        _ = conn.send_text("text:${msg.text() ?? ""}")
       } else {
-        sent = conn.send_bytes(msg.body)
+        _ = conn.send_bytes(msg.body)
       }
     })
     server.websocket("/work", (conn, msg) {
       sender = conn.sender()
       handle = spawn {
-        sent = sender.send_text("worked")
+        _ = sender.send_text("worked")
         0
       }
     })
     server.websocket("/bye", (conn, msg) {
-      sent = conn.close(1000, "done")
+      // The close goes; a send after it, a second close and a send
+      // through the sender each answer WsSendError.closed.
+      first = sent_word(conn.close(1000, "done"))
+      byes.send("bye ${first} ${sent_word(conn.send_text("late"))} ${sent_word(conn.close())} ${sent_word(conn.sender().send_bytes("x".bytes))}")
     })
-    events = Channel(String).new(16)
-    server.websocket_open("/echo", (conn) {
-      events.send("open")
+    events = sync.Channel(String).new(16)
+    server.websocket_open("/echo", (conn, req) {
+      // The handshake request: its method, path, a header and the peer.
+      seen = "${req.method} ${req.path} ${req.header("sec-websocket-version") ?? "-"} ${req.peer()}"
+      if seen == "GET /echo 13 127.0.0.1" {
+        events.send("open")
+      } else {
+        events.send("open with ${seen}")
+      }
     })
     server.websocket_close("/echo", (conn, code, reason) {
       events.send("close=${code}:${reason}")
@@ -315,23 +583,30 @@ fn test_std_http(c: Checks) {
       server.close()
       Response.text("bye")
     })
-    out = Channel(String).new(4)
-    cout = Channel(String).new(2)
+    out = sync.Channel(String).new(4)
+    cout = sync.Channel(String).new(4)
     port = server.port()
+    clients = sync.Channel(Int).new(1)
     handle = spawn {
-      ws_round(port, out, wscript, stamp)
+      ws_round(port, out, wscript, stamp, clients)
     }
     chandle = spawn {
       ws_client_round(port, cout)
+      cout.send(ws_recv_round(port))
+      clients.send(1)
+      0
     }
     server.serve()
     c.eq_int(handle.join() ?? -1, 0, "ws round task")
     c.eq_int(chandle.join() ?? -1, 0, "ws client task")
     if line = cout.recv() {
-      c.eq_str(line, "ws-client=text:abc:true:2", "ws client round")
+      c.eq_str(line, "ws-client=text:abc:true:2:text:text:abc:true:2", "ws client round")
     } else {
       c.expect(false, "ws client round present")
     }
+    c.eq_str(cout.recv() ?? "none", "ws-client-after=closed closed closed 1006 [] false", "a client's send after close answers WsSendError.closed, its recv a WsClosed")
+    c.eq_str(cout.recv() ?? "none", "nil|closed 1000 [done] true|closed 1000 [done] true|1006", "recv: nil for a timeout, a WsClosed for the end")
+    c.eq_str(byes.recv() ?? "none", "bye sent closed closed closed", "a server's send or close after close answers WsSendError.closed")
     want: Array(String) = []
     want.push("ws-echo=ok")
     want.push("ws-proto=ok")
@@ -392,13 +667,13 @@ fn test_std_http(c: Checks) {
   script2 = "${scratch()}/http-chunked-${stamp}.py"
   portf2 = "${scratch()}/http-chunked-${stamp}.port"
   py2 = "import socket, sys, os\npath = sys.argv[1]\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", 0))\nsrv.listen(1)\nwith open(path + \".tmp\", \"w\") as f:\n    f.write(str(srv.getsockname()[1]))\nos.rename(path + \".tmp\", path)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
-  _ = file_write(script2, py2)
+  _ = fs.write(script2, py2)
   log2 = "${scratch()}/http-chunked-${stamp}.log"
   handle2 = spawn {
     args2: Array(String) = []
     args2.push(script2)
     args2.push(portf2)
-    _ = process_run_out("/usr/bin/python3", args2, log2)
+    _ = run_out("/usr/bin/python3", args2, log2)
     0
   }
   got_body = ""
@@ -406,12 +681,12 @@ fn test_std_http(c: Checks) {
   sport = 0
   while got_body.size == 0 && now_ms() < deadline {
     if sport == 0 {
-      if pt = file_read(portf2) {
+      if pt = fs.read(portf2) {
         sport = pt.strip().to_i() ?? 0
       }
     }
     if sport > 0 {
-      if resp = Http.get("http://127.0.0.1:${sport}/") {
+      if resp = http.get("http://127.0.0.1:${sport}/") {
         got_body = body_text(resp)
       }
     }
@@ -419,11 +694,11 @@ fn test_std_http(c: Checks) {
   c.eq_str(got_body, "hello chunked world", "chunked response decoded")
   _ = handle2.join()
 
-  if opened = Http.listen(0) {
+  if opened = http.listen(0) {
     port = opened.port()
     opened.close()
     opened.close()
-    if resp = Http.get("http://127.0.0.1:${port}/") {
+    if resp = http.get("http://127.0.0.1:${port}/") {
       c.expect(false, "closed port refuses")
     } else {
       c.expect(true, "closed port refuses")
@@ -434,7 +709,7 @@ fn test_std_http(c: Checks) {
 
   // Multi-loop: explicit loop count, concurrent clients on
   // several connections at once, clean stop through a handler.
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 4) {
+  if opened = http.listen(0, "127.0.0.1", 1048576, 4) {
     server = opened
     server.get("/ping", (req) {
       Response.text("pong")
@@ -444,8 +719,8 @@ fn test_std_http(c: Checks) {
       Response.text("bye")
     })
     port = server.port()
-    out = Channel(String).new(8)
-    done = Channel(Int).new(8)
+    out = sync.Channel(String).new(8)
+    done = sync.Channel(Int).new(8)
     h1 = spawn {
       r = hammer_round(port, out, 25)
       done.send(1)
@@ -473,7 +748,7 @@ fn test_std_http(c: Checks) {
           got += d
         }
       }
-      if resp = Http.get("http://127.0.0.1:${port}/__stop") {
+      if resp = http.get("http://127.0.0.1:${port}/__stop") {
       }
       0
     }

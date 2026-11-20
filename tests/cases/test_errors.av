@@ -1,14 +1,16 @@
 import harness
+import std.fs
+import std.process
 
 fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(code != 0, "${tag} exits non-zero")
-  c.expect(!file_exists(bin), "${tag} bin absent")
-  if err = file_read(log) {
+  c.expect(!fs.exists(bin), "${tag} bin absent")
+  if err = fs.read(log) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -23,7 +25,7 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  _ = file_write(src, body)
+  _ = fs.write(src, body)
   args: Array(String) = []
   args.push("20")
   args.push(compiler)
@@ -32,12 +34,12 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body
   args.push(bin)
   args.push("--debug")
   started = now_ms()
-  code = process_run_out("/usr/bin/timeout", args, log) ?? -1
+  code = run_out("/usr/bin/timeout", args, log) ?? -1
   c.expect(code != 124, "${tag} finishes")
   c.expect(code != 0 && code != -1, "${tag} exits non-zero")
   c.expect(now_ms() - started < 10000, "${tag} finishes in time")
-  c.expect(!file_exists(bin), "${tag} bin absent")
-  if err = file_read(log) {
+  c.expect(!fs.exists(bin), "${tag} bin absent")
+  if err = fs.read(log) {
     c.expect(err.contains(needle), tag)
   } else {
     c.expect(false, tag)
@@ -46,10 +48,10 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body
 
 fn test_errors(c: Checks) {
   c.suite("tests/cases/test_errors.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
-    expect_err_bounded(c, compiler, stamp, "many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
-    if many = file_read("${scratch()}/errors-${stamp}-many-errors.log") {
+    expect_err_bounded(c, compiler, stamp, "many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each (s) { puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
+    if many = fs.read("${scratch()}/errors-${stamp}-many-errors.log") {
       c.expect(many.contains("and 2 more errors (limit 20)"), "the checker counts the errors past the limit")
     } else {
       c.expect(false, "many-errors log")
@@ -59,7 +61,7 @@ fn test_errors(c: Checks) {
     // 20 shown, and the 5 past the cap counted (before, the checker pulled
     // only the resolver's kept errors and the count said nothing).
     expect_err_bounded(c, compiler, stamp, "resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
-    if resolver = file_read("${scratch()}/errors-${stamp}-resolver-errors.log") {
+    if resolver = fs.read("${scratch()}/errors-${stamp}-resolver-errors.log") {
       c.expect(resolver.contains("and 5 more errors (limit 20)"), "the checker counts the resolver's errors past the limit")
     } else {
       c.expect(false, "resolver-errors log")
@@ -76,19 +78,19 @@ fn test_errors(c: Checks) {
     // Three forms the lowering once refused as "not yet supported" are
     // refused by the checker first, or lowered before that point: the
     // lowering's lines are internal errors now, and none is reachable.
-    expect_err(c, compiler, stamp, "hash-member-block", "fn main {\n  h = Hash(String, Int).new()\n  xs = h.keys() { |k|\n    puts(k)\n  }\n}\n", "error[E4003]: keys takes no arguments")
+    expect_err(c, compiler, stamp, "hash-member-block", "fn main {\n  h = Hash(String, Int).new()\n  xs = h.keys (k) {\n    puts(k)\n  }\n}\n", "error[E4003]: keys takes no arguments")
     expect_err(c, compiler, stamp, "hash-field", "fn main {\n  h = Hash(String, Int).new()\n  m = h.count\n  puts(m)\n}\n", "error[E4000]: no method count on Hash")
-    expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = buf_new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
+    expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = Buf.new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
     for tag in ["hash-member-block", "hash-field", "buf-field"] {
-      log_text = file_read("${scratch()}/errors-${stamp}-${tag}.log") ?? ""
+      log_text = fs.read("${scratch()}/errors-${stamp}-${tag}.log") ?? ""
       c.expect(!log_text.contains("back end") && !log_text.contains("internal error"), "${tag}: refused by the checker, not the lowering")
     }
     each_src = "${scratch()}/errors-${stamp}-hash-each.av"
-    _ = file_write(each_src, "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 1\n  h.each { |k, v|\n    puts(k)\n    puts(v)\n  }\n}\n")
+    _ = fs.write(each_src, "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 1\n  h.each (k, v) {\n    puts(k)\n    puts(v)\n  }\n}\n")
     c.eq_int(compile_av(compiler, each_src, "${scratch()}/errors-${stamp}-hash-each.bin", "${scratch()}/errors-${stamp}-hash-each.log"), 0, "Hash.each with a block is lowered before the member path")
     no_args: Array(String) = []
-    c.eq_int(process_run_out("${scratch()}/errors-${stamp}-hash-each.bin", no_args, "${scratch()}/errors-${stamp}-hash-each.out") ?? -1, 0, "Hash.each runs")
-    c.eq_str(file_read("${scratch()}/errors-${stamp}-hash-each.out") ?? "", "a\n1\n", "Hash.each visits the entry")
+    c.eq_int(run_out("${scratch()}/errors-${stamp}-hash-each.bin", no_args, "${scratch()}/errors-${stamp}-hash-each.out") ?? -1, 0, "Hash.each runs")
+    c.eq_str(fs.read("${scratch()}/errors-${stamp}-hash-each.out") ?? "", "a\n1\n", "Hash.each visits the entry")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
     // The bump constructor and nursery_reclaim are
     // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.
@@ -98,7 +100,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gc-hold-import", "fn main {\n  gc.hold {\n    x = 1\n  }\n}\n", "gc.hold needs import std.gc")
     expect_err(c, compiler, stamp, "gc-collect-import", "fn main {\n  gc.collect()\n}\n", "unknown name gc")
     expect_err(c, compiler, stamp, "gc-collect-args", "import std.gc\nfn main {\n  gc.collect(1)\n}\n", "gc.collect takes no arguments")
-    expect_err(c, compiler, stamp, "gc-collect-block", "import std.gc\nfn main {\n  gc.collect { || 1 }\n}\n", "gc.collect takes no block")
+    expect_err(c, compiler, stamp, "gc-collect-block", "import std.gc\nfn main {\n  gc.collect { || 1 }\n}\n", "a block in pipes is not Avant")
     expect_err(c, compiler, stamp, "gc-hold-value", "import std.gc\nfn main {\n  x = gc.hold {\n    1\n  }\n}\n", "gc.hold is a statement: gc.hold { ... }")
     expect_err(c, compiler, stamp, "gc-unknown", "import std.gc\nfn main {\n  gc.frob()\n}\n", "unknown function gc.frob; std.gc has gc.hold { } and gc.collect()")
     expect_err(c, compiler, stamp, "gc-hold-local", "import std.gc\nfn main {\n  gc = 1\n  gc.hold {\n    x = gc\n  }\n}\n", "gc.hold: gc names a local or a field here, not std.gc")
@@ -119,7 +121,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "try-string", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn s(x: String): String {\n  n = opt(x)?\n  \"y\"\n}\nfn main {\n  puts(s(\"\"))\n}\n", "but the function returns String; declare the result String?")
     expect_err(c, compiler, stamp, "try-void", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn v(x: String) {\n  n = opt(x)?\n  puts(n)\n}\nfn main {\n  v(\"\")\n}\n", "postfix ? would return nil, but the function returns nothing")
     expect_err(c, compiler, stamp, "try-union-int", "class E: Error {\n  message: String = \"e\"\n}\nfn p(x: Int): Int | E {\n  if x > 0 {\n    return x\n  }\n  E.new()\n}\nfn q(x: Int): Int {\n  n = p(x)?\n  n\n}\nfn main {\n  puts(q(1))\n}\n", "postfix ? on E | Int would return E, but the function returns Int; give it a result that includes E")
-    expect_err(c, compiler, stamp, "try-lambda", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn main {\n  g: fn(String): Int = { |x| opt(x)? + 1 }\n  puts(g(\"a\"))\n}\n", "postfix ? would return nil, but the lambda returns Int")
+    expect_err(c, compiler, stamp, "try-lambda", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn main {\n  g: fn(String): Int = (x) { opt(x)? + 1 }\n  puts(g(\"a\"))\n}\n", "postfix ? would return nil, but the lambda returns Int")
     expect_err(c, compiler, stamp, "try-spawn", "fn main {\n  h = spawn { 3? }\n  puts(h.join() ?? -1)\n}\n", "postfix ?")
     expect_err(c, compiler, stamp, "lead-minus-unused", "fn main {\n  a = 1\n  b = 2\n  t = a\n  - b\n  puts(t)\n}\n", "begins a new statement whose value nobody uses")
     expect_err(c, compiler, stamp, "lead-minus-tail", "fn f(a: Int, b: Int): Int {\n  a\n  - b\n}\nfn main {\n  puts(f(1, 2))\n}\n", "leaves the line before as a value nobody uses")
@@ -157,7 +159,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "switch-else", "fn f(n: Int): String {\n  switch n {\n    case 0 {\n      \"zero\"\n    }\n  }\n}\nfn main {\n  puts(f(0))\n}\n", "needs else")
     expect_err(c, compiler, stamp, "switch-float", "fn main {\n  switch 1.5 {\n    case 0 {\n      puts(1)\n    }\n  }\n}\n", "Bool, String, an enum or a union")
     expect_err(c, compiler, stamp, "field-default", "class Box {\n  k: Int = 2\n  n: Int = self.k + 1\n  fn initialize {\n  }\n}\nfn main {\n  puts(Box.new().n)\n}\n", "a field default cannot use self")
-    expect_err(c, compiler, stamp, "spawn-class", "class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  b = Box.new(1)\n  h = spawn { b.n }\n  puts(h.join() ?? -1)\n}\n", "cannot capture")
+    expect_err(c, compiler, stamp, "spawn-class", "class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  b = Box.new(1)\n  h = spawn { b.n }\n  puts(h.join() ?? -1)\n  puts(b.n)\n}\n", "b was moved into the task the spawn at 9:7 starts: the task holds it now")
     expect_err(c, compiler, stamp, "spawn-array-store", "fn main {\n  xs = [1, 2, 3]\n  h = spawn {\n    xs[0] = 9\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "read-only until join")
     expect_err(c, compiler, stamp, "spawn-array-push", "fn main {\n  xs = [1, 2, 3]\n  h = spawn {\n    xs.push(9)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "read-only until join")
     expect_err(c, compiler, stamp, "sender-array-store", "fn main {\n  xs = [1, 2, 3]\n  h = spawn { xs[0] }\n  xs[1] = 9\n  puts(h.join() ?? -1)\n}\n", "join first")
@@ -166,17 +168,17 @@ fn test_errors(c: Checks) {
     // the block's later statements: switch arms, value blocks, an if used
     // as a value, a spawn's own body; a mutation in a value's tail or in a
     // binding chain is seen.
-    expect_err(c, compiler, stamp, "sender-arm-int", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 1 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-arm-else", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 1 {\n      puts(0)\n    }\n    else {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-arm-enum", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  t = Tok.from_i(k()) ?? Tok.a\n  switch t {\n    case a {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    case b {\n      puts(0)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-arm-string", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch \"\${k()}\" {\n    case \"1\" {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-arm-range", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 0..=3 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-arm-union", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch maybe() {\n    case n: Int {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    case nil {\n      puts(0)\n    }\n  }\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-value-arm", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = switch k() {\n    case 1 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n      1\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-value-if", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = if k() > 0 {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    puts(h.join ?? -1)\n    1\n  } else {\n    0\n  }\n  puts(v)\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-value-block", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = [1, 2].any { |q|\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    puts(h.join ?? -1)\n    q > 0\n  }\n  puts(v)\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-spawn-body", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  g = spawn {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    0\n  }\n  puts(g.join() ?? -1)\n}\n", "join first")
-    expect_err(c, compiler, stamp, "sender-value-tail", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  xs = [1, 2]\n  v = switch k() {\n    case 1 {\n      h = spawn { xs.size }\n      xs.pop() + (h.join ?? -1)\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-int", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 1 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-else", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 1 {\n      puts(0)\n    }\n    else {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-enum", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  t = Tok.from_i(k()) ?? Tok.a\n  switch t {\n    case a {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    case b {\n      puts(0)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-string", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch \"\${k()}\" {\n    case \"1\" {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-range", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch k() {\n    case 0..=3 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    else {\n      puts(0)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-arm-union", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  switch maybe() {\n    case n: Int {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n    }\n    case nil {\n      puts(0)\n    }\n  }\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-value-arm", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = switch k() {\n    case 1 {\n      xs = [1, 2]\n      h = spawn { xs.size }\n      xs.push(3)\n      puts(h.join ?? -1)\n      1\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-value-if", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = if k() > 0 {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    puts(h.join ?? -1)\n    1\n  } else {\n    0\n  }\n  puts(v)\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-value-block", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  v = [1, 2].any (q) {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    puts(h.join ?? -1)\n    q > 0\n  }\n  puts(v)\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-spawn-body", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  g = spawn {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    0\n  }\n  puts(g.join() ?? -1)\n}\nimport std.process\n", "join first")
+    expect_err(c, compiler, stamp, "sender-value-tail", "enum Tok { a, b }\n\nfn k: Int {\n  process.args().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  xs = [1, 2]\n  v = switch k() {\n    case 1 {\n      h = spawn { xs.size }\n      xs.pop() + (h.join ?? -1)\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\nimport std.process\n", "join first")
     expect_err(c, compiler, stamp, "sender-binding-chain", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  if v = \"\${xs.pop()}\".to_i, v > 0 {\n    puts(v)\n  }\n  puts(h.join() ?? -1)\n}\n", "join first")
     // A zero-argument mutator written without
     // parentheses is a mutation on both sides of the spawn.
@@ -195,22 +197,22 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-array-class-task", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new()]\n  h = spawn {\n    b = xs[0]\n    b.n += 1\n    0\n  }\n  puts(h.join() ?? -1)\n}\n", "its elements (Box) cannot cross to another task")
     expect_err(c, compiler, stamp, "spawn-array-class-sender", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new()]\n  h = spawn { xs[0].n }\n  c = xs[0]\n  c.n += 1\n  puts(h.join() ?? -1)\n}\n", "its elements (Box) cannot cross to another task")
     expect_err(c, compiler, stamp, "spawn-array-class-nested", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [[Box.new()]]\n  h = spawn { xs[0].size }\n  puts(h.join() ?? -1)\n}\n", "an Array(Array(Box)) is shared with the task, and its elements (Box) cannot cross")
-    expect_err(c, compiler, stamp, "parallel-array-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new()]\n  ys = [1, 2].parallel { |i|\n    b = xs[0]\n    b.n += i\n    i\n  }\n  puts(ys.size)\n}\n", "its elements (Box) cannot cross to another task")
+    expect_err(c, compiler, stamp, "parallel-array-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new()]\n  ys = [1, 2].parallel (i) {\n    b = xs[0]\n    b.n += i\n    i\n  }\n  puts(ys.size)\n}\n", "its elements (Box) cannot cross to another task")
     // A method that changes its receiver, called on
     // an element of a captured Array, writes the array's buffer.
     // `.parallel` over an Array of a class gives two
     // bodies one object when the array holds it twice.
-    expect_err(c, compiler, stamp, "parallel-receiver-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  xs = [b, b]\n  rs = xs.parallel { |x|\n    x.n += 1\n    0\n  }\n  puts(rs.size)\n}\n", ".parallel cannot run over an Array(Box): its elements (Box) cannot cross to another task")
-    expect_err(c, compiler, stamp, "parallel-receiver-nested-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [[Box.new()]]\n  rs = xs.parallel { |x| x.size }\n  puts(rs.size)\n}\n", "its elements (Array(Box)) cannot cross to another task")
+    expect_err(c, compiler, stamp, "parallel-receiver-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  xs = [b, b]\n  rs = xs.parallel (x) {\n    x.n += 1\n    0\n  }\n  puts(rs.size)\n}\n", ".parallel cannot run over an Array(Box): its elements (Box) cannot cross to another task")
+    expect_err(c, compiler, stamp, "parallel-receiver-nested-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [[Box.new()]]\n  rs = xs.parallel (x) { x.size }\n  puts(rs.size)\n}\n", "its elements (Array(Box)) cannot cross to another task")
     expect_err(c, compiler, stamp, "spawn-element-method-task", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  h = spawn {\n    xs[0].bump()\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs: P.bump changes its receiver, an element of xs")
     // A `.parallel` block is checked by spawn's rules, and its messages
     // name the construct the program wrote.
-    expect_err(c, compiler, stamp, "parallel-element-method", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  ys = [1, 2].parallel { |k|\n    xs[0].bump()\n    k\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Array xs: P.bump changes its receiver, an element of xs; it is read-only while the bodies run\n")
-    expect_err(c, compiler, stamp, "parallel-capture-class", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  b = Box.new()\n  ys = [1, 2].parallel { |k| k + b.n }\n  puts(ys.size)\n}\n", ".parallel cannot capture b: its type, Box, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex\n")
-    expect_err(c, compiler, stamp, "spawn-capture-class-text", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  b = Box.new()\n  h = spawn { b.n }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture b: its type, Box, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex\n")
+    expect_err(c, compiler, stamp, "parallel-element-method", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  ys = [1, 2].parallel (k) {\n    xs[0].bump()\n    k\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Array xs: P.bump changes its receiver, an element of xs; it is read-only while the bodies run\n")
+    expect_err(c, compiler, stamp, "parallel-capture-class", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  b = Box.new()\n  ys = [1, 2].parallel (k) { k + b.n }\n  puts(ys.size)\n}\n", ".parallel cannot capture b: its type, Box, cannot cross to another task; numbers, Bool, String, Bytes, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex\n")
+    expect_err(c, compiler, stamp, "spawn-capture-class-text", "class Box {\n  pub n: Int = 1\n}\n\nfn run(b: Box): Int {\n  h = spawn { b.n }\n  h.join() ?? -1\n}\n\nfn main {\n  puts(run(Box.new()))\n}\n", "spawn cannot capture b: its type, Box, cannot be shared with another task, and it moves into the task only from a local variable whose every value is new (a constructor call, a literal or a clone); b is a parameter or a name the code around holds, which another reference may reach; capture a clone (c = b.clone(), then use c in the block)\n")
     expect_err(c, compiler, stamp, "spawn-assign-text", "fn main {\n  k = 1\n  h = spawn {\n    k = 2\n    k\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot assign to k: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join\n")
-    expect_err(c, compiler, stamp, "parallel-assign-text", "fn main {\n  k = 1\n  ys = [1, 2].parallel { |x|\n    k = x\n    k\n  }\n  puts(ys.size)\n}\n", ".parallel cannot assign to k: each body has its own copy, and the copy is read-only; give the new value as the body's value, which .parallel returns in its array\n")
-    expect_err(c, compiler, stamp, "parallel-array-push", "fn main {\n  xs = [1, 2]\n  ys = [1, 2].parallel { |x|\n    xs.push(x)\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Array xs; it is read-only while the bodies run\n")
+    expect_err(c, compiler, stamp, "parallel-assign-text", "fn main {\n  k = 1\n  ys = [1, 2].parallel (x) {\n    k = x\n    k\n  }\n  puts(ys.size)\n}\n", ".parallel cannot assign to k: each body has its own copy, and the copy is read-only; give the new value as the body's value, which .parallel returns in its array\n")
+    expect_err(c, compiler, stamp, "parallel-array-push", "fn main {\n  xs = [1, 2]\n  ys = [1, 2].parallel (x) {\n    xs.push(x)\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Array xs; it is read-only while the bodies run\n")
     // The array verbs that change a size or an order are mutators as push is.
     expect_err(c, compiler, stamp, "spawn-array-delete-if", "fn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.delete_if((x) { x > 1 })\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
     expect_err(c, compiler, stamp, "spawn-sender-delete-if", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.delete_if((x) { x > 1 })\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
@@ -223,8 +225,8 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-sender-try-delete-at", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  _ = xs.try_delete_at(0)\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
     expect_err(c, compiler, stamp, "spawn-array-concat", "fn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.concat([3])\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
     expect_err(c, compiler, stamp, "spawn-sender-concat", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.concat([3])\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
-    expect_err(c, compiler, stamp, "spawn-array-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.shuffle(Random.new(1))\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
-    expect_err(c, compiler, stamp, "spawn-sender-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.shuffle(Random.new(1))\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
+    expect_err(c, compiler, stamp, "spawn-array-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.shuffle(random.Random.new(1))\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
+    expect_err(c, compiler, stamp, "spawn-sender-shuffle", "import std.random\n\nfn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.shuffle(random.Random.new(1))\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
     // A captured Hash is read-only as a captured Array is: through the
     // captured name in the block, through the pending name in the sender
     // before the join; its keys and values cross in turn.
@@ -232,12 +234,12 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-hash-delete", "fn main {\n  h = [\"a\": 1]\n  t = spawn {\n    h.delete(\"a\")\n    h.size\n  }\n  puts(t.join() ?? -1)\n}\n", "spawn cannot mutate captured Hash h; it is read-only until join\n")
     expect_err(c, compiler, stamp, "spawn-hash-value-push", "fn main {\n  h = [\"a\": [1]]\n  t = spawn {\n    if xs = h[\"a\"] {\n      _ = xs.size\n    }\n    h[\"a\"] = [2]\n    h.size\n  }\n  puts(t.join() ?? -1)\n}\n", "spawn cannot mutate captured Hash h; it is read-only until join\n")
     expect_err(c, compiler, stamp, "spawn-set-add", "fn main {\n  s: Set(Int) = [1]\n  t = spawn {\n    _ = s.add(2)\n    s.size\n  }\n  puts(t.join() ?? -1)\n}\n", "spawn cannot mutate captured Set s; it is read-only until join\n")
-    expect_err(c, compiler, stamp, "parallel-hash-clear", "fn main {\n  h = [\"a\": 1]\n  ys = [1, 2].parallel { |x|\n    h.clear()\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Hash h; it is read-only while the bodies run\n")
-    expect_err(c, compiler, stamp, "parallel-hash-inc", "fn main {\n  h = [\"a\": 1]\n  ys = [1, 2].parallel { |x|\n    h.inc(\"a\")\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Hash h; it is read-only while the bodies run\n")
+    expect_err(c, compiler, stamp, "parallel-hash-clear", "fn main {\n  h = [\"a\": 1]\n  ys = [1, 2].parallel (x) {\n    h.clear()\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Hash h; it is read-only while the bodies run\n")
+    expect_err(c, compiler, stamp, "parallel-hash-inc", "fn main {\n  h = [\"a\": 1]\n  ys = [1, 2].parallel (x) {\n    h.inc(\"a\")\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Hash h; it is read-only while the bodies run\n")
     expect_err(c, compiler, stamp, "spawn-hash-sender-store", "fn main {\n  h = [\"a\": 1]\n  t = spawn { h.size }\n  h[\"b\"] = 2\n  puts(t.join() ?? -1)\n}\n", "cannot mutate h while a spawn using it is running; join first\n")
     expect_err(c, compiler, stamp, "spawn-hash-sender-delete", "fn main {\n  h = [\"a\": 1]\n  t = spawn { h.size }\n  h.delete(\"a\")\n  puts(t.join() ?? -1)\n}\n", "cannot mutate h while a spawn using it is running; join first\n")
     expect_err(c, compiler, stamp, "spawn-hash-class-value", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  h = [\"a\": Box.new()]\n  t = spawn { h.size }\n  puts(t.join() ?? -1)\n}\n", "spawn cannot capture h: a Hash(String, Box) is shared with the task, and its keys or values (Box) cannot cross to another task")
-    expect_err(c, compiler, stamp, "parallel-array-of-hash-class", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  hs = [[\"a\": Box.new()]]\n  ys = [1].parallel { |x| x + hs.size }\n  puts(ys.size)\n}\n", "its elements (Box) cannot cross to another task")
+    expect_err(c, compiler, stamp, "parallel-array-of-hash-class", "class Box {\n  pub n: Int = 1\n}\n\nfn main {\n  hs = [[\"a\": Box.new()]]\n  ys = [1].parallel (x) { x + hs.size }\n  puts(ys.size)\n}\n", "its elements (Box) cannot cross to another task")
     expect_err(c, compiler, stamp, "spawn-element-method-sender", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  h = spawn { xs[0].n }\n  xs[0].bump()\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running: P.bump changes its receiver")
     expect_err(c, compiler, stamp, "spawn-element-method-deep", "struct Pos {\n  x: Int\n  fn move(d: Int) {\n    self.x += d\n  }\n}\n\nstruct P {\n  pos: Pos\n  fn shift {\n    pos.move(1)\n  }\n}\n\nfn main {\n  xs = [P { pos: Pos { x: 0 } }]\n  h = spawn {\n    xs[0].shift()\n    xs[0].pos.move(1)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "P.shift changes its receiver, an element of xs")
     expect_err(c, compiler, stamp, "spawn-element-method-field", "struct Pos {\n  x: Int\n  fn move(d: Int) {\n    self.x += d\n  }\n}\n\nstruct P {\n  pos: Pos\n}\n\nfn main {\n  xs = [P { pos: Pos { x: 0 } }]\n  h = spawn {\n    xs[0].pos.move(1)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "Pos.move changes its receiver, an element of xs")
@@ -275,8 +277,6 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "hash-struct-own-eq-type", "struct P {\n  x: Int\n\n  fn equals(other: P): Bool {\n    true\n  }\n}\nfn count(by: Hash(P, Int)): Int {\n  by.size\n}\nfn main {\n  puts(1)\n}\n", "P defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares")
     expect_err(c, compiler, stamp, "hash-struct-array-key", "struct P {\n  xs: Array(Int)\n}\nfn main {\n  h = Hash(P, Int).new()\n  puts(h.size)\n}\n", "a Hash key's fields are integers, Bools, enums, Strings or structs of those, not Array(Int) (the field P.xs): key by a struct of the other fields, or keep this one out of the key")
     expect_err(c, compiler, stamp, "hash-struct-optional-key", "struct P {\n  n: Int?\n}\nfn main {\n  h = Hash(P, Int).new()\n  puts(h.size)\n}\n", "a Hash key's fields are integers, Bools, enums, Strings or structs of those, not Int? (the field P.n)")
-    expect_err(c, compiler, stamp, "hash-optional-value", "fn main {\n  h = Hash(Int, String?).new()\n  puts(h.size)\n}\n", "a Hash value cannot be optional (String?): h[k] is already nil for a missing key")
-    expect_err(c, compiler, stamp, "hash-union-value", "fn main {\n  h = Hash(Int, Int | String).new()\n  puts(h.size)\n}\n", "Hash values of type Int | String are not built yet")
     expect_err(c, compiler, stamp, "hash-get-or", "fn main {\n  h = Hash(String, Int).new()\n  puts(h.get_or(\"a\", 0))\n}\n", "Hash has no get_or: write h[k] ?? default")
     expect_err(c, compiler, stamp, "hash-lit-empty", "fn main {\n  h = [:]\n  puts(h.size)\n}\n", "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
     expect_err(c, compiler, stamp, "hash-lit-mixed", "fn main {\n  h = [\"a\": 1, 2]\n  puts(h.size)\n}\n", "a hash literal's entries are each key: value")
@@ -290,12 +290,13 @@ fn test_errors(c: Checks) {
     // parameter; a value it cannot take, and a class key with its own ==.
     expect_err(c, compiler, stamp, "hasher-new", "fn main {\n  h = Hasher.new()\n  puts(1)\n}\n", "a Hasher cannot be made: the runtime gives one to a type's hash method (fn hash(h: Hasher))")
     expect_err(c, compiler, stamp, "hasher-literal", "fn main {\n  h = Hasher { }\n  puts(1)\n}\n", "a Hasher cannot be made")
-    expect_err(c, compiler, stamp, "hasher-field", "struct P {\n  h: Hasher\n}\nfn main {\n  puts(1)\n}\n", "a field cannot hold a Hasher: the runtime gives one to a hash method for the call only")
+    expect_err(c, compiler, stamp, "hasher-field", "struct P {\n  h: Hasher\n}\nfn main {\n  puts(1)\n}\n", "a field cannot hold a Hasher: the runtime gives one to a hash method for the call only (fn hash(h: Hasher)), so it is never stored, returned or captured; a parameter or a local may name it during the call, and a helper may take it, to add values to it")
+    expect_err(c, compiler, stamp, "hasher-optional-field", "class Keep {\n  h: Hasher? = nil\n}\nfn main {\n  puts(1)\n}\n", "cannot hold a Hasher: the runtime gives one to a hash method for the call only (fn hash(h: Hasher)), so it is never stored, returned or captured")
     expect_err(c, compiler, stamp, "hasher-array", "fn f(hs: Array(Hasher)): Int {\n  hs.size\n}\nfn main {\n  puts(1)\n}\n", "an Array cannot hold a Hasher")
     expect_err(c, compiler, stamp, "hasher-hash-value", "fn f(hs: Hash(Int, Hasher)): Int {\n  hs.size\n}\nfn main {\n  puts(1)\n}\n", "a Hash cannot hold a Hasher")
     expect_err(c, compiler, stamp, "hasher-optional", "fn f(h: Hasher?) {\n}\nfn main {\n  puts(1)\n}\n", "an optional cannot hold a Hasher")
     expect_err(c, compiler, stamp, "hasher-return", "fn keep(h: Hasher): Hasher {\n  h\n}\nfn main {\n  puts(1)\n}\n", "a function's result cannot hold a Hasher")
-    expect_err(c, compiler, stamp, "hasher-capture", "struct P {\n  x: Int\n\n  fn equals(other: P): Bool {\n    self.x == other.x\n  }\n\n  fn hash(h: Hasher) {\n    g: fn(Int): Int = { |v|\n      h.add(v)\n      v\n    }\n    puts(g(self.x))\n  }\n}\nfn main {\n  s = Set(P).new()\n  puts(s.add(P { x: 1 }))\n}\n", "a lambda cannot capture the Hasher h")
+    expect_err(c, compiler, stamp, "hasher-capture", "struct P {\n  x: Int\n\n  fn equals(other: P): Bool {\n    self.x == other.x\n  }\n\n  fn hash(h: Hasher) {\n    g: fn(Int): Int = (v) {\n      h.add(v)\n      v\n    }\n    puts(g(self.x))\n  }\n}\nfn main {\n  s = Set(P).new()\n  puts(s.add(P { x: 1 }))\n}\n", "a lambda cannot capture the Hasher h")
     expect_err(c, compiler, stamp, "hasher-float", "struct P {\n  x: Float64\n\n  fn equals(other: P): Bool {\n    self.x == other.x\n  }\n\n  fn hash(h: Hasher) {\n    h.add(self.x)\n  }\n}\nfn main {\n  puts(1)\n}\n", "a Hasher takes no Float64")
     expect_err(c, compiler, stamp, "hasher-array-value", "struct P {\n  xs: Array(Int)\n\n  fn equals(other: P): Bool {\n    true\n  }\n\n  fn hash(h: Hasher) {\n    h.add(self.xs)\n  }\n}\nfn main {\n  puts(1)\n}\n", "a Hasher takes integers, Bools, enums, Strings and structs, not Array(Int)")
     expect_err(c, compiler, stamp, "hasher-method", "struct P {\n  x: Int\n\n  fn equals(other: P): Bool {\n    true\n  }\n\n  fn hash(h: Hasher) {\n    h.mix(self.x)\n  }\n}\nfn main {\n  puts(1)\n}\n", "a Hasher has one method, add(v)")
@@ -323,10 +324,11 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "set-index", "fn main {\n  s = Set(Int).new()\n  puts(s[1])\n}\n", "a Set has no [ ]: s.has(v) says whether v is in it")
     expect_err(c, compiler, stamp, "set-index-assign", "fn main {\n  s = Set(Int).new()\n  s[1] = true\n  puts(s.size)\n}\n", "a Set has no [ ]=: s.add(v) puts v in it")
     expect_err(c, compiler, stamp, "set-contains", "fn main {\n  s = Set(Int).new()\n  puts(s.contains(1))\n}\n", "no method contains on Set(Int) (write `s.has(v)`)")
+    expect_err(c, compiler, stamp, "hash-has-key", "fn main {\n  h = Hash(String, Int).new()\n  puts(h.has_key(\"a\"))\n}\n", "no method has_key on Hash (write `h.has(k)`)")
     expect_err(c, compiler, stamp, "set-elem-type", "fn main {\n  s = Set(Int).new()\n  puts(s.add(\"x\"))\n}\n", "the element must be Int, got String")
     expect_err(c, compiler, stamp, "set-arity", "fn f(s: Set(Int, Int)): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "Set takes one type argument")
     expect_err(c, compiler, stamp, "set-not-hash", "fn f(s: Set(Int)): Int {\n  s.size\n}\nfn main {\n  h = Hash(Int, Bool).new()\n  puts(f(h))\n}\n", "argument 1 of f is Hash(Int, Bool), expected Set(Int)")
-    expect_err(c, compiler, stamp, "set-each-params", "fn main {\n  s = Set(Int).new()\n  s.each { |a, b| puts(a) }\n}\n", "each { |v| ... } takes one block parameter")
+    expect_err(c, compiler, stamp, "set-each-params", "fn main {\n  s = Set(Int).new()\n  s.each (a, b) { puts(a) }\n}\n", "each takes a lambda of one parameter: s.each (v) { ... }")
     expect_err(c, compiler, stamp, "set-literal-elem", "fn main {\n  s: Set(Int) = [1, \"a\"]\n  puts(s.size)\n}\n", "set element is String, expected Int")
     expect_err(c, compiler, stamp, "set-to-a", "fn main {\n  s = Set(Int).new()\n  puts(s.to_a().size)\n}\n", "no method to_a on Set(Int) (write `s.values()`)")
     expect_err(c, compiler, stamp, "hash-inc-string", "fn main {\n  h = Hash(Int, String).new()\n  puts(h.inc(1))\n}\n", "inc needs integer values; this hash's values are String")
@@ -340,14 +342,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-method", "struct Pt {\n  x: Int\n  fn add(n: Int): Int {\n    x + n\n  }\n}\nfn main {\n  p = Pt { x: 1 }\n  f = p.add\n  puts(1)\n}\n", "methods are not values")
     expect_err(c, compiler, stamp, "fn-cfun", "lib math {\n  fun apply: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
     expect_err(c, compiler, stamp, "fn-generic", "fn id(x: T): T {\n  x\n}\nfn main {\n  f = id\n  puts(1)\n}\n", "generic function is not a value")
-    expect_err(c, compiler, stamp, "fn-lam", "fn main {\n  g = { |n| n + 1 }\n  puts(1)\n}\n", "lambda parameter needs a type")
-    expect_err(c, compiler, stamp, "fn-eq", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Int = { |n| n }\n  if f == g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
-    expect_err(c, compiler, stamp, "fn-lam-arity", "fn main {\n  f: fn(Int): Int = { |a, b| a }\n  puts(1)\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument")
-    expect_err(c, compiler, stamp, "fn-lam-ty", "fn main {\n  f: fn(Int): Int = { |n: String| 1 }\n  puts(1)\n}\n", "lambda parameter is String, expected Int")
-    expect_err(c, compiler, stamp, "fn-call-arity", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2")
-    expect_err(c, compiler, stamp, "fn-call-ty", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(\"ab\"))\n}\n", "argument 1 is String, expected Int")
-    expect_err(c, compiler, stamp, "fn-assign", "fn main {\n  g: fn(Int): Int = { |n| n }\n  f: fn(Int, String): Bool = g\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int, String): Bool")
-    expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
+    expect_err(c, compiler, stamp, "fn-lam", "fn main {\n  g = (n) { n + 1 }\n  puts(1)\n}\n", "lambda parameter needs a type")
+    expect_err(c, compiler, stamp, "fn-eq", "fn main {\n  f: fn(Int): Int = (n) { n }\n  g: fn(Int): Int = (n) { n }\n  if f == g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
+    expect_err(c, compiler, stamp, "fn-lam-arity", "fn main {\n  f: fn(Int): Int = (a, b) { a }\n  puts(1)\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument")
+    expect_err(c, compiler, stamp, "fn-lam-ty", "fn main {\n  f: fn(Int): Int = (n: String) { 1 }\n  puts(1)\n}\n", "lambda parameter is String, expected Int")
+    expect_err(c, compiler, stamp, "fn-call-arity", "fn main {\n  f: fn(Int): Int = (n) { n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2")
+    expect_err(c, compiler, stamp, "fn-call-ty", "fn main {\n  f: fn(Int): Int = (n) { n }\n  puts(f(\"ab\"))\n}\n", "argument 1 is String, expected Int")
+    expect_err(c, compiler, stamp, "fn-assign", "fn main {\n  g: fn(Int): Int = (n) { n }\n  f: fn(Int, String): Bool = g\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int, String): Bool")
+    expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = (n) { n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "a block in pipes is not Avant")
     expect_err(c, compiler, stamp, "fn-call-int", "fn main {\n  n = 1\n  puts((n)(2))\n}\n", "cannot call Int")
     expect_err(c, compiler, stamp, "fn-cret", "lib math {\n  fun make: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
     // A union in a `fun` signature that is not one pointer: it
@@ -389,26 +391,44 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
     expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
     expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")
-    expect_err(c, compiler, stamp, "fn-ne", "fn main {\n  f: fn(): Int = { || 1 }\n  g: fn(): Int = { || 2 }\n  if f != g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
-    expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int): Bool")
-    expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Bool): Int")
-    expect_err(c, compiler, stamp, "fn-body", "fn main {\n  f: fn(): Bool = { || 1 }\n  puts(1)\n}\n", "last expression is Int, expected Bool")
-    expect_err(c, compiler, stamp, "fn-retstmt", "fn main {\n  f: fn(): Bool = { ||\n    return 1\n  }\n  puts(1)\n}\n", "return type is Int, expected Bool")
-    expect_err(c, compiler, stamp, "fn-empty", "fn main {\n  f: fn(): Int = { || }\n  puts(1)\n}\n", "missing return value")
-    expect_err(c, compiler, stamp, "fn-self", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { ||\n      self.base = 2\n      base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
-    expect_err(c, compiler, stamp, "fn-selfdot", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { ||\n      self.base += 1\n      self.base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
-    expect_err(c, compiler, stamp, "fn-spawn", "fn main {\n  f: fn(): Int = { || 1 }\n  h = spawn { f() }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture")
-    expect_err(c, compiler, stamp, "handler-class", "import std.http\nimport std.sync\nclass Box {\n  pub n: Int = 0\n}\nfn main {\n  b = Box.new()\n  if server = Http.listen(0) {\n    server.get(\"/\") { |req|\n      b.n += 1\n      Response.text(\"\${b.n}\")\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture b: its type, Box, cannot cross to another thread, and the server runs every handler on each of its loop threads at once")
-    expect_err(c, compiler, stamp, "handler-hash", "import std.http\nimport std.sync\nfn main {\n  seen = Hash(String, Int).new()\n  if server = Http.listen(0) {\n    server.post(\"/\") { |req|\n      seen[req.path] = 1\n      Response.text(\"ok\")\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot mutate captured Hash seen; it is read-only once the handler is registered")
-    expect_err(c, compiler, stamp, "handler-assign", "import std.http\nimport std.sync\nfn main {\n  count = 0\n  if server = Http.listen(0) {\n    server.get(\"/\") { |req|\n      count += 1\n      Response.text(\"\${count}\")\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot assign to count: the server runs the handler on each of its loop threads at once")
-    expect_err(c, compiler, stamp, "handler-push", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = Http.listen(0) {\n    server.get(\"/\") { |req|\n      xs.push(3)\n      Response.text(\"\${xs.size}\")\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot mutate captured Array xs; it is read-only once the handler is registered")
-    expect_err(c, compiler, stamp, "handler-fn-value", "import std.http\nimport std.sync\nfn main {\n  h: fn(Request): Response = { |r| Response.text(\"x\") }\n  if server = Http.listen(0) {\n    server.get(\"/\", h)\n    server.close()\n  }\n}\n", "an HTTP handler must be a lambda written at the call or a named function")
-    expect_err(c, compiler, stamp, "handler-ws-class", "import std.http\nimport std.sync\nclass Box {\n  pub n: Int = 0\n}\nfn main {\n  b = Box.new()\n  if server = Http.listen(0) {\n    server.websocket(\"/w\") { |conn, msg|\n      b.n += 1\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture b")
-    expect_err(c, compiler, stamp, "handler-after-push", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = Http.listen(0) {\n    server.get(\"/\") { |req|\n      Response.text(\"\${xs.size}\")\n    }\n    xs.push(3)\n    server.close()\n  }\n}\n", "cannot mutate xs: an HTTP handler registered above reads it on each of the server's loop threads")
-    expect_err(c, compiler, stamp, "handler-after-assign", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = Http.listen(0) {\n    server.get(\"/\") { |req|\n      Response.text(\"\${xs.size}\")\n    }\n    xs = [3]\n    server.close()\n  }\n}\n", "cannot assign xs: an HTTP handler registered above captures it")
-    expect_err(c, compiler, stamp, "handler-self", "import std.http\nclass App {\n  pub hits: Int = 0\n  fn routes(server: Server) {\n    server.get(\"/\") { |req|\n      hits += 1\n      Response.text(\"\${hits}\")\n    }\n  }\n}\nfn main {\n  app = App.new()\n  if server = Http.listen(0) {\n    app.routes(server)\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture self: its type, App, cannot cross")
-    expect_err(c, compiler, stamp, "handler-ws-keep", "import std.http\nclass Kept {\n  pub conns: Array(WsConn) = []\n}\nfn main {\n  kept = Kept.new()\n  if server = Http.listen(0) {\n    server.websocket(\"/k\") { |conn, msg|\n      kept.conns.push(conn)\n    }\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture kept")
-    expect_err(c, compiler, stamp, "fn-lam-int", "fn main {\n  n: Int = { || 1 }\n  puts(n)\n}\n", "expected Int, got a lambda")
+    expect_err(c, compiler, stamp, "fn-ne", "fn main {\n  f: fn(): Int = () { 1 }\n  g: fn(): Int = () { 2 }\n  if f != g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
+    expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = (n) { n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int): Bool")
+    expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = (n) { n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Bool): Int")
+    expect_err(c, compiler, stamp, "fn-body", "fn main {\n  f: fn(): Bool = () { 1 }\n  puts(1)\n}\n", "last expression is Int, expected Bool")
+    expect_err(c, compiler, stamp, "fn-retstmt", "fn main {\n  f: fn(): Bool = () {\n    return 1\n  }\n  puts(1)\n}\n", "return type is Int, expected Bool")
+    expect_err(c, compiler, stamp, "fn-empty", "fn main {\n  f: fn(): Int = () { }\n  puts(1)\n}\n", "missing return value")
+    expect_err(c, compiler, stamp, "fn-self", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    () {\n      self.base = 2\n      base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
+    expect_err(c, compiler, stamp, "fn-selfdot", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    () {\n      self.base += 1\n      self.base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
+    expect_err(c, compiler, stamp, "fn-spawn", "fn main {\n  f: fn(): Int = () { 1 }\n  h = spawn { f() }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture")
+    expect_err(c, compiler, stamp, "move-loop", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  for i in 0..2 {\n    h = spawn { b.n + i }\n    puts(h.join() ?? -1)\n  }\n}\n", "spawn cannot capture b: its type, Box, cannot be shared with another task, and the spawn is inside a loop or a block that b was declared outside of")
+    expect_err(c, compiler, stamp, "move-alias", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  a = b\n  h = spawn { b.n + 1 }\n  puts(h.join() ?? -1)\n  puts(a.n)\n}\n", "the spawn at 8:7 takes b by move, so before it the value stored into a is b or a reference reached from it (Box)")
+    expect_err(c, compiler, stamp, "move-not-new", "class Box {\n  pub n: Int = 0\n}\n\nclass Holder {\n  pub b: Box = Box.new()\n}\n\nfn main {\n  k = Holder.new()\n  b = k.b\n  h = spawn { b.n + 1 }\n  puts(h.join() ?? -1)\n}\n", "the spawn at 12:7 takes b by move, so every value b holds must be new (a constructor call, a literal or a clone)")
+    expect_err(c, compiler, stamp, "move-keeps", "class Item {\n  pub v: Int = 0\n}\n\nclass Box {\n  pub items: Array(Item) = []\n\n  pub fn add(i: Item) {\n    self.items.push(i)\n  }\n}\n\nfn main {\n  it = Item.new()\n  b = Box.new()\n  b.add(it)\n  h = spawn { b.items.size }\n  puts(h.join() ?? -1)\n  it.v = 3\n}\n", "Box.add stores a parameter's reference (or a value reached from one) into an array (push); a class a spawn takes by move")
+    expect_err(c, compiler, stamp, "move-parallel", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  rs = [1, 2].parallel((k) { b.n + k })\n  puts(rs.size)\n}\n", ".parallel cannot capture b: its type, Box, cannot cross to another task")
+    expect_err(c, compiler, stamp, "move-captured-twice", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new()\n  f = () { b.n }\n  h = spawn { b.n + 1 }\n  puts(h.join() ?? -1)\n  puts(f())\n}\n", "takes b by move, so b cannot be captured by another lambda or spawn block")
+    expect_err(c, compiler, stamp, "struct-handle-class-field", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nstruct Ports {\n  hits: sync.Mutex(Int)\n  box: Box\n}\n\nfn main {\n  p = Ports { hits: sync.Mutex(Int).new(0), box: Box.new() }\n  h = spawn { p.hits.with((n) { n }) }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture p: its type, Ports, cannot cross to another task")
+    expect_err(c, compiler, stamp, "handle-reassigned", "import std.sync\n\nclass Store {\n  pub m: sync.Mutex(Int) = sync.Mutex(Int).new(0)\n}\n\nfn main {\n  s = Store.new()\n  h = spawn { s.m.with((v) { v }) }\n  puts(h.join() ?? -1)\n  s.m = sync.Mutex(Int).new(5)\n}\n", "spawn cannot capture s: a Store, a class of Mutex and Channel fields, crosses as a handle only when no field of it is assigned after initialize, and Store.m is assigned at 11:4")
+    expect_err(c, compiler, stamp, "handle-other-field", "import std.sync\n\nclass Store {\n  pub m: sync.Mutex(Int) = sync.Mutex(Int).new(0)\n  pub name: String = \"s\"\n}\n\nfn show(s: Store): Int {\n  h = spawn { s.m.with((v) { v }) }\n  h.join() ?? -1\n}\n\nfn main {\n  puts(show(Store.new()))\n}\n", "spawn cannot capture s: its type, Store, cannot be shared with another task")
+    expect_err(c, compiler, stamp, "ptr-void-capture", "lib cc {\n  fun malloc(n: Int): Ptr(Void)\n  fun free(p: Ptr(Void))\n}\n\nfn main {\n  p = cc.malloc(8)\n  h = spawn {\n    cc.free(p)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture p: its type, Ptr(Void), holds C memory, which crosses to another task only in the module whose lib block declares its C type")
+    expect_err(c, compiler, stamp, "ptr-scalar-capture", "lib cc {\n  fun calloc(n: Int, size: Int): Ptr(Int32)\n}\n\nfn main {\n  p = cc.calloc(2, 4)\n  h = spawn { p[0].to_i() }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot capture p: its type, Ptr(Int32), holds C memory")
+    expect_err(c, compiler, stamp, "with-value-reached", "import std.sync\n\nclass Session {\n  pub id: String = \"\"\n}\n\nfn main {\n  m = sync.Mutex(Hash(String, Session)).new(Hash(String, Session).new())\n  got = m.with((h) { h[\"a\"] })\n  if s = got {\n    puts(s.id)\n  }\n}\n", "Mutex.with's value cannot be Session?: it may be the guarded value or a part of it")
+    expect_err(c, compiler, stamp, "with-clone-arg", "import std.sync\n\nclass Session {\n  pub id: String = \"\"\n}\n\nfn keep(s: Session?): Int {\n  1\n}\n\nfn main {\n  m = sync.Mutex(Hash(String, Session)).new(Hash(String, Session).new())\n  n = m.with((h) { keep(h[\"a\"]) })\n  puts(n)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (Session?)")
+    expect_err(c, compiler, stamp, "lambda-try-not-union", "import std.sync\n\nfn main {\n  m = sync.Mutex(Int).new(5)\n  v = m.with((x): Int { \"12\".to_i()? + x })\n  puts(v)\n}\n", "postfix ? inside a lambda given to with has nowhere to return its failure")
+    expect_err(c, compiler, stamp, "lambda-try-each", "fn main {\n  xs = [\"1\", \"x\"]\n  xs.each((s) {\n    puts(s.to_i()?)\n  })\n}\n", "postfix ? inside a lambda given to each has nowhere to return its failure")
+    expect_err(c, compiler, stamp, "handler-class", "import std.http\nimport std.sync\nclass Box {\n  pub n: Int = 0\n}\nfn main {\n  b = Box.new()\n  if server = http.listen(0) {\n    server.get(\"/\", (req) {\n      b.n += 1\n      http.Response.text(\"\${b.n}\")\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture b: its type, Box, cannot cross to another thread, and the server runs every handler on each of its loop threads at once")
+    expect_err(c, compiler, stamp, "handler-hash", "import std.http\nimport std.sync\nfn main {\n  seen = Hash(String, Int).new()\n  if server = http.listen(0) {\n    server.post(\"/\", (req) {\n      seen[req.path] = 1\n      http.Response.text(\"ok\")\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot mutate captured Hash seen; it is read-only once the handler is registered")
+    expect_err(c, compiler, stamp, "handler-assign", "import std.http\nimport std.sync\nfn main {\n  count = 0\n  if server = http.listen(0) {\n    server.get(\"/\", (req) {\n      count += 1\n      http.Response.text(\"\${count}\")\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot assign to count: the server runs the handler on each of its loop threads at once")
+    expect_err(c, compiler, stamp, "handler-push", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = http.listen(0) {\n    server.get(\"/\", (req) {\n      xs.push(3)\n      http.Response.text(\"\${xs.size}\")\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot mutate captured Array xs; it is read-only once the handler is registered")
+    expect_err(c, compiler, stamp, "handler-fn-value", "import std.http\nimport std.sync\nfn main {\n  h: fn(http.Request): http.Response = (r) { http.Response.text(\"x\") }\n  if server = http.listen(0) {\n    server.get(\"/\", h)\n    server.close()\n  }\n}\n", "an HTTP handler must be a lambda written at the call or a named function")
+    expect_err(c, compiler, stamp, "handler-ws-class", "import std.http\nimport std.sync\nclass Box {\n  pub n: Int = 0\n}\nfn main {\n  b = Box.new()\n  if server = http.listen(0) {\n    server.websocket(\"/w\", (conn, msg) {\n      b.n += 1\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture b")
+    expect_err(c, compiler, stamp, "handler-after-push", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = http.listen(0) {\n    server.get(\"/\", (req) {\n      http.Response.text(\"\${xs.size}\")\n    })\n    xs.push(3)\n    server.close()\n  }\n}\n", "cannot mutate xs: an HTTP handler registered above reads it on each of the server's loop threads")
+    expect_err(c, compiler, stamp, "handler-after-assign", "import std.http\nimport std.sync\nfn main {\n  xs = [1, 2]\n  if server = http.listen(0) {\n    server.get(\"/\", (req) {\n      http.Response.text(\"\${xs.size}\")\n    })\n    xs = [3]\n    server.close()\n  }\n}\n", "cannot assign xs: an HTTP handler registered above captures it")
+    expect_err(c, compiler, stamp, "handler-self", "import std.http\nclass App {\n  pub hits: Int = 0\n  fn routes(server: http.Server) {\n    server.get(\"/\", (req) {\n      hits += 1\n      http.Response.text(\"\${hits}\")\n    })\n  }\n}\nfn main {\n  app = App.new()\n  if server = http.listen(0) {\n    app.routes(server)\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture self: its type, App, cannot cross")
+    expect_err(c, compiler, stamp, "handler-ws-keep", "import std.http\nclass Kept {\n  pub conns: Array(http.WsConn) = []\n}\nfn main {\n  kept = Kept.new()\n  if server = http.listen(0) {\n    server.websocket(\"/k\", (conn, msg) {\n      kept.conns.push(conn)\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot capture kept")
+    expect_err(c, compiler, stamp, "handler-every-assign", "import std.http\nfn main {\n  count = 0\n  if server = http.listen(0) {\n    server.every(10, () {\n      count += 1\n    })\n    server.close()\n  }\n}\n", "a Server.every timer cannot assign to count: the timer runs on the server's first loop thread while the handlers run on every loop thread")
+    expect_err(c, compiler, stamp, "handler-on-close-class", "import std.http\nclass Box {\n  pub n: Int = 0\n}\nfn main {\n  b = Box.new()\n  if server = http.listen(0) {\n    server.on_close(() {\n      b.n += 1\n    })\n    server.close()\n  }\n}\n", "a Server.on_close hook cannot capture b: its type, Box, cannot cross to another thread, and the hook runs on the thread that called serve, after the loop threads that ran the handlers")
+    expect_err(c, compiler, stamp, "handler-fallback-push", "import std.http\nfn main {\n  xs = [1, 2]\n  if server = http.listen(0) {\n    server.fallback((req) {\n      xs.push(3)\n      http.Response.text(\"x\")\n    })\n    server.close()\n  }\n}\n", "an HTTP handler cannot mutate captured Array xs")
+    expect_err(c, compiler, stamp, "fn-lam-int", "fn main {\n  n: Int = () { 1 }\n  puts(n)\n}\n", "expected Int, got a lambda")
     expect_err(c, compiler, stamp, "fn-generic-want", "fn id(x: T): T {\n  x\n}\nfn main {\n  f: fn(Int): Int = id\n  puts(1)\n}\n", "generic function is not a value")
     expect_err(c, compiler, stamp, "gen-bare", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nfn main {\n  x = Box\n  puts(1)\n}\n", "needs type arguments")
     expect_err(c, compiler, stamp, "gen-fresh", "class Box(Int) {\n  value: Int\n  fn initialize {\n  }\n}\nfn main {\n  puts(1)\n}\n", "must be a fresh name")
@@ -417,15 +437,13 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gen-call", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nfn main {\n  n = 1\n  x = Box(n)\n  puts(1)\n}\n", "type argument expected")
     expect_err(c, compiler, stamp, "gen-conflict", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p: Pair(String, Int) = Pair { a: 1, b: \"x\" }\n  puts(1)\n}\n", "conflicting type arguments")
     expect_err(c, compiler, stamp, "gen-lib", "lib math {\n  struct Point(T) {\n    x: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "lib structs take no type parameters")
-    expect_err(c, compiler, stamp, "gen-comptime", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn walk: Int {\n        1\n      }\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "cannot walk generic type")
     expect_err(c, compiler, stamp, "gen-deep", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nstruct Evil(T) {\n  x: Evil(Box(T))\n}\nfn main {\n  e: Evil(Int)? = nil\n  puts(1)\n}\n", "type instantiation too deep")
     expect_err(c, compiler, stamp, "gen-invar", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n  fn get: T {\n    value\n  }\n}\nfn take(b: Box(Int)): Int {\n  b.get()\n}\nfn main {\n  s = Box.new(\"hi\")\n  take(s)\n  puts(1)\n}\n", "expected Box(Int)")
     expect_err(c, compiler, stamp, "gen-arity", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p = Pair(Int) { a: 1, b: 2 }\n  puts(1)\n}\n", "takes 2 type argument")
     expect_err(c, compiler, stamp, "gen-class-lit", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nfn main {\n  b = Box(Int) { value: 1 }\n  puts(1)\n}\n", "constructed with Box(Int).new")
     expect_err(c, compiler, stamp, "spawn-struct-class", "class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nstruct Hold {\n  b: Box\n}\nfn main {\n  b = Box.new(1)\n  h = Hold { b: b }\n  t = spawn { h.b.n }\n  puts(t.join() ?? -1)\n}\n", "cannot capture")
     expect_err(c, compiler, stamp, "join-in-spawn", "fn main {\n  h = spawn { 1 }\n  t = spawn { (h.join() ?? -1) }\n  puts(t.join() ?? -1)\n}\n", "spawn cannot capture h: its type, JoinHandle(Int), cannot cross to another task")
-    expect_err(c, compiler, stamp, "mutex-escape", "import std.sync\n\nfn main {\n  seed: Array(Int) = []\n  mu = Mutex.new(seed)\n  y: Array(Int) = []\n  n = mu.with { |x|\n    y = x\n    x.size\n  }\n  puts(n)\n}\n", "Mutex.with: the value stored into y, declared before the block, is the guarded value or a reference reached from it (Array(Int))")
-    expect_err(c, compiler, stamp, "mutex-return", "import std.sync\n\nfn main {\n  mu = Mutex.new(1)\n  h = spawn {\n    mu.with { |x|\n      return x\n    }\n    0\n  }\n  puts(h.join() ?? -1)\n}\n", "return inside a spawn block: a spawn block cannot return; its value is its last expression")
+    expect_err(c, compiler, stamp, "mutex-escape", "import std.sync\n\nfn main {\n  seed: Array(Int) = []\n  mu = sync.Mutex.new(seed)\n  y: Array(Int) = []\n  n = mu.with (x) {\n    y = x\n    x.size\n  }\n  puts(n)\n}\n", "Mutex.with: the value stored into y, declared before the block, is the guarded value or a reference reached from it (Array(Int))")
     expect_err(c, compiler, stamp, "iface-no-opt", "interface Show {\n  fn to_s: String\n}\nstruct Vec2 {\n  x: Int\n  fn to_s: String { \"v\" }\n}\nfn show(v: T: Show): String { v.to_s() }\nfn main {\n  puts(show(Vec2 { x: 1 }))\n}\n", "does not implement")
     expect_err(c, compiler, stamp, "iface-missing", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n}\nfn main {\n  puts(1)\n}\n", "missing to_s")
     expect_err(c, compiler, stamp, "iface-ret", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n  fn to_s: Int { 1 }\n}\nfn main {\n  puts(1)\n}\n", "returns Int, expected String")
@@ -451,8 +469,8 @@ fn test_errors(c: Checks) {
     priv_log = "${dir}/priv.log"
     priv_code = compile_av(compiler, "${dir}/priv_main.av", priv_bin, priv_log)
     c.expect(priv_code != 0, "iface-private exits non-zero")
-    c.expect(!file_exists(priv_bin), "iface-private bin absent")
-    if err = file_read(priv_log) {
+    c.expect(!fs.exists(priv_bin), "iface-private bin absent")
+    if err = fs.read(priv_log) {
       c.expect(err.contains("does not implement"), "iface-private")
     } else {
       c.expect(false, "iface-private")
@@ -463,8 +481,8 @@ fn test_errors(c: Checks) {
     hid_log = "${dir}/hid.log"
     hid_code = compile_av(compiler, "${dir}/hid_main.av", hid_bin, hid_log)
     c.expect(hid_code != 0, "iface-vis exits non-zero")
-    c.expect(!file_exists(hid_bin), "iface-vis bin absent")
-    if err = file_read(hid_log) {
+    c.expect(!fs.exists(hid_bin), "iface-vis bin absent")
+    if err = fs.read(hid_log) {
       c.expect(err.contains("unknown type Show"), "iface-vis")
     } else {
       c.expect(false, "iface-vis")
@@ -475,8 +493,8 @@ fn test_errors(c: Checks) {
     quiet_log = "${dir}/quiet.log"
     quiet_code = compile_av(compiler, "${dir}/quiet_main.av", quiet_bin, quiet_log)
     c.expect(quiet_code != 0, "iface-opt-vis exits non-zero")
-    c.expect(!file_exists(quiet_bin), "iface-opt-vis bin absent")
-    if err = file_read(quiet_log) {
+    c.expect(!fs.exists(quiet_bin), "iface-opt-vis bin absent")
+    if err = fs.read(quiet_log) {
       c.expect(err.contains("does not implement"), "iface-opt-vis")
     } else {
       c.expect(false, "iface-opt-vis")

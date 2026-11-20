@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn tree_fixture: String {
   "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  if l = n.left {\n    if r = n.right {\n      return check(l, depth - 1) &+ check(r, depth - 1) &+ n.item\n    }\n  }\n  n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
@@ -44,7 +46,7 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
@@ -59,7 +61,7 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
   args.push("${n1}=${v1}")
   args.push("${n2}=${v2}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // The fixtures' checksums wrap with &+ and &*: since Int became 64-bit they
@@ -67,18 +69,18 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
 // 32-bit value it was before).
 fn test_gc_behavior(c: Checks) {
   c.suite("tests/cases/test_gc_behavior.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/gcb-${stamp}.av"
     bin = "${scratch()}/gcb-${stamp}.bin"
-    c.wrote(file_write(src, tree_fixture()), "write tree fixture")
+    c.wrote(fs.write(src, tree_fixture()), "write tree fixture")
     code = compile_av(compiler, src, bin, "${scratch()}/gcb-${stamp}.clog")
     c.eq_int(code, 0, "compile tree fixture")
     want = "286330497650\n715795115\n"
     log1 = "${scratch()}/gcb-${stamp}.run1"
     rc1 = run_av_bin(bin, log1)
     c.eq_int(rc1, 0, "trees survive at default young size")
-    if out1 = file_read(log1) {
+    if out1 = fs.read(log1) {
       c.eq_str(out1, want, "tree checksums at default young size")
     } else {
       c.expect(false, "read default run")
@@ -91,7 +93,7 @@ fn test_gc_behavior(c: Checks) {
     log2 = "${scratch()}/gcb-${stamp}.run2"
     rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
     c.eq_int(rc2, 0, "trees survive at 1 MB young size")
-    if out2 = file_read(log2) {
+    if out2 = fs.read(log2) {
       c.eq_str(out2, want, "tree checksums at 1 MB young size")
     } else {
       c.expect(false, "read small-young run")
@@ -99,7 +101,7 @@ fn test_gc_behavior(c: Checks) {
     log3 = "${scratch()}/gcb-${stamp}.run3"
     rc3 = run_with_env(bin, "AVANT_NURSERY", "0", log3)
     c.eq_int(rc3, 0, "trees survive with nursery off")
-    if out3 = file_read(log3) {
+    if out3 = fs.read(log3) {
       c.eq_str(out3, want, "tree checksums with nursery off")
     } else {
       c.expect(false, "read nursery-off run")
@@ -107,14 +109,14 @@ fn test_gc_behavior(c: Checks) {
 
     src2 = "${scratch()}/gcb-${stamp}-churn.av"
     bin2 = "${scratch()}/gcb-${stamp}-churn.bin"
-    c.wrote(file_write(src2, churn_fixture()), "write churn fixture")
+    c.wrote(fs.write(src2, churn_fixture()), "write churn fixture")
     code2 = compile_av(compiler, src2, bin2, "${scratch()}/gcb-${stamp}-churn.clog")
     c.eq_int(code2, 0, "compile churn fixture")
     want2 = "12497500\n4999950000\n2000\n"
     log4 = "${scratch()}/gcb-${stamp}.run4"
     rc4 = run_av_bin(bin2, log4)
     c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
-    if out4 = file_read(log4) {
+    if out4 = fs.read(log4) {
       c.eq_str(out4, want2, "churn checksums at default young size")
     } else {
       c.expect(false, "read churn run")
@@ -122,7 +124,7 @@ fn test_gc_behavior(c: Checks) {
     log5 = "${scratch()}/gcb-${stamp}.run5"
     rc5 = run_with_env(bin2, "AVANT_YOUNG_MB", "1", log5)
     c.eq_int(rc5, 0, "churn survives at 1 MB young size")
-    if out5 = file_read(log5) {
+    if out5 = fs.read(log5) {
       c.eq_str(out5, want2, "churn checksums at 1 MB young size")
     } else {
       c.expect(false, "read churn small-young run")
@@ -134,14 +136,14 @@ fn test_gc_behavior(c: Checks) {
     // reads from-space addresses and the checksum breaks or segfaults.
     src3 = "${scratch()}/gcb-${stamp}-roots.av"
     bin3 = "${scratch()}/gcb-${stamp}-roots.bin"
-    c.wrote(file_write(src3, roots_fixture()), "write roots fixture")
+    c.wrote(fs.write(src3, roots_fixture()), "write roots fixture")
     code3 = compile_av(compiler, src3, bin3, "${scratch()}/gcb-${stamp}-roots.clog")
     c.eq_int(code3, 0, "compile roots fixture")
     want3 = "4592424465\n"
     log6 = "${scratch()}/gcb-${stamp}.run6"
     rc6 = run_av_bin(bin3, log6)
     c.eq_int(rc6, 0, "rooted locals survive at default young size")
-    if out6 = file_read(log6) {
+    if out6 = fs.read(log6) {
       c.eq_str(out6, want3, "roots checksums at default young size")
     } else {
       c.expect(false, "read roots run")
@@ -149,7 +151,7 @@ fn test_gc_behavior(c: Checks) {
     log7 = "${scratch()}/gcb-${stamp}.run7"
     rc7 = run_with_env(bin3, "AVANT_YOUNG_MB", "1", log7)
     c.eq_int(rc7, 0, "rooted locals survive at 1 MB young size")
-    if out7 = file_read(log7) {
+    if out7 = fs.read(log7) {
       c.eq_str(out7, want3, "roots checksums at 1 MB young size")
     } else {
       c.expect(false, "read roots small-young run")
@@ -161,14 +163,14 @@ fn test_gc_behavior(c: Checks) {
     // regression's shape, first seen on Graph::BFS).
     src4 = "${scratch()}/gcb-${stamp}-rootsline.av"
     bin4 = "${scratch()}/gcb-${stamp}-rootsline.bin"
-    c.wrote(file_write(src4, roots_line_fixture()), "write roots-line fixture")
+    c.wrote(fs.write(src4, roots_line_fixture()), "write roots-line fixture")
     code4 = compile_av(compiler, src4, bin4, "${scratch()}/gcb-${stamp}-rootsline.clog")
     c.eq_int(code4, 0, "compile roots-line fixture")
     want4 = "5399910378\n"
     log8 = "${scratch()}/gcb-${stamp}.run8"
     rc8 = run_av_bin(bin4, log8)
     c.eq_int(rc8, 0, "straight-line roots survive at default young size")
-    if out8 = file_read(log8) {
+    if out8 = fs.read(log8) {
       c.eq_str(out8, want4, "roots-line checksums at default young size")
     } else {
       c.expect(false, "read roots-line run")
@@ -176,7 +178,7 @@ fn test_gc_behavior(c: Checks) {
     log9 = "${scratch()}/gcb-${stamp}.run9"
     rc9 = run_with_env(bin4, "AVANT_YOUNG_MB", "1", log9)
     c.eq_int(rc9, 0, "straight-line roots survive at 1 MB young size")
-    if out9 = file_read(log9) {
+    if out9 = fs.read(log9) {
       c.eq_str(out9, want4, "roots-line checksums at 1 MB young size")
     } else {
       c.expect(false, "read roots-line small-young run")
@@ -188,7 +190,7 @@ fn test_gc_behavior(c: Checks) {
     // or the start bit breaks the checksum under a small nursery.
     src5 = "${scratch()}/gcb-${stamp}-alloc.av"
     bin5 = "${scratch()}/gcb-${stamp}-alloc.bin"
-    c.wrote(file_write(src5, alloc_fixture()), "write alloc fixture")
+    c.wrote(fs.write(src5, alloc_fixture()), "write alloc fixture")
     code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
@@ -199,7 +201,7 @@ fn test_gc_behavior(c: Checks) {
     log10 = "${scratch()}/gcb-${stamp}.run10"
     rc10 = run_av_bin(bin5, log10)
     c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
-    if out10 = file_read(log10) {
+    if out10 = fs.read(log10) {
       c.eq_str(out10, want5, "alloc checksums at default young size")
     } else {
       c.expect(false, "read alloc run")
@@ -207,7 +209,7 @@ fn test_gc_behavior(c: Checks) {
     log11 = "${scratch()}/gcb-${stamp}.run11"
     rc11 = run_with_env(bin5, "AVANT_YOUNG_MB", "1", log11)
     c.eq_int(rc11, 0, "alloc and barrier paths survive at 1 MB young size")
-    if out11 = file_read(log11) {
+    if out11 = fs.read(log11) {
       c.eq_str(out11, want5, "alloc checksums at 1 MB young size")
     } else {
       c.expect(false, "read alloc small-young run")
@@ -221,14 +223,14 @@ fn test_gc_behavior(c: Checks) {
     // with the frontier disabled and under every frontier policy.
     src6 = "${scratch()}/gcb-${stamp}-frontier.av"
     bin6 = "${scratch()}/gcb-${stamp}-frontier.bin"
-    c.wrote(file_write(src6, frontier_fixture()), "write frontier fixture")
+    c.wrote(fs.write(src6, frontier_fixture()), "write frontier fixture")
     code6 = compile_av(compiler, src6, bin6, "${scratch()}/gcb-${stamp}-frontier.clog")
     c.eq_int(code6, 0, "compile frontier fixture")
     want6 = "2770226095\n"
     log12 = "${scratch()}/gcb-${stamp}.run12"
     rc12 = run_av_bin(bin6, log12)
     c.eq_int(rc12, 0, "frontier graph survives at default young size")
-    if out12 = file_read(log12) {
+    if out12 = fs.read(log12) {
       c.eq_str(out12, want6, "frontier checksums at default young size")
     } else {
       c.expect(false, "read frontier run")
@@ -236,7 +238,7 @@ fn test_gc_behavior(c: Checks) {
     log13 = "${scratch()}/gcb-${stamp}.run13"
     rc13 = run_with_env(bin6, "AVANT_YOUNG_MB", "1", log13)
     c.eq_int(rc13, 0, "frontier graph survives at 1 MB young size")
-    if out13 = file_read(log13) {
+    if out13 = fs.read(log13) {
       c.eq_str(out13, want6, "frontier checksums at 1 MB young size")
     } else {
       c.expect(false, "read frontier small-young run")
@@ -251,14 +253,14 @@ fn test_gc_behavior(c: Checks) {
     // with defragmentation disabled and at a 1 MB young size.
     src7 = "${scratch()}/gcb-${stamp}-defrag.av"
     bin7 = "${scratch()}/gcb-${stamp}-defrag.bin"
-    c.wrote(file_write(src7, defrag_fixture()), "write defrag fixture")
+    c.wrote(fs.write(src7, defrag_fixture()), "write defrag fixture")
     code7 = compile_av(compiler, src7, bin7, "${scratch()}/gcb-${stamp}-defrag.clog")
     c.eq_int(code7, 0, "compile defrag fixture")
     want7 = "58508488\n"
     log14 = "${scratch()}/gcb-${stamp}.run14"
     rc14 = run_av_bin(bin7, log14)
     c.eq_int(rc14, 0, "defrag survivors survive at default young size")
-    if out14 = file_read(log14) {
+    if out14 = fs.read(log14) {
       c.eq_str(out14, want7, "defrag checksums at default young size")
     } else {
       c.expect(false, "read defrag run")
@@ -266,7 +268,7 @@ fn test_gc_behavior(c: Checks) {
     log15 = "${scratch()}/gcb-${stamp}.run15"
     rc15 = run_with_env(bin7, "AVANT_YOUNG_MB", "1", log15)
     c.eq_int(rc15, 0, "defrag survivors survive at 1 MB young size")
-    if out15 = file_read(log15) {
+    if out15 = fs.read(log15) {
       c.eq_str(out15, want7, "defrag checksums at 1 MB young size")
     } else {
       c.expect(false, "read defrag small-young run")
@@ -274,7 +276,7 @@ fn test_gc_behavior(c: Checks) {
     log16 = "${scratch()}/gcb-${stamp}.run16"
     rc16 = run_with_env(bin7, "AVANT_NURSERY", "0", log16)
     c.eq_int(rc16, 0, "defrag survivors survive with nursery off")
-    if out16 = file_read(log16) {
+    if out16 = fs.read(log16) {
       c.eq_str(out16, want7, "defrag checksums with nursery off")
     } else {
       c.expect(false, "read defrag nursery-off run")
@@ -286,14 +288,14 @@ fn test_gc_behavior(c: Checks) {
     // loses a survivor breaks the checksum or segfaults.
     src8 = "${scratch()}/gcb-${stamp}-sizing.av"
     bin8 = "${scratch()}/gcb-${stamp}-sizing.bin"
-    c.wrote(file_write(src8, sizing_fixture()), "write sizing fixture")
+    c.wrote(fs.write(src8, sizing_fixture()), "write sizing fixture")
     code8 = compile_av(compiler, src8, bin8, "${scratch()}/gcb-${stamp}-sizing.clog")
     c.eq_int(code8, 0, "compile sizing fixture")
     want8 = "30511933696\n8\n"
     log17 = "${scratch()}/gcb-${stamp}.run17"
     rc17 = run_av_bin(bin8, log17)
     c.eq_int(rc17, 0, "sizing survivors survive at default young size")
-    if out17 = file_read(log17) {
+    if out17 = fs.read(log17) {
       c.eq_str(out17, want8, "sizing checksums at default young size")
     } else {
       c.expect(false, "read sizing run")
@@ -301,7 +303,7 @@ fn test_gc_behavior(c: Checks) {
     log20 = "${scratch()}/gcb-${stamp}.run20"
     rc20 = run_with_env(bin8, "AVANT_YOUNG_MB", "1", log20)
     c.eq_int(rc20, 0, "sizing survivors survive at 1 MB young size")
-    if out20 = file_read(log20) {
+    if out20 = fs.read(log20) {
       c.eq_str(out20, want8, "sizing checksums at 1 MB young size")
     } else {
       c.expect(false, "read sizing small-young run")
@@ -312,14 +314,14 @@ fn test_gc_behavior(c: Checks) {
     // it must stay correct too (they keep their frames).
     src9 = "${scratch()}/gcb-${stamp}-leaf.av"
     bin9 = "${scratch()}/gcb-${stamp}-leaf.bin"
-    c.wrote(file_write(src9, leaf_method_fixture()), "write leaf method fixture")
+    c.wrote(fs.write(src9, leaf_method_fixture()), "write leaf method fixture")
     code9 = compile_av(compiler, src9, bin9, "${scratch()}/gcb-${stamp}-leaf.clog")
     c.eq_int(code9, 0, "compile leaf method fixture")
     want9 = "1440000\nabcd\n"
     log21 = "${scratch()}/gcb-${stamp}.run21"
     rc21 = run_av_bin(bin9, log21)
     c.eq_int(rc21, 0, "struct methods survive churn at default young size")
-    if out21 = file_read(log21) {
+    if out21 = fs.read(log21) {
       c.eq_str(out21, want9, "leaf method checksums at default young size")
     } else {
       c.expect(false, "read leaf method run")
@@ -327,7 +329,7 @@ fn test_gc_behavior(c: Checks) {
     log22 = "${scratch()}/gcb-${stamp}.run22"
     rc22 = run_with_env(bin9, "AVANT_YOUNG_MB", "1", log22)
     c.eq_int(rc22, 0, "struct methods survive churn at 1 MB young size")
-    if out22 = file_read(log22) {
+    if out22 = fs.read(log22) {
       c.eq_str(out22, want9, "leaf method checksums at 1 MB young size")
     } else {
       c.expect(false, "read leaf method small-young run")
@@ -341,14 +343,14 @@ fn test_gc_behavior(c: Checks) {
     // every field back after each return.
     src10 = "${scratch()}/gcb-${stamp}-literal.av"
     bin10 = "${scratch()}/gcb-${stamp}-literal.bin"
-    c.wrote(file_write(src10, literal_fixture()), "write literal fixture")
+    c.wrote(fs.write(src10, literal_fixture()), "write literal fixture")
     code10 = compile_av(compiler, src10, bin10, "${scratch()}/gcb-${stamp}-literal.clog")
     c.eq_int(code10, 0, "compile literal fixture")
     want10 = "68100000\n"
     log23 = "${scratch()}/gcb-${stamp}.run23"
     rc23 = run_av_bin(bin10, log23)
     c.eq_int(rc23, 0, "struct literal fields survive at default young size")
-    if out23 = file_read(log23) {
+    if out23 = fs.read(log23) {
       c.eq_str(out23, want10, "literal checksums at default young size")
     } else {
       c.expect(false, "read literal run")
@@ -356,7 +358,7 @@ fn test_gc_behavior(c: Checks) {
     log24 = "${scratch()}/gcb-${stamp}.run24"
     rc24 = run_with_env(bin10, "AVANT_YOUNG_MB", "1", log24)
     c.eq_int(rc24, 0, "struct literal fields survive at 1 MB young size")
-    if out24 = file_read(log24) {
+    if out24 = fs.read(log24) {
       c.eq_str(out24, want10, "literal checksums at 1 MB young size")
     } else {
       c.expect(false, "read literal small-young run")
@@ -369,7 +371,7 @@ fn test_gc_behavior(c: Checks) {
     log25 = "${scratch()}/gcb-${stamp}.run25"
     rc25 = run_with_env2(bin10, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log25)
     c.eq_int(rc25, 0, "struct literal verify run exits clean")
-    if out25 = file_read(log25) {
+    if out25 = fs.read(log25) {
       c.eq_str(out25, want10, "no stale stack words under the verifier")
     } else {
       c.expect(false, "read literal verify run")

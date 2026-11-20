@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The MIR core (compiler/mir/) through the internal hook
 // `avant __mir-selftest`, which builds MIR modules with the builder and
@@ -12,7 +14,7 @@ import harness
 // The block between the line `start` and the next `== end` line.
 fn section(log: String, start: String): String {
   lines = log.split("\n")
-  buf = buf_new()
+  buf = Buf.new()
   inside = false
   i = 0
   while i < lines.size {
@@ -33,8 +35,8 @@ fn section(log: String, start: String): String {
 fn case_rules(lines: Array(String), name: String, stage: String): String {
   head = "case ${name} ${stage} "
   for l in lines {
-    if l.size > head.size && str_slice(l, 0, head.size) == head {
-      return str_slice(l, head.size, l.size)
+    if l.size > head.size && l[..head.size] == head {
+      return l[head.size..]
     }
   }
   "(missing)"
@@ -43,7 +45,7 @@ fn case_rules(lines: Array(String), name: String, stage: String): String {
 fn count_cases(lines: Array(String)): Int {
   n = 0
   for line in lines {
-    if line.size > 5 && str_slice(line, 0, 5) == "case " {
+    if line.size > 5 && line[..5] == "case " {
       n += 1
     }
   }
@@ -157,20 +159,20 @@ fn pass_lines: Array(String) {
 
 fn test_mir(c: Checks) {
   c.suite("tests/cases/test_mir.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     dir = scratch_dir()
     log = "${dir}/selftest.log"
     args: Array(String) = []
     args.push("__mir-selftest")
-    code = process_run_out(compiler, args, log) ?? -1
+    code = run_out(compiler, args, log) ?? -1
     c.eq_int(code, 0, "__mir-selftest exits 0")
     text = "(no log)"
-    if t = file_read(log) {
+    if t = fs.read(log) {
       text = t
     }
     want = "(no fixture)"
-    if t = file_read("${root}/tests/fixtures/mir/example.mir") {
+    if t = fs.read("${root}/tests/fixtures/mir/example.mir") {
       want = t
     }
     c.eq_str(section(text, "== example print"), want, "the example prints as tests/fixtures/mir/example.mir gives it")
@@ -185,7 +187,7 @@ fn test_mir(c: Checks) {
     pl = pass_lines()
     npass = 0
     for line in lines {
-      if line.size > 5 && str_slice(line, 0, 5) == "pass " {
+      if line.size > 5 && line[..5] == "pass " {
         npass += 1
       }
     }
@@ -204,9 +206,9 @@ fn test_mir(c: Checks) {
     args2.push("AVANT_YOUNG_MB=1")
     args2.push(compiler)
     args2.push("__mir-selftest")
-    c.eq_int((process_run_out("/usr/bin/env", args2, log2) ?? -1), 0, "__mir-selftest exits 0 under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
+    c.eq_int((run_out("/usr/bin/env", args2, log2) ?? -1), 0, "__mir-selftest exits 0 under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
     text2 = "(no log)"
-    if t = file_read(log2) {
+    if t = fs.read(log2) {
       text2 = t
     }
     c.eq_str(text2, text, "the same output, verifier silent, under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")

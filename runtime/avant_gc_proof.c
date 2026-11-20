@@ -88,7 +88,7 @@ const char *gc_proof_why_name(GcProofWhy why) {
  * the log whatever the proof says), in a program with one thread and a
  * young generation. Before the first full collection no object is old
  * and nothing is logged. */
-__attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
+uint8_t avant_gc_proof_logging;
 
 static void proof_push(void ***v, uint32_t *n, uint32_t *cap, void *a, void *b) {
   if (*n + 2 > *cap) {

@@ -50,9 +50,7 @@ pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
     if st.kind == msk_gc_enter() {
       found = true
     } else if st.kind == msk_gc_roots() {
-      for l in st.locals {
-        slots.push(l)
-      }
+      slots.concat(st.locals)
     }
   }
   if !found {
@@ -110,6 +108,56 @@ pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
   }
   e.frame_maps.push(text + "] }, align 8")
   e.frame_desc = "ptr getelementptr (i8, ptr ${name}, i64 2)"
+}
+
+// The slot locals read through a copy, into e.shadow, each copy an
+// alloca of its own (%sh<n>). A slot local's address escapes to the
+// runtime with the frame record, so LLVM must assume that every call
+// writes it, and keeps no slot's value in a register across a path with a
+// call: a loop whose rare path calls the runtime (a Buf's growth in
+// push_byte, an allocation's slow path) read each reference it uses from
+// its slot again in every iteration, and the data it reaches through it.
+// A copy LLVM can keep in a register holds the same value: every store of
+// the local writes the slot and the copy, and after each call the copy is
+// read again from the slot (LlEmit.resync), where a moving collection
+// rewrote it; between two calls no collection runs (a collection reads
+// and rewrites a thread's slots only at its safepoints: rule E2). The
+// slot is still what the collector reads and rewrites. A local qualifies
+// when it is one pointer word and its address is never taken (an address
+// could be stored through without the copy seeing it). Only in an
+// optimized build (shadows_on): without mem2reg the copies would be
+// loads and stores of their own.
+pub fn ll_shadow_slots(e: LlEmit, f: MFunc) {
+  e.shadow = []
+  e.resync_pending = false
+  if !e.shadows_on || e.frame_words < 0 {
+    return
+  }
+  any = false
+  for i in 0..f.locals.size {
+    ok = i < e.frame_at.size && e.frame_at[i] >= 0 && f.valid_local(i) && e.llt(f.locals[i].ty) == "ptr"
+    e.shadow.push(ok)
+    if ok {
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) {
+        if p.local < e.shadow.size {
+          e.shadow[p.local] = false
+        }
+      }
+    }
+  }
+  for i in 0..e.shadow.size {
+    if e.shadow[i] {
+      e.line("%sh${i} = alloca ptr, align 8")
+    }
+  }
 }
 
 pub fn ll_gc_frame_type(e: LlEmit): String {
@@ -242,6 +290,20 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   cont = e.part("cont")
   z = e.tmp()
   e.line("${z} = icmp eq ptr ${h}, null")
+  if ll_barrier_stores_nil(e, o) {
+    // The store it precedes writes nil: no reference to remember, so the
+    // barrier matters only to the collector's store log (a reference is
+    // removed from the holder, as a pop's clear), and is tested only
+    // while the log is on.
+    e.used_proof_global = true
+    lg = e.tmp()
+    e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
+    off = e.tmp()
+    e.line("${off} = icmp eq i8 ${lg}, 0")
+    z2 = e.tmp()
+    e.line("${z2} = or i1 ${z}, ${off}")
+    z = z2
+  }
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
   fp = e.tmp()
@@ -258,6 +320,22 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   ll_barrier_call(e, h, k)
   e.line("br label %${cont}")
   e.block(cont)
+}
+
+// Whether the statement after the barrier on O (a bare local) stores nil
+// through it: `(*_h)...  = const null`.
+fn ll_barrier_stores_nil(e: LlEmit, o: MOperand): Bool {
+  stmts = e.f.blocks[e.bk].stmts
+  k = e.si + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if hp = o.place, p = stmts[k].place, r = stmts[k].rv, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() && r.kind == mrk_use() {
+    if a = r.a {
+      return a.kind == mok_null()
+    }
+  }
+  false
 }
 
 // The index in the current block of the store the barrier on O precedes
@@ -345,7 +423,7 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 //
 // The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
 // below: the runtime's avant_alloc_slow, and under the stress mode the
-// inline allocation itself after it).
+// inline allocation itself after it); avant_alloc_unzeroed's is itself.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -424,10 +502,19 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   e.line("br label %${cont}")
 
   e.block(slow)
-  e.used_alloc_slow = true
-  sc = e.tmp()
-  e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  sc = ""
+  if callee == "avant_alloc_unzeroed" {
+    // Its own slow call, which leaves a large payload unzeroed; under the
+    // stress mode it allocates there (the inline sequence is avant_alloc's,
+    // which that mode runs at every avant_alloc site).
+    sc = ll_alloc_call(e, callee, size, ty)
+  } else {
+    e.used_alloc_slow = true
+    sc = e.tmp()
+    e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  }
   s = ll_alloc_birth(e, sc, birth)
+  e.resync()
   e.line("br label %${cont}")
 
   e.block(cont)
@@ -488,7 +575,7 @@ fn ll_alloc_take(e: LlEmit, bump: String, total: String, const_size: Bool, sz: I
   e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
-    hdr = (32800u64 << 48u64) | (tid.to_u64() << 32u64) | sz.to_u64()
+    hdr = (32800 << 48u64) | (tid.to_u64() << 32u64) | sz.to_u64()
     e.line("store i64 ${hdr.wrap_i()}, ptr ${bump}, align 8")
   } else {
     tz = e.tmp()
@@ -605,6 +692,323 @@ pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
   r
 }
 
+// _d = call avant_buf_size(_b): a Buf's size read in place (its header's
+// second word), so a loop testing it keeps no call. A null Buf, which the
+// runtime reads as empty, reads the static zero header @buf.nil instead
+// (a select, no branch). The call form when inline fast paths are off.
+pub fn ll_buf_size(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.used_buf_nil = true
+  b = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${b}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr @buf.nil, ptr ${b}")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${q}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  w
+}
+
+// call avant_buf_push_byte(_b, _c): the runtime's fast path in place
+// (runtime/avant_buf.c): a Buf (AvantBuf: its data, its size, its
+// capacity) with room stores the byte at its size and counts it; one
+// that is full, has no storage yet or is null calls the runtime, which
+// grows it (and may collect: the MIR's call is a collecting one, so what
+// is live across it is in a slot either way). The byte is in 0..255
+// already (the lowering checks one that is not a literal). The call form
+// when inline fast paths are off.
+pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need("avant_buf_push_byte")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  b = e.value(args[0])
+  v = e.value(args[1])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${b}, null")
+  test = e.part("bufroom")
+  fast = e.part("bufput")
+  slow = e.part("bufgrow")
+  done = e.part("bufpushed")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${b}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${b}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${b}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load i32, ptr ${cp}, align 4, !tbaa !7")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  room = e.tmp()
+  e.line("${room} = icmp slt i32 ${sz}, ${cap}")
+  both = e.tmp()
+  e.line("${both} = and i1 ${hasd}, ${room}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${both}, i1 true)")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${w}")
+  t = e.tmp()
+  e.line("${t} = trunc i64 ${v} to i8")
+  e.line("store i8 ${t}, ptr ${ep}, align 1, !tbaa !3")
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, 1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  e.line("br label %${done}")
+  e.block(slow)
+  e.line("call void @avant_buf_push_byte(ptr ${b}, i64 ${v})")
+  e.resync()
+  e.line("br label %${done}")
+  e.block(done)
+  ""
+}
+
+// call avant_array_push_i32 / _i64 / _ptr (_a, _v[, _t]) and
+// _s = call avant_array_push_slot(_a, size, _t): the runtime's fast path in
+// place (runtime/avant_array.c), as a Buf's push_byte: an array (its
+// buffer, its size, its capacity word) with room puts the element at its
+// size and counts it; one that is full, has no buffer yet or is null calls
+// the runtime, which grows it (and may collect: the MIR's call is a
+// collecting one, so what is live across it is in a slot either way). A
+// frozen array's capacity word is negative, so its push always takes the
+// call, which traps. The word is read as the runtime reads it, a relaxed
+// atomic load (a task's end may swap it from its thread). A store of a
+// reference, and a slot that may hold one, first passes the buffer's
+// barrier, before the store, as an element store's (ll_barrier): nothing
+// while the buffer is young or remembered, else avant_barrier_slot with
+// the slot (the runtime's own push skips only a young buffer). push_slot returns the slot, which the MIR then stores through.
+// The call form when inline fast paths are off.
+pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  a = e.value(args[0])
+  v = e.value(args[1])
+  et = "ptr"
+  esz = "8"
+  if name == "avant_array_push_i32" {
+    et = "i32"
+    esz = "4"
+  } else if name == "avant_array_push_i64" {
+    et = "i64"
+  } else if name == "avant_array_push_slot" {
+    esz = v
+  }
+  slot_form = name == "avant_array_push_slot"
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${a}, null")
+  test = e.part("arrroom")
+  fast = e.part("arrput")
+  slow = e.part("arrgrow")
+  done = e.part("arrpushed")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${a}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${a}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${a}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load atomic i32, ptr ${cp} monotonic, align 4")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  room = e.tmp()
+  e.line("${room} = icmp slt i32 ${sz}, ${cap}")
+  both = e.tmp()
+  e.line("${both} = and i1 ${hasd}, ${room}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${both}, i1 true)")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  off = e.tmp()
+  e.line("${off} = mul nuw nsw i64 ${w}, ${esz}")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off}")
+  if name == "avant_array_push_ptr" || slot_form {
+    // The barrier before the store, as an element store's (ll_barrier):
+    // the buffer's header flags (the 16 bits at its payload - 2), in the
+    // heap and young (32) or remembered (16), else the call.
+    fp = e.tmp()
+    e.line("${fp} = getelementptr inbounds i8, ptr ${dp}, i64 -2")
+    fl = e.tmp()
+    e.line("${fl} = load i16, ptr ${fp}, align 2")
+    yb = e.tmp()
+    e.line("${yb} = and i16 ${fl}, -32720")
+    old = e.tmp()
+    e.line("${old} = icmp ule i16 ${yb}, -32768")
+    bar = e.part("arrbar")
+    put = e.part("arrstore")
+    e.line("br i1 ${old}, label %${bar}, label %${put}")
+    e.block(bar)
+    e.need("avant_barrier_slot")
+    e.line("call void @avant_barrier_slot(ptr ${dp}, ptr ${ep})")
+    e.line("br label %${put}")
+    e.block(put)
+  }
+  if !slot_form {
+    e.line("store ${et} ${v}, ptr ${ep}, align ${esz}, !tbaa !3")
+  }
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, 1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  fend = e.part("arrfast")
+  e.line("br label %${fend}")
+  e.block(fend)
+  e.line("br label %${done}")
+  e.block(slow)
+  r = ""
+  if slot_form {
+    t = e.value(args[2])
+    r = e.tmp()
+    e.line("${r} = call ptr @${name}(ptr ${a}, i64 ${v}, i32 ${t})")
+  } else if name == "avant_array_push_ptr" {
+    t = e.value(args[2])
+    e.line("call void @${name}(ptr ${a}, ptr ${v}, i32 ${t})")
+  } else {
+    e.line("call void @${name}(ptr ${a}, ${et} ${v})")
+  }
+  e.resync()
+  e.line("br label %${done}")
+  e.block(done)
+  if !slot_form {
+    return ""
+  }
+  res = e.tmp()
+  e.line("${res} = phi ptr [ ${ep}, %${fend} ], [ ${r}, %${slow} ]")
+  res
+}
+
+// _v = call avant_array_pop_ptr(_a) and _s = call avant_array_pop_slot(_a,
+// size): the runtime's pop in place (runtime/avant_array.c), as push's: a
+// non-null array with a buffer, a size above zero and a capacity word that
+// is not negative (a frozen array's is, and its pop takes the call, which
+// traps) counts one element off and gives its last one: pop_slot the
+// slot's address (the MIR reads it, and zeroes it when it may hold
+// references), pop_ptr the reference itself, its word cleared so the
+// collector no longer reaches the element through the buffer. Before that
+// clear the runtime tells the collector's store log that a reference is
+// removed (avant_gc_overwrite), which does something only while the log
+// is on and the buffer is in the heap and not young: that case, as an
+// empty or null array, takes the call. The capacity word is read as the
+// runtime reads it, a relaxed atomic load. The call form when inline fast
+// paths are off.
+pub fn ll_array_pop(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  a = e.value(args[0])
+  ptr_form = name == "avant_array_pop_ptr"
+  esz = "8"
+  if !ptr_form {
+    esz = e.value(args[1])
+  }
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${a}, null")
+  test = e.part("arrhas")
+  fast = e.part("arrtake")
+  slow = e.part("arrpopcall")
+  done = e.part("arrpopped")
+  e.line("br i1 ${isn}, label %${slow}, label %${test}")
+  e.block(test)
+  dp = e.tmp()
+  e.line("${dp} = load ptr, ptr ${a}, align 8, !tbaa !5")
+  sp = e.tmp()
+  e.line("${sp} = getelementptr inbounds i8, ptr ${a}, i64 8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${sp}, align 8, !tbaa !7, !range !12")
+  cp = e.tmp()
+  e.line("${cp} = getelementptr inbounds i8, ptr ${a}, i64 12")
+  cap = e.tmp()
+  e.line("${cap} = load atomic i32, ptr ${cp} monotonic, align 4")
+  hasd = e.tmp()
+  e.line("${hasd} = icmp ne ptr ${dp}, null")
+  some = e.tmp()
+  e.line("${some} = icmp sgt i32 ${sz}, 0")
+  open = e.tmp()
+  e.line("${open} = icmp sge i32 ${cap}, 0")
+  b1 = e.tmp()
+  e.line("${b1} = and i1 ${hasd}, ${some}")
+  b2 = e.tmp()
+  e.line("${b2} = and i1 ${b1}, ${open}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${b2}, i1 true)")
+  if ptr_form {
+    // The store log: off (its byte zero), or, in the buffer's header
+    // flags (the 16 bits at its payload - 2), the buffer young (32),
+    // logged since the last full collection (512, the runtime's
+    // AVANT_FLAG_LOGGED) or not in the heap (the 0x8000 bit clear).
+    chk = e.part("arrlog")
+    e.line("br i1 ${x}, label %${chk}, label %${slow}")
+    e.block(chk)
+    e.used_proof_global = true
+    lg = e.tmp()
+    e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
+    off = e.tmp()
+    e.line("${off} = icmp eq i8 ${lg}, 0")
+    fp = e.tmp()
+    e.line("${fp} = getelementptr inbounds i8, ptr ${dp}, i64 -2")
+    fl = e.tmp()
+    e.line("${fl} = load i16, ptr ${fp}, align 2")
+    hy = e.tmp()
+    e.line("${hy} = and i16 ${fl}, -32224")
+    nl = e.tmp()
+    e.line("${nl} = icmp ne i16 ${hy}, -32768")
+    quiet = e.tmp()
+    e.line("${quiet} = or i1 ${off}, ${nl}")
+    y = e.tmp()
+    e.line("${y} = call i1 @llvm.expect.i1(i1 ${quiet}, i1 true)")
+    e.line("br i1 ${y}, label %${fast}, label %${slow}")
+  } else {
+    e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  }
+  e.block(fast)
+  n = e.tmp()
+  e.line("${n} = add nsw i32 ${sz}, -1")
+  e.line("store i32 ${n}, ptr ${sp}, align 8, !tbaa !7")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${n} to i64")
+  off2 = e.tmp()
+  e.line("${off2} = mul nuw nsw i64 ${w}, ${esz}")
+  ep = e.tmp()
+  e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off2}")
+  v = ep
+  if ptr_form {
+    v = e.tmp()
+    e.line("${v} = load ptr, ptr ${ep}, align 8, !tbaa !3")
+    e.line("store ptr null, ptr ${ep}, align 8, !tbaa !3")
+  }
+  e.line("br label %${done}")
+  e.block(slow)
+  r = e.tmp()
+  if ptr_form {
+    e.line("${r} = call ptr @${name}(ptr ${a})")
+  } else {
+    e.line("${r} = call ptr @${name}(ptr ${a}, i64 ${esz})")
+  }
+  e.resync()
+  e.line("br label %${done}")
+  e.block(done)
+  res = e.tmp()
+  e.line("${res} = phi ptr [ ${v}, %${fast} ], [ ${r}, %${slow} ]")
+  res
+}
+
 // Whether the string object at Q (not null) is a view: its header's type
 // id (the 16 bits at Q - 4) is 1020; expected false.
 fn ll_str_is_view(e: LlEmit, q: String): String {
@@ -641,6 +1045,7 @@ pub fn ll_str_unview(e: LlEmit, name: String, args: Array(MOperand)): String {
   e.block(view)
   r = e.tmp()
   e.line("${r} = call ptr @${name}(ptr ${s})")
+  e.resync()
   e.line("br label %${done}")
   e.block(done)
   p = e.tmp()
@@ -722,6 +1127,7 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.line("br i1 ${x}, label %${yes}, label %${cont}")
   e.block(yes)
   e.line("call void @avant_gc_poll()")
+  e.resync()
   e.line("br label %${cont}")
   e.block(cont)
 }

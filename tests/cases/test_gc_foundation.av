@@ -1,5 +1,6 @@
 import harness
 import backends
+import std.process
 
 // The heap foundation's behavior.
 //
@@ -35,8 +36,8 @@ fn gc_envs: Array(String) {
 fn stat_int(text: String, key: String): Int {
   parts = text.split(" ")
   for p in parts {
-    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
-      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
     }
   }
   -1
@@ -103,7 +104,7 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_foundation.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_gc_foundation(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

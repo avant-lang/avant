@@ -1,0 +1,236 @@
+// `defer { ... }`: each deferred block runs on every way out of the block
+// that holds it (its end, return, `?`, break, continue), the latest
+// first, after a returned or block value is computed. Its golden is the
+// run's stdout (tests/goldens/runs/fixtures/syntax/defer.out).
+
+import std.sync
+
+class Res {
+  pub name: String = ""
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+
+  pub fn use(k: Int): Int {
+    defer { puts("release ${self.name}") }
+    k + 1
+  }
+}
+
+// The tail value is computed before the deferred block runs.
+fn tail(n: Int): Int {
+  x = n
+  defer { puts("tail: x is ${x}") }
+  x = x + 1
+  x * 10
+}
+
+// A return's value is computed first: the deferred block cannot change
+// it. Two deferred blocks run the latest first.
+fn early(n: Int): Int {
+  x = n
+  defer { puts("early: first") }
+  defer {
+    puts("early: second, x is ${x}")
+    x = 999
+  }
+  if n > 2 {
+    return x
+  }
+  x = 7
+  x + 1
+}
+
+fn parse(s: String): Int? {
+  defer { puts("parse ${s}: done") }
+  v = s.to_i()?
+  v + 1
+}
+
+fn opt(x: Int?): Int {
+  defer { puts("opt: done") }
+  v = x ?? return -1
+  if w = x {
+    defer { puts("opt: bound ${w} done") }
+    puts("opt: bound ${w}")
+  }
+  v
+}
+
+// In a loop body, the deferred block runs at the end of each iteration,
+// on continue and on break, before the step to the next value.
+fn loops {
+  for i in 0..4 {
+    defer { puts("range end ${i}") }
+    if i == 1 {
+      continue
+    }
+    if i == 3 {
+      break
+    }
+    puts("range ${i}")
+  }
+  for i in 0..=2 {
+    defer { puts("inclusive end ${i}") }
+    puts("inclusive ${i}")
+  }
+  for x in [10, 20, 30] {
+    defer { puts("walk end ${x}") }
+    if x == 20 {
+      continue
+    }
+    puts("walk ${x}")
+  }
+  for k, x in ["a", "b"] {
+    defer { puts("position end ${k}") }
+    puts("position ${k} ${x}")
+  }
+  j = 0
+  while j < 3 {
+    defer { puts("while end ${j}") }
+    j += 1
+    if j == 2 {
+      continue
+    }
+    puts("while ${j}")
+  }
+}
+
+fn nested {
+  defer { puts("nested: outer") }
+  if true {
+    defer { puts("nested: inner first") }
+    defer { puts("nested: inner second") }
+    puts("nested: in the if")
+  }
+  puts("nested: after the if")
+}
+
+fn values(c: Bool): Int {
+  y = if c {
+    defer { puts("values: if branch done") }
+    5
+  } else {
+    6
+  }
+  s = switch y {
+    case 5 {
+      defer { puts("values: arm done") }
+      "five"
+    }
+    else {
+      "other"
+    }
+  }
+  puts("values: ${s}")
+  y
+}
+
+// A lambda in a deferred block, lowered on each way out.
+fn lam_twice(n: Int): Int {
+  defer {
+    k = 0
+    bump = () { k += 1 }
+    bump()
+    bump()
+    puts("lam_twice: k is ${k}")
+  }
+  if n > 0 {
+    return 1
+  }
+  if n < -5 {
+    return 3
+  }
+  2
+}
+
+// A loop inside a deferred block may break out of itself.
+fn inner_loop {
+  defer {
+    for i in 0..10 {
+      if i == 2 {
+        break
+      }
+      puts("inner_loop: ${i}")
+    }
+  }
+  puts("inner_loop: body")
+}
+
+fn count(xs: Array(T)): Int {
+  n = 0
+  for x in xs {
+    defer { n += 1 }
+    if n == 1 {
+      continue
+    }
+    puts("count: ${x}")
+  }
+  n
+}
+
+// The deferred block allocates while the returned string waits.
+fn build(n: Int): String {
+  s = "start"
+  defer {
+    junk: Array(String) = []
+    for i in 0..20000 {
+      junk.push("garbage ${i}")
+    }
+    puts("build: made ${junk.size}")
+  }
+  for i in 0..n {
+    s = "${s}-${i}"
+  }
+  s
+}
+
+fn main {
+  defer { puts("main: done") }
+  puts(tail(1))
+  puts(early(5))
+  puts(early(1))
+  puts(parse("41") ?? -1)
+  puts(parse("zz") ?? -1)
+  puts(opt(nil))
+  puts(opt(4))
+  loops()
+  nested()
+  puts(values(true))
+  puts(lam_twice(1))
+  puts(lam_twice(-9))
+  puts(lam_twice(0))
+  inner_loop()
+  puts(count([5, 6, 7]))
+  puts(count(["a", "b"]))
+  puts(Res.new("db").use(1))
+  puts(build(3))
+  twice = (k: Int): Int {
+    defer { puts("lambda: ${k} done") }
+    k * 2
+  }
+  puts(twice(4))
+  [1, 2].each((v) {
+    defer { puts("each: ${v} done") }
+    puts("each: ${v}")
+  })
+  puts([1, 2, 3].any((v) {
+    defer { puts("any: ${v} done") }
+    v == 2
+  }))
+  m = sync.Mutex(Int).new(0)
+  m.with((v) {
+    defer { puts("with: done") }
+    puts("with: ${v}")
+  })
+  h = spawn {
+    defer { puts("task: done") }
+    40 + 2
+  }
+  puts(h.join())
+  if true {
+    return
+  }
+  puts("unreached")
+}

@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The messages for names, calls and ambiguity. A type
 // without the type-level function a call names, a type two
@@ -124,6 +126,15 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("clash-three", "import lexa\nimport lexb\nimport lexc\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Token is a type of lexa, lexb and lexc: write lexa.Token, lexb.Token or lexc.Token", "4:9"), three))
   fnty: Array(String) = ["alpha", "pub struct Value {\n  pub v: Int\n}\n", "beta", "pub fn Value: Int {\n  1\n}\n"]
   xs.push(with_mods(only("clash-type-and-fn", "import alpha\nimport beta\nfn f(v: Value): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Value is a type of alpha and a function of beta: write alpha.Value or beta.Value", "3:9"), fnty))
+  // A module's own alias beside an import's pub type or alias of the same
+  // name: one type, so the name is the module's own alias; two different
+  // types stay a clash that names both modules.
+  adata = "pub type Data = Int | String\npub type Other = Int | Bool\npub struct Pt {\n  pub x: Int\n}\npub fn mk: Data {\n  3\n}\n"
+  amods: Array(String) = ["adata", adata]
+  xs.push(with_mods(accepted("alias-own-same", "import adata\n\ntype Data = adata.Data\ntype Pt = adata.Pt\n\nfn twice(d: Data): Array(Data) {\n  [d, d]\n}\n\nfn px(p: Pt): Int {\n  p.x\n}\n\nfn main {\n  ds = twice(adata.mk())\n  ds.push(\"x\")\n  puts(ds.size)\n  p = Pt { x: 4 }\n  puts(px(p) + px(adata.Pt { x: 1 }))\n}\n", "3\n5\n"), amods))
+  xs.push(with_mods(accepted("alias-own-same-members", "import adata\n\ntype Data = Int | String\n\nfn main {\n  ds: Array(Data) = [adata.mk(), \"y\"]\n  puts(ds.size)\n}\n", "2\n"), amods))
+  xs.push(with_mods(only("alias-own-differs", "import adata\n\ntype Data = adata.Other\n\nfn main {\n  d: Data = 3\n  puts(1)\n}\n", "Data is a type of both adata and main: write adata.Data or main.Data", "6:6"), amods))
+  xs.push(with_mods(only("alias-own-struct-twice", "import adata\n\nstruct Pt {\n  x: Int\n}\n\nfn main {\n  p = Pt { x: 4 }\n  puts(p.x)\n}\n", "Pt is a type of both adata and main: write adata.Pt or main.Pt", "8:7"), amods))
   // A call whose arguments fit no signature says what it takes.
   add = "fn add(a: Int, b: Int): Int {\n  a + b\n}\n"
   xs.push(only("count-few", add + "fn main {\n  puts(add(1))\n}\n", "add takes 2 arguments, given 1: add(a: Int, b: Int): Int", "5:8"))
@@ -138,8 +149,8 @@ fn cases: Array(NCase) {
   xs.push(only("count-method", cls + "fn main {\n  c = C.new()\n  puts(c.twice(1, 2))\n}\n", "C.twice takes 1 argument, given 2: C.twice(a: Int): Int", "11:9"))
   xs.push(only("types-method", cls + "fn main {\n  c = C.new()\n  puts(c.twice(\"a\"))\n}\n", "argument 1 of C.twice is String, expected Int: C.twice(a: Int): Int", "11:9"))
   xs.push(only("count-type-fn", cls + "fn main {\n  c = C.make()\n  puts(1)\n}\n", "C.make takes 1 argument, given 0: C.make(n: Int): C", "10:8"))
-  xs.push(only("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
-  xs.push(only("count-fn-value", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "3:8"))
+  xs.push(only("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1, (a, b) { a + b }))\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
+  xs.push(only("count-fn-value", "fn main {\n  f: fn(Int): Int = (n) { n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "3:8"))
   // "Did you mean", one suggestion at most, only from what is
   // in scope at the error.
   xs.push(only("mean-local", "fn main {\n  count = 3\n  puts(cuont)\n}\n", "unknown name cuont (did you mean `count`?)", "3:8"))
@@ -185,7 +196,7 @@ fn cases: Array(NCase) {
   xs.push(only("mean-hash", "fn main {\n  h = Hash(String, Int).new()\n  puts(h.kyes.size)\n}\n", "no method kyes on Hash (did you mean `keys`?)", "3:9"))
   xs.push(only("mean-int", "fn main {\n  n = 3\n  puts(n.to_ff)\n}\n", "no method to_ff on Int (did you mean `to_f`?)", "3:9"))
   xs.push(only("mean-float", "fn main {\n  f = 2.0\n  puts(f.sqtr)\n}\n", "no method sqtr on Float64 (did you mean `sqrt`?)", "3:9"))
-  xs.push(only("mean-buf", "fn main {\n  b = buf_new()\n  b.push_srt(\"a\")\n  puts(b.to_s())\n}\n", "no method push_srt on Buf (did you mean `push_str`?)", "3:4"))
+  xs.push(only("mean-buf", "fn main {\n  b = Buf.new()\n  b.push_srt(\"a\")\n  puts(b.to_s())\n}\n", "no method push_srt on Buf (did you mean `push_str`?)", "3:4"))
   // A use of an optional says how to open it.
   xs.push(only("open-eq-nil", "fn main {\n  x: Int? = nil\n  puts(x == nil)\n}\n", "x is Int? and an optional is never compared with nil: test it with `if _ = x { ... } else { ... }`, or open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-not-nil", "fn main {\n  x: Int? = 2\n  puts(nil != x)\n}\n", "x is Int? and an optional is never compared with nil", "3:12"))
@@ -222,7 +233,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
       }
       src = "${d}/main.av"
     }
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/nm-${f.tag}.bin", "${dir}/nm-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -248,7 +259,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
     if f2.mods.size > 0 {
       file = "main.av"
     }
-    c.expect(jobs[i].code != 0 && !file_exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(jobs[i].code != 0 && !fs.exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
     c.expect(log.contains(f2.want), "${f2.tag}: says ${f2.want}")
     c.expect(log.contains("${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
     if f2.single {
@@ -287,7 +298,7 @@ fn builtin_value(kind: String): String {
     return "Hash(String, Int).new"
   }
   if kind == "is_buf" {
-    return "buf_new()"
+    return "Buf.new()"
   }
   if kind == "is_join" {
     return "spawn { 1 }"
@@ -304,16 +315,16 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
   pairs: Array(String) = []
   while i <= src.size {
     if i == src.size || src[i] == 10 {
-      raw = str_slice(src, start, i)
+      raw = src[start..i]
       line = raw.strip()
       if line.contains("pub fn builtin_member_names(") {
         in_fn = true
       } else if in_fn && raw == "}" {
         in_fn = false
-      } else if in_fn && line.size > 9 && str_slice(line, 0, 9) == "if ty.is_" {
-        kind = str_slice(line, 6, line.size - 2)
-      } else if in_fn && kind.size > 0 && line.size > 8 && str_slice(line, 0, 8) == "return \"" {
-        for n in str_slice(line, 8, line.size - 1).split(" ") {
+      } else if in_fn && line.size > 9 && line[..9] == "if ty.is_" {
+        kind = line[6..line.size - 2]
+      } else if in_fn && kind.size > 0 && line.size > 8 && line[..8] == "return \"" {
+        for n in line[8..line.size - 1].split(" ") {
           pairs.push(kind)
           pairs.push(n)
         }
@@ -330,7 +341,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
   k = 0
   prog = 0
   while k < pairs.size {
-    body = buf_new()
+    body = Buf.new()
     body.push_str("fn main {\n  v = ${builtin_value(pairs[k])}\n")
     lot: Array(String) = []
     while k < pairs.size && lot.size < 12 && (lot.size == 0 || pairs[k] == pairs[k - 2]) {
@@ -340,10 +351,10 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
     }
     body.push_str("}\n")
     f = "${dir}/nm-builtin-${prog}.av"
-    _ = file_write(f, body.to_s())
+    _ = fs.write(f, body.to_s())
     jobs.push(compile_job("", compiler, f, "${dir}/nm-builtin-${prog}.bin", "${dir}/nm-builtin-${prog}.log"))
     tags.push("${prog}")
-    joined = buf_new()
+    joined = Buf.new()
     for x in lot {
       if joined.size > 0 {
         joined.push_str(" ")
@@ -364,7 +375,7 @@ fn check_builtin_names(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_names.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_builtin_names(c, compiler, scratch_dir())
   } else {

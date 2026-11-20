@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Declarations: one spelling for a function without parameters, named
 // arguments for parameters with defaults, struct fields with defaults,
@@ -57,14 +59,14 @@ fn cases: Array(RCase) {
   xs.push(refused("empty-parens-fun", "lib c {\n  fun getpid(): Int32\n}\nfn main { }\n", "a fun without parameters is declared without parentheses: write fun getpid, not fun getpid()", "2:14"))
   xs.push(accepted("fun-no-parens", "lib c {\n  fun getpid: Int32\n}\nfn main {\n  puts(c.getpid() > 0)\n}\n", "true\n"))
   // A call whose lambda argument is checked after the others takes its defaults
-  xs.push(accepted("lambda-arg-defaults", "fn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nfn main {\n  puts(apply({ |v| v * 10 }))\n  puts(apply({ |v| v * 10 }, 2))\n}\n", "10\n20\n"))
+  xs.push(accepted("lambda-arg-defaults", "fn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nfn main {\n  puts(apply((v) { v * 10 }))\n  puts(apply((v) { v * 10 }, 2))\n}\n", "10\n20\n"))
   // Named arguments for parameters with defaults
   pad = "fn pad(s: String, width: Int = 8, fill: String = \".\"): String {\n  out = s\n  while out.size < width {\n    out = out + fill\n  }\n  out\n}\n"
   xs.push(accepted("named", "${pad}fn main {\n  puts(pad(\"ab\", fill: \"*\"))\n  puts(pad(\"ab\", 4, fill: \"-\"))\n  puts(pad(\"ab\", fill: \"+\", width: 5))\n  puts(pad(\"ab\", width: 3))\n}\n", "ab******\nab--\nab+++\nab.\n"))
   // The written arguments are evaluated left to right as written, then the defaults.
   xs.push(accepted("named-order", "fn note(tag: String, n: Int): Int {\n  puts(tag)\n  n\n}\nfn three(a: Int, b: Int = note(\"default b\", 10), c: Int = 100, d: Int = note(\"default d\", 1000)): Int {\n  a + b + c + d\n}\nfn main {\n  puts(three(note(\"a\", 1), d: note(\"d\", 4), c: note(\"c\", 3)))\n}\n", "a\nd\nc\ndefault b\n18\n"))
   xs.push(accepted("named-reads-earlier", "fn span(a: Int, b: Int = a + 1, c: Int = b * 2): Int {\n  a * 100 + b * 10 + c\n}\nfn main {\n  puts(span(1, c: 5))\n  puts(span(1, b: 4))\n}\n", "125\n148\n"))
-  xs.push(accepted("named-forms", "fn wrap(x: T, times: Int = 1): Array(T) {\n  out: Array(T) = []\n  for i in 0..times {\n    out.push(x)\n  }\n  out\n}\nfn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nstruct Pt {\n  x: Int\n  y: Int\n  fn shifted(dx: Int = 0, dy: Int = 0): Pt {\n    Pt { x: x + dx, y: y + dy }\n  }\n  fn self.make(x: Int, y: Int = 3): Pt {\n    Pt { x: x, y: y }\n  }\n}\nfn (p: Pt) scaled(k: Int = 2, off: Int = 0): Int {\n  p.x * k + off\n}\nclass Conn {\n  host: String\n  port: Int\n  fn initialize(host: String, port: Int = 80) {\n    self.host = host\n    self.port = port\n  }\n}\nfn main {\n  puts(wrap(\"a\", times: 3).size)\n  puts(apply({ |v| v * 10 }))\n  puts(apply({ |v| v * 10 }, extra: 5, n: 2))\n  p = Pt { x: 1, y: 7 }\n  q = p.shifted(dy: 1)\n  puts(\"\${q.x} \${q.y}\")\n  puts(Pt.make(2, y: 8).y)\n  puts(p.scaled(off: 1))\n  puts(Conn.new(\"h\", port: 8080).port)\n  puts(Conn.new(\"h\").port)\n}\n", "3\n10\n25\n1 8\n8\n3\n8080\n80\n"))
+  xs.push(accepted("named-forms", "fn wrap(x: T, times: Int = 1): Array(T) {\n  out: Array(T) = []\n  for i in 0..times {\n    out.push(x)\n  }\n  out\n}\nfn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nstruct Pt {\n  x: Int\n  y: Int\n  fn shifted(dx: Int = 0, dy: Int = 0): Pt {\n    Pt { x: x + dx, y: y + dy }\n  }\n  fn self.make(x: Int, y: Int = 3): Pt {\n    Pt { x: x, y: y }\n  }\n}\nfn (p: Pt) scaled(k: Int = 2, off: Int = 0): Int {\n  p.x * k + off\n}\nclass Conn {\n  host: String\n  port: Int\n  fn initialize(host: String, port: Int = 80) {\n    self.host = host\n    self.port = port\n  }\n}\nfn main {\n  puts(wrap(\"a\", times: 3).size)\n  puts(apply((v) { v * 10 }))\n  puts(apply((v) { v * 10 }, extra: 5, n: 2))\n  p = Pt { x: 1, y: 7 }\n  q = p.shifted(dy: 1)\n  puts(\"\${q.x} \${q.y}\")\n  puts(Pt.make(2, y: 8).y)\n  puts(p.scaled(off: 1))\n  puts(Conn.new(\"h\", port: 8080).port)\n  puts(Conn.new(\"h\").port)\n}\n", "3\n10\n25\n1 8\n8\n3\n8080\n80\n"))
   xs.push(refused("named-unknown", "${pad}fn main {\n  puts(pad(\"a\", wide: 3))\n}\n", "pad has no parameter named wide", "9:23"))
   xs.push(refused("named-no-default", "${pad}fn main {\n  puts(pad(s: \"a\"))\n}\n", "s of pad has no default, so it is passed by position: a name is given only to a parameter with a default", "9:8"))
   xs.push(refused("named-by-position", "${pad}fn main {\n  puts(pad(\"a\", 3, width: 4))\n}\n", "width is already given by position (argument 2 of pad)", "9:27"))
@@ -72,7 +74,7 @@ fn cases: Array(RCase) {
   xs.push(refused("named-then-positional", "${pad}fn main {\n  puts(pad(\"a\", fill: \"x\", 3))\n}\n", "a positional argument cannot follow a named one: write the positional arguments first", "9:28"))
   xs.push(refused("named-wrong-type", "${pad}fn main {\n  puts(pad(\"a\", width: \"x\"))\n}\n", "argument 2 of pad is String, expected Int", "9:24"))
   xs.push(refused("named-builtin", "fn main {\n  xs = [1]\n  xs.push(v: 2)\n}\n", "push takes its arguments by position (v: is a named argument)", "3:14"))
-  xs.push(refused("named-fn-value", "fn main {\n  f = { |x: Int| x }\n  puts(f(x: 1))\n}\n", "a fn value takes its arguments by position (x: is a named argument)", "3:13"))
+  xs.push(refused("named-fn-value", "fn main {\n  f = (x: Int) { x }\n  puts(f(x: 1))\n}\n", "a fn value takes its arguments by position (x: is a named argument)", "3:13"))
   xs.push(refused("named-overload", "fn show(n: Int, width: Int = 4): String {\n  \"\${n}\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  puts(show(\"a\", width: 2))\n}\n", "show has no parameter named width", "8:25"))
   // Struct fields with defaults: a literal leaves out exactly those
   opts = "struct Opts {\n  port: Int\n  loops: Int = 4\n  name: String = \"srv\"\n}\n"
@@ -96,7 +98,7 @@ fn cases: Array(RCase) {
   xs.push(refused("field-param-wrong-arg", "class C {\n  a: Int\n  fn initialize(self.a) {\n  }\n}\nfn main {\n  puts(C.new(\"x\").a)\n}\n", "argument 1 of C.new is String, expected Int", "7:9"))
   // Grouping parentheses in types, and an optional function value
   xs.push(accepted("grouped-union", "fn f(k: Int): (Int | String)? {\n  if k == 0 {\n    return nil\n  }\n  if k == 1 {\n    return 7\n  }\n  \"s\"\n}\nfn main {\n  for k in 0..3 {\n    switch f(k) {\n      case nil { puts(\"nil\") }\n      case n: Int { puts(n) }\n      case s: String { puts(s) }\n    }\n  }\n}\n", "nil\n7\ns\n"))
-  xs.push(accepted("optional-fn", "class Handler {\n  v: Int\n  cb: (fn(Int): Int)?\n\n  fn initialize(self.v, self.cb = nil) {\n  }\n\n  fn run: Int {\n    if f = cb {\n      return f(v)\n    }\n    v\n  }\n}\n\nfn double(n: Int): Int {\n  n * 2\n}\n\nfn pick(k: Int): (fn(Int): Int)? {\n  if k % 3 == 0 {\n    return nil\n  }\n  if k % 3 == 1 {\n    return double\n  }\n  { |n| n + k }\n}\n\nfn main {\n  f: (fn(Int): Int)? = nil\n  g = f ?? double\n  puts(g(5))\n  total = 0\n  for k in 0..6 {\n    if h = pick(k) {\n      total += h(10)\n    } else {\n      total += 1\n    }\n  }\n  puts(total)\n  hs = [Handler.new(1), Handler.new(2, cb: double), Handler.new(3, cb: { |n| n * 100 })]\n  for x in hs {\n    puts(x.run())\n  }\n  fs: Array(fn(Int): Int) = [double]\n  if e = fs.get(0) {\n    puts(e(21))\n  }\n  if e2 = fs.get(3) {\n    puts(e2(1))\n  } else {\n    puts(\"none\")\n  }\n  u: (fn(Int): Int)? = double\n  switch u {\n    case nil { puts(\"nil\") }\n    case w: fn(Int): Int { puts(w(4)) }\n  }\n}\n", "10\n69\n1\n4\n300\n42\nnone\n8\n"))
+  xs.push(accepted("optional-fn", "class Handler {\n  v: Int\n  cb: (fn(Int): Int)?\n\n  fn initialize(self.v, self.cb = nil) {\n  }\n\n  fn run: Int {\n    if f = cb {\n      return f(v)\n    }\n    v\n  }\n}\n\nfn double(n: Int): Int {\n  n * 2\n}\n\nfn pick(k: Int): (fn(Int): Int)? {\n  if k % 3 == 0 {\n    return nil\n  }\n  if k % 3 == 1 {\n    return double\n  }\n  (n) { n + k }\n}\n\nfn main {\n  f: (fn(Int): Int)? = nil\n  g = f ?? double\n  puts(g(5))\n  total = 0\n  for k in 0..6 {\n    if h = pick(k) {\n      total += h(10)\n    } else {\n      total += 1\n    }\n  }\n  puts(total)\n  hs = [Handler.new(1), Handler.new(2, cb: double), Handler.new(3, cb: (n) { n * 100 })]\n  for x in hs {\n    puts(x.run())\n  }\n  fs: Array(fn(Int): Int) = [double]\n  if e = fs.get(0) {\n    puts(e(21))\n  }\n  if e2 = fs.get(3) {\n    puts(e2(1))\n  } else {\n    puts(\"none\")\n  }\n  u: (fn(Int): Int)? = double\n  switch u {\n    case nil { puts(\"nil\") }\n    case w: fn(Int): Int { puts(w(4)) }\n  }\n}\n", "10\n69\n1\n4\n300\n42\nnone\n8\n"))
   xs.push(refused("optional-fn-shown", "fn main {\n  f: (fn(Int): Int)? = 1\n}\n", "cannot assign Int to (fn(Int): Int)?", "2:24"))
   xs.push(refused("fn-field-hint", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new()\n}\n", "or make it optional (f: (fn(Int): Int)?)", "2:3"))
   xs
@@ -106,7 +108,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/decl-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/decl-${f.tag}.bin", "${dir}/decl-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -128,7 +130,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/decl-${f3.tag}.run.err"), f3.err, "${f3.tag}: stderr")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/decl-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/decl-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("decl-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -137,7 +139,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_declarations.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

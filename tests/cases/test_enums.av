@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Enumerations and switch over them. Each program is compiled
 // in parallel; a refused one must
@@ -81,6 +83,15 @@ fn cases: Array(RCase) {
   xs.push(refused("str-value-needs-else", "fn f(s: String): Int {\n  switch s {\n    case \"a\" { 1 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "switch expression needs else", "2:3"))
   xs.push(refused("int-label-string", "fn main {\n  n = 1\n  switch n {\n    case \"1\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "case label must be an integer literal", "4:10"))
   xs.push(refused("enum-label-string", "enum Tok { eof, name, number }\nfn main {\n  switch Tok.eof {\n    case \"eof\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "a case label of a switch over Tok is one of its members, written bare", "4:10"))
+  xs.push(accepted("short-member-places", "enum Mode { read, write, append }\n\nclass Opts {\n  pub on: Mode = :read\n  pub all: Array(Mode) = []\n}\n\nstruct P {\n  m: Mode\n}\n\nfn open(path: String, on: Mode): String {\n  \"\${path}:\${on}\"\n}\n\nfn named(path: String, on: Mode = :read): String {\n  \"\${path}:\${on}\"\n}\n\nfn pick(n: Int): Mode {\n  if n > 0 {\n    return :append\n  }\n  switch n {\n    case 0 { :write }\n    else { :read }\n  }\n}\n\nfn main {\n  puts(open(\"a\", :write))\n  puts(named(\"b\", on: :append))\n  puts(named(\"c\"))\n  m: Mode = :append\n  m = :read\n  o = Opts.new()\n  o.on = :write\n  o.all = [:read, :write]\n  o.all.push(:append)\n  p = P { m: :write }\n  q: Mode? = :write\n  h = Hash(String, Mode).new()\n  h[\"x\"] = :append\n  puts(\"\${m} \${o.on} \${o.all.size} \${o.all[2]} \${p.m} \${pick(1)} \${pick(0)} \${pick(-1)} \${q ?? :read} \${m == :read} \${:write != o.on} \${h[\"y\"] ?? :append}\")\n}\n", "a:write\nb:append\nc:read\nread write 3 append write append write read write true false append\n"))
+  xs.push(accepted("short-member-calls", "enum Mode { read, write, append }\n\nenum Color { red, write }\n\nclass File {\n  pub mode: Mode\n\n  fn initialize(mode: Mode) {\n    self.mode = mode\n  }\n\n  pub fn set(m: Mode): File {\n    self.mode = m\n    self\n  }\n}\n\nfn paint(c: Color): String { \"c:\${c}\" }\nfn paint(m: Mode): String { \"m:\${m}\" }\n\nfn main {\n  f = File.new(:write)\n  puts(f.set(:append).mode)\n  puts(paint(:red))\n  puts(paint(:append))\n  g: fn(Mode): String = (m) { \"\${m}\" }\n  puts(g(:read))\n}\n", "append\nc:red\nm:append\nread\n"))
+  xs.push(accepted("short-member-std", "import std.json\n\nfn is_obj(j: json.Json): Bool {\n  j.kind() == :obj\n}\n\nfn main {\n  if doc = json.Json.parse(\"{}\") {\n    puts(is_obj(doc))\n  }\n}\n", "true\n"))
+  xs.push(refused("short-member-unknown", "enum Mode { read, write, append }\n\nfn main {\n  m: Mode = :wrte\n  puts(m)\n}\n", "Mode has no member wrte; its members are read, write, append", "4:13"))
+  xs.push(refused("short-member-no-enum", "enum Mode { read, write, append }\n\nfn main {\n  x = :read\n  puts(x)\n}\n", ":read names a member of the enum expected where it stands, and no type is expected here", "4:7"))
+  xs.push(refused("short-member-not-enum", "fn main {\n  n: Int = :read\n  puts(n)\n}\n", ":read names a member of the enum expected where it stands, and Int is expected here", "2:12"))
+  xs.push(refused("short-member-two-enums", "enum Mode { read, write, append }\n\nenum Color { red, write }\n\nfn main {\n  m: Mode | Color = :write\n  puts(m)\n}\n", "holds several enums: write the member with its enum's name (Color.write or Mode.write)", "6:21"))
+  xs.push(refused("short-member-overloads", "enum Mode { read, write, append }\n\nenum Color { red, write }\n\nfn paint(c: Color): String { \"c\" }\nfn paint(m: Mode): String { \"m\" }\n\nfn main {\n  puts(paint(:write))\n}\n", "ambiguous call to paint", "9:8"))
+  xs.push(refused("short-member-case-label", "enum Mode { read, write, append }\n\nfn main {\n  switch Mode.read {\n    case :read { puts(1) }\n    else { puts(2) }\n  }\n}\n", "a case label over an enum is its member's bare name: case read, not case :read", "5:10"))
   xs
 }
 
@@ -88,7 +99,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/enum-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/enum-${f.tag}.bin", "${dir}/enum-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -109,7 +120,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/enum-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/enum-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/enum-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("enum-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -120,20 +131,20 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 // table paid for only when used.
 fn check_ll(c: Checks, compiler: String, dir: String) {
   sw = "${dir}/enum-ll-switch.av"
-  _ = file_write(sw, "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.from_i(1) ?? Tok.eof))\n}\n")
+  _ = fs.write(sw, "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.from_i(1) ?? Tok.eof))\n}\n")
   c.eq_int(emit_ll(compiler, sw, "${dir}/enum-ll-switch.ll", "${dir}/enum-ll-switch.log"), 0, "ll-switch: emits")
   ll = log_text("${dir}/enum-ll-switch.ll")
   c.expect(ll.contains("@avant_trap_enum_at("), "ll-switch: the no-member path traps")
   c.expect(ll.contains("switch i8 "), "ll-switch: one switch on the enum's byte")
   c.expect(!ll.contains("c\"number\\00\""), "ll-switch: no name table")
   pr = "${dir}/enum-ll-print.av"
-  _ = file_write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
+  _ = fs.write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
   c.eq_int(emit_ll(compiler, pr, "${dir}/enum-ll-print.ll", "${dir}/enum-ll-print.log"), 0, "ll-print: emits")
   c.expect(log_text("${dir}/enum-ll-print.ll").contains("number"), "ll-print: the names are there when printed")
   // The last arm is the default behind a range
   // test, so a four-member switch has three cases, and the trap stays.
   d4 = "${dir}/enum-ll-last.av"
-  _ = file_write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): String {\n  switch x {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n    case d { \"d\" }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(f(Four.from_i(3) ?? Four.a))\n  puts(h.join() ?? -1)\n}\n")
+  _ = fs.write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): String {\n  switch x {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n    case d { \"d\" }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(f(Four.from_i(3) ?? Four.a))\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, d4, "${dir}/enum-ll-last.ll", "${dir}/enum-ll-last.log"), 0, "ll-last: emits")
   ll4 = log_text("${dir}/enum-ll-last.ll")
   labels = -1
@@ -152,7 +163,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_enums.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_ll(c, compiler, scratch_dir())
   } else {

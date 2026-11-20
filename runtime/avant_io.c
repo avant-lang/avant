@@ -327,6 +327,71 @@ avant_int avant_main_fail(const char *text) {
   return 1;
 }
 
+/* One write of the program's to stdout, whole: N bytes from P, then a
+ * newline when NL, under one hold of stdout's lock (another thread's
+ * flush between the text and its newline would write the line without
+ * its end). The C library copies a write longer than the buffer's free
+ * space in two parts: the part that fits, then a flush of the full
+ * buffer, then the rest. A stack overflow (or SIGTERM, SIGINT) inside
+ * that flush ends the process while the buffer holds the first part, and
+ * the handler, which writes the buffer up to its write pointer
+ * (avant_out_pending), wrote the line cut short. So the buffer is
+ * flushed first, while it holds only whole earlier writes, and the write
+ * then goes into the buffer at once; a write longer than the buffer
+ * itself goes out with write(2) instead, in one piece after the buffer's
+ * bytes. The buffer between the write base and the write pointer then
+ * always holds whole writes: an interrupted write is either all there or
+ * not there at all. glibc's FILE fields; on another C library, the
+ * plain stdio writes. Not before the stream has a buffer: its first write
+ * allocates one (the smallest glibc picks is a terminal's 1024 bytes),
+ * so a first write longer than that goes out directly as well. */
+void avant_out_whole(const char *p, size_t n, int nl) {
+  FILE *f = stdout;
+  size_t all = n + (nl ? 1u : 0u);
+  flockfile(f);
+#if defined(__GLIBC__)
+  /* The free space up to the buffer's end (a line-buffered stream keeps
+   * its write end at the buffer's start). */
+  if (f->_IO_write_ptr > f->_IO_write_base && (size_t)(f->_IO_buf_end - f->_IO_write_ptr) < all) {
+    (void)fflush_unlocked(f);
+  }
+  if (all > (f->_IO_buf_base ? (size_t)(f->_IO_buf_end - f->_IO_buf_base) : 1024u) && f->_IO_write_ptr == f->_IO_write_base) {
+    const char *q = p;
+    size_t left = n;
+    int part = 0;
+    while (part < 2) {
+      while (left) {
+        ssize_t w = write(f->_fileno, q, left);
+        if (w < 0 && errno == EINTR) {
+          continue;
+        }
+        if (w <= 0) {
+          f->_flags |= _IO_ERR_SEEN;
+          funlockfile(f);
+          return;
+        }
+        q += w;
+        left -= (size_t)w;
+      }
+      part++;
+      q = "\n";
+      left = (part == 1 && nl) ? 1u : 0u;
+    }
+    /* The stream's own count of its position no longer holds. */
+    f->_offset = -1;
+    funlockfile(f);
+    return;
+  }
+#endif
+  if (n) {
+    fwrite_unlocked(p, 1, n, f);
+  }
+  if (nl) {
+    putc_unlocked('\n', f);
+  }
+  funlockfile(f);
+}
+
 /* print, eputs and eprint (puts keeps its own writers in avant_str.c):
  * one value's text, a newline when HOW has bit 1, to stderr when it has
  * bit 2. A write to stderr first flushes what stdout holds, so the two
@@ -336,15 +401,16 @@ avant_int avant_main_fail(const char *text) {
 static void out_check(int at_exit);
 
 static void out_bytes(const char *p, size_t n, int32_t how) {
-  FILE *f = (how & 2) ? stderr : stdout;
   if (how & 2) {
     fflush(stdout);
-  }
-  if (n) {
-    fwrite(p, 1, n, f);
-  }
-  if (how & 1) {
-    putc('\n', f);
+    if (n) {
+      fwrite(p, 1, n, stderr);
+    }
+    if (how & 1) {
+      putc('\n', stderr);
+    }
+  } else {
+    avant_out_whole(p, n, how & 1);
   }
   if (ferror_unlocked(stdout) || ferror_unlocked(stderr)) {
     out_check(0);
@@ -1375,6 +1441,8 @@ static void out_check_at_exit(void) {
  * directory on it. std.http's sockets never raise it (every socket write
  * carries MSG_NOSIGNAL: uSockets' bsd_send and bsd_write2). The exit
  * check is registered first, so it runs after tmp_finish. */
+static void tmp_catch(int sig);
+
 __attribute__((constructor)) static void avant_io_start(void) {
   struct sigaction sa;
   sigset_t set;
@@ -1386,6 +1454,11 @@ __attribute__((constructor)) static void avant_io_start(void) {
   sigaddset(&set, SIGPIPE);
   sigprocmask(SIG_UNBLOCK, &set, NULL);
   atexit(out_check_at_exit);
+  /* A program ended by SIGTERM or SIGINT (kill, Ctrl-C) keeps what it
+   * printed: the handler writes stdout's buffer before the default
+   * action (tmp_on_signal). Only a default action is replaced. */
+  tmp_catch(SIGINT);
+  tmp_catch(SIGTERM);
 }
 
 /* The private directory's cleanup on a crash, from a fault handler that
@@ -1398,8 +1471,17 @@ void avant_tmp_on_crash(void) {
   tmp_finish();
 }
 
+/* A signal that ends the program (SIGTERM, SIGINT, SIGHUP, a closed
+ * pipe, a crash the fault handler does not take): what the program
+ * printed and stdout still buffers is written first, as a crash's is
+ * (avant_out_pending: the bytes up to the buffer's write pointer, with
+ * write(2), since the signal may stop a write half way), then the
+ * private directory's cleanup, then the signal's default action. */
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
+  if (sig != SIGPIPE) {
+    avant_out_pending();
+  }
   if (g_tmp_ready && getpid() == g_tmp_owner) {
     tmp_stop_children();
   }
@@ -1409,6 +1491,12 @@ static void tmp_on_signal(int sig) {
   sigemptyset(&sa.sa_mask);
   sigaction(sig, &sa, NULL);
   raise(sig);
+}
+
+/* The cleanup's handler, so the fault handler (avant_stack.c) can tell
+ * it from a C library's own when it was installed first. */
+void (*avant_tmp_crash_handler(void))(int) {
+  return tmp_on_signal;
 }
 
 /* An ignored signal stays ignored (nohup, a parent's choice; SIGPIPE is
@@ -1427,6 +1515,102 @@ static void tmp_catch(int sig) {
   sa.sa_handler = tmp_on_signal;
   sigfillset(&sa.sa_mask);
   sigaction(sig, &sa, NULL);
+}
+
+/* std.process.notify: the signals a program asked to see (SIGTERM and
+ * SIGINT, so a server can close and drain, and the others it names). The
+ * handler writes the signal's number to a pipe, the one thing a handler
+ * may do with an Avant program's state (it cannot send on a Channel):
+ * one pipe for each notify call, and the process.Signals that call
+ * returns reads it in recv (avant_sys_signal_wait, waiting natively, on
+ * whichever task calls it), with no reader task and no channel. Such
+ * a signal no longer ends the program: its default action is replaced,
+ * the scratch directory's handler (tmp_catch) included, and the program
+ * decides (the directory is still removed at exit). The crash signals
+ * are not given here (avant_sys_signal_notify refuses them). */
+#define SIG_SLOTS 16
+typedef struct SigSlot {
+  int fd[2];
+  volatile uint32_t mask; /* bit n: signal n */
+} SigSlot;
+static SigSlot g_sig_slots[SIG_SLOTS];
+static volatile int g_sig_nslots;
+static pthread_mutex_t g_sig_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Each notify call's pipe that asked for sig gets its number. */
+static void sig_on_notify(int sig) {
+  int saved = errno;
+  unsigned char b = (unsigned char)sig;
+  int i;
+  int n = g_sig_nslots;
+  for (i = 0; i < n; i++) {
+    if (g_sig_slots[i].mask & (1u << sig)) {
+      ssize_t w = write(g_sig_slots[i].fd[1], &b, 1);
+      (void)w; /* a full pipe drops it: 65536 signals are waiting */
+    }
+  }
+  errno = saved;
+}
+
+/* A notify call's slot for the signals of mask (bit n: signal n): its
+ * pipe, then each signal's handler. -1 for a signal that is not a
+ * catchable one or is a crash signal the runtime keeps, -2 when the
+ * slots (16) or pipes are used up. */
+avant_int avant_sys_signal_notify(avant_int mask) {
+  static const int refused[] = {SIGKILL, SIGSTOP, SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP};
+  struct sigaction sa;
+  int slot;
+  int sig;
+  size_t k;
+  if (mask <= 1 || (uint64_t)mask >= (1ull << 32)) {
+    return -1;
+  }
+  for (k = 0; k < sizeof refused / sizeof refused[0]; k++) {
+    if (mask & (1ll << refused[k])) {
+      return -1;
+    }
+  }
+  pthread_mutex_lock(&g_sig_mu);
+  slot = g_sig_nslots;
+  if (slot >= SIG_SLOTS || pipe(g_sig_slots[slot].fd) != 0) {
+    pthread_mutex_unlock(&g_sig_mu);
+    return -2;
+  }
+  fcntl(g_sig_slots[slot].fd[0], F_SETFD, FD_CLOEXEC);
+  fcntl(g_sig_slots[slot].fd[1], F_SETFD, FD_CLOEXEC);
+  fcntl(g_sig_slots[slot].fd[1], F_SETFL, O_NONBLOCK);
+  g_sig_slots[slot].mask = (uint32_t)mask;
+  __atomic_store_n(&g_sig_nslots, slot + 1, __ATOMIC_RELEASE);
+  pthread_mutex_unlock(&g_sig_mu);
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = sig_on_notify;
+  sa.sa_flags = SA_RESTART;
+  sigfillset(&sa.sa_mask);
+  for (sig = 1; sig < 32; sig++) {
+    if (mask & (1ll << sig)) {
+      sigaction(sig, &sa, NULL);
+    }
+  }
+  return slot;
+}
+
+/* The next signal of the slot's, its number; waits natively (the
+ * collector runs without this thread, and the task stops counting as
+ * running in the pool). */
+avant_int avant_sys_signal_wait(avant_int slot) {
+  unsigned char b = 0;
+  ssize_t r;
+  if (slot < 0 || slot >= g_sig_nslots) {
+    return 0;
+  }
+  avant_task_wait_begin();
+  avant_gc_native_begin();
+  do {
+    r = read(g_sig_slots[slot].fd[0], &b, 1);
+  } while (r < 0 && errno == EINTR);
+  avant_gc_native_end();
+  avant_task_wait_end();
+  return r == 1 ? (avant_int)b : 0;
 }
 
 static int tmp_env_on(const char *name) {
@@ -1478,9 +1662,11 @@ static void tmp_create(void) {
   tmp_catch(SIGPIPE);
   /* A crash removes the directory too: the handler
    * cleans up and re-raises the signal with its default action, so the
-   * process still dies by it (a core dump included). A crash with no
-   * stack left (a stack overflow) runs the stack's own handler instead,
-   * which cleans up too (avant_stack.c, on the thread's signal stack). */
+   * process still dies by it (a core dump included). SIGSEGV and SIGBUS
+   * already have the fault handler of avant_stack.c (installed when the
+   * main thread registers, on the thread's signal stack), which names the
+   * fault or the stack overflow and cleans up the same way; these calls
+   * leave it in place. */
   tmp_catch(SIGSEGV);
   tmp_catch(SIGBUS);
   tmp_catch(SIGFPE);

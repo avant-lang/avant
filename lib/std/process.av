@@ -1,0 +1,200 @@
+// std.process: the program's arguments and environment, and other
+// programs run from it.
+//
+// A program is a String (a name without / is looked up on PATH) and its
+// arguments an Array(String). A program that could not start, or that a
+// signal killed, is a ProcessError (the prelude's error type); a
+// non-zero exit status is no error, only the Int.
+
+lib process_sys {
+  fun avant_sys_run(path: String, args: Array(String), out: String): Int
+  fun avant_sys_errno: Int
+  fun avant_sys_signal: Int
+  fun avant_sys_capture(path: String, args: Array(String), input: String): Int
+  fun avant_sys_captured(which: Int): String
+  fun avant_sys_captured_into(which: Int, dst: Buf): Int
+  fun avant_sys_env_set(name: String, value: String): Int
+  fun avant_sys_more_errno: Int
+  fun avant_sys_more_signal: Int
+  fun avant_sys_signal_notify(mask: Int): Int
+  fun avant_sys_signal_wait(slot: Int): Int
+}
+
+// The program's name, then its arguments.
+pub fn args: Array(String) {
+  argv()
+}
+
+// The environment variable's value; nil when it is not set.
+pub fn env(name: String): String? {
+  env_get(name)
+}
+
+// Sets the environment variable for this program and the programs it
+// runs after. The environment is the process's: set it before starting
+// tasks that read it.
+pub fn env_set(name: String, value: String) {
+  if process_sys.avant_sys_env_set(name, value) != 0 {
+    panic("process.env_set(name, value) needs a name without = or a zero byte, got \"${name}\"")
+  }
+}
+
+// Runs the program and waits; the child shares this program's stdin,
+// stdout and stderr. Its exit status.
+pub fn run(path: String, args: Array(String)): Int | ProcessError {
+  st = process_sys.avant_sys_run(path, args, "")
+  if st == -2 {
+    return ProcessError.new(path, 0, process_sys.avant_sys_signal(), "")
+  }
+  if st < 0 {
+    return ProcessError.new(path, process_sys.avant_sys_errno(), 0, "")
+  }
+  st
+}
+
+// What a finished program gave: its exit status and what it wrote.
+pub class Output {
+  pub status: Int
+  pub stdout: String
+  pub stderr: String
+
+  fn initialize(status: Int, stdout: String, stderr: String) {
+    self.status = status
+    self.stdout = stdout
+    self.stderr = stderr
+  }
+}
+
+// Runs the program with input on its stdin, then the end of its input,
+// and captures its stdout and stderr as they come, so it never stalls.
+pub fn output(path: String, args: Array(String), input: String = ""): Output | ProcessError {
+  st = process_sys.avant_sys_capture(path, args, input)
+  if st < 0 {
+    return failure(path, st)
+  }
+  Output.new(st, process_sys.avant_sys_captured(1), process_sys.avant_sys_captured(2))
+}
+
+// output into the caller's buffers: the child's stdout is appended to out
+// and its stderr to err, and the exit status is the value, so a loop
+// that runs many programs reuses two Bufs.
+pub fn output_into(path: String, args: Array(String), out: Buf, err: Buf, input: String = ""): Int | ProcessError {
+  st = process_sys.avant_sys_capture(path, args, input)
+  if st < 0 {
+    return failure(path, st)
+  }
+  e1 = process_sys.avant_sys_captured_into(1, out)
+  e2 = process_sys.avant_sys_captured_into(2, err)
+  if e1 != 0 {
+    return ProcessError.new(path, e1, 0, "")
+  }
+  if e2 != 0 {
+    return ProcessError.new(path, e2, 0, "")
+  }
+  st
+}
+
+// Why a captured run failed: a signal, or a start (or an output too large
+// to hold) that failed.
+fn failure(path: String, st: Int): ProcessError {
+  if st == -2 {
+    return ProcessError.new(path, 0, process_sys.avant_sys_more_signal(), "")
+  }
+  ProcessError.new(path, process_sys.avant_sys_more_errno(), 0, "")
+}
+
+// A signal, by its Linux name without SIG (`Signal.term` is SIGTERM,
+// `Signal.int` SIGINT, `Signal.pipe` SIGPIPE). `number()` is its number;
+// `process.signal_of(n)` the signal of a number (a ProcessError's
+// `signal`), nil for one that is not among them (a real-time signal).
+pub enum Signal {
+  hup = 1,
+  int,
+  quit,
+  ill,
+  trap,
+  abrt,
+  bus,
+  fpe,
+  kill,
+  usr1,
+  segv,
+  usr2,
+  pipe,
+  alrm,
+  term,
+  stkflt,
+  chld,
+  cont,
+  stop,
+  tstp,
+  ttin,
+  ttou,
+  urg,
+  xcpu,
+  xfsz,
+  vtalrm,
+  prof,
+  winch,
+  io,
+  pwr,
+  sys
+
+  // The signal's number (SIGTERM's 15).
+  pub fn number: Int {
+    self.to_i()
+  }
+}
+
+pub fn signal_of(n: Int): Signal? {
+  // The members are numbered 1 to 31 in order (a member's index, not
+  // from_i's search of every number).
+  if n < 1 || n > 31 {
+    return nil
+  }
+  Signal.members()[n - 1]
+}
+
+// The signals delivered to the program, Go's signal.Notify: a server
+// waits for `Signal.term` (a container's stop) or `Signal.int` (Ctrl-C)
+// in a task and closes and drains (`closer.close()`):
+//
+//   sigs = process.notify([process.Signal.term, process.Signal.int])
+//   closer = server.closer()
+//   _ = spawn {
+//     _ = sigs.recv()
+//     closer.close()
+//   }
+//
+// A signal named here no longer ends the program, from this call on, for
+// the program's life. SIGKILL and SIGSTOP cannot be caught, and the crash
+// signals (segv, bus, fpe, ill, abrt, trap) are the runtime's: naming one
+// traps. Each call has a pipe of its own, which the runtime's handler
+// writes each signal it names to, in order (at most 16 calls); `recv`
+// reads the next.
+pub fn notify(signals: Array(Signal)): Signals {
+  mask = 0
+  for sig in signals {
+    mask = mask | (1 << sig.number())
+  }
+  slot = process_sys.avant_sys_signal_notify(mask)
+  if slot < 0 {
+    if slot == -1 {
+      panic("process.notify: SIGKILL and SIGSTOP cannot be caught, and the crash signals (segv, bus, fpe, ill, abrt, trap) are the runtime's")
+    }
+    panic("process.notify: at most 16 calls in a program")
+  }
+  Signals { slot: slot }
+}
+
+// The signals notify delivers: a number, so it crosses to any task.
+pub struct Signals {
+  slot: Int
+
+  // The next signal, waiting for it (natively: the waiting task does
+  // not count as running in the pool, and the collector runs without
+  // it). Signals that came before are kept, in order, and given first.
+  pub fn recv: Signal? {
+    signal_of(process_sys.avant_sys_signal_wait(self.slot))
+  }
+}

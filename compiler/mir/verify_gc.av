@@ -358,8 +358,8 @@ fn mir_v11_walk(v: MVerifier, lv: MLive, check: Bool): Bool {
       }
       w = 0
       while w < nw {
-        gen[w] = 0u64
-        kill[w] = 0u64
+        gen[w] = 0
+        kill[w] = 0
         w += 1
       }
     }
@@ -377,9 +377,9 @@ fn mir_v11_walk(v: MVerifier, lv: MLive, check: Bool): Bool {
         for w in 0..nw {
           x = live[w] & cand[w]
           if d >= 0 && d / 64 == w {
-            x = x & ~(1u64 << (d % 64).to_u64())
+            x = x & ~(1 << (d % 64).to_u64())
           }
-          if x != 0u64 {
+          if x != 0 {
             mir_v11_report(v, b, j, st, w, x)
           }
         }
@@ -415,7 +415,7 @@ fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
   f = v.func
   ts = v.ts
   for i in 0..64 {
-    if ((x >> i.to_u64()) & 1u64) != 0u64 {
+    if ((x >> i.to_u64()) & 1) != 0 {
       k = w * 64 + i
       if k != st.dest {
         rule = 11
@@ -476,7 +476,7 @@ fn mir_v14(v: MVerifier) {
   preds = mir_preds(f)
   op_out = mir_zero_words(nb * nw)
   for i in 0..op_out.size {
-    op_out[i] = ~0u64
+    op_out[i] = ~0
   }
   op = mir_zero_words(nw)
   changed = true
@@ -522,7 +522,7 @@ fn mir_v14_op_in(f: MFunc, b: Int, preds: Array(Array(Int)), op_out: Array(UInt6
   nw = op.size
   if b == 0 || preds[b].size == 0 {
     for w in 0..nw {
-      op[w] = 0u64
+      op[w] = 0
     }
     if b == 0 && f.fresh_self && f.locals.size > 1 {
       mir_bit_on(op, 0, 1)
@@ -530,7 +530,7 @@ fn mir_v14_op_in(f: MFunc, b: Int, preds: Array(Array(Int)), op_out: Array(UInt6
     return
   }
   for w in 0..nw {
-    op[w] = ~0u64
+    op[w] = ~0
   }
   for p in preds[b] {
     for w in 0..nw {
@@ -564,7 +564,7 @@ fn mir_v14_op_step(v: MVerifier, blk: MBlock, j: Int, op: Array(UInt64)) {
   }
   if st.kind == msk_call() && (st.collects || mir_is_indirect(st)) {
     for w in 0..op.size {
-      op[w] = 0u64
+      op[w] = 0
     }
   }
   d = mir_stmt_def(st)

@@ -35,14 +35,24 @@ pub class LlEmit {
   pub used_alloc_globals: Bool = false
   pub used_alloc_slow: Bool = false
   pub used_poll_global: Bool = false
+  pub used_proof_global: Bool = false
   pub used_frame_global: Bool = false
   pub used_frame_helpers: Bool = false
   pub used_str_nil: Bool = false
+  pub used_buf_nil: Bool = false
   pub frame_words: Int = -1
   pub frame_at: Array(Int)
   pub frame_align: Int = 8
   pub frame_desc: String = ""
   pub frame_maps: Array(String)
+  // The slot locals read through a copy of their own (ll_shadow_slots):
+  // true at each such local's index, in the function being emitted;
+  // whether this module's functions get them (an optimized build), and
+  // whether a call was emitted since the copies were last read again from
+  // the frame record (resync).
+  pub shadow: Array(Bool)
+  pub shadows_on: Bool = false
+  pub resync_pending: Bool = false
   pub cur_file: Int = 0
   pub cur_line: Int = 0
   pub cur_col: Int = 0
@@ -50,6 +60,13 @@ pub class LlEmit {
   tloc_seen: Hash(String, Int)
   pub trap_ovf: Bool = false
   pub trap_div0: Bool = false
+  // The function's arithmetic trap blocks, one per kind and source line
+  // (ll_arith_trap): "ovf FILE LINE" or "div0 FILE LINE", the column of
+  // the line's first check (-1 when its checks have several), and the
+  // index of each key.
+  pub arith_keys: Array(String)
+  pub arith_cols: Array(Int)
+  arith_seen: Hash(String, Int)
   pub trap_bounds: Bool = false
   pub used_stubs: Bool = false
   pub rt_names: Array(String)
@@ -65,6 +82,20 @@ pub class LlEmit {
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
   pub ov_ty: Int = 0
+  // What LLVM is told about the constants computed before main
+  // (ll_const_facts): the functions the start-up reaches, which read
+  // the slots plainly; whether a constant object's own fields may be
+  // marked (no C function is handed a reference); in the function being
+  // emitted, the locals holding a slot's address and those holding the
+  // value loaded from one; for the place just formed, the type a slot
+  // holds (-1 when it is no slot) and whether it is a constant object's
+  // field.
+  pub startup_reach: Set(String) = Set(String).new()
+  pub const_fields: Bool = false
+  pub cslots: Set(Int) = Set(Int).new()
+  pub cvals: Set(Int) = Set(Int).new()
+  pa_cslot: Int = -1
+  pa_cfield: Bool = false
 
   fn initialize(m: MModule) {
     self.m = m
@@ -81,8 +112,36 @@ pub class LlEmit {
     self.loop_md_n = ll_tbaa_last()
     self.frame_at = []
     self.frame_maps = []
+    self.shadow = []
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
+    self.arith_keys = []
+    self.arith_cols = []
+    self.arith_seen = Hash(String, Int).new()
+  }
+
+  // A new function: no arithmetic trap blocks yet.
+  pub fn arith_reset {
+    self.arith_keys = []
+    self.arith_cols = []
+    self.arith_seen = Hash(String, Int).new()
+  }
+
+  // The index of the arithmetic trap block of kind ("ovf", "div0") for
+  // the statement being emitted's line.
+  pub fn arith_block(kind: String): Int {
+    key = "${kind} ${self.cur_file} ${self.cur_line}"
+    if got = self.arith_seen.get(key) {
+      if self.arith_cols[got] != self.cur_col {
+        self.arith_cols[got] = -1
+      }
+      return got
+    }
+    n = self.arith_keys.size
+    self.arith_seen[key] = n
+    self.arith_keys.push(key)
+    self.arith_cols.push(self.cur_col)
+    n
   }
 
   // The source site of the statement being emitted, for a trap's
@@ -245,6 +304,51 @@ pub class LlEmit {
     local_name(n)
   }
 
+  // Whether local n is a slot local read through its copy.
+  pub fn shadowed(n: Int): Bool {
+    n < self.shadow.size && self.shadow[n]
+  }
+
+  // The address local n is read at: its copy's for a shadowed slot
+  // local, which holds the slot's value at every point between two calls
+  // (ll_shadow_slots), else local_addr's.
+  pub fn read_addr(n: Int): String {
+    if shadowed(n) {
+      return "%sh${n}"
+    }
+    local_addr(n)
+  }
+
+  // A store of a whole local's value: into its place, and into its copy
+  // when it is shadowed.
+  pub fn store_local(n: Int, val: String) {
+    ty = self.f.locals[n].ty
+    store(ty, val, local_addr(n), slot_vol(n))
+    if shadowed(n) {
+      store(ty, val, "%sh${n}", false)
+    }
+  }
+
+  // After a call that may collect or write a slot: every shadowed slot
+  // local's copy read again from the frame record, where a moving
+  // collection rewrote it. A copy read again and not used before its
+  // local's next store is dead, and the optimizer removes the load. Once
+  // per call: an inline fast path calls it in its slow block, right after
+  // the runtime's call, so that the fast path keeps the copies.
+  pub fn resync {
+    if !self.resync_pending {
+      return
+    }
+    self.resync_pending = false
+    for i in 0..self.shadow.size {
+      if self.shadow[i] {
+        t = tmp()
+        line("${t} = load ptr, ptr ${local_addr(i)}, align 8")
+        line("store ptr ${t}, ptr %sh${i}, align 8")
+      }
+    }
+  }
+
   // Rule E2: no slot access is volatile. A collection reads and rewrites
   // a thread's slots only while that thread is stopped at a safepoint (a
   // collecting call, the poll) or native (inside a call), in a shared
@@ -295,7 +399,7 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = local_addr(p.local)
+    ptr = read_addr(p.local)
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an
@@ -308,6 +412,11 @@ pub class LlEmit {
     region = 0
     pend = 0
     arr = false
+    self.pa_cslot = -1
+    self.pa_cfield = false
+    if self.cslots.size > 0 {
+      const_place(p, ty)
+    }
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
@@ -374,6 +483,40 @@ pub class LlEmit {
     ptr
   }
 
+  // A read of a constant computed before main (ll_const_facts): `*_a`
+  // with _a a slot's address, or a field of the object loaded from one
+  // (`(*_v).f`): an Array's buffer reference or size (not its capacity
+  // word, which a task's freeze counts in), or any field of a class
+  // object (none is assigned outside initialize).
+  fn const_place(p: MPlace, ty: Int) {
+    if p.proj.size == 1 && p.proj[0].kind == mpk_deref() && self.cslots.has(p.local) {
+      self.pa_cslot = self.ts.get(ty).pointee
+      return
+    }
+    if self.const_fields && p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && self.cvals.has(p.local) {
+      l = self.ts.get(ty).layout
+      if l >= 0 {
+        lk = self.ts.layouts[l].kind
+        self.pa_cfield = lk == mlk_class() || (lk == mlk_array() && p.proj[1].field < 2)
+      }
+    }
+  }
+
+  // The marks of such a read: the slot's value never changes after the
+  // start-up (its object is pinned) and, a reference, is never null and
+  // spans its layout; a pinned constant object's field never changes.
+  fn const_marks: String {
+    t = ", !invariant.load !13"
+    if self.pa_cslot >= 0 && self.ts.is_refkind(self.pa_cslot) {
+      t = "${t}, !nonnull !13, !align !{i64 8}"
+      l = self.ts.get(self.pa_cslot).layout
+      if l >= 0 && self.ts.layouts[l].size > 0 {
+        t = "${t}, !dereferenceable !{i64 ${self.ts.layouts[l].size}}"
+      }
+    }
+    t
+  }
+
   // An index operand as i64 (sign-extended from i32).
   fn index64(o: MOperand): String {
     if o.kind == mok_int() {
@@ -410,6 +553,9 @@ pub class LlEmit {
       tag = self.pa_tbaa
       if self.pa_size {
         tag = tag + ll_size_range()
+      }
+      if self.pa_cslot >= 0 || self.pa_cfield {
+        tag = tag + const_marks()
       }
       x = load_tagged(ty, ptr, self.pa_vol, tag)
       self.ov_ty = ty
@@ -563,7 +709,7 @@ pub fn ll_plain(s: String): Bool {
 // A global symbol: mangled names are always quoted; C names bare
 // when LLVM allows it.
 pub fn ll_sym(name: String): String {
-  if str_starts(name, "av.") || !ll_plain(name) {
+  if name.starts_with("av.") || !ll_plain(name) {
     return "@\"${name}\""
   }
   "@${name}"

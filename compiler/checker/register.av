@@ -13,18 +13,12 @@ import checker.names
 import checker
 import checker.init
 import checker.hints
+import checker.receiver
+import checker.visibility
 
 pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
   if id = checker_self.fn_index.get(name) {
     return checker_self.functions[id]
-  }
-  nil
-}
-
-pub fn (checker_self: Checker) find_method(owner: String, name: String): FuncSig? {
-  key = "${owner}__${name}"
-  if id = checker_self.method_index.get(key) {
-    return checker_self.methods[id]
   }
   nil
 }
@@ -87,12 +81,13 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   n
 }
 
-// A public function of another module with the same name and parameters:
-// both take their module in their emit name, which stays unique.
+// A public function of another module with the same name and parameters,
+// or parameters whose names read the same (two modules' C types of one
+// name): both take their module in their emit name, which stays unique.
 pub fn (checker_self: Checker) pub_twin_elsewhere(sig: FuncSig): Bool {
   for i in 1..checker_self.functions.size {
     other = checker_self.functions[i]
-    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && params_same(other.params, sig.params) {
+    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && (params_same(other.params, sig.params) || sig_mangle("", other.params) == sig_mangle("", sig.params)) {
       return true
     }
   }
@@ -290,6 +285,11 @@ pub fn (checker_self: Checker) check: Program {
   while i < checker_self.program.functions.size {
     checker_self.clear_poison()
     fnn = checker_self.program.functions[i]
+    if fnn.mod_name == "std.json" && fnn.owner.size == 0 && fnn.name.size > 6 && str_slice(fnn.name, 0, 6) == "codec_" {
+      // The typed decode's and encode's pieces (checker/json_codec.av):
+      // lowered only when a call reaches them.
+      fnn.lazy = true
+    }
     if fn_is_method(fnn) {
       checker_self.register_method(fnn)
     } else {
@@ -318,6 +318,13 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.assign_emit_names()
   checker_self.clear_poison()
   checker_self.check_field_defaults()
+  if checker_self.any_err() {
+    return checker_self.program
+  }
+  // The constants computed before main, each value checked in the
+  // order they are computed, before any body reads one
+  // (checker/const_values.av).
+  checker_self.check_const_inits()
   if checker_self.any_err() {
     return checker_self.program
   }
@@ -356,7 +363,9 @@ pub fn (checker_self: Checker) check: Program {
   }
   i = 0
   while i < checker_self.pending.size {
+    mark = checker_self.errors.items.size
     checker_self.check_function(checker_self.pending[i])
+    checker_self.move_instance_errors(checker_self.pending[i], mark)
     i += 1
   }
   // Generic class instances made while checking the bodies get their
@@ -375,10 +384,18 @@ pub fn (checker_self: Checker) check: Program {
   // Array a running task reads (checker/spawn.av).
   checker_self.clear_poison()
   checker_self.check_element_writes()
+  // A class that crossed a task as a handle keeps its fields
+  // (checker/spawn.av).
+  checker_self.clear_poison()
+  checker_self.check_handle_classes(fns)
   // A method that changes its receiver, called on a block parameter that
   // is a copy (checker/places.av).
   checker_self.clear_poison()
   checker_self.check_copy_calls()
+  // A constant computed before main never changes, and reads only the
+  // values computed before it (checker/const_values.av).
+  checker_self.clear_poison()
+  checker_self.check_const_values(fns)
   checker_self.program
 }
 
@@ -418,8 +435,19 @@ pub fn (checker_self: Checker) check_aliases {
   for al2 in checker_self.program.aliases {
     checker_self.clear_poison()
     checker_self.current_module = al2.mod_name
-    _ = checker_self.resolve_in_module(clone_type_name(al2.target))
+    probe = TypeName.new(al2.loc, al2.name)
+    probe.mod_name = al2.mod_name
+    if g = checker_self.resolver.generic_alias_target(probe) {
+      // An alias of a generic type names the generic, resolved with each
+      // use's type arguments.
+      continue
+    }
+    mark = checker_self.err_count()
+    aty = checker_self.resolve_in_module(clone_type_name(al2.target))
     checker_self.pull_resolve()
+    if !checker_self.new_err_since(mark) {
+      checker_self.alias_tys[type_slot(al2.mod_name, al2.name)] = aty
+    }
   }
   checker_self.current_module = saved
 }
@@ -435,7 +463,21 @@ pub fn (checker_self: Checker) check_type_name(name: String, loc: Location, what
   }
 }
 
+// A lib block's C signatures name its module's types: a C layout of one
+// name in two modules is each module's own (before, every signature was
+// resolved outside any module, so one module's `Ptr(Pair)` named the
+// other's layout).
 pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
+  saved_mod = checker_self.current_module
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.current_module = lib_def.mod_name
+  checker_self.resolver.scope_mod = lib_def.mod_name
+  checker_self.register_lib_in(lib_def)
+  checker_self.current_module = saved_mod
+  checker_self.resolver.scope_mod = saved_scope
+}
+
+pub fn (checker_self: Checker) register_lib_in(lib_def: LibDef) {
   if id = checker_self.lib_names.get(lib_def.name) {
     other = ""
     if o = checker_self.lib_mod.get(lib_def.name) {
@@ -463,7 +505,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       checker_self.fail(cfun.loc, "C function ${cfun.name} collides with an Avant function")
       return
     }
-    if rid = checker_self.reserved.get(cfun.name) {
+    if checker_self.reserved.has(cfun.name) {
       checker_self.fail(cfun.loc, "C function ${cfun.name} is reserved: the runtime defines it and the compiler calls it with its own signature; choose another name")
       return
     }
@@ -471,7 +513,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     k = 0
     while k < cfun.params.size {
       checker_self.resolver.c_scalar_ok = true
-      pty = checker_self.resolver.resolve_value(cfun.params[k].type)
+      pty = checker_self.resolve_value_in_module(cfun.params[k].type)
       checker_self.resolver.c_scalar_ok = false
       checker_self.pull_resolve()
       if pty.is_fn() {
@@ -502,7 +544,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     ret = checker_self.t_void()
     if t = cfun.return_type {
       checker_self.resolver.c_scalar_ok = true
-      ty = checker_self.resolver.resolve(t)
+      ty = checker_self.resolve_in_module(t)
       checker_self.resolver.c_scalar_ok = false
       checker_self.pull_resolve()
       if ty.is_opaque() {
@@ -535,17 +577,25 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
               where = " in ${fm}"
             }
           }
-          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${c_sig_text(first.params, first.ret)}${where}; a second binding of it must declare the same signature, not ${c_sig_text(params, ret)}")
+          was = c_sig_text(first.params, first.ret)
+          now = c_sig_text(params, ret)
+          if was == now {
+            // Two modules' C layouts of one name read the same: each
+            // named with its module.
+            was = c_sig_text_mod(first.params, first.ret)
+            now = c_sig_text_mod(params, ret)
+          }
+          checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}${was}${where}; a second binding of it must declare the same signature, not ${now}")
           return
         }
       }
     }
     sig = CFunSig.new(cfun.name, lib_def.name, params, ret)
     m = lib_def.mod_name
-    sig.runtime = m == "prelude" || m == "task" || (m.size > 4 && str_slice(m, 0, 4) == "std.")
+    sig.runtime = m == "prelude" || m == "task" || (m.size > 4 && m.starts_with("std."))
     checker_self.cfuns.push(sig)
     checker_self.cfun_index[key] = checker_self.cfuns.size - 1
-    if !checker_self.c_symbols.has_key(cfun.name) {
+    if !checker_self.c_symbols.has(cfun.name) {
       checker_self.c_symbols[cfun.name] = key
     }
   }
@@ -572,6 +622,50 @@ pub fn c_sigs_same(ap: Array(Ty), ar: Ty, bp: Array(Ty), br: Ty): Bool {
   true
 }
 
+// `is GOT, expected WANT` of an argument's message; when the two read the
+// same (two modules' C types of one name), each C type is named with its
+// module.
+pub fn (checker_self: Checker) arg_is_text(got: Ty, want: Ty): String {
+  g = got.show()
+  w = want.show()
+  if g == w {
+    g = c_ty_text_mod(got)
+    w = c_ty_text_mod(want)
+  }
+  "is ${g}, expected ${w}"
+}
+
+// A binding's signature with each C layout and opaque C type named by
+// its module: `(Int, Int): Ptr(ma.Pair)`.
+pub fn c_sig_text_mod(params: Array(Ty), ret: Ty): String {
+  out = "("
+  i = 0
+  while i < params.size {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + c_ty_text_mod(params[i])
+    i += 1
+  }
+  out = out + ")"
+  if !ret.is_void() {
+    out = out + ": " + c_ty_text_mod(ret)
+  }
+  out
+}
+
+pub fn c_ty_text_mod(t: Ty): String {
+  if t.is_ptr() {
+    if e = t.inner {
+      return "Ptr(${c_ty_text_mod(e)})"
+    }
+  }
+  if (t.is_clayout() || t.is_opaque()) && t.mod_name.size > 0 {
+    return "${t.mod_name}.${t.show()}"
+  }
+  t.show()
+}
+
 // A binding's signature as written: `(Int32, String): Int`.
 pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
   out = "("
@@ -590,6 +684,41 @@ pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
   out
 }
 
+// The refusal of a function named name, declared in module mod_name,
+// whose calls a builtin takes: a builtin function (`puts`, `exit`,
+// `panic`, `now_ms`, ...) runs at every call `name(...)`, and a prelude
+// name that moved to a std module is refused at every call with its new
+// spelling, so the function would never be called; "" for any other
+// name. `join` is a method (of an Array, of a task's handle), not a free
+// builtin: a function of that name is called.
+pub fn builtin_fn_shadow_text(name: String, mod_name: String): String {
+  if mod_name == "prelude" {
+    return ""
+  }
+  if mod_name.starts_with("std.") && name == "sha256" {
+    // std.digest's own sha256, called digest.sha256(...).
+    return ""
+  }
+  twin = retired_twin_name(name)
+  if twin.size > 0 {
+    return "fn ${name}: ${name} is the prelude's old spelling of ${twin}, and every call ${name}(...) is refused with that spelling, so this function would never be called; give it another name"
+  }
+  moved = moved_io_name(name)
+  if moved.size > 0 {
+    return "fn ${name}: ${name} is the prelude's old name of ${moved}, and every call ${name}(...) is refused with that spelling, so this function would never be called; give it another name"
+  }
+  if name != "join" && prelude_call_name(name) {
+    return "fn ${name}: ${name} is a builtin function, and every call ${name}(...) is the builtin's, so this function would never be called; give it another name"
+  }
+  ""
+}
+
+// Whether fnn may be the program's entry: it is in the root module (or
+// the program has none).
+pub fn (checker_self: Checker) entry_module(fnn: Function): Bool {
+  checker_self.root_module.size == 0 || fnn.mod_name.size == 0 || fnn.mod_name == checker_self.root_module
+}
+
 pub fn (checker_self: Checker) register_function(fnn: Function) {
   if is_op_fn_name(fnn.name) {
     checker_self.fail(fnn.loc, "operator methods need a receiver")
@@ -601,11 +730,21 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  if fnn.name == "run" {
+  if fnn.name == "run" && !fnn.vis {
+    // Another module's pub fn run is an ordinary function (std.process's
+    // run); only the root's is the entry.
     if checker_self.root_module.size > 0 && fnn.mod_name != checker_self.root_module && fnn.mod_name.size > 0 {
       checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
       return
     }
+  }
+  // A builtin's name: every call of it is the builtin's (checker.av
+  // check_call_parts tries the builtins first), so a function of that
+  // name would never be called.
+  shadow = builtin_fn_shadow_text(fnn.name, fnn.mod_name)
+  if shadow.size > 0 {
+    checker_self.fail(fnn.loc, shadow)
+    return
   }
   if id = checker_self.lib_names.get(fnn.name) {
     checker_self.fail(fnn.loc, "function ${fnn.name} collides with a lib")
@@ -630,7 +769,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  if fnn.name == "run" {
+  if fnn.name == "run" && checker_self.entry_module(fnn) {
     if tparams.size > 0 {
       checker_self.fail(fnn.loc, "run cannot be generic")
       return
@@ -696,7 +835,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   }
   checker_self.current_module = saved_mod
-  if fnn.name == "main" || fnn.name == "run" {
+  if fnn.name == "main" || (fnn.name == "run" && checker_self.entry_module(fnn)) {
     if ret.is_void() {
     } else if !ret.is_int() {
       checker_self.fail(fnn.loc, checker_self.entry_rule_text(fnn.name, ret.show()))
@@ -1375,4 +1514,33 @@ pub fn op_arity_text(name: String, n: Int): String {
     }
   }
   ""
+}
+
+// The errors an instance's body gave (those after mark) are the call's
+// that made the instance, the outermost one when an instance made
+// another: a program sees its own line, and the message names the
+// instance and the place in the generic code.
+pub fn (checker_self: Checker) move_instance_errors(f: Function, mark: Int) {
+  if checker_self.errors.items.size <= mark {
+    return
+  }
+  if call = f.inst_call {
+    loc = call
+    note = "in ${f.inst_shown}"
+    g = f.inst_from
+    while true {
+      if h = g, hc = h.inst_call {
+        loc = hc
+        note = "${note}, called from ${h.inst_shown}"
+        g = h.inst_from
+      } else {
+        break
+      }
+    }
+    k = mark
+    while k < checker_self.errors.items.size {
+      checker_self.errors.items[k].move_to(loc, note)
+      k += 1
+    }
+  }
 }

@@ -1,0 +1,197 @@
+import harness
+import std.fs
+import std.process
+
+// The String key hash is a keyed function: a secret drawn per process
+// (fixed by AVANT_HASH_SEED, so a measurement repeats its probes) enters
+// every word of the key, so keys that collide under one secret do not
+// under another, and no rule over the key's bytes alone makes them
+// collide. avant_hash_str_hash gives the hash a String key of the given
+// bytes takes; it is called with the key's bytes and their count.
+
+lib hash_keyed_rt {
+  fun avant_hash_str_hash(s: String, n: Int): Int
+}
+
+fn key_hash(k: String): Int {
+  hash_keyed_rt.avant_hash_str_hash(k, k.size)
+}
+
+// Every spelling of LOWER with some of its letters taken from UPPER, the
+// same word in capitals (2^size keys): they differ in
+// bit 5 of their bytes only. A hash whose low bits depend on the low bits
+// of the bytes alone, whatever its seed (FNV-1a with the seed in its start
+// value), puts them all in one bucket of a table of 32 positions or fewer.
+fn case_spellings(lower: String, upper: String): Array(String) {
+  out: Array(String) = []
+  n = lower.size
+  m = 0
+  while m < (1 << n) {
+    k = ""
+    j = 0
+    while j < n {
+      if ((m >> j) & 1) == 1 {
+        k = k + upper[j..j + 1]
+      } else {
+        k = k + lower[j..j + 1]
+      }
+      j += 1
+    }
+    out.push(k)
+    m += 1
+  }
+  out
+}
+
+fn low_bits_spread(keys: Array(String), mask: Int): Int {
+  seen = Set(Int).new()
+  for k in keys {
+    _ = seen.add(key_hash(k) & mask)
+  }
+  seen.size
+}
+
+fn test_spread(c: Checks) {
+  // 64 keys over 32 low-bit values: a random function leaves about 28
+  // distinct; fewer than 16 has a chance far below one in a billion.
+  keys = case_spellings("abcdef", "ABCDEF")
+  c.eq_int(keys.size, 64, "64 case spellings")
+  c.expect(low_bits_spread(keys, 31) >= 16, "case spellings spread over the low 5 bits (${low_bits_spread(keys, 31)} of 32)")
+  long_keys: Array(String) = []
+  for k in keys {
+    long_keys.push("${k}, then a longer key of forty bytes")
+  }
+  c.expect(low_bits_spread(long_keys, 31) >= 16, "40-byte keys differing in bit 5 of their first bytes spread too")
+  c.expect(low_bits_spread(case_spellings("abcdefghij", "ABCDEFGHIJ"), 1023) >= 512, "1024 spellings of 10 bytes over 1024 values")
+}
+
+// A key of every length from 0 to 48: each lookup through a slice and
+// through two pieces, split at every point, finds the key, so the hash of
+// two pieces is the hash of their bytes as one key, at every length the
+// short and long paths take.
+fn test_pieces(c: Checks) {
+  // No spaces: get_slice trims its slice.
+  src = "The-quick-brown-fox-jumps-over-the-lazy-dog,0123456789"
+  h = Hash(String, Int).new()
+  hs = Hash(String, String).new()
+  n = 0
+  while n <= 48 {
+    h[src[0..n]] = n
+    hs[src[0..n]] = "${n}"
+    n += 1
+  }
+  bad = 0
+  n = 0
+  while n <= 48 {
+    key = src[0..n]
+    if (hs.get_slice(src, 0, n) ?? "") != "${n}" {
+      bad += 1
+    }
+    if key_hash(key) != key_hash("${key}") {
+      bad += 1
+    }
+    i = 0
+    while i <= n {
+      if (h.get_concat(key[0..i], key[i..n]) ?? -1) != n {
+        bad += 1
+      }
+      i += 1
+    }
+    n += 1
+  }
+  c.eq_int(bad, 0, "slices and pieces of every length and split find their key")
+  s: Set(String) = []
+  for k in case_spellings("abcdefgh", "ABCDEFGH") {
+    _ = s.add(k)
+  }
+  c.eq_int(s.size, 256, "a Set of case spellings keeps them all")
+  hits = 0
+  for k in case_spellings("abcdefgh", "ABCDEFGH") {
+    if s.has(k) {
+      hits += 1
+    }
+  }
+  c.eq_int(hits, 256, "and finds each")
+}
+
+// The hook called from C with a String in each of its forms: a `lib`
+// call gives C a flat string as itself, a view that ends its base as the
+// address of its bytes inside the base (no header of its own before
+// them), and any other view as a fresh copy. Each gives the hash of its
+// flat copy's bytes. A slice of 64 bytes or more, and a quarter of its
+// string or more, is a view sharing its string's bytes; the hook once
+// read such a slice at the end of a literal as a string object and
+// crashed.
+fn test_views(c: Checks) {
+  lit = "The quick brown fox jumps over the lazy dog; the five boxing wizards jump quickly, again."
+  heap = "${lit}${lit}"
+  bad = 0
+  for src in [lit, heap] {
+    n = src.size
+    for k in [src[n - 64..], src[n - 80..], src[1..], src[8..n - 8], src[0..64], src] {
+      if key_hash(k) != key_hash("${k}") {
+        bad += 1
+      }
+    }
+  }
+  c.eq_int(bad, 0, "a view that ends its base, a view inside it and a flat string hash as their flat copies")
+  for i in 0..65 {
+    k = lit[lit.size - i..]
+    if key_hash(k) != key_hash("${k}") {
+      bad += 1
+    }
+  }
+  c.eq_int(bad, 0, "every tail of a literal hashes as its copy")
+  c.expect(key_hash("") == key_hash(lit[5..5]), "the empty key's hash")
+}
+
+// The hashes a program prints under three seeds: AVANT_HASH_SEED=0 twice
+// gives the same hashes, and those are the function's known answers for
+// that secret; another seed gives other hashes.
+fn test_seeds(c: Checks) {
+  if compiler = process.env("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "${scratch()}/hash-keyed-${stamp}.av"
+    bin = "${scratch()}/hash-keyed-${stamp}"
+    clog = "${scratch()}/hash-keyed-${stamp}-cc.log"
+    body = "lib k {\n  fun avant_hash_str_hash(s: String, n: Int): Int\n}\nfn main {\n  for s in [\"\", \"a\", \"abc\", \"abcd\", \"hello world!\", \"0123456789abcdef\", \"0123456789abcdefg\", \"a key of forty bytes, give or take one!!\"] {\n    puts(k.avant_hash_str_hash(s, s.size))\n  }\n}\n"
+    c.wrote(fs.write(src, body), "write the seed probe")
+    c.eq_int(compile_av(compiler, src, bin, clog), 0, "compile the seed probe")
+    if fs.exists(bin) {
+      chmod_x(bin)
+      outs: Array(String) = []
+      for seed in ["0", "0", "1"] {
+        log = "${scratch()}/hash-keyed-${stamp}-${outs.size}.log"
+        code = run_out("/usr/bin/env", ["AVANT_HASH_SEED=${seed}", bin], log) ?? -1
+        c.eq_int(code, 0, "run the seed probe (AVANT_HASH_SEED=${seed})")
+        outs.push(fs.read(log) ?? "")
+      }
+      c.eq_str(outs[0], outs[1], "AVANT_HASH_SEED=0 repeats its hashes")
+      c.eq_str(outs[0], known_seed0(), "the known answers under AVANT_HASH_SEED=0")
+      c.expect(outs[0] != outs[2], "another seed gives other hashes")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  c.suite("tests/cases/test_hash_keyed.av")
+  test_spread(c)
+  test_pieces(c)
+  test_views(c)
+  test_seeds(c)
+  c.finish()
+}
+
+// The function's answers for the probe's keys under the secret
+// AVANT_HASH_SEED=0 derives, as an independent implementation of it
+// computes them (lengths 0, 1, 3, 4, 12, 16, 17 and 40: every path).
+fn known_seed0: String {
+  "4223743209\n261612863\n1065696343\n2027452599\n3017020195\n3923427755\n372860947\n861967022\n"
+}

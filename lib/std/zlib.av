@@ -6,19 +6,26 @@ lib zlibc {
   fun avant_zlib_take_status: Int
 }
 
-pub class ZlibError: Error {
-  pub message: String
+// Why a zlib call failed: the input is not zlib data (invalid_data),
+// or the result would not fit a Buf's size limit (too_large). The
+// runtime's status codes are 1 and 2.
+pub enum ZlibError: Error {
+  invalid_data
+  too_large
 
-  fn initialize(message: String) {
-    self.message = message
+  pub fn message: String {
+    switch self {
+      case invalid_data { "invalid zlib data" }
+      case too_large { "the zlib result would pass a Buf's size limit" }
+    }
   }
 }
 
 fn zlib_error(code: Int): ZlibError {
   if code == 1 {
-    return ZlibError.new("invalid zlib data")
+    return ZlibError.invalid_data
   }
-  ZlibError.new("zlib error")
+  ZlibError.too_large
 }
 
 pub fn (b: Bytes) compress: Bytes {

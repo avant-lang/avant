@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The thread-locals generated code reads in its hot loops (the
 // allocation cursor and limits, the start bits' base, the frame chain's
@@ -15,13 +17,13 @@ import harness
 // them and fails this test.
 fn test_tls_place(c: Checks) {
   c.suite("tests/cases/test_tls_place.av")
-  compiler = env_get("AVANT_COMPILER") ?? ""
+  compiler = process.env("AVANT_COMPILER") ?? ""
   if compiler.size == 0 {
     return
   }
   dir = scratch_dir()
   write_av(dir, "plain", "fn main: Int {\n  puts(\"plain\")\n  0\n}\n")
-  write_av(dir, "regex", "import std.regex\n\nfn main: Int {\n  r = Regex.compile(\"a+b\") else e {\n    return 1\n  }\n  puts(r.is_closed())\n  0\n}\n")
+  write_av(dir, "regex", "import std.regex\n\nfn main: Int {\n  r = regex.Regex.compile(\"a+b\") else e {\n    return 1\n  }\n  puts(r.is_closed())\n  0\n}\n")
   names = ["avant_gc_bump", "avant_gc_limit", "avant_gc_limit_mt", "avant_gc_top", "avant_gc_base", "avant_gc_starts"]
   offsets: Array(Int) = []
   sizes: Array(Int) = []
@@ -35,9 +37,9 @@ fn test_tls_place(c: Checks) {
     args: Array(String) = []
     args.push("-c")
     args.push(script)
-    status = process_run_out("/bin/sh", args, log) ?? -1
+    status = run_out("/bin/sh", args, log) ?? -1
     c.eq_int(status, 0, "tls place: readelf reads the ${prog} program")
-    out = file_read(log) ?? ""
+    out = fs.read(log) ?? ""
     lines = out.split("\n")
     seen = 0
     for line in lines {

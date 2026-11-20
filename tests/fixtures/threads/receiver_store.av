@@ -1,0 +1,30 @@
+// A method that changes its struct receiver, called on an element of an
+// array it is given, starts a task that reads the array and then stores
+// to its receiver while the task still runs: the store would change an
+// element the task reads, so it stops the program, naming the call and
+// the store's place.
+import std.sync
+
+struct Pos {
+  x: Int
+  y: Int
+
+  fn tally(xs: Array(Pos), gate: sync.Channel(Int)) {
+    h = spawn {
+      _ = gate.recv()
+      xs.size
+    }
+    self.x = 5
+    gate.send(1)
+    n = h.join() ?? -1
+    self.x = n + 700
+  }
+}
+
+fn main {
+  xs: Array(Pos) = [Pos { x: 1, y: 2 }]
+  gate = sync.Channel(Int).new(1)
+  puts("start")
+  xs[0].tally(xs, gate)
+  puts("${xs[0].x} ${xs.size}")
+}

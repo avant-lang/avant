@@ -26,7 +26,7 @@ fn bad_acc: Acc {
 }
 
 // A task that sets n to 5 and traps, poisoning m.
-fn poison(m: Mutex(Acc)) {
+fn poison(m: sync.Mutex(Acc)) {
   xs = [1, 2, 3]
   h = spawn {
     m.with (acc) {
@@ -42,11 +42,11 @@ fn poison(m: Mutex(Acc)) {
   puts("not trapped: ${v}")
 }
 
-fn bump(m: Mutex(Acc)): Void | MutexError {
+fn bump(m: sync.Mutex(Acc)): Void | sync.MutexError {
   m.try_with (acc) { acc.n += 1 }?
 }
 
-fn report_bump(m: Mutex(Acc), label: String) {
+fn report_bump(m: sync.Mutex(Acc), label: String) {
   bump(m) else e {
     puts("${label}: ${e}")
     return
@@ -54,7 +54,7 @@ fn report_bump(m: Mutex(Acc), label: String) {
   puts("${label}: ok")
 }
 
-fn statement_try(m: Mutex(Acc)) {
+fn statement_try(m: sync.Mutex(Acc)) {
   m.try_with (acc) { acc.n += 1 } else e {
     puts("statement: ${e}")
     return
@@ -71,26 +71,26 @@ fn join_task(h: JoinHandle(Int), label: String) {
 }
 
 fn main {
-  a = argv()
+  a = process.args()
   kind = "heal"
   if a.size > 1 {
     kind = a[a.size - 1]
   }
   if kind == "heal" {
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
     poison(m)
     puts("poisoned: ${m.poisoned()}")
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
     puts("poisoned: ${m.poisoned()}")
   } else if kind == "heal-lambda" {
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: 7 } })
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: 7 } })
     poison(m)
     r = m.try_with (acc) { acc.n * 2 }
     puts("try_with: ${r ?? -1}")
   } else if kind == "heal-task" {
     // Another task meets the poison and heals it.
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
     poison(m)
     h = spawn {
       m.with (acc) {
@@ -103,7 +103,7 @@ fn main {
   } else if kind == "heal-traps" {
     // The recover function traps in a task: that task ends, and the
     // mutex stays poisoned until m.recover.
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
     poison(m)
     h = spawn {
       m.with (acc) { acc.n }
@@ -115,21 +115,21 @@ fn main {
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
   } else if kind == "recover" {
-    m = Mutex(Acc).new(Acc { n: 0 })
+    m = sync.Mutex(Acc).new(Acc { n: 0 })
     poison(m)
     m.recover(Acc { n: 11 })
     puts("poisoned: ${m.poisoned()}")
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
   } else if kind == "clear" {
-    m = Mutex(Acc).new(Acc { n: 0 })
+    m = sync.Mutex(Acc).new(Acc { n: 0 })
     poison(m)
     m.clear_poison()
     puts("poisoned: ${m.poisoned()}")
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
   } else if kind == "try-void" {
-    m = Mutex(Acc).new(Acc { n: 1 })
+    m = sync.Mutex(Acc).new(Acc { n: 1 })
     report_bump(m, "healthy")
     poison(m)
     statement_try(m)
@@ -144,15 +144,15 @@ fn main {
     // made: the assignments after the call do not reach the rebuild.
     base = 30
     label = "rebuilt"
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + label.size } })
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + label.size } })
     base = 100
     label = "changed later"
     poison(m)
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
-    ms: Array(Mutex(Acc)) = []
+    ms: Array(sync.Mutex(Acc)) = []
     for i in 0..3 {
-      ms.push(Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + i } }))
+      ms.push(sync.Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + i } }))
     }
     base = 0
     got: Array(Int) = []
@@ -163,10 +163,13 @@ fn main {
     puts("each: ${got[0]} ${got[1]} ${got[2]}")
   } else if kind == "heal-main-traps" {
     // On the main thread a trap in the recover function ends the program.
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
+    m = sync.Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
     poison(m)
     n = m.with (acc) { acc.n }
     puts("never ${n}")
   }
   puts("after")
 }
+
+// Imported last, so no line the goldens name moves.
+import std.process

@@ -1,5 +1,6 @@
 import harness
 import backends
+import std.process
 
 // std.http on the new back end (AVANT_BACKEND=llvm):
 // tests/cases/test_std_http.av, compiled by the new back end,
@@ -34,13 +35,29 @@ fn test_std_http_llvm(c: Checks, compiler: String, root: String, dir: String) {
       what = "under ${envs[i]}"
     }
     c.eq_int(run[0].code, 0, "test_std_http.av built by the llvm back end, ${what}: passes")
+    if run[0].code != 0 {
+      // The child's own report is in files the runner does not keep:
+      // show its failed checks and the end of its stderr here.
+      out = log_text("${dir}/http.${i}.out")
+      for line in out.split("\n") {
+        if line.contains("✕") || line.contains("got ") {
+          c.expect(false, "child: ${line}")
+        }
+      }
+      err = log_text("${dir}/http.${i}.err")
+      start = 0
+      if err.size > 2000 {
+        start = err.size - 2000
+      }
+      c.expect(false, "child stderr: ${err[start..]}")
+    }
     i += 1
   }
 }
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_std_http_llvm.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_std_http_llvm(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

@@ -4,7 +4,8 @@
 #   sh tools/readme-check.sh [FILE.md]        (default: README.md)
 #   sh tools/readme-check.sh --plan [FILE.md] (extract and plan only: no compiler)
 #
-# The gate runs it on README.md and on CONTRIBUTING.md.
+# The gate runs it on README.md, on CONTRIBUTING.md and on DESIGN.md
+# (readme-check.sh there once DESIGN.md holds a fenced block).
 #
 # Every ```avant block of the document is compiled, and run, with the
 # compiler under test, and what the document says a program prints is

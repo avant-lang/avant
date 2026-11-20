@@ -139,8 +139,6 @@ static void gc_settings_read(GcSettings *s) {
   }
 }
 
-_Atomic uint32_t g_avant_str_gen;
-
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
@@ -372,7 +370,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
   t0 = now_ns();
   gc_thread.collecting = 1;
-  atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
   /* Every thread's remembered-set buffer joins the set
    * before anything reads it. */
@@ -671,6 +668,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
+    /* What this cycle used beyond its live bytes joins the retention
+     * history (GcHeap.cycle_peak); the next cycle's peak starts here. */
+    gc_heap.retain_hist[gc_heap.retain_at++ % RETAIN_CYCLES] =
+        gc_heap.cycle_peak > gc_heap.heap_bytes ? gc_heap.cycle_peak - gc_heap.heap_bytes : 0;
+    gc_heap.cycle_peak = gc_heap.heap_bytes;
     /* Free memory beyond the retention target goes back to the OS. */
     gc_heap_return(gc_heap.live);
     if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
@@ -1048,12 +1050,19 @@ void avant_gc_collect(void) {
  * a `?` that returns). Under AVANT_GC_STRESS=1 a hold is inactive, so a
  * stress run collects inside it as it would without it, and the hold
  * hides no missing root. */
+/* Whether this thread is inside a hold, for the runtime's inline
+ * allocation (avant_rt.h, avant_alloc_try_inline): with the young budget
+ * spent, a hold's allocations collect nothing, and avant_alloc would only
+ * take its locked path for them. */
+__thread uint32_t avant_gc_hold_open;
+
 void avant_gc_hold_begin(void) {
   gc_init();
   if (gc_heap.set.stress) {
     return;
   }
   if (gc_thread.hold++ == 0) {
+    avant_gc_hold_open = 1;
     gc_alloc_sync();
     gc_thread.hold_base = avant_g_stats.allocated_bytes;
     gc_thread.hold_site = __builtin_return_address(0);
@@ -1074,6 +1083,7 @@ void avant_gc_hold_end(void) {
   if (--gc_thread.hold > 0) {
     return;
   }
+  avant_gc_hold_open = 0;
   young = gc_thread.hold_young;
   gc_thread.hold_young = 0;
   gc_alloc_sync();

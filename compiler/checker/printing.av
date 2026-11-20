@@ -27,6 +27,10 @@ pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
     return checker_self.t_string()
   }
   if expr.args.size != 0 {
+    if object.is_integer() {
+      checker_self.fail(expr.loc, "${object.show()}.to_s takes no arguments, or one base (n.to_s(16))")
+      return checker_self.t_string()
+    }
     checker_self.fail(expr.loc, "${object.show()}.to_s takes no arguments")
     return checker_self.t_string()
   }
@@ -197,5 +201,23 @@ pub fn (checker_self: Checker) check_exit_call(expr: Expr): Ty {
   }
   // A status of another type is the mismatch check_expr_as reports.
   checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+  checker_self.t_void()
+}
+
+// panic(message): one String, printed as a trap's line with the call's
+// site, after which the program exits with status 1 (in a task, the task
+// ends with the trap, as any trap ends it). It never returns, so a block
+// that ends with it leaves (ast_is_exit_call), and it may stand after
+// `??` where `return` may (parser.av parse_infix_rest).
+pub fn (checker_self: Checker) check_panic_call(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "panic does not take a block")
+    return checker_self.t_void()
+  }
+  if expr.args.size != 1 {
+    checker_self.fail(expr.loc, "panic takes one String, the message")
+    return checker_self.t_void()
+  }
+  checker_self.check_expr_as(expr.args[0], checker_self.t_string())
   checker_self.t_void()
 }

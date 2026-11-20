@@ -131,6 +131,9 @@
 #define HEAP_RESERVE_GB_DEFAULT 64
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
+/* RETAIN_CYCLES: the full collections whose use of memory beyond the live
+ * bytes the retention target remembers (GcHeap.cycle_peak). */
+#define RETAIN_CYCLES 4
 /* Card marking for large pointer buffers: a card is
  * 2^CARD_SHIFT bytes of heap address space, one byte
  * of the side table gc_heap.cards. Settable at build time for a
@@ -147,6 +150,7 @@
 #endif
 #define CARD_SIZE (1u << CARD_SHIFT)
 #define SCALAR_LOS_MIN 6144
+_Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes size is SCALAR_LOS_MIN");
 /* The default young budget: 4 MiB, chosen among 4, 8 and 16 MiB on the
  * final collector (LangArena prod at each: total wall time 42.29 /
  * 42.53 / 42.67 s, average RSS 28.27 / 28.21 / 29.02 MB, worst memory
@@ -704,7 +708,9 @@ typedef struct BlockSet {
  * an object that is not young when the barrier's slow call logs the
  * references it holds, cleared when the next full collection begins (the
  * holders list). A header copied by the defragmenter never carries it
- * (the bits are cleared before anything moves). */
+ * (the bits are cleared before anything moves). Generated code reads it
+ * too: the inline pop of a reference takes no call for a logged buffer
+ * (compiler/llvm/emit_gc.av ll_array_pop). */
 #define AVANT_FLAG_LOGGED 512u
 
 /* The collector's counters, per family. AvantGcStats (avant_rt.h, ABI:
@@ -1219,8 +1225,8 @@ typedef struct GcProof {
  * collector unit and guarded by the world lock unless a field says
  * otherwise. The fields are grouped by the unit that owns them. What the
  * generated code reads or writes by name stays outside (the inline
- * allocation path's thread-locals and counters, avant_g_stats,
- * g_avant_str_gen), as does g_avant_shared, which the
+ * allocation path's thread-locals and counters, avant_g_stats), as
+ * does g_avant_shared, which the
  * runtime's other units read. Per-thread state is GcThread. */
 typedef struct GcHeap {
   /* avant_gc_heap.c. The reservation: base is 4 MiB
@@ -1279,6 +1285,16 @@ typedef struct GcHeap {
    * program that never runs a full collection
    * can return memory; under E it equals the full-collection count. */
   uint64_t return_clock;
+  /* The heap's bytes at their highest since the last full collection
+   * (cycle_peak, gc_note_cycle_peak), and what the last RETAIN_CYCLES full
+   * collections found the program used beyond its live bytes (the peak
+   * less the live bytes after each; retain_hist, a ring at retain_at):
+   * gc_heap_return keeps the largest of them resident, so the memory one
+   * cycle of the program needs is not given back for the next to fault
+   * in again. */
+  uint64_t cycle_peak;
+  uint64_t retain_hist[RETAIN_CYCLES];
+  uint32_t retain_at;
   /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
    * bit and bytes (GcSpace). */
   GcSpace space[SPACE_COUNT];
@@ -1683,6 +1699,14 @@ typedef struct GcHeap {
 
 extern GcHeap gc_heap;
 
+/* GcHeap.cycle_peak, where the heap's bytes grow (a block taken, a large
+ * object's run). */
+static inline void gc_note_cycle_peak(void) {
+  if (gc_heap.heap_bytes > gc_heap.cycle_peak) {
+    gc_heap.cycle_peak = gc_heap.heap_bytes;
+  }
+}
+
 /* A mutator thread's collector state: gc_thread, thread-local, defined
  * in avant_gc_roots.c. */
 typedef struct GcThread {
@@ -1700,6 +1724,9 @@ typedef struct GcThread {
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
   int alloc_mature;
+  /* The next large Bytes this thread allocates keeps whatever its pages
+   * held (avant_alloc_bytes_unzeroed): set only around that call. */
+  int los_nozero;
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
   ThreadReg reg;
@@ -1834,7 +1861,8 @@ extern __thread GcThread gc_thread;
  * world lock the collector holds). Its object may
  * move like any rooted object (S+'s copy and defragmentation rewrite the
  * slot); until then it was PINNED while rooted, because the worker read
- * it while other threads collected. */
+ * it while other threads collected. (A constant's slot is no root: its
+ * value lives outside the collected heap, avant_const_ready.) */
 #define EACH_TASK_ROOT(SLOT, BODY)                                       \
   do {                                                                   \
     AvantGcTaskRoot *etr_r_;                                             \
@@ -1871,6 +1899,7 @@ void gc_heap_reserve(void);
 Block *gc_block_take(void);
 void gc_block_give(Block *b);
 uint64_t gc_chunk_take(uint64_t n);
+int gc_chunk_take_at(uint64_t first, uint64_t n);
 void gc_chunk_give(uint64_t c);
 void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
@@ -1936,6 +1965,8 @@ void gc_cards_settle(void);
 void gc_rem_merge_all(void);
 void gc_rem_thread_leave(void);
 void gc_hdr_or(AvantHeader *h, uint16_t bits);
+void gc_verify_consts(void);
+uint64_t gc_const_region_bytes(void);
 void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
 /* The young generation is S+: candidate S, the

@@ -1,0 +1,42 @@
+// What the receiver's check lets through: the method's stores before the
+// task starts and after its join (this thread's call is then the
+// freeze's only count), a store while a task reads another array, a
+// store in a method of self and through a struct field, and a growth
+// once the call has returned.
+struct Q {
+  y: Int
+}
+
+struct Pos {
+  x: Int
+  q: Q
+
+  fn bump {
+    self.q.y += 1
+  }
+
+  fn tally(xs: Array(Pos)) {
+    self.x = 3
+    h = spawn { xs.size }
+    n = h.join() ?? -1
+    self.bump()
+    self.x = n + 700
+  }
+
+  fn other(xs: Array(Pos), ys: Array(Pos)) {
+    h = spawn { ys.size }
+    self.q.y = 40
+    n = h.join() ?? -1
+    self.x += n
+  }
+}
+
+fn main {
+  xs: Array(Pos) = [Pos { x: 1, q: Q { y: 2 } }]
+  ys: Array(Pos) = [Pos { x: 0, q: Q { y: 0 } }, Pos { x: 0, q: Q { y: 0 } }]
+  xs[0].tally(xs)
+  xs.push(Pos { x: 9, q: Q { y: 9 } })
+  puts("${xs[0].x} ${xs[0].q.y} ${xs.size}")
+  xs[0].other(xs, ys)
+  puts("${xs[0].x} ${xs[0].q.y}")
+}

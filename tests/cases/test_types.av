@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Unions and T?, methods on any type, overloads, operator methods,
 // generics as instantiated, and named interfaces on the new back
@@ -100,7 +102,7 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
     j = jobs[base + i]
     c.eq_int(j.code, 0, "${gn[i]}: dump under llvm exits 0")
     want = "(no golden)"
-    if t = file_read("${root}/tests/goldens/types/${gn[i]}.mir") {
+    if t = fs.read("${root}/tests/goldens/types/${gn[i]}.mir") {
       want = t
     }
     c.eq_str(log_text(j.log), want, "tests/fixtures/types/${gn[i]}.av: the MIR dump is tests/goldens/types/${gn[i]}.mir")
@@ -176,7 +178,7 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_types.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_types(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

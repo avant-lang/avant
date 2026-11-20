@@ -19,7 +19,12 @@ fi
 # after it by 16-byte steps, and with them tasks' times (up to 14%;
 # tools/placement-probe.sh measures it).
 place="-falign-functions=64 -falign-loops=32"
-cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
+# A source path in an object (`__FILE__` of an `assert`, as picohttpparser's)
+# is written relative to the checkout (runtime/...), so a program built in
+# one checkout is byte for byte the one built from the same commit in
+# another.
+prefix="-ffile-prefix-map=$root=runtime"
+cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place $prefix -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
 compile() {
   "$cc" -c $cflags -o "$2" "$1"
@@ -98,7 +103,7 @@ build_core "$root/build"
 # The seed-ABI copy an older build made (a 32-bit avant_int for the
 # v0.40.0 seed's B) is gone; a checkout built before keeps none.
 rm -rf "$root/build/seed-abi"
-for name in avant_json.c avant_http.c avant_base64.c avant_sys.c avant_os.c; do
+for name in avant_json.c avant_http.c avant_base64.c avant_sys.c avant_os.c avant_digest.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
 

@@ -6,25 +6,25 @@ import std.sync
 
 fn main {
   // Closed, buffered with room: false, nothing stored.
-  a = Channel(Int).new(2)
+  a = sync.Channel(Int).new(2)
   a.close()
   puts(a.send(1))
   puts(a.recv() ?? -1)
   // Buffered: true until closed; the value sent before stays.
-  b = Channel(Int).new(1)
+  b = sync.Channel(Int).new(1)
   puts(b.send(1))
   b.close()
   puts(b.send(2))
   puts(b.recv() ?? -1)
   puts(b.recv() ?? -1)
   // Rendezvous, closed: false at once.
-  c = Channel(Int).new()
+  c = sync.Channel(Int).new()
   c.close()
   puts(c.send(3))
   // Full and waiting: the close wakes the sender with false.
-  d = Channel(Int).new(1)
+  d = sync.Channel(Int).new(1)
   puts(d.send(1))
-  started = Channel(Int).new(1)
+  started = sync.Channel(Int).new(1)
   h = spawn {
     _ = started.send(1)
     n = 0
@@ -40,8 +40,8 @@ fn main {
   puts(d.recv() ?? -1)
   // Rendezvous and waiting for a receiver: the close wakes the sender
   // with false, and its value is not received.
-  e = Channel(Int).new()
-  ready = Channel(Int).new(1)
+  e = sync.Channel(Int).new()
+  ready = sync.Channel(Int).new(1)
   h2 = spawn {
     _ = ready.send(1)
     n = 0
@@ -56,7 +56,7 @@ fn main {
   puts(e.recv() ?? -1)
   // Rendezvous with a receiver: true, and the receiver gets each value
   // once even with several senders.
-  f = Channel(Int).new()
+  f = sync.Channel(Int).new()
   senders: Array(JoinHandle(Int)) = []
   for i in 1..5 {
     k = i

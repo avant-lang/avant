@@ -69,10 +69,14 @@ pub class MirClosures {
   pub env: Int = -1
   pub boxed: Array(String) = []
   pub box_local: Hash(String, Int) = Hash(String, Int).new()
-  pub box_ready: Hash(String, Int) = Hash(String, Int).new()
+  pub box_ready: Set(String) = Set(String).new()
   pub cap_at: Hash(String, Int) = Hash(String, Int).new()
   pub cap_tys: Array(Ty) = []
   pub pending: Array(MirLam) = []
+  // The thunks already queued, by symbol: a deferred block lowered on
+  // several ways out lowers its lambdas there several times, and each
+  // thunk is made once.
+  pub queued: Set(String) = Set(String).new()
   pub lam_n: Hash(String, Int) = Hash(String, Int).new()
 }
 
@@ -100,16 +104,19 @@ pub class MirCb {
 // loop depth, lw_heads.size, where each was opened).
 pub class MirFfi {
   pub cbs: Array(MirCb) = []
-  pub cb_seen: Hash(String, Int) = Hash(String, Int).new()
+  pub cb_seen: Set(String) = Set(String).new()
   // The key types of the hashes keyed by their type's own hash and
   // equality, each once (by its MIR text), and where its first hash is
   // made: their two thunks are written after the functions
   // (lower_hash.av lower_key_thunks).
   pub ukeys: Array(Ty) = []
   pub ukey_locs: Array(Location) = []
-  pub ukey_seen: Hash(String, Int) = Hash(String, Int).new()
+  pub ukey_seen: Set(String) = Set(String).new()
   pub pins: Array(Int) = []
   pub pin_depth: Array(Int) = []
+  // The `defer` statements whose blocks wait, innermost last: entry j's
+  // pin entry is mir_defer_base() - j (lower_stmt.av lower_defer).
+  pub defers: Array(Stmt) = []
   // A `Mutex.with` block's pin entry is -2 - h, h the local holding the
   // mutex; this is the index of its gate field (lower_task.av).
   pub with_gate: Hash(Int, Int) = Hash(Int, Int).new()
@@ -117,7 +124,14 @@ pub class MirFfi {
   pub fn reset_pins {
     self.pins = []
     self.pin_depth = []
+    self.defers = []
   }
+}
+
+// The pin entry of the deferred block j is mir_defer_base() - j, below
+// every other entry (a `Mutex.with`'s is -2 - h, h a local).
+pub fn mir_defer_base: Int {
+  -1099511627776
 }
 
 // A spawn or `.parallel` thunk waiting to be lowered (lower_task.av): the
@@ -143,6 +157,8 @@ pub class MirTask {
 // mutex, the cell's field index), innermost last.
 pub class MirTasks {
   pub pending: Array(MirTask) = []
+  // The thunks already queued, by symbol (MirClosures.queued).
+  pub queued: Set(String) = Set(String).new()
   pub done: Int = 0
   pub count: Int = 0
   pub n: Hash(String, Int) = Hash(String, Int).new()
@@ -304,10 +320,10 @@ pub class MirLower {
   // ---- locations (9): the file table holds paths relative to the root
   // source's directory, else to the Avant root, else as given.
   pub fn rel_path(path: String): String {
-    if self.lw_root_dir.size > 0 && str_starts(path, "${self.lw_root_dir}/") {
+    if self.lw_root_dir.size > 0 && path.starts_with("${self.lw_root_dir}/") {
       return str_slice(path, self.lw_root_dir.size + 1, path.size)
     }
-    if self.lw_avant_root.size > 0 && str_starts(path, "${self.lw_avant_root}/") {
+    if self.lw_avant_root.size > 0 && path.starts_with("${self.lw_avant_root}/") {
       return str_slice(path, self.lw_avant_root.size + 1, path.size)
     }
     path
@@ -369,7 +385,7 @@ pub class MirLower {
     }
     // Symbols are collision-free by construction; a collision
     // would be a defect of the scheme, so it stops the lowering.
-    taken = Hash(String, Int).new()
+    taken = Set(String).new()
     i = 0
     while i < fns.size {
       sym = ""
@@ -381,11 +397,10 @@ pub class MirLower {
       if self.failed() {
         return
       }
-      if taken.has_key(sym) {
+      if !taken.add(sym) {
         refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
         return
       }
-      taken[sym] = 1
       self.lw_fn_syms[fns[i].emit_name] = sym
       i += 1
     }
@@ -398,9 +413,11 @@ pub class MirLower {
       prewalk_function(fns[i])
       i += 1
     }
+    self.prewalk_startup_consts()
     if self.failed() {
       return
     }
+    self.note_startup_consts()
     has_main = false
     run_fn: Function? = nil
     for f in fns {
@@ -423,6 +440,9 @@ pub class MirLower {
       i += 1
     }
     self.lw_cov.rank = 1000000
+    // The constants computed before main (lower_const.av).
+    self.lower_const_inits()
+    self.lower_pending_lambdas()
     self.lower_ctors()
     self.lower_pending_lambdas()
     // The spawn and .parallel thunks after the constructors (the old back
@@ -452,9 +472,9 @@ pub class MirLower {
   // new call reaches one (one may call another: an error enum's text
   // calls its message, which calls name).
   pub fn lower_lazy(fns: Array(Function)) {
-    called = Hash(String, Int).new()
+    called = Set(String).new()
     scanned = 0
-    done = Hash(String, Int).new()
+    done = Set(String).new()
     grow = true
     while grow && !self.failed() {
       grow = false
@@ -462,7 +482,7 @@ pub class MirLower {
         for bb in self.lw_m.funcs[scanned].blocks {
           for st in bb.stmts {
             if st.kind == msk_call() && st.callee.size > 0 {
-              called[st.callee] = 1
+              called.add(st.callee)
             }
           }
         }
@@ -474,10 +494,10 @@ pub class MirLower {
           continue
         }
         if sym = self.lw_fn_syms.get(f.emit_name) {
-          if done.has_key(sym) || !called.has_key(sym) {
+          if done.has(sym) || !called.has(sym) {
             continue
           }
-          done[sym] = 1
+          done.add(sym)
           self.lw_cov.rank = i
           lower_function(f)
           self.lower_pending_lambdas()
@@ -569,7 +589,7 @@ pub class MirLower {
     self.lw_cl.base = ""
     self.lw_cl.boxed = mir_no_names()
     self.lw_cl.box_local = Hash(String, Int).new()
-    self.lw_cl.box_ready = Hash(String, Int).new()
+    self.lw_cl.box_ready = Set(String).new()
   }
 
   // The checked signature of a function or a method (methods are in the
@@ -627,6 +647,16 @@ pub class MirLower {
         sname = "${fnn.owner}.${fnn.name}"
       }
       mf = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
+      mf.in_lib = mir_lib_source(fnn.mod_name, fnn.loc.path)
+      if !self.lw_main {
+        mf.nonnull.push(false)
+        if recv >= 0 {
+          mf.nonnull.push(true)
+        }
+        for pt in fs.params {
+          mf.nonnull.push(!pt.is_nil() && !pt.includes_nil())
+        }
+      }
       // A class's initialize: its receiver is the object its constructor
       // just allocated (MFunc.fresh_self, fresh.av).
       if fnn.name == "initialize" && !fnn.type_method && recv >= 0 && !self.lw_m.types.is_addr(recv) {
@@ -673,6 +703,9 @@ pub class MirLower {
     args.push(self.lw_b.copy_local(2))
     self.lw_b.call(-1, "avant_io_init_argv", args)
     self.cov_init()
+    if self.has_startup_consts() {
+      self.lw_b.call(-1, self.consts_symbol(), none)
+    }
   }
 
   // The end of a body that falls through: a void function returns (a
@@ -782,6 +815,12 @@ pub fn mir_no_names: Array(String) {
 // verifier rejects at stage lowered is a lowering bug: its errors are the
 // message, prefixed so they read as internal.
 // root_path is the root source file; avant_root the Avant root (std).
+// Whether a declaration comes from the standard library (a `std.` module)
+// or a prelude part (a `<...>` path, the compiler's own text).
+pub fn mir_lib_source(mod_name: String, path: String): Bool {
+  path.starts_with("<") || mod_name.starts_with("std.")
+}
+
 pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String): MirLowered {
   mir_lower_program(program, symbols, root_path, avant_root, "")
 }
@@ -823,5 +862,6 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   mir_upsert_pass(lw.lw_m)
   mir_loop_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
+  mir_caller_sites(lw.lw_m)
   MirLowered.new(lw.lw_m, "")
 }

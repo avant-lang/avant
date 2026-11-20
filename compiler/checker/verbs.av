@@ -210,6 +210,12 @@ pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): T
     }
     return checker_self.t_string()
   }
+  if c == "binary_search" {
+    return checker_self.check_binary_search(expr, array, e)
+  }
+  if c == "sort_by" {
+    return checker_self.check_sort_by(expr, array, e)
+  }
   if !(c == "dup" || c == "reversed" || c == "first" || c == "last" || c == "unique") {
     return nil
   }
@@ -243,6 +249,92 @@ pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): T
       }
       checker_self.call_verb_template(expr, "__avant_unique_eq", e)
     }
+  }
+  res
+}
+
+// `xs.binary_search(v)`: the index of an element equal to v in an array
+// sorted by the element's order, the first such one, or nil (`Int?`).
+// The element type orders as `sort` needs: a number, a String, Bytes, a
+// Bool, or a type with its own order (`compare` or `<`), whose elements
+// are equal when neither comes first.
+pub fn (checker_self: Checker) check_binary_search(expr: Expr, array: Ty, e: Ty): Ty {
+  res = ty_nilable(checker_self.t_int())
+  if b = expr.block {
+    checker_self.fail(expr.loc, "binary_search takes one value, not a function")
+    return res
+  }
+  if expr.args.size != 1 {
+    checker_self.fail(expr.loc, "binary_search takes one value, the element to find")
+    return res
+  }
+  got = checker_self.check_expr_as(expr.args[0], e)
+  if checker_self.has_err() {
+    return res
+  }
+  if !ty_assignable(got, e) {
+    checker_self.fail(expr.args[0].loc, "binary_search expects ${e.show()}, got ${got.show()}")
+    return res
+  }
+  if checker_self.is_ordered_ty(e) {
+    checker_self.call_verb_template(expr, "__avant_binary_search", e)
+  } else if checker_self.has_order(e, expr.loc) {
+    checker_self.call_verb_template(expr, "__avant_binary_search_ord", e)
+  } else {
+    checker_self.fail(expr.loc, "binary_search needs an ordered element type, got ${array.show()}: a number, a String, Bytes, or a type with fn compare")
+  }
+  res
+}
+
+// `xs.sort_by((x) { key })`: sorted in place by each element's key,
+// stable, the key computed once per element (an array of keys sorted
+// with the elements, through the template's index order). The key is
+// any type with an order (a number, a String, Bytes, a type with fn
+// compare). Written as the call of the
+// template `__avant_sort_by(xs, (x) { key })`, which infers the key's
+// type from the lambda.
+pub fn (checker_self: Checker) check_sort_by(expr: Expr, array: Ty, e: Ty): Ty {
+  res = checker_self.t_void()
+  key = Expr.new(ex_lambda(), expr.loc)
+  if bl = expr.block {
+    if expr.args.size != 0 {
+      checker_self.fail(expr.loc, "sort_by takes one function, (x) { key }")
+      return res
+    }
+    if !bl.paren {
+      checker_self.fail(bl.loc, "sort_by takes a lambda: write sort_by((x) { key }) or sort_by (x) { key }")
+      return res
+    }
+    if bl.params.size != 1 {
+      checker_self.fail(bl.loc, "sort_by takes a function of one parameter, (x) { key }")
+      return res
+    }
+    key = Expr.new(ex_lambda(), bl.loc)
+    key.block = bl
+  } else if expr.args.size == 1 {
+    // A function by its name, or a variable holding one.
+    key = expr.args[0]
+  } else {
+    checker_self.fail(expr.loc, "sort_by takes one function, (x) { key }")
+    return res
+  }
+  recv = Expr.new(ex_name(), expr.loc)
+  if r = expr.receiver {
+    recv = r
+  } else {
+    return res
+  }
+  if sig = checker_self.verb_template("__avant_sort_by") {
+    args: Array(Expr) = []
+    args.push(recv)
+    args.push(key)
+    expr.args = args
+    expr.block = nil
+    expr.receiver = nil
+    expr.callee = "__avant_sort_by"
+    expr.method_call = false
+    // A key without an order is the instance's error, reported here.
+    checker_self.check_expr(expr)
   }
   res
 }
@@ -311,7 +403,7 @@ pub fn (checker_self: Checker) check_array_change(expr: Expr, array: Ty, e: Ty):
   if c == "shuffle" || c == "shuffled" {
     r = checker_self.check_expr(expr.args[0])
     if !(r.is_class() && r.name == "Random") {
-      checker_self.fail(expr.args[0].loc, "${c} takes a Random (import std.random; Random.new(seed)), got ${r.show()}")
+      checker_self.fail(expr.args[0].loc, "${c} takes a Random (import std.random; random.Random.new(seed)), got ${r.show()}")
       return res
     }
     tys: Array(Ty) = []
@@ -371,9 +463,7 @@ pub fn (checker_self: Checker) call_verb_template_of(expr: Expr, name: String, s
     if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
       args: Array(Expr) = []
       args.push(recv)
-      for a in expr.args {
-        args.push(a)
-      }
+      args.concat(expr.args)
       expr.args = args
       expr.receiver = nil
       expr.callee = name
@@ -440,6 +530,16 @@ pub fn verb_template_source(name: String): String {
   }
   if name == "__avant_unique_eq" {
     return "fn __avant_unique_eq(xs: Array(T)): Array(T) {\n  out: Array(T) = []\n  for x in xs {\n    if !out.has(x) {\n      out.push(x)\n    }\n  }\n  out\n}\n"
+  }
+  if name == "__avant_binary_search" || name == "__avant_binary_search_ord" {
+    found = "xs[lo] == v"
+    if name == "__avant_binary_search_ord" {
+      found = "!(v < xs[lo])"
+    }
+    return "fn ${name}(xs: Array(T), v: T): Int? {\n  lo = 0\n  hi = xs.size\n  while lo < hi {\n    mid = lo + (hi - lo) / 2\n    if xs[mid] < v {\n      lo = mid + 1\n    } else {\n      hi = mid\n    }\n  }\n  if lo < xs.size && ${found} {\n    return lo\n  }\n  nil\n}\n"
+  }
+  if name == "__avant_sort_by" {
+    return "fn __avant_sort_by(xs: Array(T), key: fn(T): K) {\n  n = xs.size\n  if n < 2 {\n    return\n  }\n  keys: Array(K) = []\n  keys.reserve(n)\n  for i in 0..n {\n    keys.push(key(xs[i]))\n  }\n  order = Array(Int).new(n, (i) { i })\n  order.sort((a, b) { keys[a] < keys[b] })\n  ys = xs.dup()\n  for i in 0..n {\n    xs[i] = ys[order[i]]\n  }\n}\n"
   }
   if name == "__avant_fill" {
     return "fn __avant_fill(xs: Array(T), v: T) {\n  i = 0\n  while i < xs.size {\n    xs[i] = v\n    i += 1\n  }\n}\n"
@@ -534,6 +634,61 @@ pub fn (checker_self: Checker) check_array_fn_verb(expr: Expr, array: Ty, e: Ty)
     b.key_ty = bt
   } else if !bt.is_bool() {
     checker_self.fail(b.loc, "the predicate of ${c} must give a Bool, got ${bt.show()}")
+  }
+  res
+}
+
+// `h.delete_if((k, v) { ... })` on a Hash, `s.delete_if((v) { ... })` on
+// a Set: the entries the predicate holds for removed, in one pass in
+// place, the others kept in their order (the walk in place, each entry
+// read once; its parameters are copies, as each's are). Void.
+pub fn (checker_self: Checker) check_hash_delete_if(expr: Expr, hash: Ty, is_set: Bool): Ty {
+  res = checker_self.t_void()
+  form = "(k, v) { ... }"
+  n = 2
+  if is_set {
+    form = "(v) { ... }"
+    n = 1
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "delete_if takes one function, ${form}")
+    return res
+  }
+  b = Block.new(expr.loc)
+  if bl = expr.block {
+    b = bl
+  } else {
+    checker_self.fail(expr.loc, "delete_if takes one function, ${form}")
+    return res
+  }
+  if !b.paren {
+    checker_self.fail(b.loc, "delete_if takes a lambda: write delete_if(${form}) or delete_if ${form}")
+    return res
+  }
+  if b.params.size != n {
+    checker_self.fail(b.loc, "delete_if on ${hash.show()} takes a function of ${n} parameters, ${form}")
+    return res
+  }
+  if k = hash.key {
+    saved_for = checker_self.for_names.size
+    checker_self.refuse_block_param_outer(b, "delete_if")
+    checker_self.push_scope()
+    checker_self.bind(b.params[0], k)
+    checker_self.note_for_var(b.params[0], 8)
+    if !is_set {
+      if v = hash.val {
+        checker_self.bind(b.params[1], v)
+        checker_self.note_for_var(b.params[1], 8)
+      }
+    }
+    checker_self.loop_depth += 1
+    bt = checker_self.check_walk_value(b, "delete_if", checker_self.t_bool())
+    checker_self.loop_depth -= 1
+    checker_self.pop_scope()
+    checker_self.end_for_vars(saved_for)
+    if !checker_self.has_err() && !bt.is_bool() {
+      checker_self.fail(b.loc, "the predicate of delete_if must give a Bool, got ${bt.show()}")
+    }
   }
   res
 }

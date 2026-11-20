@@ -43,7 +43,15 @@ pub class HashKeyUse {
 pub class TypeResolver {
   pub named: Hash(String, Int)
   pub collide: Hash(String, Int)
+  // The opaque C types, by type_key(module, name): one per module that
+  // writes the name (a module's lib block, else its other declarations
+  // when no lib block writes it), so two packages' Ptr(Ctx) are two
+  // types; opaque_mod is a name's first module, opaque_n its count of
+  // modules and opaque_text them all ("a and b").
   opaques: Hash(String, Int)
+  opaque_mod: Hash(String, String)
+  opaque_n: Hash(String, Int)
+  opaque_text: Hash(String, String)
   interned: Array(Ty)
   failed: Bool = false
   err: CompileError? = nil
@@ -78,6 +86,19 @@ pub class TypeResolver {
   aliases: Array(AliasDef)
   alias_ix: Hash(String, Int)
   alias_inflight: Array(String)
+  // For each alias in flight, how many Array elements and Hash values
+  // deep the resolution was when it began (in_container then): an alias
+  // met again deeper than that is a recursive alias.
+  alias_depth: Array(Int)
+  in_container: Int = 0
+  // The recursive aliases (Ty.rec) by type_key: made when the body first
+  // names the alias, filled when the body is resolved.
+  rec_aliases: Hash(String, Ty)
+  // A Hash whose value is a recursive alias still being resolved (its
+  // members unknown then): checked once the alias is.
+  rec_hash_at: Array(Location)
+  rec_hash_key: Array(Ty)
+  rec_hash_val: Array(Ty)
   pub bound_uses: Array(BoundUse)
   pub hash_key_uses: Array(HashKeyUse)
 
@@ -88,6 +109,12 @@ pub class TypeResolver {
     self.collide = col
     o = Hash(String, Int).new()
     self.opaques = o
+    om = Hash(String, String).new()
+    self.opaque_mod = om
+    on = Hash(String, Int).new()
+    self.opaque_n = on
+    ot = Hash(String, String).new()
+    self.opaque_text = ot
     inn: Array(Ty) = []
     inn.push(ty_void())
     self.interned = inn
@@ -112,6 +139,12 @@ pub class TypeResolver {
     ai = Hash(String, Int).new()
     self.alias_ix = ai
     self.alias_inflight = []
+    self.alias_depth = []
+    ra = Hash(String, Ty).new()
+    self.rec_aliases = ra
+    self.rec_hash_at = []
+    self.rec_hash_key = []
+    self.rec_hash_val = []
     self.bound_uses = []
     self.hash_key_uses = []
     self.inst_depth = 0
@@ -258,6 +291,12 @@ pub class TypeResolver {
     if tn.fn_type || tn.members.size > 0 || tn.mod_name.size > 0 || tn.pinned {
       return
     }
+    if mod_name.size > 0 {
+      if t0 = get_named(tn.name), t0.mod_name != mod_name && t0.mod_name.starts_with("std.") {
+        fail(tn.loc, std_bare_text(tn.name, t0.mod_name))
+        return
+      }
+    }
     if flag = self.collide.get(tn.name) {
       owners = seen_owners(tn.name, mod_name)
       if owners.size > 1 {
@@ -331,7 +370,7 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == self.scope_mod {
           for imp in info.imports {
-            if imp != self.scope_mod && template_in(imp, name) && type_is_pub(p, imp, name) {
+            if imp != self.scope_mod && !imp.starts_with("std.") && template_in(imp, name) && type_is_pub(p, imp, name) {
               out.push(imp)
             }
           }
@@ -357,6 +396,38 @@ pub class TypeResolver {
     false
   }
 
+  // A std module other than from that declares the type name (generic or
+  // not), or "": a std module's types are written with its name
+  // (`sync.Mutex(Int)`, `fs.Reader`), never bare outside it.
+  pub fn std_owner_of(name: String, from: String): String {
+    if p = self.program {
+      for sdef in p.structs {
+        if sdef.name == name && sdef.mod_name != from && sdef.mod_name.starts_with("std.") {
+          return sdef.mod_name
+        }
+      }
+      for cdef in p.classes {
+        if cdef.name == name && cdef.mod_name != from && cdef.mod_name.starts_with("std.") {
+          return cdef.mod_name
+        }
+      }
+    }
+    ""
+  }
+
+  pub fn std_bare_text(name: String, owner: String): String {
+    last = owner
+    i = owner.size - 1
+    while i >= 0 {
+      if owner[i] == 46 {
+        last = str_slice(owner, i + 1, owner.size)
+        break
+      }
+      i -= 1
+    }
+    "${name} needs its module's name: write ${last}.${name}; a std module's types are not named bare"
+  }
+
   // The modules whose type name mod_name sees: its own, then each import
   // that declares it pub, in import order.
   pub fn seen_owners(name: String, mod_name: String): Array(String) {
@@ -368,7 +439,9 @@ pub class TypeResolver {
       for info in p.mods {
         if info.name == mod_name {
           for imp in info.imports {
-            if imp != mod_name && type_is_pub(p, imp, name) {
+            // A module's own type wins over the prelude's of its name.
+            own_wins = imp == "prelude" && out.size > 0
+            if imp != mod_name && !imp.starts_with("std.") && !own_wins && type_is_pub(p, imp, name) {
               if t2 = get_named_in(imp, name) {
                 out.push(imp)
               }
@@ -404,11 +477,61 @@ pub class TypeResolver {
     get_named(name)
   }
 
-  pub fn get_opaque(name: String): Ty? {
-    if id = self.opaques.get(name) {
+  // The opaque C type name of module mod_name, or nil.
+  pub fn get_opaque_in(mod_name: String, name: String): Ty? {
+    if id = self.opaques.get(type_key(mod_name, name)) {
       return ty_at(id)
     }
     nil
+  }
+
+  // The opaque C type a use of name means: the module qual's when the
+  // use qualifies it (Ptr(net.Ctx)), else the current module's own
+  // (scope_mod), else the one module's that writes it; nil when none
+  // does, or when several do (opaque_ambiguous).
+  pub fn get_opaque_for(qual: String, name: String): Ty? {
+    if qual.size > 0 {
+      return get_opaque_in(qual, name)
+    }
+    if self.scope_mod.size > 0 {
+      if own = get_opaque_in(self.scope_mod, name) {
+        return own
+      }
+    }
+    if n = self.opaque_n.get(name), n == 1 {
+      if m = self.opaque_mod.get(name) {
+        return get_opaque_in(m, name)
+      }
+    }
+    nil
+  }
+
+  // The modules that write the opaque C type name, when more than one
+  // does and the use is in none of them: "" otherwise.
+  pub fn opaque_ambiguous(name: String): String {
+    if n = self.opaque_n.get(name), n > 1 {
+      return self.opaque_text.get(name) ?? ""
+    }
+    ""
+  }
+
+  // A new opaque C type name of module mod_name.
+  pub fn add_opaque(mod_name: String, name: String) {
+    if have = get_opaque_in(mod_name, name) {
+      return
+    }
+    opq = ty_named(tyk_opaque(), name)
+    opq.mod_name = mod_name
+    id = intern(opq)
+    self.opaques[type_key(mod_name, name)] = id
+    if n = self.opaque_n.get(name) {
+      self.opaque_n[name] = n + 1
+      self.opaque_text[name] = (self.opaque_text.get(name) ?? "") + " and " + mod_name
+    } else {
+      self.opaque_n[name] = 1
+      self.opaque_mod[name] = mod_name
+      self.opaque_text[name] = mod_name
+    }
   }
 
   pub fn resolve_value(tn: TypeName): Ty {
@@ -550,7 +673,10 @@ pub class TypeResolver {
         fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
-      return ty_array(no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "an Array"))
+      self.in_container += 1
+      elem = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "an Array")
+      self.in_container -= 1
+      return ty_array(elem)
     }
     if tn.name == "Hash" {
       if tn.args.size != 2 {
@@ -558,7 +684,15 @@ pub class TypeResolver {
         return self.t_int
       }
       hk = no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a Hash")
+      self.in_container += 1
       hv = no_hasher(resolve_value_uninline(tn.args[1]), tn.args[1], "a Hash")
+      self.in_container -= 1
+      if hv.rec && hv.members.size == 0 {
+        // A recursive alias in its own body: checked when it is known.
+        self.rec_hash_at.push(tn.loc)
+        self.rec_hash_key.push(hk)
+        self.rec_hash_val.push(hv)
+      }
       why = hash_type_problem(hk, hv)
       if why.size > 0 {
         fail(tn.loc, why)
@@ -616,6 +750,14 @@ pub class TypeResolver {
       // value's.
       saved = self.c_scalar_ok
       self.c_scalar_ok = true
+      if inner.mod_name.size == 0 && inner.args.size == 0 && self.scope_mod.size > 0 {
+        if own = get_named_in(self.scope_mod, inner.name), own.is_clayout() {
+          // The module's own C layout of that name, not another
+          // module's (a C layout's name is its module's).
+          self.c_scalar_ok = saved
+          return ty_ptr(own)
+        }
+      }
       pt = no_hasher(resolve_uninline(inner), inner, "a Ptr")
       self.c_scalar_ok = saved
       if !ptr_pointee_ok(pt) {
@@ -627,7 +769,34 @@ pub class TypeResolver {
     if id = self.tparams.get(tn.name), tn.args.size == 0 {
       return ty_var(tn.name)
     }
+    if tn.args.size > 0 && self.aliases.size > 0 {
+      if g = generic_alias_target(tn) {
+        use = clone_type_name(tn)
+        use.name = g.name
+        use.mod_name = g.mod_name
+        return instantiate_template(use)
+      }
+    }
     ntmpl = template_count(tn.name)
+    if ntmpl > 0 && tn.mod_name.size == 0 && self.scope_mod.size > 0 {
+      sm = std_owner_of(tn.name, self.scope_mod)
+      if sm.size > 0 && template_in(sm, tn.name) {
+        // A std module's generic type named bare: a program's own (or an
+        // import's) is meant, else the qualified spelling is asked for.
+        owners = template_owners(tn.name)
+        if owners.size == 1 {
+          use = clone_type_name(tn)
+          use.mod_name = owners[0]
+          return instantiate_template(use)
+        }
+        if owners.size == 0 {
+          fail(tn.loc, std_bare_text(tn.name, sm))
+        } else {
+          fail(tn.loc, owners_clash_text(tn.name, owners))
+        }
+        return self.t_int
+      }
+    }
     if ntmpl > 0 {
       if tn.mod_name.size == 0 && ntmpl > 1 {
         owners = template_owners(tn.name)
@@ -647,6 +816,10 @@ pub class TypeResolver {
     }
     reject_args(tn)
     if tn.mod_name.size > 0 {
+      if al0 = find_alias(tn), alias_names_itself(al0) {
+        // A recursive alias pinned to its module (pin_type_name).
+        return resolve_alias(al0, tn)
+      }
       if found = get_named_in(tn.mod_name, tn.name) {
         if found.template {
           fail(tn.loc, "${tn.name} needs type arguments")
@@ -660,24 +833,31 @@ pub class TypeResolver {
         fail(tn.loc, "${tn.name} needs type arguments")
         return self.t_int
       }
+      if tn.mod_name.size == 0 && self.scope_mod.size > 0 && found.mod_name != self.scope_mod && found.mod_name.starts_with("std.") {
+        fail(tn.loc, std_bare_text(tn.name, found.mod_name))
+        return self.t_int
+      }
       return found
     }
     if al = find_alias(tn) {
       return resolve_alias(al, tn)
     }
-    if opq = get_opaque(tn.name) {
+    if opq = get_opaque_for(tn.mod_name, tn.name) {
       return opq
+    }
+    if tn.mod_name.size == 0 {
+      both = opaque_ambiguous(tn.name)
+      if both.size > 0 {
+        fail(tn.loc, "${tn.name} is an opaque C type of modules ${both}, each its own: write the module's name (Ptr(module.${tn.name}))")
+        return self.t_int
+      }
     }
     fail(tn.loc, "unknown type ${tn.name}${type_hint(tn.name)}")
     self.t_int
   }
 
   pub fn save_inflight: Array(String) {
-    saved: Array(String) = []
-    for i in 0..self.struct_inflight.size {
-      saved.push(self.struct_inflight[i])
-    }
-    saved
+    self.struct_inflight.dup()
   }
 
   // `Void | E`, a failure-or-nothing result: Void is its one success, so
@@ -730,7 +910,7 @@ pub class TypeResolver {
       if i > 0 {
         buf.push_str(", ")
       }
-      buf.push_str(args[i].show())
+      buf.push_str(args[i].show_bare())
       i += 1
     }
     buf.push_str(")")
@@ -1000,6 +1180,13 @@ pub class TypeResolver {
   // in the generic's own module, read the same types. Type parameters
   // and built-in names are left as they are.
   pub fn pin_type_name(tn: TypeName) {
+    if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size > 0 {
+      if g = generic_alias_target(tn) {
+        // An alias of a generic: the generic itself, with these arguments.
+        tn.name = g.name
+        tn.mod_name = g.mod_name
+      }
+    }
     if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size == 0 {
       if al = find_alias(tn) {
         // An alias is the type it names, wherever the instance is read.
@@ -1022,7 +1209,7 @@ pub class TypeResolver {
       return
     }
     if template_count(tn.name) > 0 {
-      if tn.mod_name.size == 0 && template_count(tn.name) > 1 {
+      if tn.mod_name.size == 0 && (template_count(tn.name) > 1 || std_owner_of(tn.name, self.scope_mod).size > 0) {
         owners = template_owners(tn.name)
         if owners.size == 1 {
           tn.mod_name = owners[0]
@@ -1046,7 +1233,7 @@ pub class TypeResolver {
       }
     }
     if found = get_named(tn.name) {
-      if found.is_struct() || found.is_class() || found.is_clayout() {
+      if found.is_struct() || found.is_class() || found.is_clayout() || (found.is_enum() && found.mod_name.size > 0) {
         tn.mod_name = found.mod_name
         tn.pinned = true
       }
@@ -1093,19 +1280,41 @@ pub class TypeResolver {
   }
 
   // The type an alias names, resolved in the alias's own module. An alias
-  // that reaches itself before a struct or class names it is refused: a
-  // recursive type goes through a class, whose fields may name the alias.
+  // may name itself inside an Array's element or a Hash's value, directly
+  // in its own body (`type J = Int | Array(J)`): it is then a union named
+  // by the alias (ty_rec_union), made once. Any other way of reaching
+  // itself is refused: through a field of a struct or class, or that
+  // Array or Hash, a type may hold itself.
   pub fn resolve_alias(al: AliasDef, tn: TypeName): Ty {
     key = type_key(al.mod_name, al.name)
-    if self.alias_inflight.contains(key) {
-      fail(tn.loc, "type ${al.name} names itself: a recursive type goes through a struct or class, whose field may hold a ${al.name}")
-      return self.t_int
-    }
     if tn.args.size > 0 {
       fail(tn.loc, "${tn.name} does not take type arguments")
       return self.t_int
     }
+    if g = generic_alias_target(tn) {
+      fail(tn.loc, "${tn.name} needs type arguments")
+      return self.t_int
+    }
+    if done = self.rec_aliases.get(key) {
+      return done
+    }
+    at = self.alias_inflight.index_of(key) ?? -1
+    if at >= 0 {
+      last = self.alias_inflight.size - 1
+      if at == last && self.in_container > self.alias_depth[last] {
+        shell = ty_rec_union(al.name, al.mod_name)
+        self.rec_aliases[key] = shell
+        return shell
+      }
+      if at != last {
+        fail(tn.loc, "type ${al.name} names itself through type ${self.alias_name_of(self.alias_inflight[last])}: a recursive alias names itself in its own body, inside an Array's element or a Hash's value (type ${al.name} = Int | Array(${al.name})); write the other alias's members there, or let the recursion go through a struct or class")
+      } else {
+        fail(tn.loc, "type ${al.name} names itself outside an Array's element or a Hash's value: a recursive alias is a union holding itself there (type ${al.name} = Int | Array(${al.name})), or the recursion goes through a struct or class, whose field may hold a ${al.name}")
+      }
+      return self.t_int
+    }
     self.alias_inflight.push(key)
+    self.alias_depth.push(self.in_container)
     saved = self.scope_mod
     self.scope_mod = al.mod_name
     t = clone_type_name(al.target)
@@ -1113,24 +1322,114 @@ pub class TypeResolver {
     ty = resolve(t)
     self.scope_mod = saved
     self.alias_inflight.pop()
+    self.alias_depth.pop()
+    if shell = self.rec_aliases.get(key) {
+      // The body named the alias: the union it resolved to becomes the
+      // alias's own.
+      if !ty.is_union() || ty.rec {
+        fail(al.loc, "type ${al.name} names itself but is not a union: a recursive alias is a union of its members, one of them holding it (type ${al.name} = Int | Array(${al.name}))")
+        self.rec_aliases.delete(key)
+        return self.t_int
+      }
+      shell.members = ty.members
+      for i in 0..self.rec_hash_val.size {
+        if self.rec_hash_val[i] == shell {
+          why = hash_type_problem(self.rec_hash_key[i], shell)
+          if why.size > 0 {
+            fail(self.rec_hash_at[i], why)
+          }
+        }
+      }
+      return shell
+    }
     ty
+  }
+
+  // An alias's name from its type_key (`main.Json` gives Json).
+  pub fn alias_name_of(key: String): String {
+    if i = self.alias_ix.get(key), i >= 0 {
+      return self.aliases[i].name
+    }
+    key
+  }
+
+  // The generic type an alias names when its target is a generic struct
+  // or class written without type arguments (`type Mutex = sync.Mutex`,
+  // then `Mutex(Int)`): the generic's name with its module, through an
+  // alias of such an alias; nil for any other alias. One alias serves
+  // every instance; the arguments and their checks are the generic's.
+  pub fn generic_alias_target(tn: TypeName): TypeName? {
+    if self.aliases.size == 0 || tn.fn_type || tn.members.size > 0 || tn.pinned {
+      return nil
+    }
+    found = find_alias(tn)
+    depth = 0
+    while depth < 16 {
+      if al = found {
+        t = al.target
+        if t.fn_type || t.members.size > 0 || t.nilable || t.args.size > 0 || t.pinned {
+          return nil
+        }
+        mod = t.mod_name
+        if mod.size == 0 {
+          if template_in(al.mod_name, t.name) {
+            mod = al.mod_name
+          } else {
+            saved = self.scope_mod
+            self.scope_mod = al.mod_name
+            owners = template_owners(t.name)
+            self.scope_mod = saved
+            if owners.size == 1 {
+              mod = owners[0]
+            }
+          }
+        }
+        if mod.size > 0 && template_in(mod, t.name) {
+          out = TypeName.new(tn.loc, t.name)
+          out.mod_name = mod
+          return out
+        }
+        saved2 = self.scope_mod
+        self.scope_mod = al.mod_name
+        found = find_alias(t)
+        self.scope_mod = saved2
+        depth += 1
+      } else {
+        return nil
+      }
+    }
+    nil
+  }
+
+  // Whether an alias names itself in its own body (a recursive alias):
+  // such a name is not expanded in place, since its expansion holds it.
+  pub fn alias_names_itself(al: AliasDef): Bool {
+    type_name_mentions(al.target, al.name)
   }
 
   // tn, an alias's name, rewritten in place into the alias's type, its
   // names qualified in the alias's module (nilable kept).
   pub fn expand_alias_name(tn: TypeName, al: AliasDef) {
     key = type_key(al.mod_name, al.name)
-    if self.alias_inflight.contains(key) {
+    if self.alias_inflight.has(key) {
+      return
+    }
+    if alias_names_itself(al) {
+      // A recursive alias stays its name, pinned to its module.
+      tn.mod_name = al.mod_name
+      tn.pinned = true
       return
     }
     t = clone_type_name(al.target)
     qualify_seen(t, al.mod_name)
     self.alias_inflight.push(key)
+    self.alias_depth.push(self.in_container)
     saved = self.scope_mod
     self.scope_mod = al.mod_name
     pin_type_name(t)
     self.scope_mod = saved
     self.alias_inflight.pop()
+    self.alias_depth.pop()
     tn.name = t.name
     tn.args = t.args
     tn.members = t.members
@@ -1333,68 +1632,69 @@ pub class TypeResolver {
   }
 }
 
-pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
+// The opaque C types a type name of module mod_name writes
+// (`Ptr(Ctx)` with no type Ctx declared): in a lib block (in_lib) each is
+// the module's own; elsewhere, only a name no lib block writes is (a
+// module's Ptr(Ctx) beside a package's lib that writes Ctx means the
+// package's: collect_opaques reads the lib blocks first).
+pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Set(String), mod_name: String, in_lib: Bool) {
   if r = tn.ret {
-    note_ptr_opaque_skip(r, resolver, skip)
+    note_ptr_opaque_skip(r, resolver, skip, mod_name, in_lib)
   }
   for arg in tn.args {
-    note_ptr_opaque_skip(arg, resolver, skip)
+    note_ptr_opaque_skip(arg, resolver, skip, mod_name, in_lib)
   }
   i = 0
   while i < tn.members.size {
-    note_ptr_opaque_skip(tn.members[i], resolver, skip)
+    note_ptr_opaque_skip(tn.members[i], resolver, skip, mod_name, in_lib)
     i += 1
   }
   for bound in tn.bounds {
-    note_ptr_opaque_skip(bound, resolver, skip)
+    note_ptr_opaque_skip(bound, resolver, skip, mod_name, in_lib)
   }
   if tn.name == "Ptr" {
     if tn.args.size == 1 {
       inner = tn.args[0]
-      if inner.args.size == 0 {
+      if inner.args.size == 0 && inner.mod_name.size == 0 {
         if type_is_builtin(inner.name) {
           return
         }
         if existing = resolver.get_named(inner.name) {
           return
         }
-        if skipped = skip.get(inner.name) {
+        if skip.has(inner.name) {
           return
         }
-        if already = resolver.get_opaque(inner.name) {
-          return
+        if !in_lib {
+          if n = resolver.opaque_n.get(inner.name) {
+            return
+          }
         }
-        opq = ty_named(tyk_opaque(), inner.name)
-        id = resolver.intern(opq)
-        resolver.opaques[inner.name] = id
+        resolver.add_opaque(mod_name, inner.name)
       }
     }
   }
 }
 
-pub fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
-  empty = Hash(String, Int).new()
-  note_ptr_opaque_skip(tn, resolver, empty)
-}
-
-pub fn note_type_name(tn: TypeName, resolver: TypeResolver) {
-  note_ptr_opaque(tn, resolver)
+pub fn note_type_name(tn: TypeName, resolver: TypeResolver, mod_name: String, in_lib: Bool) {
+  empty = Set(String).new()
+  note_ptr_opaque_skip(tn, resolver, empty, mod_name, in_lib)
 }
 
 pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   for lib_def in program.libs {
     for cfun in lib_def.funs {
       for param in cfun.params {
-        note_type_name(param.type, resolver)
+        note_type_name(param.type, resolver, lib_def.mod_name, true)
       }
       if ret = cfun.return_type {
-        note_type_name(ret, resolver)
+        note_type_name(ret, resolver, lib_def.mod_name, true)
       }
     }
     for lay in lib_def.layouts {
       k = 0
       while k < lay.fields.size {
-        note_type_name(lay.fields[k].type, resolver)
+        note_type_name(lay.fields[k].type, resolver, lib_def.mod_name, true)
         k += 1
       }
     }
@@ -1402,32 +1702,32 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   for sdef in program.structs {
     j = 0
     while j < sdef.fields.size {
-      note_type_name(sdef.fields[j].type, resolver)
+      note_type_name(sdef.fields[j].type, resolver, sdef.mod_name, false)
       j += 1
     }
   }
   for cdef in program.classes {
     j = 0
     while j < cdef.fields.size {
-      note_type_name(cdef.fields[j].type, resolver)
+      note_type_name(cdef.fields[j].type, resolver, cdef.mod_name, false)
       j += 1
     }
   }
   fns = program_all_functions(program)
   for fnn in fns {
     names = collect_fn_type_params(fnn, resolver.named)
-    skip = Hash(String, Int).new()
+    skip = Set(String).new()
     for name in names {
-      skip[name] = 1
+      skip.add(name)
     }
     for param in fnn.params {
-      note_ptr_opaque_skip(param.type, resolver, skip)
+      note_ptr_opaque_skip(param.type, resolver, skip, fnn.mod_name, false)
     }
     if recv = fnn.receiver {
-      note_ptr_opaque_skip(recv.type, resolver, skip)
+      note_ptr_opaque_skip(recv.type, resolver, skip, fnn.mod_name, false)
     }
     if ret = fnn.return_type {
-      note_ptr_opaque_skip(ret, resolver, skip)
+      note_ptr_opaque_skip(ret, resolver, skip, fnn.mod_name, false)
     }
   }
 }
@@ -1494,7 +1794,7 @@ pub fn clayout_count(resolver: TypeResolver, cx: Expr, mod_name: String): Int {
     resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant whose value is one")
     return 0
   }
-  if lit.int_bits < 1u64 || lit.int_bits > 16777216u64 {
+  if lit.int_bits < 1 || lit.int_bits > 16777216 {
     resolver.fail(cx.loc, "a C array's length is 1 to 16777216, not ${lit.int_bits}")
     return 0
   }
@@ -1748,3 +2048,23 @@ pub fn seal_one_emit(resolver: TypeResolver, mod_name: String, name: String) {
   }
 }
 
+// Whether the written type tn names `name` anywhere inside it.
+pub fn type_name_mentions(tn: TypeName, name: String): Bool {
+  if tn.name == name && !tn.fn_type && tn.members.size == 0 {
+    return true
+  }
+  for a in tn.args {
+    if type_name_mentions(a, name) {
+      return true
+    }
+  }
+  for m in tn.members {
+    if type_name_mentions(m, name) {
+      return true
+    }
+  }
+  if r = tn.ret {
+    return type_name_mentions(r, name)
+  }
+  false
+}

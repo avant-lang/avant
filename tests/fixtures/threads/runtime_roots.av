@@ -1,19 +1,22 @@
 // The runtime's thread-local references are roots of
 // every thread's collections, not only of the collecting thread's. Each
-// of six tasks puts a fresh key into a hash it then drops (`inc_slice`
-// copies the slice into a new heap string), so `hash_last_key()`'s
-// thread-local slot (avant_hash.c, g_last_key) is the key's only
-// reference; it churns young strings and objects while the main thread
-// and the other tasks do the same, so most collections run on another
-// thread; then it reads the key back. Each task also parses a JSON
-// document per round (avant_json.c keeps the pool in a thread-local slot
-// between the parse and the Json value) and reads a field and a string
-// back. Every value is checked, and the program prints 0 wrong reads in
-// every environment. With gc_each_runtime_root walking only the
-// collecting thread's slots (the code before threads stopped for a collection), the key reads
-// back wrong or the verifier reports the slot.
+// of six tasks parses a JSON text through the runtime's entry alone
+// (avant_json.c keeps the parse's pool in a thread-local slot until a
+// Json value takes it, and here none does), so the slot is the pool's
+// only reference while the task churns young strings and objects beside
+// the main thread and the other tasks, and most collections run on
+// another thread. Each task also parses a JSON document per round through
+// std.json and reads a field and a string back. Every value is checked,
+// and the program prints 0 wrong reads in every environment. With
+// gc_each_runtime_root walking only the collecting thread's slots (the
+// code before threads stopped for a collection), the verifier reports
+// the slot, or a value reads back wrong.
 
 import std.json
+
+lib jroot {
+  fun avant_json_parse(text: String, max_depth: Int, max_bytes: Int, max_entries: Int): Ptr(Void)
+}
 
 class Cell {
   v: Int
@@ -43,19 +46,9 @@ fn churn(id: Int, r: Int, n: Int): Int {
 fn work(id: Int, rounds: Int): Int {
   bad = 0
   for r in 0..rounds {
-    text = "pre-w${id}-r${r}-post"
-    want = "w${id}-r${r}"
-    h = Hash(String, Int).new()
-    if h.inc_slice(text, 4, text.size - 5) != 1 {
-      bad += 1
-    }
-    h = Hash(String, Int).new()
-    text = ""
+    _ = jroot.avant_json_parse("{\"w\": ${id}, \"r\": ${r}}", 256, -1, -1)
     bad += churn(id, r, 300)
-    if hash_last_key() != want {
-      bad += 1
-    }
-    if doc = Json.parse("{\"id\": ${id}, \"round\": ${r}, \"name\": \"t${id}\"}") {
+    if doc = json.Json.parse("{\"id\": ${id}, \"round\": ${r}, \"name\": \"t${id}\"}") {
       bad += churn(id, r, 50)
       if n = doc.int("round") {
         if n != r {

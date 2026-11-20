@@ -91,7 +91,7 @@ install -m 644 "$root/runtime/avant_rt.h" "$dir/runtime/avant_rt.h"
 # examples/"), with the C sources its interop examples link; Avant's
 # LICENSE; and the third-party notices, which the vendored
 # libraries' terms require beside a binary that carries them (the
-# runtime objects carry all six): runtime/third_party/NOTICE.md and each
+# runtime objects carry all eight): runtime/third_party/NOTICE.md and each
 # tree's license, the two that keep theirs in a source header (yyjson,
 # picohttpparser) as that header's license comment.
 (cd "$root" && find examples -type f | LC_ALL=C sort) | while IFS= read -r f; do
@@ -100,7 +100,7 @@ done
 install -m 644 "$root/LICENSE" "$dir/LICENSE"
 tp="$root/runtime/third_party"
 install -D -m 644 "$tp/NOTICE.md" "$dir/third_party/NOTICE.md"
-for f in base64/LICENSE pcre2/LICENCE.md pcre2/AUTHORS.md pcre2/deps/sljit/LICENSE uSockets/LICENSE zlib/LICENSE; do
+for f in base64/LICENSE pcre2/LICENCE.md pcre2/AUTHORS.md pcre2/deps/sljit/LICENSE uSockets/LICENSE zlib/LICENSE crc32-chromium/LICENSE sha-intrinsics/README.md; do
   [ -f "$tp/$f" ] || fail "third-party license is missing: runtime/third_party/$f"
   install -D -m 644 "$tp/$f" "$dir/third_party/$f"
 done
@@ -155,21 +155,21 @@ import std.base64
 import std.http
 
 fn main {
-  if doc = Json.parse("{\"n\": 1}") {
+  if doc = json.Json.parse("{\"n\": 1}") {
     puts(doc.int("n") ?? 0)
   }
-  if re = Regex.compile("a+") {
+  if re = regex.Regex.compile("a+") {
     puts(re.count("aa"))
   }
   p = "b"
-  if re2 = Regex.compile(p + "+") {
+  if re2 = regex.Regex.compile(p + "+") {
     puts(re2.count("bb"))
   }
   if back = "z".bytes.compress().uncompress() {
     puts(back.size)
   }
   puts("a".bytes.to_base64())
-  if server = Http.listen(0) {
+  if server = http.listen(0) {
     server.close()
   }
   h = spawn {

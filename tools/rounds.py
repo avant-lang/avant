@@ -6,12 +6,12 @@ stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`;
 this mode costs N + 1 runs of every task.
 
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
-          [--side NAME=BIN_DIR]... [--pin CPU] [--short SECONDS]
+          [--side NAME=BIN_DIR]... [--layouts S1,S2,...] [--pin CPU] [--short SECONDS]
           [--timeout SECONDS] [--allow-governor] [--cpu-tolerance F]
           [--max-involuntary N] [--max-outside CPUS] [--retries N] [TASK...]
   python3 tools/rounds.py table DIR
   python3 tools/rounds.py spawner DIR      (compiles the spawner into DIR, prints its path)
-  python3 tools/rounds.py judge RESULT     (one spawner result by the undisturbed rule)
+  python3 tools/rounds.py judge RESULT [THREADS]  (one spawner result by the undisturbed rule; THREADS the program's own)
 
 `tools/lr-table.sh rounds ...` calls the first form. BIN_DIR holds the
 harness-built Avant binaries (langarena/tmp after `measure.cr -- prod`); with
@@ -19,6 +19,15 @@ no --side, the checkout's own langarena/tmp is the one side, named `avant`.
 Several sides (a base and a new tree) are measured in the same rounds, their
 order rotated by round. TASK names restrict the set (default: every task of
 RUN_JS with a binary in every side).
+
+--layouts S1,S2,... times every task across code layouts: each BIN_DIR then
+holds one directory per shift, BIN_DIR/S/SLUG, the same program with its
+code S bytes later (tools/layout-cc.sh links them), and round r runs every
+side's binary at the ((r - 1) mod K)-th shift (the warm-up at S1). With as
+many rounds as shifts, every layout runs once per side, so a task's median
+is over its layouts and its min-max spread covers what one address can move
+it: one address no longer decides a published number. Each raw file names
+its `layout`; binaries.sha256 lists every layout's binary (SIDE@S--SLUG).
 
 The loop, lifted from bench/valk/measure.py's `time` with
 its kept-but-bad settled; bench/valk/measure.py now calls it:
@@ -78,6 +87,7 @@ lr-avant.tsv files from the raw files.
 import hashlib
 import os
 import platform
+import re
 import signal
 import statistics
 import subprocess
@@ -283,6 +293,15 @@ def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None, env=None):
 #   competitor; idle, at most 0.53 CPUs on average (typically under 0.3).
 # For CPU-bound programs only: a program that waits for input or sleeps is
 # not timed here.
+# A program whose own threads outnumber the CPUs it may run on (Matmul::T16
+# in one NUMA node's 8 CPUs) preempts itself: idle, in a node slot, its
+# involuntary switches reached 133 to 414 a second (16 threads on 8 CPUs)
+# where the same program on the whole machine stays near 50; so the limit
+# on involuntary switches is scaled by its threads over its CPUs for such a
+# program (500 a second for 16 threads on 8 CPUs), its threads read from
+# the task's configuration (cfg_threads). The other two signs, and the
+# CPU time outside the program on its CPUs above all, are judged as for
+# any program: another process on its CPUs still shows there.
 CPU_TOLERANCE = 0.01      # wall - (user + sys) at most this fraction of the wall...
 CPU_SLACK_S = 0.005       # ...or this many seconds, whichever is larger (process start and reaping)
 MAX_INVOLUNTARY_PER_S = 250  # involuntary context switches per second of wall
@@ -304,7 +323,8 @@ def rule_from_env():
 
 
 def rule_text():
-    return ("undisturbed when the CPU time is under the wall by at most %g%% or %g s, at most %g involuntary switches a second, "
+    return ("undisturbed when the CPU time is under the wall by at most %g%% or %g s, at most %g involuntary switches a second "
+            "(times its threads over its CPUs when they outnumber them), "
             "at most %g CPUs busy outside the task on its CPUs and their SMT siblings; a disturbed run is run again at once, at most %d times"
             % (CPU_TOLERANCE * 100, CPU_SLACK_S, MAX_INVOLUNTARY_PER_S, MAX_OUTSIDE_CPUS, RETRIES))
 
@@ -326,8 +346,10 @@ def set_rule(flag, value):
         die("%s needs a number, not %r" % (flag, value))
 
 
-def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None):
-    """None when the run is undisturbed, else the reason (the counters that broke the rule)."""
+def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None, threads=None):
+    """None when the run is undisturbed, else the reason (the counters that broke the rule). threads: the
+    program's own threads, when known (cfg_threads): above its CPUs, the limit on involuntary switches is
+    scaled by threads / CPUs."""
     if "nivcsw" not in res:
         return None  # a result from before the counters: nothing to judge by
     tol = CPU_TOLERANCE if tol is None else tol
@@ -339,8 +361,12 @@ def disturbance(res, tol=None, slack=None, max_inv=None, max_out=None):
     why = []
     if wall - cpu > max(tol * wall, slack):
         why.append("CPU time %.4f s under the wall %.4f s by %.1f%%" % (cpu, wall, (wall - cpu) / wall * 100 if wall else 0))
+    own = ""
+    if threads and res.get("cpus") and threads > res["cpus"]:
+        own = "; %d threads on %d CPUs" % (threads, res["cpus"])
+        max_inv = max_inv * threads / res["cpus"]
     if wall > 0 and res["nivcsw"] > max(10, max_inv * wall):  # at least 10 for a run of a few milliseconds
-        why.append("%d involuntary context switches, %.0f a second (at most %d)" % (res["nivcsw"], res["nivcsw"] / wall, max_inv))
+        why.append("%d involuntary context switches, %.0f a second (at most %d%s)" % (res["nivcsw"], res["nivcsw"] / wall, max_inv, own))
     if wall > 0 and res["outside_mine_s"] > max(max_out * wall, 0.05):  # 0.05 s: five clock ticks, the counters' grain
         why.append("%.2f CPUs busy outside the program on its CPUs (at most %g)" % (res["outside_mine_s"] / wall, max_out))
     return "; ".join(why) or None
@@ -417,7 +443,10 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
     round r's order (default: rotate). One unmeasured warm-up of every row
     first; one raw file per run, d/RAW/round-R/FILE.run (FILE: the row's
     "file", else its id), and with keep the run's standard output beside
-    it as FILE.out (bench/valk-gc reads its programs' own timings there)."""
+    it as FILE.out (bench/valk-gc reads its programs' own timings there).
+    A row with "layouts", a list of (name, cwd), runs round r from the
+    (r - 1) % len-th of them (its name is the raw file's `layout`) and the
+    warm-up from the first."""
     scratch = os.path.join(d, "scratch")
     os.makedirs(scratch, exist_ok=True)
     fo, fe = os.path.join(scratch, "out"), os.path.join(scratch, "err")
@@ -445,10 +474,13 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
         rd = os.path.join(d, raw, "round-%d" % r)
         os.makedirs(rd)
         for pos, row in enumerate(order, 1):
+            if row.get("layouts"):
+                lname, lcwd = row["layouts"][(r - 1) % len(row["layouts"])]
+                row = dict(row, cwd=lcwd, fields=dict(row.get("fields", {}), layout=lname))
             base = os.path.join(rd, row.get("file", row["id"]))
             for attempt in range(RETRIES + 1):
                 res, out, err = one(row, "round %d" % r)
-                why = disturbance(res)
+                why = disturbance(res, threads=row.get("threads"))
                 last = why is None or attempt == RETRIES
                 # a disturbed run that is run again is kept beside the result as FILE.disturbed-N (N from 1),
                 # never as a .run file, so the readers of the .run files see one run per row and round
@@ -486,6 +518,20 @@ def slug_of(name):
     return name.lower().replace("::", "_")
 
 
+def threads_of(bdir, slug):
+    """The task's own threads from the harness's configuration beside its binary (SLUG.cfg.av's cfg_threads,
+    in BIN_DIR or its parent: a layout's directory sits below it), else None."""
+    for d in (bdir, os.path.dirname(os.path.abspath(bdir))):
+        p = os.path.join(d, slug + ".cfg.av")
+        if os.path.exists(p):
+            for line in open(p):
+                m = re.match(r"\s*fn cfg_threads: Int \{\s*(\d+)\s*\}", line)
+                if m:
+                    return int(m.group(1))
+            return None
+    return None
+
+
 def checkout_of(path):
     p = os.path.abspath(path)
     while p != "/":
@@ -497,10 +543,11 @@ def checkout_of(path):
 
 def cmd_langarena(argv):
     rounds, run_js, out, sides, pin, short, limit, allow, only = None, None, None, [], None, 0.2, 900.0, False, []
+    layouts = []
     a = list(argv)
     while a:
         x = a.pop(0)
-        if x in ("--rounds", "--run-js", "--out", "--side", "--pin", "--short", "--timeout",
+        if x in ("--rounds", "--run-js", "--out", "--side", "--layouts", "--pin", "--short", "--timeout",
                  "--cpu-tolerance", "--max-involuntary", "--max-outside", "--retries"):
             if not a:
                 die("%s needs a value" % x)
@@ -515,6 +562,10 @@ def cmd_langarena(argv):
                 if "=" not in v:
                     die("--side needs NAME=BIN_DIR")
                 sides.append(tuple(v.split("=", 1)))
+            elif x == "--layouts":
+                layouts = [p.strip() for p in v.split(",") if p.strip()]
+                if not layouts or any(not p.isdigit() for p in layouts):
+                    die("--layouts needs shifts in bytes, comma-separated (0,64,192)")
             elif x == "--pin":
                 pin = int(v)
             elif x == "--short":
@@ -547,8 +598,11 @@ def cmd_langarena(argv):
     for t in only:
         if t not in known:
             die("task %s: not in %s" % (t, run_js))
+    def bins(b, n):
+        """The task's binaries of one side: one, or one per layout."""
+        return [os.path.join(b, lay, slug_of(n)) for lay in layouts] if layouts else [os.path.join(b, slug_of(n))]
     sel = [(n, c) for n, c in tasks if (not only or n in only)
-           and all(os.access(os.path.join(b, slug_of(n)), os.X_OK) for _, b in sides)]
+           and all(os.access(p, os.X_OK) for _, b in sides for p in bins(b, n))]
     if not sel:
         die("no task has a binary in every side")
     out = os.path.abspath(out)
@@ -558,6 +612,8 @@ def cmd_langarena(argv):
              "rounds: %d (after one unmeasured warm-up of every row)" % rounds,
              "run_js: %s" % os.path.abspath(run_js),
              "tasks: %d; sides: %s" % (len(sel), " ".join(n for n, _ in sides)),
+             "layouts: %s" % ("shifts %s; round r runs every side at the ((r - 1) mod %d)-th, the warm-up at the first"
+                              % (" ".join(layouts), len(layouts)) if layouts else "one (the binaries as built)"),
              "pin: %s" % ("cpu %d (Matmul::T* unpinned)" % pin if pin is not None else "none"),
              "short: under %g s median is flagged" % short,
              "rule: " + rule_text(),
@@ -583,10 +639,13 @@ def cmd_langarena(argv):
     with open(os.path.join(out, "binaries.sha256"), "w") as f:
         for name, bdir in sides:
             for n, _ in sel:
-                p = os.path.join(bdir, slug_of(n))
-                f.write("%s  %s--%s\n" % (hashlib.sha256(open(p, "rb").read()).hexdigest(), name, slug_of(n)))
+                for i, p in enumerate(bins(bdir, n)):
+                    f.write("%s  %s%s--%s\n" % (hashlib.sha256(open(p, "rb").read()).hexdigest(), name,
+                                                "@" + layouts[i] if layouts else "", slug_of(n)))
     with open(os.path.join(out, "params.tsv"), "w") as f:
         f.write("short\t%g\nsides\t%s\n" % (short, " ".join(n for n, _ in sides)))
+        if layouts:
+            f.write("layouts\t%s\n" % " ".join(layouts))
     # The spawn floor: the same loop on /bin/true, 2 * rounds runs.
     floor_rows = [{"id": "floor--true", "argv": ["/bin/true"], "cwd": out, "pin": True}]
     measure(spawn, floor_rows, 2 * rounds, os.path.join(out, "floor"), 10.0,
@@ -594,8 +653,13 @@ def cmd_langarena(argv):
     rows = []
     for n, c in sel:
         for side, bdir in sides:
-            rows.append({"id": "%s--%s" % (side, slug_of(n)), "argv": ["./" + slug_of(n)], "cwd": os.path.abspath(bdir),
-                         "pin": not n.startswith("Matmul::T"), "fields": {"task": n, "side": side, "checksum": c}})
+            row = {"id": "%s--%s" % (side, slug_of(n)), "argv": ["./" + slug_of(n)], "cwd": os.path.abspath(bdir),
+                   "pin": not n.startswith("Matmul::T"), "fields": {"task": n, "side": side, "checksum": c},
+                   "threads": threads_of(bdir, slug_of(n))}
+            if layouts:
+                row["layouts"] = [(lay, os.path.abspath(os.path.join(bdir, lay))) for lay in layouts]
+                row["cwd"] = row["layouts"][0][1]
+            rows.append(row)
     # The sides' order rotates by round inside the rotating task order: rows
     # of one task stay together, and the side that goes first changes.
     per_task = [rows[i:i + len(sides)] for i in range(0, len(rows), len(sides))]
@@ -717,6 +781,12 @@ def write_tables(d):
           "Wall: a nanosecond clock read by the spawner just before it starts the task and just after it reaps it (no wrapper's start-up inside); "
           "spread = (max − min) / median; slow runs: runs more than 5% over the median (one or two slow runs make a wide spread, not a moved median). Peak RSS: wait4's rusage of the task's own process (no wrapper's memory). "
           "Median, minimum and maximum; never a best-of.", ""]
+    if params.get("layouts"):
+        lays = params["layouts"].split()
+        md.append("Layouts: round r ran every side's binary with its code shifted by the ((r − 1) mod %d)-th of %s bytes "
+                  "(the same instructions at another address), so a median is over the layouts and the min–max spread covers "
+                  "what the address moves as well as the run-to-run noise. Each raw file names its `layout`." % (len(lays), ", ".join(lays)))
+        md.append("")
     if floor:
         md.append("Spawn floor (the same loop on `/bin/true`, %d runs): median %.2f ms, min %.2f, max %.2f. "
                   "A row flagged short (median under %g s) is mostly start-up and noise at this resolution: "
@@ -777,10 +847,11 @@ def write_tables(d):
             f.write("\n".join(lr[s]) + ("\n" if lr[s] else ""))
 
 
-def cmd_judge(res_path):
-    """One spawner result file judged by the rule: prints its counters as
-    tab-separated fields (user_s sys_s nvcsw nivcsw outside_cpus) and then
-    `yes` or `no: REASON`; status 0 when undisturbed, 3 when disturbed."""
+def cmd_judge(res_path, threads=None):
+    """One spawner result file judged by the rule (THREADS: the program's own
+    threads, when known): prints its counters as tab-separated fields
+    (user_s sys_s nvcsw nivcsw outside_cpus) and then `yes` or `no:
+    REASON`; status 0 when undisturbed, 3 when disturbed."""
     try:
         f = [int(x) for x in open(res_path).read().split()]
     except (OSError, ValueError) as e:
@@ -788,7 +859,7 @@ def cmd_judge(res_path):
     if len(f) < 11:
         die("judge %s: not a result of this spawner" % res_path)
     res = parse_result(f)
-    why = disturbance(res)
+    why = disturbance(res, threads=threads)
     wall = f[0] / 1e9
     print("%.4f\t%.4f\t%d\t%d\t%.3f\t%s" % (res["user_s"], res["sys_s"], res["nvcsw"], res["nivcsw"],
                                          res["outside_mine_s"] / wall if wall else 0.0, "no: " + why if why else "yes"))
@@ -810,8 +881,10 @@ def main():
     if sys.argv[1] == "rule" and len(sys.argv) == 2:
         print(rule_text())
         return 0
-    if sys.argv[1] == "judge" and len(sys.argv) == 3:
-        return cmd_judge(sys.argv[2])
+    if sys.argv[1] == "judge" and len(sys.argv) in (3, 4):
+        if len(sys.argv) == 4 and not sys.argv[3].isdigit():
+            die("judge RESULT [THREADS]: THREADS is a number of threads, not %r" % sys.argv[3])
+        return cmd_judge(sys.argv[2], int(sys.argv[3]) if len(sys.argv) == 4 and sys.argv[3] != "0" else None)
     if sys.argv[1] == "table" and len(sys.argv) == 3:
         write_tables(sys.argv[2])
         print(os.path.join(sys.argv[2], "rounds.md"))

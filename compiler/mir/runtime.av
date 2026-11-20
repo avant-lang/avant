@@ -35,6 +35,10 @@ pub class MRtRow {
   pub cls: Int = 0
   pub alloc: Bool = false
   pub slot: Bool = false
+  // Takes a derived address only to compare it with the runtime's own
+  // addresses before it returns: never stored, never read through, and
+  // the call never collects (verify_module.av V10).
+  pub peek: Bool = false
   pub noreturn: Bool = false
   varargs: Bool = false
   pub attrs: String = ""
@@ -56,7 +60,7 @@ pub class MRtTable {
     mir_rt_attrs(self)
   }
 
-  // flags: "", or space-separated alloc slot noreturn varargs.
+  // flags: "", or space-separated alloc slot peek noreturn varargs.
   pub fn row(name: String, params: String, ret: String, cls: Int, flags: String) {
     r = MRtRow.new(name, params, ret, cls)
     words = flags.split(" ")
@@ -65,6 +69,8 @@ pub class MRtTable {
         r.alloc = true
       } else if w == "slot" {
         r.slot = true
+      } else if w == "peek" {
+        r.peek = true
       } else if w == "noreturn" {
         r.noreturn = true
       } else if w == "varargs" {
@@ -180,6 +186,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_hold", "ptr, u64, ref str, ref str", "void", n, "")
   t.row("avant_array_unhold", "ptr", "void", n, "")
   t.row("avant_array_frozen", "ref, i32", "void", n, "")
+  // A store through a struct method's receiver in a program with such
+  // calls that spawns (lower_agg.av recv_store_check): the receiver's
+  // address and the store's site.
+  t.row("avant_array_recv_store", "addr, ref str", "void", n, "peek")
   t.row("avant_str_size", "ref str", "i64", n, "")
   // The address of a string's bytes (a view's are its base's), used at
   // once; the emitter inlines it.
@@ -195,18 +205,12 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_parse_u64", "ref str, i64, ptr", "u64", n, "")
   t.row("avant_str_parse_f64", "ref str", "f64", n, "")
   t.row("avant_str_parse_f64_slice", "ref str, i64, i64", "f64", n, "")
-  t.row("avant_checksum_str", "ref str", "i32", n, "")
-  t.row("avant_checksum_f64", "f64", "i32", n, "")
   t.row("avant_buf_size", "ref", "i64", n, "")
   t.row("avant_buf_starts", "ref, ref str", "i32", n, "")
   // The search methods of String, Bytes and Buf: both sides read in
   // place, no allocation (a trap for a bad start or byte).
   t.row("avant_seq_find", "ref, i32, ref, i32, i64, i32", "i64", n, "")
   t.row("avant_seq_find_byte", "ref, i32, i64, i64, i32", "i64", n, "")
-  t.row("avant_wide_op", "i64, i64, i64, i64, i64", "i64", n, "")
-  t.row("avant_wide_hi", "", "i64", n, "")
-  t.row("avant_now_ms", "", "i32", n, "")
-  t.row("avant_now_us", "", "i32", n, "")
   t.row("avant_clock_ms", "", "i64", n, "")
   t.row("avant_clock_us", "", "i64", n, "")
   t.row("avant_trap_empty", "i32", "void", n, "noreturn")
@@ -230,9 +234,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_enum", "i64, ref str", "void", n, "noreturn")
   // `x.expect(why)` on nil: the text given.
   t.row("avant_trap_expect", "ref str", "void", n, "noreturn")
-  // std's contract traps: no collection, no return.
-  t.row("avant_regex_closed", "", "void", n, "noreturn")
-  t.row("avant_json_misuse", "ref str", "void", n, "noreturn")
+  // A constant computed before main whose value is a failure.
+  t.row("avant_trap_const", "ref str", "void", n, "noreturn")
   // The sited form the emitter calls for each trap row above (ll_call,
   // ll_bounds, ll_arith_block): its parameters and the site's number in
   // the module's table of trap texts.
@@ -256,6 +259,13 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_c_null_at", "ref str, i32", "void", n, "noreturn")
   t.row("avant_trap_enum_at", "i64, ref str, i32", "void", n, "noreturn")
   t.row("avant_trap_expect_at", "ref str, i32", "void", n, "noreturn")
+  t.row("avant_trap_const_at", "ref str, i32", "void", n, "noreturn")
+  // The constants' start-up (lower_const.av): the constant being
+  // computed, none, and a slot's reference words made roots with what
+  // the value reaches frozen; none allocates on the heap.
+  t.row("avant_const_begin", "ref str", "void", n, "")
+  t.row("avant_const_end", "", "void", n, "")
+  t.row("avant_const_ready", "ptr, u64", "void", n, "")
   t.row("avant_checked_add_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_sub_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_mul_i64", "i64, i64", "i64", n, "")
@@ -303,6 +313,17 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_bits_cttz_i32", "i32", "i32", n, "")
   t.row("avant_bits_f64_to_u64", "f64", "u64", n, "")
   t.row("avant_bits_u64_to_f64", "u64", "f64", n, "")
+  // std.bits (lib/std/bits.av): a multiply's high half, an add's carry
+  // and a subtract's borrow out, a 128-by-64 division, a rotation, the
+  // bit and byte reversals.
+  t.row("avant_bits_mulhi_u64", "u64, u64", "u64", n, "")
+  t.row("avant_bits_carry_u64", "u64, u64, u64", "u64", n, "")
+  t.row("avant_bits_borrow_u64", "u64, u64, u64", "u64", n, "")
+  t.row("avant_bits_divq_u64", "u64, u64, u64", "u64", n, "")
+  t.row("avant_bits_divr_u64", "u64, u64, u64", "u64", n, "")
+  t.row("avant_bits_rotl_u64", "u64, u64", "u64", n, "")
+  t.row("avant_bits_bitrev_u64", "u64", "u64", n, "")
+  t.row("avant_bits_bswap_u64", "u64", "u64", n, "")
   t.row("avant_gc_enter", "", "void", n, "")
   t.row("avant_gc_leave", "", "void", n, "")
   t.row("avant_gc_root_begin", "u32", "ptr", n, "")
@@ -352,12 +373,26 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_hash_set_ref_sk", "ref, ref str, ref", "void", c, "")
   t.row("avant_hash_keys", "ref", "ref", c, "")
   t.row("avant_hash_values", "ref", "ref", c, "")
+  // The walk in place: none of them allocates.
+  t.row("avant_hash_walk", "ref, i32", "i32", n, "")
+  t.row("avant_hash_walk_key", "ref, i32", "ptr", n, "")
+  t.row("avant_hash_walk_val", "ref, i32", "ptr", n, "")
+  t.row("avant_hash_walk_ok", "ref, u32, i32", "i32", n, "")
+  t.row("avant_hash_walk_delete", "ref, i32", "void", n, "")
   t.row("avant_hash_clear", "ref", "void", n, "")
   t.row("avant_hash_size", "ref", "i64", n, "")
   t.row("avant_hash_del_sk", "ref, ref str", "void", n, "")
   t.row("avant_hash_del_ik", "ref, i64", "void", n, "")
   t.row("avant_hash_get_str_slice", "ref, ref str, i64, i64, ptr", "ref str", n, "")
-  t.row("avant_hash_inc_slice", "ref, ref str, i64, i64", "i64", c, "")
+  // A String key given as a slice of a String (_sk_part) or a Buf
+  // (_bk_part), read in place (lower_hash.av key_part): the find only
+  // reads; the upsert and the slot build the key at a miss.
+  t.row("avant_hash_find_sk_part", "ref, ref str, i64, i64, ptr", "ptr", n, "")
+  t.row("avant_hash_find_bk_part", "ref, ref, i64, i64, ptr", "ptr", n, "")
+  t.row("avant_hash_upsert_sk_part", "ref, ref str, i64, i64, ptr", "ptr", c, "")
+  t.row("avant_hash_upsert_bk_part", "ref, ref, i64, i64, ptr", "ptr", c, "")
+  t.row("avant_hash_slot_sk_part", "ref, ref str, i64, i64, i32", "addr", c, "slot")
+  t.row("avant_hash_slot_bk_part", "ref, ref, i64, i64, i32", "addr", c, "slot")
   t.row("avant_buf_clear", "ref", "void", n, "")
   t.row("avant_buf_push_byte", "ref, i64", "void", c, "")
   t.row("avant_buf_push_str", "ref, ref str", "void", c, "")
@@ -371,6 +406,10 @@ fn mir_rt_fill(t: MRtTable) {
   // collects: the allocation entry, the slot rows, and the rows the core
   // example and the verifier tests call.
   t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
+  // avant_alloc for a buffer of scalars the code writes whole before it
+  // reads it (`Array(T).new(n, value)`): its inline path is avant_alloc's,
+  // its slow call this one, which leaves a large payload unzeroed.
+  t.row("avant_alloc_unzeroed", "u64, u32", "ref", c, "alloc")
   // The inline allocation path's slow call (llvm/emit_gc.av
   // ll_alloc_slow_helper calls it); the MIR names avant_alloc only.
   t.row("avant_alloc_slow", "u64, u32", "ref", c, "")
@@ -421,6 +460,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_fmt_float", "f64, i64", "ref str", c, "")
   t.row("avant_str_strip", "ref str, i32", "ref str", c, "")
   t.row("avant_buf_new", "i64", "ref", c, "")
+  t.row("avant_buf_new_filled", "i64, i64", "ref", c, "")
+  t.row("avant_hash_reserve", "ref, i64", "void", c, "")
   t.row("avant_buf_to_str", "ref", "ref str", c, "")
   // collects: the hand-off of a dead Buf (mir/take.av).
   t.row("avant_buf_take_str", "ref", "ref str", c, "")
@@ -453,7 +494,6 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_sum_i64", "ref", "i64", c, "")
   t.row("avant_array_sum_u64", "ref", "u64", c, "")
   t.row("avant_array_sum_f64", "ref", "f64", c, "")
-  t.row("avant_hash_last_key", "", "ref str", c, "")
   t.row("avant_str_split", "ref str, ref str", "ref", c, "")
   t.row("avant_str_split_n", "ref str, ref str, i64", "ref", c, "")
   t.row("avant_str_replace", "ref str, ref str, ref str", "ref str", c, "")
@@ -524,6 +564,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_join_what", "ref", "ref str", n, "")
   t.row("avant_join_site", "ref", "ref str", n, "")
   t.row("avant_task_cb_enter", "", "void", n, "")
+  t.row("avant_stack_ensure", "", "void", n, "")
   t.row("avant_task_cb_leave", "", "void", n, "")
   t.row("avant_gate_lock_with", "ref, u64", "i32", c, "")
   t.row("avant_gate_poisoned", "ref, u64", "i32", n, "")
@@ -541,8 +582,6 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_gate_clear_poison", "ref, u64", "void", n, "")
   t.row("avant_file_exists", "ref str", "i32", c, "")
   t.row("avant_sha256", "ref str", "ref str", c, "")
-  t.row("avant_crc32_bytes", "ref", "i32", c, "")
-  t.row("avant_sha256_word0", "ref", "i32", c, "")
   t.row("avant_gc_collect_young", "", "void", c, "")
   t.row("avant_gc_hold_end", "", "void", c, "")
   t.row("avant_task_hold_end", "", "void", c, "")
@@ -567,10 +606,21 @@ fn mir_rt_attrs(t: MRtTable) {
   t.set_attrs("avant_str_eq", str_reader)
   // avant_str.c avant_str_cmp: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_cmp", str_reader)
-  // avant_checksum_str: avant_str_n, a byte loop.
-  t.set_attrs("avant_checksum_str", str_reader)
   // avant_buf_starts: avant_str_n, field reads of the Buf, memcmp.
   t.set_attrs("avant_buf_starts", str_reader)
   // avant_buf.c:192-195: one field read of its argument.
   t.set_attrs("avant_buf_size", "nounwind willreturn nofree nosync memory(argmem: read)")
+  // The barriers (runtime/avant_gc_remset.c): they read the holder (its
+  // header, and its references when the store log records them) and write
+  // only the collector's own tables (the remembered set, the cards, the
+  // log) and the holder's header flags, which generated code reads only in
+  // its inline barrier and pop tests: a stale read there of a bit a
+  // barrier sets (remembered, logged, cards) only makes one more call, and
+  // no barrier changes the young and heap bits. So a field or a size
+  // loaded before a barrier's call is not loaded again after it (a queue's
+  // length around the store into its element).
+  barrier = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
+  t.set_attrs("avant_barrier", barrier)
+  t.set_attrs("avant_barrier_slot", barrier)
+  t.set_attrs("avant_barrier_at", barrier)
 }

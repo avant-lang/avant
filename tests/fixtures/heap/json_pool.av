@@ -1,0 +1,34 @@
+import std.json
+import std.process
+
+// A thousand parses of a 51-byte document, then a large one and the
+// small one again: each parse's pool is the smallest large object (two
+// pages), not zeroed, and every value read back is the text's.
+fn main {
+  text = "{\"id\": 12, \"name\": \"ada\", \"ok\": true, \"tags\": [1]}"
+  total = 0
+  for i in 0..1000 {
+    if j = json.Json.parse(text) {
+      total += j.int("id") ?? 0
+    }
+  }
+  puts(total)
+  if process.args().size > 1 {
+    return
+  }
+  b = Buf.new()
+  b.push_str("[")
+  for i in 0..5000 {
+    if i > 0 {
+      b.push_str(",")
+    }
+    b.push_str("{\"x\": ${i}, \"s\": \"v${i}\"}")
+  }
+  b.push_str("]")
+  if big = json.Json.parse(b.to_s()) {
+    puts(big.len())
+  }
+  if j2 = json.Json.parse(text) {
+    puts("${j2.int("id") ?? 0} ${j2.str("name") ?? ""}")
+  }
+}

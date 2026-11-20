@@ -15,11 +15,12 @@
 #include <time.h>
 #include <unistd.h>
 
-/* The prelude's second part (compiler/prelude_src.av,
- * prelude_more_source): standard input and files read line by line, the
- * file system's basics and a child process's output. A program links
- * this object only when it calls one of those functions, so no other
- * program carries it. It shares avant_io.c's helpers (the avant_io_*
+/* std.fs, std.process and the prelude's second part
+ * (compiler/prelude_src.av, prelude_more_source): standard input and
+ * files read line by line, the file system's basics, the environment and
+ * a child process's output. A program links this object only when it
+ * imports one of those modules or calls read_line, so no other program
+ * carries it. It shares avant_io.c's helpers (the avant_io_*
  * functions below); its own error state is read with
  * avant_sys_more_errno and avant_sys_more_signal, as avant_io.c's is with
  * avant_sys_errno and avant_sys_signal. */
@@ -172,6 +173,63 @@ avant_int avant_sys_delete(const char *path) {
   }
   g_sys_errno = 0;
   return 0;
+}
+
+/* std.process's env_set: setenv(3), replacing a value there; -1 for a
+ * name that is empty or holds '=' (EINVAL). A string from Avant may hold
+ * a zero byte, which would cut the name: refused too. */
+avant_int avant_sys_env_set(const char *name, const char *value) {
+  if (!name || !name[0] || strchr(name, '=') || avant_str_n(name) != strlen(name)) {
+    g_sys_errno = EINVAL;
+    return -1;
+  }
+  if (setenv(name, value ? value : "", 1) != 0) {
+    g_sys_errno = errno;
+    return -1;
+  }
+  g_sys_errno = 0;
+  return 0;
+}
+
+/* std.fs's rename: from moved to to, replacing a file there (rename(2)). */
+avant_int avant_sys_rename(const char *from, const char *to) {
+  if (rename(from ? from : "", to ? to : "") != 0) {
+    g_sys_errno = errno;
+    return -1;
+  }
+  g_sys_errno = 0;
+  return 0;
+}
+
+/* std.fs's append: body added to the end of the file, created when it is
+ * not there; the bytes written, or -1 (avant_sys_more_errno). */
+avant_int avant_sys_append(const char *path, const char *body) {
+  FILE *f;
+  size_t n;
+  if (!body) {
+    body = "";
+  }
+  n = avant_str_n(body);
+  if (n > (size_t)AVANT_SIZE_MAX) {
+    g_sys_errno = EFBIG;
+    return -1;
+  }
+  f = fopen(path ? path : "", "ab");
+  if (!f) {
+    g_sys_errno = errno;
+    return -1;
+  }
+  if (n && fwrite(body, 1, n, f) != n) {
+    g_sys_errno = errno ? errno : EIO;
+    fclose(f);
+    return -1;
+  }
+  if (fclose(f) != 0) {
+    g_sys_errno = errno;
+    return -1;
+  }
+  g_sys_errno = 0;
+  return (avant_int)n;
 }
 
 /* The size in bytes of what path names, or -1. */

@@ -1,5 +1,12 @@
 import harness
+import std.fs
 import std.json
+import std.process
+
+type Json = json.Json
+type JsonBuilder = json.JsonBuilder
+type JsonKind = json.JsonKind
+type JsonValue = json.JsonValue
 
 fn churn(rounds: Int) {
   keep: Array(String) = []
@@ -249,7 +256,7 @@ fn test_std_json(c: Checks) {
   built.key("point").obj().set("x", 1).set("y", 2).end()
   built.set("ok", true)
   built.set("pi", 3.5)
-  built.set_null("nothing")
+  built.set("nothing", nil)
   built.end()
   if doc2 = Json.parse(built.to_s()) {
     if name2 = doc2.str("name") {
@@ -322,7 +329,7 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(false, "parse objects")
   }
-  dst = buf_new()
+  dst = Buf.new()
   dst.push_str("prefix:")
   into = JsonBuilder.into(dst)
   into.obj().set("a", 1).end()
@@ -388,19 +395,21 @@ fn test_json_value_written(c: Checks) {
   c.eq_str(out.to_s(), "{\"one\":\"x\",\"list\":[\"x\",{\"k\":\"v\"}]}", "set and add take a JsonValue")
   hand = JsonValue.new()
   hand.kind = JsonKind.obj
-  hand.keys.push("gone")
+  hand.members["z"] = item
+  hand.members["a"] = JsonValue.new()
   h = JsonBuilder.new()
   h.value(hand)
-  c.eq_str(h.to_s(), "{\"gone\":null}", "a name in keys without a member is null")
+  c.eq_str(h.to_s(), "{\"z\":\"x\",\"a\":null}", "a hand-built object written in the order of its members")
 }
 
-// JsonValue's object members: a Hash by name, their names in the
-// document's order; a repeated name keeps its first value.
+// JsonValue's object members: a Hash by name, in the document's order;
+// a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
   if doc = Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2]}, \"b\": 2, \"z\": \"s\"}") {
     v = doc.to_value()
-    c.eq_int(v.keys.size, 3, "members: one name each")
-    c.eq_str("${v.keys[0]}${v.keys[1]}${v.keys[2]}", "baz", "members: the document's order")
+    names = v.members.keys()
+    c.eq_int(names.size, 3, "members: one name each")
+    c.eq_str("${names[0]}${names[1]}${names[2]}", "baz", "members: the document's order")
     c.eq_int(v.members.size, 3, "members: a Hash by name")
     if b = v.get("b") {
       c.eq_int(b.int_val, 1, "members: a repeated name keeps its first value")
@@ -440,9 +449,91 @@ fn test_json_members(c: Checks) {
       i += 1
     }
     c.eq_int(sum, 4498500, "members: 3000 names found by the Hash")
-    c.eq_str(v.keys[2999], "k2999", "members: the last name last")
+    c.eq_str(v.members.keys()[2999], "k2999", "members: the last name last")
   } else {
     c.expect(false, "members: parse the large object")
+  }
+}
+
+// A JsonBuilder's set, add and value take any value json.encode writes,
+// written as it writes them: a struct by its pub fields, an Array, an
+// optional, nil (where set_null and null were), alongside the scalars,
+// a Json and another builder.
+struct Pos {
+  pub x: Int
+  pub y: Int
+}
+
+fn test_builder_values(c: Checks) {
+  maybe: Int? = nil
+  b = Json.object()
+  b.set("at", Pos { x: 1, y: 2 })
+  b.set("path", [Pos { x: 0, y: 0 }])
+  b.set("none", nil)
+  b.set("maybe", maybe)
+  b.set("n", 7)
+  b.key("list").arr().add(1.5).add("s").add(nil).add([true]).end()
+  b.end()
+  c.eq_str(b.to_s(), "{\"at\":{\"x\":1,\"y\":2},\"path\":[{\"x\":0,\"y\":0}],\"none\":null,\"maybe\":null,\"n\":7,\"list\":[1.5,\"s\",null,[true]]}", "set and add take a struct, an Array, an optional and nil")
+}
+
+// The limits of a parse: max_depth (256 unless set) refuses arrays and
+// objects nested deeper, at the bracket that goes past it; max_bytes and
+// max_entries (none unless set) refuse a longer text or a document of
+// more values (each member's name counted as one). Each is a JsonError
+// naming it, never a trap; a parse used to take any depth.
+fn parse_says(text: String, max_depth: Int, max_bytes: Int?, max_entries: Int?): String {
+  if doc = Json.parse(text, max_depth: max_depth, max_bytes: max_bytes, max_entries: max_entries) {
+    return "ok ${doc.len()}"
+  } else e {
+    return e.message
+  }
+}
+
+fn test_json_limits(c: Checks) {
+  deep = "[".repeat(300) + "]".repeat(300)
+  if d = Json.parse(deep) {
+    c.expect(false, "300 levels are over the default max_depth")
+  } else e {
+    c.eq_str(e.message, "JSON nested deeper than max_depth 256 at byte 256", "300 levels are over the default max_depth")
+    c.eq_int(e.offset ?? -1, 256, "the offset of the bracket past the limit")
+  }
+  c.eq_str(parse_says("[".repeat(256) + "]".repeat(256), 256, nil, nil), "ok 1", "256 levels are within it")
+  c.eq_str(parse_says(deep, 300, nil, nil), "ok 1", "max_depth raised")
+  c.eq_str(parse_says("{\"a\": [[1]]}", 2, nil, nil), "JSON nested deeper than max_depth 2 at byte 7", "an object's member nested too deep")
+  c.eq_str(parse_says("{\"a\": [1]}", 2, nil, nil), "ok 1", "an object holding an array: depth 2")
+  c.eq_str(parse_says("7", 1, nil, nil), "ok 0", "a scalar has no depth")
+  c.eq_str(parse_says("[1, 2, 3]", 256, nil, 3), "JSON document of 4 values is over max_entries 3", "max_entries counts the array too")
+  c.eq_str(parse_says("[1, 2, 3]", 256, nil, 4), "ok 3", "within max_entries")
+  c.eq_str(parse_says("{\"a\": 1}", 256, nil, 2), "JSON document of 3 values is over max_entries 2", "a member's name counts")
+  c.eq_str(parse_says("[1, 2, 3]", 256, 8, nil), "JSON text of 9 bytes is over max_bytes 8", "max_bytes")
+  c.eq_str(parse_says("[1, 2, 3]", 256, 9, nil), "ok 3", "within max_bytes")
+  c.eq_str(parse_says("[1, 2", 256, 9, 100), "invalid JSON at byte 5: unexpected end of data", "a text within the limits that does not parse")
+}
+
+// A parse's pool is sized by yyjson's own bound and not zeroed: a
+// 51-byte document's is the smallest large object, two pages (it was
+// three, zeroed), and the values read back are the text's in every
+// collector mode, after a large document's pages were freed (and
+// poisoned, in the check modes) too.
+fn test_json_pool(c: Checks) {
+  if compiler = process.env("AVANT_COMPILER") {
+    dir = scratch_dir()
+    bin = "${dir}/json_pool.bin"
+    c.eq_int(compile_av(compiler, "${avant_test_root()}/tests/fixtures/heap/json_pool.av", bin, "${dir}/json_pool.clog"), 0, "json_pool.av compiles")
+    clean = "env -u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS -u AVANT_GC_STATS"
+    // In the collector mode this file runs in (the gate runs it in each).
+    out = "${dir}/json_pool"
+    _ = process.run("/bin/sh", ["-c", "'${bin}' > '${out}.out' 2> '${out}.err'; echo $? > '${out}.rc'"])
+    c.eq_str(fs.read("${out}.rc") ?? "", "0\n", "json_pool.av: exit 0")
+    c.eq_str(fs.read("${out}.out") ?? "", "12000\n5000\n12 ada\n", "json_pool.av: the values parsed")
+    c.eq_str(fs.read("${out}.err") ?? "", "", "json_pool.av: no stderr")
+    st = "${dir}/json_pool.stats"
+    _ = process.run("/bin/sh", ["-c", "${clean} AVANT_GC_STATS=1 '${bin}' small > /dev/null 2> '${st}'"])
+    text = fs.read(st) ?? ""
+    c.expect(text.contains(" los_allocs=1000 los_bytes=8192000 "), "a small document's pool is two pages, 1000 parses: ${text.size} bytes of statistics")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
   }
 }
 
@@ -456,5 +547,8 @@ fn main: Int {
   test_json_kinds(c)
   test_json_members(c)
   test_json_value_written(c)
+  test_json_limits(c)
+  test_builder_values(c)
+  test_json_pool(c)
   c.finish()
 }

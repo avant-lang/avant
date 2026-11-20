@@ -511,7 +511,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
       t = at
     }
     target = arg.resolved
-    if !str_starts(target, "av.") {
+    if !target.starts_with("av.") {
       base = lw.lw_cl.base
       if base.size == 0 {
         base = b.func.symbol
@@ -532,8 +532,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
     return b.c_i32(0)
   }
   sym = "${target}#cb"
-  if !lw.lw_ffi.cb_seen.has_key(sym) {
-    lw.lw_ffi.cb_seen[sym] = 1
+  if lw.lw_ffi.cb_seen.add(sym) {
     lw.lw_ffi.cbs.push(MirCb.new(sym, target, fty, lam, arg.loc))
   }
   b.c_fn(sym)
@@ -624,6 +623,13 @@ pub fn (lw: MirLower) lower_cb_thunks {
     recovers = lw.recovers()
     if recovers {
       b.call(-1, "avant_task_cb_enter", none)
+    } else {
+      // A C thread Avant did not start gets its signal stack at its
+      // first callback (runtime/avant_stack.c), whether or not the
+      // callback allocates (its registration would give it one too),
+      // so a stack overflow there says so as on any other thread; on a
+      // thread that has one, a thread-local test.
+      b.call(-1, "avant_stack_ensure", none)
     }
     if ret == mt_void() {
       b.call(-1, cb.target, args)
@@ -1099,6 +1105,15 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
 }
 
 pub fn (lw: MirLower) unpin(h: Int) {
+  if !lw.open_now() {
+    // A deferred block before this entry ended the program.
+    return
+  }
+  if h <= mir_defer_base() {
+    // A deferred block (lower_stmt.av lower_defer).
+    lw.run_defer(lw.lw_ffi.defers[mir_defer_base() - h])
+    return
+  }
   args: Array(MOperand) = []
   if h < -1 {
     // A `Mutex.with` block's lock, its mutex in local -2 - h
@@ -1222,7 +1237,7 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
     }
   }
   fv = -1
-  if flags.kind == ex_int() && flags.int_bits <= 2147483647u64 {
+  if flags.kind == ex_int() && flags.int_bits <= 2147483647 {
     fv = flags.int_bits.to_i()
   } else if flags.kind == ex_bool() {
     fv = 0

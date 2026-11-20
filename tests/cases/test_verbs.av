@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // The refusals of the sequence and array verbs: slices (`xs[a..b]`, the
 // open and inclusive forms, `slice`, `try_slice`), the verbs that take a
@@ -45,7 +47,7 @@ fn cases: Array(LCase) {
   xs.push(refused("slice-inclusive-open", "fn main {\n  xs = [1, 2]\n  puts(xs[1..=].size)\n}\n", "an inclusive slice needs its last index", "3:12"))
   xs.push(refused("slice-bounds", "fn main {\n  xs = [1, 2]\n  puts(xs[1.5..].size)\n}\n", "the bounds of a slice are Int, got Float64", "3:11"))
   xs.push(refused("slice-arity", "fn main {\n  s = \"abc\"\n  puts(s.slice(1, 2, 3))\n}\n", "slice takes start and stop, or start alone", "3:9"))
-  xs.push(refused("find-pipes", "fn main {\n  xs = [1, 2]\n  puts(xs.find { |x| x > 1 } ?? 0)\n}\n", "find takes a lambda: write find((x) { ... })", "3:16"))
+  xs.push(refused("find-pipes", "fn main {\n  xs = [1, 2]\n  puts(xs.find { |x| x > 1 } ?? 0)\n}\n", "a block in pipes is not Avant", "3:16"))
   xs.push(refused("find-break", "fn main {\n  xs = [1, 2]\n  puts(xs.find((x) {\n    if x > 1 {\n      break\n    }\n    true\n  }) ?? 0)\n}\n", "break inside a lambda given to find", "5:7"))
   xs.push(refused("find-predicate", "fn main {\n  xs = [1, 2]\n  puts(xs.find((x) { x }) ?? 0)\n}\n", "the predicate of find must give a Bool, got Int", "3:16"))
   xs.push(refused("min-by-key", "fn main {\n  xs = [1, 2]\n  puts(xs.min_by((x) { [x] }) ?? 0)\n}\n", "the key of min_by must be a number, a String or Bytes, got Array(Int)", "3:18"))
@@ -55,12 +57,15 @@ fn cases: Array(LCase) {
   xs.push(refused("first-arguments", "fn main {\n  xs = [1, 2]\n  puts(xs.first(1) ?? 0)\n}\n", "first takes no arguments", "3:10"))
   xs.push(refused("push-str-type", "fn main {\n  b = Buf.new()\n  b.push_str(5)\n}\n", "push_str expects String, Bytes or Buf, got Int", "3:14"))
   xs.push(refused("each-function-type", "fn shout(s: String) {\n  puts(s)\n}\n\nfn main {\n  xs = [1, 2]\n  xs.each(shout)\n}\n", "argument 1 of shout is Int, expected String", "7:11"))
-  xs.push(refused("shuffle-random", "fn main {\n  xs = [1, 2]\n  xs.shuffle(7)\n}\n", "shuffle takes a Random (import std.random; Random.new(seed)), got Int", "3:14"))
+  xs.push(refused("shuffle-random", "fn main {\n  xs = [1, 2]\n  xs.shuffle(7)\n}\n", "shuffle takes a Random (import std.random; random.Random.new(seed)), got Int", "3:14"))
   xs.push(refused("concat-type", "fn main {\n  xs = [1, 2]\n  xs.concat([\"a\"])\n}\n", "array element is String, expected Int", "3:14"))
+  xs.push(refused("contains-hint", "fn main {\n  xs = [1, 2]\n  puts(xs.contains(2))\n}\n", "no method contains on Array (write `xs.has(v)`)", "3:10"))
   xs.push(refused("remove-hint", "fn main {\n  xs = [1, 2]\n  xs.remove(0)\n}\n", "no method remove on Array(Int) (write `xs.delete_at(i)`", "3:5"))
   xs.push(refused("retain-hint", "fn main {\n  xs = [1]\n  xs.retain((x) { x > 0 })\n}\n", "no method retain on Array(Int) (write `xs.delete_if (x) { ... }` with the test turned around)", "3:5"))
   xs.push(refused("try-shl-float", "fn main {\n  x = 1.5\n  puts(x.try_shl(1) ?? 0.0)\n}\n", "no method try_shl on Float64", "3:9"))
   xs.push(refused("insert-type", "fn main {\n  xs = [1, 2]\n  xs.insert(0, \"a\")\n}\n", "insert expects Int, got String", "3:16"))
+  xs.push(refused("bytes-split-sep", "fn main {\n  b = \"a,b\".bytes\n  puts(b.split(1).size)\n}\n", "the separator of split is Bytes or a String, got Int", "3:16"))
+  xs.push(refused("bytes-strip-args", "fn main {\n  b = \"a \".bytes\n  puts(b.strip(1).size)\n}\n", "strip takes no arguments", "3:9"))
   xs.push(refused("contains-pattern", "fn main {\n  s = \"abc\"\n  puts(s.contains(1.5))\n}\n", "the pattern of contains is a String, Bytes, Buf or a byte (Int), got Float64", "3:19"))
   xs.push(refused("index-of-start", "fn main {\n  s = \"abc\"\n  puts(s.index_of(\"a\", \"b\") ?? 0)\n}\n", "the start of index_of is an Int, got String", "3:24"))
   xs.push(refused("count-arity", "fn main {\n  b = Buf.new()\n  puts(b.count())\n}\n", "count takes one pattern: a String, Bytes, Buf or a byte", "3:9"))
@@ -82,6 +87,12 @@ fn cases: Array(LCase) {
   xs.push(traps("pad-byte", "fn main {\n  b = 300\n  puts(\"7\".pad_left(3, b))\n}\n", "avant runtime: byte 300 out of range (0..255)"))
   xs.push(traps("search-byte", "fn main {\n  b = 256\n  puts(\"abc\".contains(b))\n}\n", "avant runtime: byte 256 out of range (0..255)"))
   xs.push(refused("join-types", "fn main {\n  xs = [1, 2]\n  ys = [\"a\"]\n  puts((xs + ys).size)\n}\n", "cannot join Array(Int) and Array(String)", "4:12"))
+  xs.push(refused("binary-search-order", "struct P {\n  x: Int\n}\n\nfn main {\n  ps = [P { x: 1 }]\n  puts(ps.binary_search(P { x: 1 }) ?? -1)\n}\n", "binary_search needs an ordered element type, got Array(P)", "7:10"))
+  xs.push(refused("binary-search-type", "fn main {\n  xs = [1, 2]\n  puts(xs.binary_search(\"a\") ?? -1)\n}\n", "expected Int, got String", "3:25"))
+  xs.push(refused("binary-search-block", "fn main {\n  xs = [1, 2]\n  puts(xs.binary_search((x) { x }) ?? -1)\n}\n", "expected Int, got a lambda", "3:25"))
+  xs.push(refused("sort-by-arity", "fn main {\n  xs = [1, 2]\n  xs.sort_by()\n}\n", "sort_by takes one function, (x) { key }", "3:5"))
+  xs.push(refused("sort-by-params", "fn main {\n  xs = [1, 2]\n  xs.sort_by((a, b) { a })\n}\n", "the lambda has 2 parameters where fn(Int): K takes 1 argument", "3:14"))
+  xs.push(refused("sort-by-key-order", "struct P {\n  x: Int\n}\n\nfn main {\n  ps = [P { x: 1 }]\n  ps.sort_by((p) { p })\n}\n", "P has no order: define fn compare(other: P): Int on it", "7:5"))
   xs
 }
 
@@ -89,7 +100,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/verb-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/verb-${f.tag}.bin", "${dir}/verb-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -115,7 +126,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
       c.eq_str(log_text("${dir}/verb-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/verb-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/verb-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("verb-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
@@ -124,7 +135,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_verbs.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

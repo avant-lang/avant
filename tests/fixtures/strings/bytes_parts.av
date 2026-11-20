@@ -1,0 +1,42 @@
+// Bytes splits and strips as a String does, its parts Bytes: split by
+// Bytes or a String separator, with a limit; strip, strip_left and
+// strip_right trim ASCII whitespace. Beside them, the searches Bytes
+// shares with String.
+fn show(xs: Array(Bytes)): String {
+  out = Buf.new()
+  for x in xs {
+    out.push_str("[")
+    out.push_bytes(x)
+    out.push_str("]")
+  }
+  out.to_s()
+}
+
+fn main {
+  b = " k=v=w,\t,x \n".bytes
+  parts = b.split(",".bytes)
+  puts(parts.size)
+  puts(show(parts))
+  puts(show(b.split("=", 2)))
+  puts(show("a,,b".bytes.split(",")))
+  puts(show("".bytes.split(",")))
+  puts(show([b.strip(), b.strip_left(), b.strip_right()]))
+  puts("   ".bytes.strip().size)
+  t = b.strip()
+  puts(t == "k=v=w,\t,x".bytes)
+  puts(t.starts_with("k=".bytes))
+  puts(t.ends_with(",x"))
+  puts(t.index_of("=") ?? -1)
+  puts(t.index_of("=".bytes, 2) ?? -1)
+  first = t.split("=")[0]
+  puts(first == "k".bytes)
+  raw = Buf.new()
+  raw.push_byte(0)
+  raw.push_byte(255)
+  raw.push_byte(0)
+  raw.push_byte(7)
+  sep = Buf.new()
+  sep.push_byte(255)
+  halves = raw.to_s().bytes.split(sep.to_s().bytes)
+  puts("${halves.size} ${halves[0].size} ${halves[1].size} ${halves[1][1]}")
+}

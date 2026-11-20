@@ -7,8 +7,6 @@ target triple = "x86_64-pc-linux-gnu"
 @str.0 = private constant { i64, [6 x i8] } { i64 4611686018427387910, [6 x i8] c"small\00" }, align 8
 @str.1 = private constant { i64, [4 x i8] } { i64 4611686018427387908, [4 x i8] c"%s\0A\00" }, align 8
 
-@avant_str_headered = constant i32 1, align 4
-
 @avant_gc_bump = external thread_local(localexec) global ptr
 @avant_gc_limit = external thread_local(localexec) global ptr
 
@@ -16,7 +14,7 @@ target triple = "x86_64-pc-linux-gnu"
 
 declare ptr @avant_alloc(i64, i32)
 declare ptr @avant_alloc_slow(i64, i32)
-declare void @avant_barrier(ptr)
+declare void @avant_barrier(ptr) nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)
 declare void @avant_gc_frame_enter(ptr)
 declare void @avant_gc_frame_leave(ptr)
 declare void @avant_io_init_argv(i32, ptr)

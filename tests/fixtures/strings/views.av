@@ -66,17 +66,17 @@ fn sum_bytes(s: String): Int {
 
 fn main {
   big = text(200, 0)
-  v = str_slice(big, 10, 150)
+  v = big[10..150]
   puts("${v.size} ${v[0]} ${v[139]} ${v.get(140) ?? -1} ${sum_bytes(v)}")
-  w = str_slice(v, 5, 100)
-  puts("${w.size} ${w[0] == big[15]} ${w == str_slice(big, 15, 110)}")
-  short = str_slice(big, 0, 10)
+  w = v[5..100]
+  puts("${w.size} ${w[0] == big[15]} ${w == big[15..110]}")
+  short = big[..10]
   puts("${short} ${short.size}")
-  puts("${v < big} ${big < v} ${v == v} ${str_slice(v, 0, 0).size}")
-  puts("${str_slice(v, 0, 20)}|${str_slice(v, 120, 140)}")
+  puts("${v < big} ${big < v} ${v == v} ${v[..0].size}")
+  puts("${v[..20]}|${v[120..140]}")
   joined = w + "!" + v
   puts("${joined.size} ${joined[95]}")
-  label = str_slice(text(100, 3), 0, 70)
+  label = text(100, 3)[..70]
   switch label {
     case "nothing" { puts("no") }
     else { puts("switch else ${label.size}") }
@@ -84,20 +84,20 @@ fn main {
   h = Hash(String, Int).new()
   h[v] = 1
   h[w] = 2
-  puts("${h[str_slice(big, 10, 150)] ?? 0} ${h[w] ?? 0} ${h.size}")
+  puts("${h[big[10..150]] ?? 0} ${h[w] ?? 0} ${h.size}")
   tags = Hash(Tag, Int).new()
   tags[Tag { name: v }] = 7
-  puts("own hash ${tags[Tag { name: str_slice(big, 10, 150) }] ?? 0} ${tags[Tag { name: w }] ?? 0}")
+  puts("own hash ${tags[Tag { name: big[10..150] }] ?? 0} ${tags[Tag { name: w }] ?? 0}")
   arr: Array(String) = [v, w, short]
   arr.sort()
-  puts("${arr[0].size} ${arr.contains(w)} ${arr.index_of(v) ?? -1} ${(arr.min() ?? "").size} ${(arr.max() ?? "").size}")
+  puts("${arr[0].size} ${arr.has(w)} ${arr.index_of(v) ?? -1} ${(arr.min() ?? "").size} ${(arr.max() ?? "").size}")
   b = Buf.new()
   b.push_str(w)
   b.push_slice(v, 0, 3)
-  puts("${b.size} ${b.starts_with(str_slice(w, 0, 70))}")
+  puts("${b.size} ${b.starts_with(w[..70])}")
   digits = "x" + repeat_byte(55, 80)
-  num = str_slice(digits, 1, 66)
-  puts("${num.size} ${(str_slice(num, 0, 18).to_i() ?? -1) > 0} ${(num.to_f() ?? 0.0) > 1.0}")
+  num = digits[1..66]
+  puts("${num.size} ${(num[..18].to_i() ?? -1) > 0} ${(num.to_f() ?? 0.0) > 1.0}")
   padded = "   " + text(90, 1) + "   "
   s = padded.strip()
   puts("${s.size} ${s[0]} ${s.chars().size}")
@@ -108,7 +108,7 @@ fn main {
   keep = Keep.new()
   for r in 0..40 {
     base = text(300, r)
-    keep.views.push(str_slice(base, 100, 260))
+    keep.views.push(base[100..260])
     churn(200)
     gcy.avant_gc_collect_young()
   }

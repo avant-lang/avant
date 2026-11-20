@@ -1,6 +1,7 @@
 // The verifier's module-level rules: V10 on layouts and externals (no
-// field or external parameter is a derived address; only `slot` rows
-// return one) and V20 (unique, mangled symbols; only main has C linkage;
+// field or external parameter is a derived address, but a `peek` row's,
+// which only compares it before it returns; only `slot` rows return one)
+// and V20 (unique, mangled symbols; only main has C linkage;
 // the type-map registry and the layouts' type ids).
 
 import source
@@ -25,7 +26,7 @@ pub fn mir_verify_module(v: MVerifier) {
   for e in v.m.externs {
     s = ts.sigs[e.sig]
     for param in s.params {
-      if ts.is_addr(param) {
+      if ts.is_addr(param) && !(e.peek_row && e.cls == mcc_never()) {
         v.merr(10, "extern ${e.name} takes a derived address")
       }
     }
@@ -36,7 +37,7 @@ pub fn mir_verify_module(v: MVerifier) {
   seen = Hash(String, Int).new()
   for k in 0..v.m.funcs.size {
     g = v.m.funcs[k]
-    if seen.has_key(g.symbol) {
+    if seen.has(g.symbol) {
       v.merr(20, "symbol ${g.symbol} is defined twice")
     }
     seen[g.symbol] = k
@@ -51,7 +52,7 @@ pub fn mir_verify_module(v: MVerifier) {
   while k < v.m.maps.size {
     tm = v.m.maps[k]
     key = "${tm.id}"
-    if ids.has_key(key) {
+    if ids.has(key) {
       v.merr(20, "type id ${tm.id} is registered twice")
     }
     ids[key] = k

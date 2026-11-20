@@ -85,6 +85,19 @@ void avant_exit_claim(void) {
   }
 }
 
+/* The constant being computed before main (avant_const_begin): its name
+ * and place, as a string object of the program's image; NULL once main
+ * runs. A trap meanwhile names it after its own text. */
+static const char *g_const_what;
+
+void avant_const_begin(const char *what) {
+  g_const_what = what;
+}
+
+void avant_const_end(void) {
+  g_const_what = NULL;
+}
+
 __attribute__((noreturn)) static void trap_tail(void) {
   const char *site = g_trap_loc;
   g_trap_loc = NULL;
@@ -97,6 +110,11 @@ __attribute__((noreturn)) static void trap_tail(void) {
   fputs(g_trap_text, stderr);
   if (site) {
     fprintf(stderr, " at %s", site);
+  }
+  if (g_const_what) {
+    size_t n;
+    const char *d = avant_str_bytes(g_const_what, &n);
+    fprintf(stderr, ", computing %.*s before main", (int)n, d);
   }
   fputc('\n', stderr);
   exit(1);
@@ -111,11 +129,12 @@ void avant_trap_text(const char *what) {
 }
 
 /* Integer overflow and division by zero raised by the generated code: fn names
- * the function and where it starts
- * ("Heap.pop (heap.av:12:3)"). Every check of a function shares one cold
- * block (identical bounds traps stay identical), so LLVM can merge and
- * fold them as before; the function is the site it can name without
- * costing the hot path. */
+ * the function and the check's line ("Heap.pop (heap.av:14:9)"; the
+ * line alone, "Heap.pop (heap.av:14)", when the line has several
+ * checks). The checks of one line share one cold block, so LLVM can
+ * merge and fold a statement's checks as before. An index out of bounds
+ * names the function and where it starts: its checks share one block a
+ * function. */
 void avant_trap_overflow_in(int32_t fn) {
   trap_head();
   trap_out("integer overflow in %s", site_or(fn));
@@ -151,6 +170,10 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
   trap_head();
   if (what == 1) {
     trap_out("an element was added to a Set during its walk, which would miss it: collect the new elements and add them after the walk");
+  } else if (what == 2) {
+    trap_out("a key other than the visited one was deleted from a Hash during its walk (or the Hash was cleared), which walks the entries in place: delete the visited key only, collect the keys and delete them after the walk, or use delete_if");
+  } else if (what == 3) {
+    trap_out("an element other than the visited one was deleted from a Set during its walk (or the Set was cleared), which walks the elements in place: delete the visited element only, collect the elements and delete them after the walk, or use delete_if");
   } else {
     trap_out("a key was added to a Hash during its walk, which would miss it: collect the new entries and add them after the walk");
   }
@@ -159,19 +182,46 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
 
 /* A change to an Array a running task reads (avant_rt.h,
  * AVANT_ARRAY_FROZEN): op names the operation
- * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
- * growth, pop, fill, sort, reverse, reserve, insert, concat) print no
- * site; generated code's (an element store, clear, a sort with a block,
- * delete_if, delete_at, shuffle, a fill of other elements) call the _at
- * form. */
+ * (AVANT_FROZEN_*). Generated code tests the freeze itself and calls the
+ * _at form, which names the site: an element store, clear, a sort with a
+ * block, delete_if, delete_at, shuffle, a fill of other elements, and,
+ * in a program that spawns, the call of any runtime mutator. The
+ * runtime's own test inside those functions (push's growth, pop, fill,
+ * sort, reverse, reserve, insert, concat), which has no site, stays for
+ * their other callers. */
 static const char *frozen_op(int32_t op) {
   static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if", "insert", "delete_at", "concat", "shuffle"};
   return op >= 0 && op <= 12 ? names[op] : "a change";
 }
 
+/* Whether a constant computed before main froze an array or a hash
+ * (avant_const_ready, avant_gc_roots.c): a freeze is then a constant's
+ * when no second thread ever ran (no task could have taken one), and
+ * either one's otherwise. */
+static int g_const_frozen;
+
+void avant_trap_note_const_frozen(void) {
+  g_const_frozen = 1;
+}
+
+/* 0: a task's freeze, 1: a constant's, 2: either. */
+static int frozen_by(void) {
+  if (!g_const_frozen) {
+    return 0;
+  }
+  return atomic_load(&g_avant_shared) ? 2 : 1;
+}
+
 void avant_trap_frozen(int32_t op) {
+  int by = frozen_by();
   trap_head();
-  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
+  if (by == 1) {
+    trap_out("%s on an array a constant holds: a constant's value never changes, at any depth; change a copy (clone())", frozen_op(op));
+  } else if (by == 2) {
+    trap_out("%s on an array a constant holds or a running task reads: a constant's value never changes, at any depth, and a spawn or .parallel that captured an array keeps it unchanged until the task ends; change a copy (clone()), or join the task before changing the array", frozen_op(op));
+  } else {
+    trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
+  }
   trap_tail();
 }
 
@@ -181,6 +231,11 @@ void avant_trap_frozen(int32_t op) {
 void avant_trap_frozen_call(int32_t op, const char *name, const char *site) {
   g_trap_loc = site;
   trap_head();
+  if (op == AVANT_FROZEN_RECV) {
+    /* The store is the receiver's, the site the store's. */
+    trap_out("a store to the receiver of %s, an element of an array a running task reads: a task started during the call reads the array until it ends; join it before the method changes its receiver", name ? name : "a method");
+    trap_tail();
+  }
   trap_out("%s on an array while %s, called on one of its elements, runs: the method changes its receiver, so the array's size and order cannot change until it returns; copy the element, call the method on the copy and store it back", frozen_op(op), name ? name : "a method");
   trap_tail();
 }
@@ -192,7 +247,16 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
 
 void avant_trap_frozen_hash(int32_t op) {
   static const char *names[] = {"a store", "delete", "clear"};
+  int by = frozen_by();
   trap_head();
+  if (by == 1) {
+    trap_out("%s on a hash a constant holds: a constant's value never changes, at any depth; change a copy (clone())", op >= 0 && op <= 2 ? names[op] : "a change");
+    trap_tail();
+  }
+  if (by == 2) {
+    trap_out("%s on a hash a constant holds or a running task reads: a constant's value never changes, at any depth, and a spawn or .parallel that captured a hash keeps it unchanged until the task ends; change a copy (clone()), or join the task before changing the hash", op >= 0 && op <= 2 ? names[op] : "a change");
+    trap_tail();
+  }
   trap_out("%s on a hash a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the hash", op >= 0 && op <= 2 ? names[op] : "a change");
   trap_tail();
 }
@@ -201,7 +265,7 @@ void avant_trap_frozen_hash(int32_t op) {
  * on it. */
 void avant_trap_poisoned(void) {
   trap_head();
-  trap_out("Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
+  trap_out("sync.Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
   trap_tail();
 }
 
@@ -330,9 +394,9 @@ void avant_trap_size_at(int32_t kind, int32_t site) {
 }
 
 void avant_trap_negative(avant_int n, int32_t what) {
-  static const char *names[] = {"Array size", "repeat_byte count", "repeat count"};
+  static const char *names[] = {"Array size", "repeat_byte count", "repeat count", "Buf size", "Hash capacity"};
   trap_head();
-  trap_out("%s %lld is negative", names[what >= 0 && what <= 2 ? what : 0], (long long)n);
+  trap_out("%s %lld is negative", names[what >= 0 && what <= 4 ? what : 0], (long long)n);
   trap_tail();
 }
 
@@ -513,6 +577,20 @@ void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
   trap_out("%lld is not a member of %s", (long long)value, name);
+  trap_tail();
+}
+
+/* A constant computed before main whose value is a failure (nil, an
+ * error): what names it. */
+void avant_trap_const_at(const char *what, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  {
+    size_t n;
+    const char *d = avant_str_bytes(what, &n);
+    trap_out("%.*s", (int)n, d);
+  }
+  g_const_what = NULL;
   trap_tail();
 }
 

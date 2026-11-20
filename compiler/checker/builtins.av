@@ -116,11 +116,36 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
   if expr.callee == "to_buf" {
     return checker_self.expect_no_args(expr, checker_self.t_buf(), "to_buf takes no arguments")
   }
+  if expr.callee == "to_s" {
+    // The same bytes as a String, unchecked, as Buf's to_s: no copy.
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "to_s takes no arguments")
+  }
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
   if expr.callee == "code_points" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_int()), "code_points takes no arguments")
+  }
+  // String's split and strip, over bytes: the parts are Bytes.
+  if expr.callee == "split" {
+    if expr.args.size != 1 && expr.args.size != 2 {
+      checker_self.fail(expr.loc, "split takes a separator (Bytes or a String) and an optional limit, split(sep, limit)")
+      return ty_array(checker_self.t_bytes())
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if !got.is_bytes() && !got.is_string() {
+      checker_self.fail(expr.args[0].loc, "the separator of split is Bytes or a String, got ${got.show()}")
+    }
+    if expr.args.size == 2 {
+      lim = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+      if !lim.is_int() {
+        checker_self.fail(expr.args[1].loc, "the limit of split is an Int, got ${lim.show()}")
+      }
+    }
+    return ty_array(checker_self.t_bytes())
+  }
+  if expr.callee == "strip" || expr.callee == "strip_left" || expr.callee == "strip_right" {
+    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "${expr.callee} takes no arguments")
   }
   none: Ty? = nil
   checker_self.dispatch_method(expr, checker_self.t_bytes(), none)
@@ -248,7 +273,7 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
       bt = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
       if !bt.is_int() {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be Int")
-      } else if expr.args[0].kind == ex_int() && (expr.args[0].int_bits < 2u64 || expr.args[0].int_bits > 36u64) {
+      } else if expr.args[0].kind == ex_int() && (expr.args[0].int_bits < 2 || expr.args[0].int_bits > 36) {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be in 2..36")
       }
     }
@@ -444,7 +469,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_void()
       }
       if b.params.size != 1 {
-        checker_self.fail(b.loc, "each { |x| ... } takes one block parameter")
+        checker_self.fail(b.loc, "each takes a lambda of one parameter: xs.each (x) { ... }")
         return checker_self.t_void()
       }
       if e = array.inner {
@@ -473,7 +498,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if b = expr.block {
       if b.params.size != 2 {
-        checker_self.fail(b.loc, "sort { |a, b| ... } takes two block parameters")
+        checker_self.fail(b.loc, "sort takes a lambda of two parameters: xs.sort (a, b) { ... }")
         return checker_self.t_void()
       }
       if e = array.inner {
@@ -510,7 +535,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if b = expr.block {
       if b.params.size != 2 {
-        checker_self.fail(b.loc, "sorted { |a, b| ... } takes two block parameters")
+        checker_self.fail(b.loc, "sorted takes a lambda of two parameters: xs.sorted (a, b) { ... }")
         if e = array.inner {
           return ty_array(e)
         }
@@ -551,9 +576,8 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     return checker_self.expect_no_args(expr, checker_self.t_void(), "reverse takes no arguments")
   }
-  // `has` is the membership test of every collection; `contains` is its
-  // old name on arrays, kept while the compiler's own sources use it.
-  if expr.callee == "has" || expr.callee == "contains" {
+  // `has` is the membership test of every collection.
+  if expr.callee == "has" {
     member = expr.callee
     if b = expr.block {
       checker_self.fail(expr.loc, "${member} does not take a block")
@@ -581,7 +605,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if b = expr.block {
       if b.params.size != 1 {
-        checker_self.fail(b.loc, "${pred_name} { |x| ... } takes one block parameter")
+        checker_self.fail(b.loc, "${pred_name} takes a lambda of one parameter: xs.${pred_name} (x) { ... }")
         return checker_self.t_bool()
       }
       if e = array.inner {
@@ -809,7 +833,11 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     none: Ty? = nil
     return checker_self.dispatch_method(expr, array, none)
   }
-  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", checker_self.builtin_hint(array, expr.callee))
+  hint = checker_self.builtin_hint(array, expr.callee)
+  if expr.callee == "contains" || expr.callee == "includes" || expr.callee == "has_key" {
+    hint = " (write `xs.has(v)`)"
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", hint)
   checker_self.t_int()
 }
 
@@ -820,7 +848,7 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       return ty_array(checker_self.t_int())
     }
     if b.params.size != 1 {
-      checker_self.fail(b.loc, "parallel { |x| ... } takes one block parameter")
+      checker_self.fail(b.loc, "parallel takes a lambda of one parameter: xs.parallel (x) { ... }")
       return ty_array(checker_self.t_int())
     }
     if e = array.inner {
@@ -873,9 +901,7 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
         // A `?` in the body: that element is the failure.
         parts: Array(Ty) = []
         parts.push(result)
-        for f in fails {
-          parts.push(f)
-        }
+        parts.concat(fails)
         result = ty_union_build(parts)
       }
       checker_self.loop_depth = saved_loops
@@ -928,6 +954,9 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     }
     return ty_array(elem)
   }
+  if c == "delete_if" {
+    return checker_self.check_hash_delete_if(expr, set, true)
+  }
   if c == "each" {
     if b = expr.block {
       if expr.args.size != 0 {
@@ -935,7 +964,7 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
         return checker_self.t_void()
       }
       if b.params.size != 1 {
-        checker_self.fail(b.loc, "each { |v| ... } takes one block parameter")
+        checker_self.fail(b.loc, "each takes a lambda of one parameter: s.each (v) { ... }")
         return checker_self.t_void()
       }
       checker_self.refuse_block_param_outer(b, "each")
@@ -1001,10 +1030,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return ty_array(checker_self.t_int())
   }
-  // `has`, the one membership test of every collection; `has_key`, its
-  // old name, stays until the compiler's own source (built by a seed
-  // that knows only has_key) moves to has.
-  if expr.callee == "has" || expr.callee == "has_key" {
+  // `has`, the one membership test of every collection.
+  if expr.callee == "has" {
     if expr.args.size == 1 {
       if b = expr.block {
         checker_self.fail(expr.loc, "${expr.callee} takes one key")
@@ -1068,6 +1095,9 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return vt
   }
+  if expr.callee == "delete_if" {
+    return checker_self.check_hash_delete_if(expr, hash, false)
+  }
   if expr.callee == "each" {
     if b = expr.block {
       if expr.args.size != 0 {
@@ -1075,7 +1105,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         return checker_self.t_void()
       }
       if b.params.size != 2 {
-        checker_self.fail(b.loc, "each { |k, v| ... } takes two block parameters")
+        checker_self.fail(b.loc, "each takes a lambda of two parameters: h.each (k, v) { ... }")
         return checker_self.t_void()
       }
       if k = hash.key, v = hash.val {
@@ -1152,38 +1182,6 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return gone
   }
-  if expr.callee == "inc_slice" {
-    if expr.args.size == 3 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
-        return checker_self.t_int()
-      }
-    } else {
-      checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
-      return checker_self.t_int()
-    }
-    ok = false
-    if k = hash.key, v = hash.val, k.is_string() && v.is_int() {
-      ok = true
-    }
-    if !ok {
-      checker_self.fail(expr.loc, "inc_slice is Hash(String, Int) only")
-    }
-    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
-    if !ty_assignable(s, checker_self.t_string()) {
-      checker_self.fail(expr.args[0].loc, "inc_slice expects String")
-    }
-    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int() {
-      if !stop.is_int() {
-        checker_self.fail(expr.loc, "start and stop must be Int")
-      }
-    } else {
-      checker_self.fail(expr.loc, "start and stop must be Int")
-    }
-    return checker_self.t_int()
-  }
   if expr.callee == "get_slice" {
     if expr.args.size == 3 {
       if b = expr.block {
@@ -1251,19 +1249,19 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     none: Ty? = nil
     return checker_self.dispatch_method(expr, hash, none)
   }
-  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", checker_self.builtin_hint(hash, expr.callee))
+  hint = checker_self.builtin_hint(hash, expr.callee)
+  if expr.callee == "has_key" || expr.callee == "contains" || expr.callee == "includes" || expr.callee == "contains_key" {
+    hint = " (write `h.has(k)`)"
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", hint)
   checker_self.t_int()
 }
 
 pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
-  if expr.callee == "sha256" {
+  // The compiler's own sources' sha256 (the hex text), not std.digest's
+  // digest.sha256 (the bytes).
+  if expr.callee == "sha256" && expr.mod_name.size == 0 {
     return checker_self.check_one_string(expr, checker_self.t_string())
-  }
-  if expr.callee == "crc32_bytes" {
-    return checker_self.check_bytes_checksum(expr)
-  }
-  if expr.callee == "sha256_word0" {
-    return checker_self.check_bytes_checksum(expr)
   }
   nil
 }
@@ -1306,25 +1304,6 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
   checker_self.t_void()
 }
 
-// crc32_bytes and sha256_word0 take Bytes (the references hash a
-// uint8_t buffer; the Array(Int) form is gone).
-pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
-  if expr.args.size == 1 {
-    if b = expr.block {
-      checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
-      return ty_int32()
-    }
-  } else {
-    checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
-    return ty_int32()
-  }
-  got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
-  if !got.is_bytes() {
-    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Bytes")
-  }
-  ty_int32()
-}
-
 pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
   if expr.callee == "now_us" {
     if expr.args.size == 0 {
@@ -1358,7 +1337,8 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     return checker_self.t_string()
   }
   if expr.callee == "bytes_to_str" {
-    return checker_self.check_i32_bytes_to_str(expr)
+    checker_self.fail(expr.loc, "bytes_to_str is gone: push the bytes into a Buf (buf.push_byte(n)) and take buf.to_s(), or a Bytes' b.to_s()")
+    return checker_self.t_string()
   }
   if expr.callee == "fmt_float" {
     if expr.args.size == 2 {
@@ -1407,128 +1387,6 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       checker_self.fail(expr.loc, "start and stop must be Int")
     }
     return ty_nilable(checker_self.t_float())
-  }
-  if expr.callee == "hash_last_key" {
-    if expr.args.size == 0 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "hash_last_key takes no arguments")
-        return checker_self.t_string()
-      }
-      return checker_self.t_string()
-    }
-    checker_self.fail(expr.loc, "hash_last_key takes no arguments")
-    return checker_self.t_string()
-  }
-  if expr.callee == "exp" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "exp takes one Float64")
-        return checker_self.t_float()
-      }
-    } else {
-      checker_self.fail(expr.loc, "exp takes one Float64")
-      return checker_self.t_float()
-    }
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric() {
-      checker_self.fail(expr.args[0].loc, "exp expects Float64")
-    }
-    if !got.is_float() {
-      expr.args[0].ty = checker_self.t_float()
-    }
-    return checker_self.t_float()
-  }
-  if expr.callee == "sqrt" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "sqrt takes one Float64")
-        return checker_self.t_float()
-      }
-    } else {
-      checker_self.fail(expr.loc, "sqrt takes one Float64")
-      return checker_self.t_float()
-    }
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric() {
-      checker_self.fail(expr.args[0].loc, "sqrt expects Float64")
-    }
-    if !got.is_float() {
-      expr.args[0].ty = checker_self.t_float()
-    }
-    return checker_self.t_float()
-  }
-  if expr.callee == "wide_op" {
-    if expr.args.size == 5 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "wide_op takes five Ints")
-        return checker_self.t_int()
-      }
-    } else {
-      checker_self.fail(expr.loc, "wide_op takes five Ints")
-      return checker_self.t_int()
-    }
-    i = 0
-    while i < expr.args.size {
-      got = checker_self.check_expr_as(expr.args[i], checker_self.t_int())
-      if !got.is_int() {
-        checker_self.fail(expr.args[i].loc, "wide_op expects Int")
-      }
-      i += 1
-    }
-    return checker_self.t_int()
-  }
-  if expr.callee == "wide_hi" {
-    if expr.args.size == 0 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "wide_hi takes no arguments")
-        return checker_self.t_int()
-      }
-      return checker_self.t_int()
-    }
-    checker_self.fail(expr.loc, "wide_hi takes no arguments")
-    return checker_self.t_int()
-  }
-  // The 32-bit checksums (checksum_f64, checksum_str, crc32_bytes,
-  // sha256_word0) are Int32: the bits they always had.
-  if expr.callee == "checksum_f64" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-        return ty_int32()
-      }
-    } else {
-      checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-      return ty_int32()
-    }
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric() {
-      checker_self.fail(expr.args[0].loc, "checksum_f64 expects Float64")
-    }
-    if !got.is_float() {
-      expr.args[0].ty = checker_self.t_float()
-    }
-    return ty_int32()
-  }
-  if expr.callee == "checksum_str" {
-    return checker_self.check_one_string(expr, ty_int32())
-  }
-  if expr.callee == "puts_u" {
-    if expr.args.size == 1 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "puts_u takes one integer")
-        return checker_self.t_void()
-      }
-    } else {
-      checker_self.fail(expr.loc, "puts_u takes one integer")
-      return checker_self.t_void()
-    }
-    // An integer, printed as the unsigned number of its bits at its own
-    // width (an Int as UInt64, an Int32 as UInt32).
-    got = checker_self.check_expr(expr.args[0])
-    if !got.is_integer() {
-      checker_self.fail(expr.args[0].loc, "puts_u expects an integer")
-    }
-    return checker_self.t_void()
   }
   nil
 }

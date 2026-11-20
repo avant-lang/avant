@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The compiler's own heap is fully traced: dumping itself under
 // the collector's verifier prints no untraced-reference report. Split
@@ -21,7 +23,7 @@ fn test_fixed_point_verify(c: Checks) {
     c.skip("the compiler's dump under AVANT_GC_VERIFY=1", "outer AVANT_GC_STRESS: a compiler-sized job under a collection at every helper call; the gate checks it outside it")
     return
   }
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
     main_av = "${root}/compiler/main.av"
@@ -37,7 +39,7 @@ fn test_fixed_point_verify(c: Checks) {
     vcode = jobs[0].code
 
     c.eq_int(vcode, 0, "dump compiler under AVANT_GC_VERIFY=1")
-    if vout = file_read(vlog) {
+    if vout = fs.read(vlog) {
       c.expect(!vout.contains("avant gc verify:"), "compiler heap fully traced (no verifier report)")
     } else {
       c.expect(false, "compiler heap fully traced (no verifier report)")

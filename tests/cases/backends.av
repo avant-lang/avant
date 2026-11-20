@@ -1,4 +1,5 @@
 import harness
+import std.fs
 
 // Helpers shared by the suite tests of the back end's subsets
 // (test_scalars.av, test_strings.av, ...; until the old back end retired
@@ -8,14 +9,14 @@ import harness
 // own files, waves of at most 24 jobs, and the run goldens.
 
 pub fn log_text(path: String): String {
-  if t = file_read(path) {
+  if t = fs.read(path) {
     return t
   }
   "(no log)"
 }
 
 pub fn key_of(rel: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < rel.size {
     c = rel[i]
@@ -117,17 +118,17 @@ pub fn run_waves(jobs: Array(HJob)) {
 // tests/ and without .av.
 pub fn golden_key(rel: String): String {
   k = rel
-  if k.size > 6 && str_slice(k, 0, 6) == "tests/" {
-    k = str_slice(k, 6, k.size)
+  if k.size > 6 && k[..6] == "tests/" {
+    k = k[6..]
   }
-  if k.size > 3 && str_slice(k, k.size - 3, k.size) == ".av" {
-    k = str_slice(k, 0, k.size - 3)
+  if k.size > 3 && k[k.size - 3..] == ".av" {
+    k = k[..k.size - 3]
   }
   k
 }
 
 pub fn golden_out(root: String, rel: String): String {
-  if t = file_read("${root}/tests/goldens/runs/${golden_key(rel)}.out") {
+  if t = fs.read("${root}/tests/goldens/runs/${golden_key(rel)}.out") {
     return t
   }
   "(no golden for ${rel})"
@@ -165,7 +166,7 @@ fn is_version(s: String): Bool {
   digits = 0
   i = 0
   while i < s.size {
-    ch = str_slice(s, i, i + 1)
+    ch = s[i..i + 1]
     if ch == "." {
       if digits == 0 {
         return false
@@ -185,8 +186,8 @@ fn is_version(s: String): Bool {
 // The golden stderr: KEY.err, absent when it is empty.
 pub fn golden_err(root: String, rel: String): String {
   path = "${root}/tests/goldens/runs/${golden_key(rel)}.err"
-  if file_exists(path) {
-    if t = file_read(path) {
+  if fs.exists(path) {
+    if t = fs.read(path) {
       return t
     }
   }
@@ -196,7 +197,7 @@ pub fn golden_err(root: String, rel: String): String {
 // The golden exit status (status.txt: `PATH STATUS` lines), -1 when the
 // program has none.
 pub fn golden_status(root: String, rel: String): Int {
-  if t = file_read("${root}/tests/goldens/runs/status.txt") {
+  if t = fs.read("${root}/tests/goldens/runs/status.txt") {
     lines = t.split("\n")
     i = 0
     while i < lines.size {

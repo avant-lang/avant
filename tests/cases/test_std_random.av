@@ -1,10 +1,12 @@
 import harness
 import std.random
 
+type Random = random.Random
+
 // std.random: the seeded generator's sequence (xoshiro256** seeded by
 // SplitMix64, checked against the reference algorithm's values), its
 // ranges, a generator seeded from the system's entropy, and
-// Random.bytes.
+// random.bytes.
 fn test_std_random(c: Checks) {
   c.suite("tests/cases/test_std_random.av")
   r = Random.new(42)
@@ -81,17 +83,17 @@ fn test_std_random(c: Checks) {
   deck.shuffle(Random.new(42))
   c.expect(deck == [1, 2, 3, 4, 5, 6, 7, 8].shuffled(Random.new(42)), "shuffle follows the seed")
   c.eq_int(deck.sum(), 36, "shuffle keeps the elements")
-  k1 = Random.bytes(16)
-  k2 = Random.bytes(16)
-  c.eq_int(k1.size, 16, "Random.bytes(16) gives 16 bytes")
-  c.expect(k1 != k2, "Random.bytes gives new bytes each call")
-  c.eq_int(Random.bytes(0).size, 0, "Random.bytes(0) is empty")
-  big = Random.bytes(100000)
+  k1 = random.bytes(16)
+  k2 = random.bytes(16)
+  c.eq_int(k1.size, 16, "random.bytes(16) gives 16 bytes")
+  c.expect(k1 != k2, "random.bytes gives new bytes each call")
+  c.eq_int(random.bytes(0).size, 0, "random.bytes(0) is empty")
+  big = random.bytes(100000)
   seen = Array(Int).new(256, 0)
   for i in 0..big.size {
     seen[big[i]] += 1
   }
-  c.expect((seen.min() ?? 0) > 250, "Random.bytes covers every byte value")
+  c.expect((seen.min() ?? 0) > 250, "random.bytes covers every byte value")
 }
 
 fn main: Int {

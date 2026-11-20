@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Operators a type defines (`[]`, `[]=`, `&`, `|`, `^`, `<<`, `>>`, unary
 // `-`, beside the arithmetic and comparison ones) and compound assignment
@@ -53,7 +55,7 @@ fn cases: Array(RCase) {
   xs.push(refused("bits-undefined", "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  b = a | a\n}\n", "bitwise operator expects matching integer operands", "6:9"))
   xs.push(accepted("compound-int", "fn main {\n  n = 100\n  n %= 7\n  puts(n)\n  n <<= 4\n  puts(n)\n  n >>= 2\n  puts(n)\n  n |= 3\n  puts(n)\n  n &= 6\n  puts(n)\n  n ^= 15\n  puts(n)\n  m = 9223372036854775807\n  m &+= 1\n  puts(m)\n  m &-= 1\n  puts(m)\n  m &*= 2\n  puts(m)\n}\n", "2\n32\n8\n11\n2\n13\n-9223372036854775808\n9223372036854775807\n-2\n"))
   xs.push(accepted("compound-widths", "fn main {\n  w: Int32 = 5\n  w <<= 3\n  w %= 7\n  u: UInt64 = 1u64\n  u <<= 63\n  s = 2\n  u >>= s\n  v: UInt32 = 255\n  v ^= 15\n  puts(\"\${w} \${u} \${v}\")\n}\n", "5 2305843009213693952 240\n"))
-  xs.push(accepted("compound-places", "class Acc {\n  pub n: Int = 6\n  pub xs: Array(Int) = [1, 2, 3]\n}\nfn main {\n  a = Acc.new()\n  a.n %= 4\n  a.n <<= 2\n  a.xs[1] |= 4\n  a.xs[2] <<= 1\n  b = Buf.new()\n  b.push_byte(200)\n  b[0] ^= 255\n  k = 3\n  inc = { |d: Int| k <<= d }\n  inc(2)\n  puts(\"\${a.n} \${a.xs[1]} \${a.xs[2]} \${b[0]} \${k}\")\n}\n", "8 6 6 55 12\n"))
+  xs.push(accepted("compound-places", "class Acc {\n  pub n: Int = 6\n  pub xs: Array(Int) = [1, 2, 3]\n}\nfn main {\n  a = Acc.new()\n  a.n %= 4\n  a.n <<= 2\n  a.xs[1] |= 4\n  a.xs[2] <<= 1\n  b = Buf.new()\n  b.push_byte(200)\n  b[0] ^= 255\n  k = 3\n  inc = (d: Int) { k <<= d }\n  inc(2)\n  puts(\"\${a.n} \${a.xs[1]} \${a.xs[2]} \${b[0]} \${k}\")\n}\n", "8 6 6 55 12\n"))
   xs.push(refused("compound-percent-float", "fn main {\n  f = 2.5\n  f %= 2.0\n}\n", "% expects matching integer operands", "3:5"))
   xs.push(refused("compound-bits-bool", "fn main {\n  t = true\n  t |= false\n}\n", "compound assignment expects a numeric target, got Bool", "3:5"))
   xs.push(refused("compound-int-float", "fn main {\n  f = 2.5\n  n = 2\n  f *= n\n}\n", "cannot assign Int to Float64", "4:8"))
@@ -69,7 +71,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/op-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/op-${f.tag}.bin", "${dir}/op-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -90,7 +92,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/op-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/op-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/op-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("op-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -101,10 +103,10 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 // same .ll, their file names and trap positions aside.
 fn same_ll(c: Checks, compiler: String, dir: String, tag: String, a: String, b: String) {
   pa = "${dir}/op-ll-${tag}.av"
-  _ = file_write(pa, a)
+  _ = fs.write(pa, a)
   c.eq_int(emit_ll(compiler, pa, "${dir}/op-ll-${tag}.a.ll", "${dir}/op-ll-${tag}.a.log"), 0, "ll-${tag}: the long form emits")
   la = log_text("${dir}/op-ll-${tag}.a.ll")
-  _ = file_write(pa, b)
+  _ = fs.write(pa, b)
   c.eq_int(emit_ll(compiler, pa, "${dir}/op-ll-${tag}.b.ll", "${dir}/op-ll-${tag}.b.log"), 0, "ll-${tag}: the short form emits")
   lb = log_text("${dir}/op-ll-${tag}.b.ll")
   c.expect(la.size > 0, "ll-${tag}: has code")
@@ -116,7 +118,7 @@ fn same_ll(c: Checks, compiler: String, dir: String, tag: String, a: String, b: 
 fn without_sites(ll: String): String {
   out = ""
   for line in ll.split("\n") {
-    if !(line.size > 4 && str_slice(line, 0, 4) == "@tl.") {
+    if !(line.size > 4 && line[..4] == "@tl.") {
       out = out + line + "\n"
     }
   }
@@ -132,7 +134,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_operators.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
     check_ll(c, compiler, scratch_dir())
   } else {

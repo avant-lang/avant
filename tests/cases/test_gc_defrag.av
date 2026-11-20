@@ -1,5 +1,6 @@
 import harness
 import backends
+import std.process
 
 // A full collection's defragmentation does not
 // move a mature object that a word of the collecting thread's stack names.
@@ -58,8 +59,8 @@ fn test_gc_defrag(c: Checks, compiler: String, root: String, dir: String) {
 fn stat_int(text: String, key: String): Int {
   parts = text.split(" ")
   for p in parts {
-    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
-      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
     }
   }
   -1
@@ -120,7 +121,7 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_defrag.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_gc_defrag(c, compiler, avant_test_root(), scratch_dir())
     test_defrag_gain(c, compiler, avant_test_root(), scratch_dir())
   } else {

@@ -38,8 +38,8 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
     // runtime/avant_hash.c's AvantHash: the three buffers (its only
     // references), the size and capacity, the descriptor and the seed,
     // the compact layout's used entries, four bytes of decoded widths,
-    // and the count of added keys a walk reads (field 9, byte 48).
-    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed", "used", "widths", "adds"]
+    // and the count of changes a walk reads (field 9, byte 48).
+    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed", "used", "widths", "changes"]
     fields.push(mt_ref())
     fields.push(mt_ref())
     fields.push(mt_ref())
@@ -76,6 +76,11 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
       // An array of a struct inside that struct (struct_layout): the
       // element buffer is completed when the struct is.
       et = lw.lw_m.types.agg(lw.struct_ahead(name))
+      ahead = true
+    } else if e.rec && lw.struct_busy(name) {
+      // An array of a recursive alias inside its own union, completed
+      // as a struct's is (union_layout).
+      et = lw.lw_m.types.agg(lw.union_ahead(name))
       ahead = true
     } else {
       et = lw.field_mty(e, loc)
@@ -319,7 +324,8 @@ pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
 }
 
 // `Array(T).new(n)` and `Array(T).new(n, value)`: n (a negative n traps:
-// avant_trap_negative(n, 0)), a zeroed buffer of n elements, then the
+// avant_trap_negative(n, 0)), a buffer of n elements (zeroed, unless the
+// value of a scalar element type fills it), then the
 // value, when there is one, stored into every element (a
 // reference-carrying one behind the buffer's barrier, as an array
 // literal's), or else the zero's strings when the element's zero is not
@@ -356,7 +362,6 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
-  b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(e)
   rc = b.types.ref_carrying(et)
@@ -372,6 +377,14 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
       }
     }
   }
+  // A buffer of scalars the fill below writes whole is not zeroed first
+  // (a large one: avant_alloc_unzeroed); one that holds references is,
+  // since the collector reads its words before the fill reaches them.
+  alloc = "avant_alloc"
+  if e.elems.size == 1 && !zero_member && !rc {
+    alloc = "avant_alloc_unzeroed"
+  }
+  b.call(d, alloc, lw.two(bytes, lw.buf_tid(aty)))
   if zero_member {
   } else if e.elems.size == 1 {
     v = lw.lower_coerced(e.elems[0], et, want)
@@ -492,7 +505,20 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, a sort with a
 // block, `delete_if`, `delete_at`, and a `fill` of elements other than
 // numbers, a `shuffle` and a `try_delete_at` (generic functions' loops,
-// checked at their call). The ops are avant_rt.h's AVANT_FROZEN_*.
+// checked at their call). In a program that spawns or uses .parallel,
+// the calls of the runtime's mutators (push, pop, a fill of numbers,
+// sort, reverse, reserve, insert, concat) test it here too, before the
+// call (mutator_frozen_check), so a task's freeze traps naming the call's
+// file and line; the runtime's own test, which has no site, stays for
+// its other callers. The ops are avant_rt.h's AVANT_FROZEN_*.
+pub fn mir_frozen_push: Int {
+  0
+}
+
+pub fn mir_frozen_pop: Int {
+  1
+}
+
 pub fn mir_frozen_clear: Int {
   2
 }
@@ -517,6 +543,22 @@ pub fn mir_frozen_sort: Int {
   4
 }
 
+pub fn mir_frozen_reverse: Int {
+  5
+}
+
+pub fn mir_frozen_reserve: Int {
+  6
+}
+
+pub fn mir_frozen_insert: Int {
+  9
+}
+
+pub fn mir_frozen_concat: Int {
+  11
+}
+
 pub fn mir_frozen_store: Int {
   7
 }
@@ -536,7 +578,7 @@ pub fn mir_frozen_store: Int {
 // not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
   holds = lw.lw_m.elem_holds
-  if !lw.lw_m.shared && (!holds || op == mir_frozen_store()) {
+  if !lw.lw_m.shared && !lw.lw_m.const_arrays && (!holds || op == mir_frozen_store()) {
     return
   }
   b = lw.lw_b
@@ -551,6 +593,18 @@ pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
     return
   }
   lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
+}
+
+// A call of a runtime mutator on the array held in h: in a program that
+// spawns or uses .parallel, the freeze test before the call, so its trap
+// names the call's file and line (the runtime's own test has no site).
+// Any other program's code is unchanged: there only a method call on an
+// element freezes an array, and the runtime's trap names that call.
+pub fn (lw: MirLower) mutator_frozen_check(h: Int, op: Int, loc: Location) {
+  if lw.lw_m.shared || lw.lw_m.const_arrays {
+    lw.at(loc)
+    lw.frozen_check(h, op, loc)
+  }
 }
 
 // An array verb written as a generic function of the program
@@ -857,13 +911,23 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
 // drops it where v is known to be a byte).
 pub fn (lw: MirLower) byte_of(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
+  x = lw.byte_checked(v, loc)
+  lw.tmp(mt_u8(), b.rv_cast(x, mt_u8()))
+}
+
+// The Int v, after the same check: `buf.push_byte(v)`'s argument, so
+// its trap names the call's position (the runtime function checks again
+// for its other callers; LLVM drops this check where v is known to be a
+// byte).
+pub fn (lw: MirLower) byte_checked(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
   x = b.temp(mt_int())
   b.assign(b.pl(x), b.rv_use(v))
   u = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(x), mt_u64()))
   inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u64(255)))
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_byte", lw.one(b.copy_local(x)), loc)
-  lw.tmp(mt_u8(), b.rv_cast(b.copy_local(x), mt_u8()))
+  b.copy_local(x)
 }
 
 // ---- members
@@ -941,7 +1005,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(recv)
   // The value first, then the receiver: push, has, fill.
-  if (name == "push" || name == "has" || name == "contains" || name == "fill") && args.size == 1 {
+  if (name == "push" || name == "has" || name == "fill") && args.size == 1 {
     v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
     a = lw.lower_expr(recv)
     if lw.failed() {
@@ -950,6 +1014,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     lw.at(e.loc)
     h = lw.hold(a, aty)
     if name == "push" {
+      lw.mutator_frozen_check(h, mir_frozen_push(), e.loc)
       lw.arr_push(h, aty, et, v)
       return zero
     }
@@ -966,6 +1031,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
           v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
         }
       }
+      lw.mutator_frozen_check(h, mir_frozen_fill(), e.loc)
       b.call(-1, f, lw.two(b.copy_local(h), v))
       return zero
     }
@@ -994,6 +1060,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     hi = lw.hold(a, aty)
+    lw.mutator_frozen_check(hi, mir_frozen_insert(), e.loc)
     four = lw.two(b.copy_local(hi), ip)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1031,6 +1098,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     hc = lw.hold(a, aty)
+    lw.mutator_frozen_check(hc, mir_frozen_concat(), e.loc)
     four = lw.two(b.copy_local(hc), o)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1080,6 +1148,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return zero
     }
     lw.at(e.loc)
+    lw.mutator_frozen_check(h2, mir_frozen_reserve(), e.loc)
     four = lw.two(b.copy_local(h2), n)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
@@ -1087,6 +1156,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "pop" {
+    lw.mutator_frozen_check(h2, mir_frozen_pop(), e.loc)
     return lw.lower_pop(e, h2, aty, et, want)
   }
   if name == "clear" {
@@ -1105,6 +1175,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "reverse" {
+    lw.mutator_frozen_check(h2, mir_frozen_reverse(), e.loc)
     b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
@@ -1127,6 +1198,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return zero
     }
     if name == "sort" {
+      lw.mutator_frozen_check(h2, mir_frozen_sort(), e.loc)
       b.call(-1, sf, lw.one(b.copy_local(h2)))
       return zero
     }

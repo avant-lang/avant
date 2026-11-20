@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Type aliases (`type Ty = A | B`, recursive through classes), bounds on a
 // generic type's parameters (`class Top(T: Ranked)`) and on a parameter
@@ -41,11 +43,29 @@ fn cases: Array(RCase) {
   xs: Array(RCase) = []
   xs.push(accepted("alias-recursive-union", "type Ty = Scalar | TyArray | TyUnion\n\nclass Scalar {\n  pub name: String\n  fn initialize(name: String) {\n    self.name = name\n  }\n}\n\nclass TyArray {\n  pub elem: Ty\n  fn initialize(elem: Ty) {\n    self.elem = elem\n  }\n}\n\nclass TyUnion {\n  pub members: Array(Ty) = []\n}\n\nfn show(t: Ty): String {\n  switch t {\n    case s: Scalar { s.name }\n    case a: TyArray { \"Array(\${show(a.elem)})\" }\n    case u: TyUnion {\n      text = \"\"\n      for m in u.members {\n        if text.size > 0 {\n          text = text + \" | \"\n        }\n        text = text + show(m)\n      }\n      text\n    }\n  }\n}\nfn main {\n  i: Ty = Scalar.new(\"Int\")\n  u = TyUnion.new()\n  u.members.push(i)\n  u.members.push(TyArray.new(Scalar.new(\"String\")))\n  t: Ty = TyArray.new(u)\n  puts(show(t))\n  ts: Array(Ty) = [i, t]\n  puts(ts.size)\n}\n", "Array(Int | Array(String))\n2\n"))
   xs.push(accepted("alias-plain", "type Id = Int\ntype Names = Array(String)\ntype Pick = Int | String\n\nfn first(ns: Names): String {\n  ns[0]\n}\n\nfn pick(n: Id): Pick {\n  if n > 0 {\n    return n\n  }\n  \"none\"\n}\n\nfn main {\n  a: Id = 4\n  b: Int = a + 1\n  puts(first([\"x\", \"y\"]))\n  puts(\"\${pick(b)} \${pick(0)}\")\n  o: Id? = nil\n  puts(o ?? 7)\n}\n", "x\n5 none\n7\n"))
-  xs.push(refused("alias-self", "type Json = Int | Array(Json)\nfn main { }\n", "type Json names itself: a recursive type goes through a struct or class, whose field may hold a Json", "1:25"))
+  xs.push(accepted("alias-as-value", "import std.regex\nimport std.sync\n\ntype Rx = regex.Regex\ntype Counter = sync.Mutex(Int)\ntype P = Point\ntype Q = P\n\nstruct Point {\n  x: Int\n  y: Int\n}\n\nclass Box {\n  pub n: Int = 7\n}\n\ntype B = Box\n\nfn main {\n  if r = Rx.compile(\"a+\") {\n    puts(r.count(\"caab\"))\n  }\n  c = Counter.new(4)\n  puts(c.with((v) { v }))\n  p = P { x: 1, y: 2 }\n  q = Q { x: 3, y: 4 }\n  puts(p.x + q.y)\n  puts(B.new().n)\n  rs: Array(Rx) = []\n  puts(rs.size)\n}\n", "1\n4\n5\n7\n0\n"))
+  xs.push(accepted("alias-std-struct-literal", "import std.time\n\ntype T = time.Time\n\nfn main {\n  t = T { sec: 0, nsec: 0 }\n  puts(t.iso())\n}\n", "1970-01-01T00:00:00Z\n"))
+  xs.push(accepted("alias-enum-members", "import std.json\n\ntype JsonKind = json.JsonKind\ntype Kind = JsonKind\ntype Dir = Compass\n\nenum Compass {\n  north, south\n}\n\nfn word(k: JsonKind): String {\n  switch k {\n    case obj { \"obj\" }\n    case arr { \"arr\" }\n    else { \"other\" }\n  }\n}\n\nfn main {\n  k = JsonKind.obj\n  puts(word(k))\n  puts(word(Kind.arr))\n  puts(JsonKind.from_name(\"str\") ?? JsonKind.null)\n  puts(JsonKind.members().size)\n  puts(k == json.JsonKind.obj)\n  puts(Dir.south.to_i())\n}\n", "obj\narr\nstr\n7\ntrue\n1\n"))
+  xs.push(refused("alias-union-no-value", "type Expr = Num | Add\n\nclass Num {\n  pub n: Int = 1\n}\n\nclass Add {\n  pub n: Int = 2\n}\n\nfn main {\n  e = Expr.new()\n}\n", "Expr is an alias of a union or a function type, not one type: build a value with its member's own name", "12:7"))
+  xs.push(accepted("alias-recursive", "type Json = Bool | Int | String | Array(Json) | Hash(String, Json)\n\nfn text(j: Json): String {\n  switch j {\n    case b: Bool { \"\${b}\" }\n    case n: Int { \"\${n}\" }\n    case s: String { \"'\${s}'\" }\n    case xs: Array(Json) {\n      parts: Array(String) = []\n      for x in xs {\n        parts.push(text(x))\n      }\n      \"[\${parts.join(\",\")}]\"\n    }\n    case h: Hash(String, Json) {\n      parts: Array(String) = []\n      for k, v in h {\n        parts.push(\"\${k}:\${text(v)}\")\n      }\n      \"{\${parts.join(\",\")}}\"\n    }\n  }\n}\n\nfn depth(j: Json): Int {\n  switch j {\n    case xs: Array(Json) {\n      d = 0\n      for x in xs {\n        d = d.max(depth(x))\n      }\n      d + 1\n    }\n    else { 0 }\n  }\n}\n\nfn main {\n  xs: Array(Json) = [1, \"a\", true]\n  h = Hash(String, Json).new()\n  h[\"xs\"] = xs\n  h[\"n\"] = 2\n  doc: Json = h\n  puts(text(doc))\n  if got = h[\"xs\"] {\n    puts(depth(got))\n  }\n  if first = xs.get(1) {\n    puts(text(first))\n  }\n  deep: Json = 0\n  for i in 0..10000 {\n    one: Array(Json) = [deep]\n    deep = one\n  }\n  puts(depth(deep))\n  opt: Json? = nil\n  puts(text(opt ?? false))\n}\n", "{xs:[1,'a',true],n:2}\n1\n'a'\n10000\nfalse\n"))
+  xs.push(accepted("hash-union-values", "fn word(v: Int | String): String {\n  switch v {\n    case n: Int { \"n\${n}\" }\n    case s: String { s }\n  }\n}\n\nfn main {\n  h: Hash(String, Int | String) = [\"a\": 1, \"b\": \"bee\"]\n  h[\"c\"] = 3\n  puts(word(h[\"b\"] ?? 0))\n  puts(word(h[\"zz\"] ?? \"none\"))\n  if old = h.delete(\"a\") {\n    puts(word(old))\n  }\n  vs = h.values()\n  puts(word(vs[1]))\n  h.each((k, v) { puts(\"\${k}=\${word(v)}\") })\n}\n", "bee\nnone\nn1\nn3\nb=bee\nc=n3\n"))
+  xs.push(refused("alias-self-bare", "type A = Int | A\nfn main { }\n", "type A names itself outside an Array's element or a Hash's value: a recursive alias is a union holding itself there (type A = Int | Array(A)), or the recursion goes through a struct or class, whose field may hold a A", "1:16"))
+  xs.push(refused("alias-self-optional", "type B = B?\nfn main { }\n", "type B names itself outside an Array's element or a Hash's value", "1:10"))
+  xs.push(refused("alias-self-hash-key", "type K = Int | Hash(K, Int)\nfn main { }\n", "type K names itself outside an Array's element or a Hash's value", "1:21"))
+  xs.push(refused("alias-self-not-union", "type J = Array(J)\nfn main { }\n", "type J names itself but is not a union: a recursive alias is a union of its members, one of them holding it (type J = Int | Array(J))", "1:6"))
+  xs.push(refused("alias-self-mutual", "type P = Int | Array(Q)\ntype Q = String | Array(P)\nfn main {\n  x: P = 1\n}\n", "type Q names itself through type P: a recursive alias names itself in its own body, inside an Array's element or a Hash's value (type Q = Int | Array(Q)); write the other alias's members there, or let the recursion go through a struct or class", "1:22"))
+  xs.push(accepted("hash-nil-values", "type AnyData = Nil | Bool | Int | String | Array(AnyData) | Hash(String, AnyData)\n\nfn show(d: AnyData): String {\n  switch d {\n    case nil { \"nil\" }\n    case b: Bool { \"\${b}\" }\n    case i: Int { \"\${i}\" }\n    case s: String { \"'\${s}'\" }\n    case xs: Array(AnyData) {\n      parts: Array(String) = []\n      for x in xs {\n        parts.push(show(x))\n      }\n      \"[\${parts.join(\",\")}]\"\n    }\n    case h: Hash(String, AnyData) {\n      parts: Array(String) = []\n      for k, v in h {\n        parts.push(\"\${k}:\${show(v)}\")\n      }\n      \"{\${parts.join(\",\")}}\"\n    }\n  }\n}\n\nfn main {\n  h: Hash(String, Nil | Int | String) = [:]\n  h[\"a\"] = nil\n  h[\"b\"] = 3\n  puts(h.has(\"a\"))\n  puts(h.has(\"c\"))\n  puts(h.size)\n  x = h[\"a\"]\n  y = h[\"c\"]\n  puts(x ?? \"none\")\n  if v = h[\"b\"] {\n    puts(\"b set\")\n  }\n  if v = h[\"a\"] {\n    puts(\"a set?\")\n  } else {\n    puts(\"a reads nil\")\n  }\n  if old = h.delete(\"a\") {\n    puts(\"deleted a non-nil\")\n  } else {\n    puts(\"deleted a nil\")\n  }\n  puts(h.has(\"a\"))\n  h2: Hash(String, Nil | Int) = [\"p\": nil, \"q\": 1]\n  puts(h2.size)\n  puts(h2.has(\"p\"))\n  d: Hash(String, AnyData) = [:]\n  d[\"x\"] = nil\n  arr: Array(AnyData) = [1, \"two\", nil]\n  d[\"y\"] = arr\n  d[\"z\"] = true\n  puts(d.has(\"x\"))\n  puts(d.size)\n  doc: AnyData = d\n  puts(show(doc))\n  for k, v in d {\n    puts(\"\${k} \${show(v)}\")\n  }\n  vs = d.values()\n  puts(vs.size)\n  c = d.clone()\n  puts(c.has(\"x\"))\n}\n", "true\nfalse\n2\nnone\nb set\na reads nil\ndeleted a nil\nfalse\n2\ntrue\ntrue\n3\n{x:nil,y:[1,'two',nil],z:true}\nx nil\ny [1,'two',nil]\nz true\n3\ntrue\n"))
+  xs.push(refused("alias-self-shown", "type Json = Int | Array(Json)\nfn main {\n  a: Json = \"x\"\n}\n", "cannot assign String to Json", "3:13"))
+  xs.push(refused("alias-self-no-eq", "type Json = Int | Array(Json)\nfn main {\n  a: Json = 1\n  b: Json = 2\n  puts(a == b)\n}\n", "Json has no ==: take it apart with switch and compare its members", "5:10"))
   xs.push(refused("alias-unknown", "type T2 = Strng | Int\nfn main { }\n", "unknown type Strng", "1:11"))
   xs.push(refused("alias-lower", "type id = Int\nfn main { }\n", "the name of type alias id is a type name, written with a capital first letter: write Id", "1:6"))
   xs.push(refused("alias-duplicate", "struct P {\n  x: Int\n}\ntype P = Int\nfn main { }\n", "P is already defined", "4:6"))
   xs.push(refused("alias-params", "type Pair(A) = Array(A)\nfn main { }\n", "a type alias takes no type parameters: type Pair = T names one type", "1:10"))
+  xs.push(accepted("alias-generic", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nclass Cell(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\ntype P = Pair\ntype Q = P\ntype C = Cell\n\nfn sum(p: Q(Int, Int)): Int {\n  p.a + p.b\n}\n\nfn main {\n  p = P(Int, Int) { a: 1, b: 2 }\n  puts(sum(p))\n  c = C(String).new(\"x\")\n  cs: Array(C(String)) = [c]\n  puts(cs[0].v)\n  h: Hash(String, Q(Int, String)) = [:]\n  h[\"k\"] = Pair(Int, String) { a: 3, b: \"s\" }\n  puts(h.size)\n}\n", "3\nx\n1\n"))
+  xs.push(accepted("alias-generic-std", "import std.sync\n\ntype Mutex = sync.Mutex\ntype Chan = sync.Channel\n\nstruct Box {\n  n: Int\n}\n\nfn read(m: Mutex(Box)): Int {\n  m.with((b) { b.n })\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  boxes: Array(Mutex(Box)) = []\n  boxes.push(Mutex(Box).new(Box { n: 2 }))\n  c = Chan(Int).new(2)\n  _ = c.send(5)\n  inferred = Mutex.new(3)\n  puts(m.with((v) { v }) + read(boxes[0]) + (c.recv() ?? 0) + inferred.with((v) { v }))\n}\n", "11\n"))
+  xs.push(refused("alias-generic-bare", "import std.sync\ntype M = sync.Mutex\nfn main {\n  x: M = 1\n}\n", "M needs type arguments", "4:6"))
+  xs.push(refused("alias-generic-arity", "import std.sync\ntype M = sync.Mutex\nfn main {\n  x: M(Int, Int)? = nil\n}\n", "Mutex takes 1 type argument", "4:6"))
+  xs.push(accepted("enum-type-argument-qualified", "import std.sync\n\nenum Color { red, blue }\n\ntype Colors = sync.Channel(Color)\n\nfn make: sync.Channel(Color) {\n  ch = sync.Channel(Color).new(2)\n  _ = ch.send(Color.blue)\n  ch\n}\n\nfn first(c: Colors): Color {\n  c.recv() ?? Color.red\n}\n\nfn main {\n  puts(first(make()))\n  m: sync.Mutex(Color) = sync.Mutex(Color).new(Color.red)\n  puts(m.with((c) { c }))\n}\n", "blue\nred\n"))
   xs.push(refused("alias-args", "type Id = Int\nfn main {\n  a: Id(Int) = 1\n}\n", "Id does not take type arguments", "3:6"))
   xs.push(accepted("alias-type-keyword-name", "fn main {\n  type = 3\n  puts(type)\n}\n", "3\n"))
   xs.push(accepted("type-bound", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank() > best.rank() {\n      self.best = x\n    }\n  }\n}\nfn main {\n  t = Top.new(Card { n: 2 })\n  t.offer(Card { n: 5 })\n  t.offer(Card { n: 3 })\n  puts(t.best.n)\n}\n", "5\n"))
@@ -78,7 +98,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/ty-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/ty-${f.tag}.bin", "${dir}/ty-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -99,7 +119,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
       c.eq_str(log_text("${dir}/ty-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ty-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/ty-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("ty-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
     }
@@ -108,7 +128,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_types_and_text.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
   } else {
     c.expect(false, "AVANT_COMPILER")

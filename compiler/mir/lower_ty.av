@@ -145,7 +145,7 @@ pub fn mir_is_str_ty(t: Ty): Bool {
 // The arity of a string builtin (lower_str.av; calls.av:205-249,
 // 320-346), or -1 when c is not one.
 pub fn mir_str_builtin_arity(c: String): Int {
-  if c == "chr" || c == "checksum_str" {
+  if c == "chr" {
     return 1
   }
   if c == "repeat_byte" || c == "fmt_float" {
@@ -168,6 +168,11 @@ pub fn mir_mty(t: Ty): String {
     return c_scalar_name(t.c_scalar)
   }
   if t.is_enum() {
+    return "${mir_module_part(t.mod_name)}.${t.name}"
+  }
+  if t.rec {
+    // A recursive alias's union by its module and name: its members
+    // hold it.
     return "${mir_module_part(t.mod_name)}.${t.name}"
   }
   if t.is_carray() {
@@ -292,7 +297,7 @@ pub fn mir_mty(t: Ty): String {
   if t.is_void() {
     return "Void"
   }
-  t.show()
+  t.show_bare()
 }
 
 fn mir_module_byte(c: Int): Bool {

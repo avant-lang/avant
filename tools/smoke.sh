@@ -189,7 +189,7 @@ fn main {
   xs: Array(Int) = [1, 2]
   xs.push(3)
   sum = 0
-  xs.each { |n| sum += n }
+  xs.each (n) { sum += n }
   puts(sum)
   puts(xs.size)
 
@@ -239,7 +239,7 @@ src json.av <<'EOF'
 import std.json
 
 fn main {
-  if doc = Json.parse("{\"n\": 7, \"name\": \"ada\"}") {
+  if doc = json.Json.parse("{\"n\": 7, \"name\": \"ada\"}") {
     if n = doc.int("n") {
       puts(n)
     }
@@ -258,7 +258,7 @@ src regex_literal.av <<'EOF'
 import std.regex
 
 fn main {
-  if re = Regex.compile("a+") {
+  if re = regex.Regex.compile("a+") {
     if m = re.find("xxaa") {
       puts(m.start)
       puts(m.end)
@@ -285,7 +285,7 @@ import std.regex
 fn main {
   p = "a"
   p = p + "+"
-  if re = Regex.compile(p) {
+  if re = regex.Regex.compile(p) {
     if m = re.find("xxaa") {
       puts(m.start)
       puts(m.end)
@@ -321,14 +321,14 @@ src http.av <<'EOF'
 import std.http
 
 fn main {
-  if server = Http.listen(0) {
-    server.get("/") { |req|
+  if server = http.listen(0) {
+    server.get("/", (req) {
       server.close()
-      Response.text("Hello Avant")
-    }
+      http.Response.text("Hello Avant")
+    })
     port = server.port()
     handle = spawn {
-      if resp = Http.get("http://127.0.0.1:${port}/") {
+      if resp = http.get("http://127.0.0.1:${port}/") {
         puts(String.from_utf8(resp.body) ?? "")
       }
       0
@@ -354,7 +354,7 @@ src tests/test_ok.av <<'EOF'
 import std.testing
 
 fn main: Int {
-  t = Test.new()
+  t = testing.Test.new()
   t.check(1 + 1 == 2, "arithmetic")
   t.finish()
 }
@@ -380,7 +380,7 @@ else
 fi
 expect example-hello "Hello Avant" "$avant" run "$inst/examples/hello.av"
 missing=""
-for f in LICENSE third_party/NOTICE.md third_party/base64/LICENSE third_party/pcre2/LICENCE.md third_party/pcre2/deps/sljit/LICENSE third_party/uSockets/LICENSE third_party/zlib/LICENSE third_party/yyjson/LICENSE third_party/picohttpparser/LICENSE; do
+for f in LICENSE third_party/NOTICE.md third_party/base64/LICENSE third_party/pcre2/LICENCE.md third_party/pcre2/deps/sljit/LICENSE third_party/uSockets/LICENSE third_party/zlib/LICENSE third_party/yyjson/LICENSE third_party/picohttpparser/LICENSE third_party/crc32-chromium/LICENSE third_party/sha-intrinsics/README.md; do
   [ -s "$inst/$f" ] || missing="$missing $f"
 done
 if [ -z "$missing" ]; then

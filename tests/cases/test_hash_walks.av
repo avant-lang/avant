@@ -1,0 +1,169 @@
+import harness
+import backends
+import std.fs
+import std.process
+
+// Hashes and sets: what their own hash and equality may do, and walks.
+// Each program is compiled in parallel; an accepted one must print what
+// it should, a refused one must leave no binary, say the expected words
+// and point at the expected line and column, and one that traps must
+// compile, end with a failure and say why.
+//   - a key type's own hash or equals that stores into, deletes from or
+//     clears the hash it is called for traps (the probe that called it
+//     would read moved entries); a lookup there, or a change to another
+//     hash, is allowed.
+//   - a Hash keeps the order its keys were inserted in, for every key
+//     type (integers, Strings, structs): keys(), values(), for and each
+//     give it; a replaced value keeps its key's place, a key deleted and
+//     set again goes last, and the order survives growth and the
+//     compaction after many deletions (a table that deletes as much as it
+//     inserts, integer and String keys).
+//   - for k, v in h, for k in h.keys(), for v in h.values() and for v in s
+//     walk in place: break, continue and return as in any for; deleting
+//     the visited key is allowed; adding a key, deleting another or a
+//     clear traps after the step; for x in h names both parts or is
+//     refused; a position over a Set or keys() still walks an array.
+//   - delete_if on a Hash and a Set removes what the predicate holds for,
+//     keeps the rest in order, traps on a change the predicate makes to
+//     another entry, and is a compile error with a block in pipes.
+//   - == and != on Hash and Set: the same keys with equal values, in any
+//     order; a Hash whose values have no == is refused.
+
+class PCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 1 accepted, 2 refused, 3 compiles and traps.
+  pub kind: Int = 0
+}
+
+fn accepted(tag: String, src: String, out: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.kind = 2
+  f
+}
+
+fn traps(tag: String, src: String, needle: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 3
+  f
+}
+
+fn cases: Array(PCase) {
+  xs: Array(PCase) = []
+  xs.push(traps("uk-equals-store", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.h[Key { id: 100, hold: hold }] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "a store on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-equals-delete", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      _ = hold.h.delete(Key { id: 5, hold: hold })\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "delete on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-equals-clear", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.h.clear()\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "clear on a Hash while its key's own hash or equals runs for it"))
+  xs.push(traps("uk-hash-store", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    if hold.armed {\n      hold.armed = false\n      hold.h[Key { id: 100, hold: hold }] = 1\n    }\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "a store on a Hash while its key's own hash or equals runs for it"))
+  xs.push(accepted("uk-equals-lookup", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      _ = hold.h[Key { id: 7, hold: hold }]\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "3\n10\n"))
+  xs.push(accepted("uk-equals-other-hash", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.other[1] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  puts(hd.h.size)\n}\n", "3\n10\n"))
+  xs.push(accepted("uk-store-after-probe", "class Holder {\n  pub h: Hash(Key, Int)\n  pub other: Hash(Int, Int)\n  pub armed: Bool\n\n  fn initialize {\n    self.h = Hash(Key, Int).new()\n    self.other = Hash(Int, Int).new()\n    self.armed = false\n  }\n}\n\nstruct Key {\n  id: Int\n  hold: Holder\n\n  fn equals(other: Key): Bool {\n    if hold.armed {\n      hold.armed = false\n      hold.other[1] = 1\n    }\n    id == other.id\n  }\n\n  fn hash(h: Hasher) {\n    h.add(id)\n  }\n}\n\nfn main {\n  hd = Holder.new()\n  for i in 0..10 {\n    hd.h[Key { id: i, hold: hd }] = i\n  }\n  hd.armed = true\n  puts(hd.h[Key { id: 3, hold: hd }] ?? -1)\n  hd.h[Key { id: 50, hold: hd }] = 50\n  puts(hd.h.size)\n}\n", "3\n11\n"))
+  xs.push(accepted("order-int", "fn main {\n  h = Hash(Int, Int).new()\n  for x in [5, -3, 9, 0, 7] {\n    h[x] = x * 10\n  }\n  h[9] = 1\n  _ = h.delete(-3)\n  h[-3] = 2\n  line = \"\"\n  for k, v in h {\n    line = \"\${line}\${k}:\${v} \"\n  }\n  puts(line)\n  ks = h.keys()\n  vs = h.values()\n  puts(\"\${ks[0]} \${ks[4]} \${vs[0]} \${vs[4]}\")\n}\n", "5:50 9:1 0:0 7:70 -3:2 \n5 -3 50 2\n"))
+  xs.push(accepted("order-int32-growth", "fn main {\n  h = Hash(Int32, Int).new()\n  n = 0\n  for i in 0..5000 {\n    h[(5000 - i).to_i32()] = i\n  }\n  for i in 0..4000 {\n    _ = h.delete((5000 - i).to_i32())\n  }\n  for i in 0..3000 {\n    h[(20000 + i).to_i32()] = i\n  }\n  prev = -1\n  ok = true\n  for k, v in h {\n    if v <= prev && k < 20000.to_i32() {\n      ok = false\n    }\n    prev = v\n    n += 1\n  }\n  ks = h.keys()\n  puts(\"\${n} \${h.size} \${ok} \${ks[0]} \${ks[999]} \${ks[1000]} \${ks[3999]}\")\n}\n", "4000 4000 true 1000 1 20000 22999\n"))
+  xs.push(accepted("order-string", "fn main {\n  h = [\"pear\": 1, \"fig\": 2, \"apple\": 3]\n  h[\"fig\"] = 20\n  _ = h.delete(\"pear\")\n  h[\"pear\"] = 4\n  line = \"\"\n  for k in h.keys() {\n    line = \"\${line}\${k} \"\n  }\n  for v in h.values() {\n    line = \"\${line}\${v} \"\n  }\n  puts(line)\n}\n", "fig apple pear 20 3 4 \n"))
+  xs.push(accepted("order-set", "fn main {\n  s: Set(Int) = [30, 10, 20]\n  _ = s.delete(10)\n  _ = s.add(10)\n  line = \"\"\n  for v in s {\n    line = \"\${line}\${v} \"\n  }\n  puts(line)\n}\n", "30 20 10 \n"))
+  xs.push(accepted("churn-int-order", "fn main {\n  h = Hash(Int, Int).new()\n  for i in 0..3000 {\n    h[i * 31] = i\n  }\n  for i in 0..100000 {\n    _ = h.delete(i * 31)\n    h[(i + 3000) * 31] = i + 3000\n  }\n  ok = true\n  prev = -1\n  for k, v in h {\n    if k != v * 31 || v <= prev {\n      ok = false\n    }\n    prev = v\n  }\n  puts(\"\${h.size} \${ok} \${prev} \${h[102999 * 31] ?? -1} \${h[99999 * 31] ?? -1}\")\n}\n", "3000 true 102999 102999 -1\n"))
+  xs.push(accepted("churn-string-order", "fn main {\n  h = Hash(String, Int).new()\n  for i in 0..2000 {\n    h[\"k\${i}\"] = i\n  }\n  for i in 0..50000 {\n    _ = h.delete(\"k\${i}\")\n    h[\"k\${i + 2000}\"] = i + 2000\n  }\n  ok = true\n  prev = -1\n  for k, v in h {\n    if k != \"k\${v}\" || v <= prev {\n      ok = false\n    }\n    prev = v\n  }\n  puts(\"\${h.size} \${ok} \${prev}\")\n}\n", "2000 true 51999\n"))
+  xs.push(accepted("walk-break-continue-return", "fn first_big(h: Hash(String, Int)): String {\n  for k, v in h {\n    if v > 10 {\n      return k\n    }\n  }\n  \"none\"\n}\n\nfn main {\n  h = [\"a\": 1, \"b\": 20, \"c\": 3, \"d\": 40]\n  n = 0\n  for k, v in h {\n    if v == 1 {\n      continue\n    }\n    n += v\n    if k == \"c\" {\n      break\n    }\n  }\n  puts(\"\${n} \${first_big(h)}\")\n}\n", "23 b\n"))
+  xs.push(accepted("walk-try", "fn parse(s: String): Int? {\n  if s == \"x\" {\n    return nil\n  }\n  s.size\n}\n\nfn total(h: Hash(Int, String)): Int? {\n  t = 0\n  for k, v in h {\n    t += parse(v)?\n  }\n  t\n}\n\nfn main {\n  puts(total([1: \"ab\", 2: \"c\"]) ?? -1)\n  puts(total([1: \"ab\", 2: \"x\"]) ?? -1)\n}\n", "3\n-1\n"))
+  xs.push(accepted("walk-delete-visited", "fn main {\n  h = Hash(Int, Int).new()\n  for i in 0..100 {\n    h[i] = i\n  }\n  seen = 0\n  for k, v in h {\n    seen += 1\n    if v % 3 != 0 {\n      _ = h.delete(k)\n    }\n  }\n  s: Set(String) = [\"a\", \"b\", \"c\"]\n  for v in s {\n    _ = s.delete(v)\n  }\n  puts(\"\${seen} \${h.size} \${s.size}\")\n}\n", "100 34 0\n"))
+  xs.push(accepted("walk-assign-value", "fn main {\n  h = [\"a\": 1, \"b\": 2]\n  for k, v in h {\n    h[k] = v * 10\n  }\n  puts((h[\"a\"] ?? 0) + (h[\"b\"] ?? 0))\n}\n", "30\n"))
+  xs.push(accepted("walk-lambda-captures", "fn main {\n  h = [1: 10, 2: 20]\n  fs: Array(fn(): Int) = []\n  for k, v in h {\n    fs.push(() { k + v })\n  }\n  puts(fs[0]() + fs[1]() * 100)\n}\n", "2211\n"))
+  xs.push(accepted("walk-struct-key", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  h = Hash(P, String).new()\n  h[P { x: 2, y: 1 }] = \"b\"\n  h[P { x: 1, y: 9 }] = \"a\"\n  for p, name in h {\n    puts(\"\${p.x},\${p.y}=\${name}\")\n  }\n}\n", "2,1=b\n1,9=a\n"))
+  xs.push(accepted("walk-empty", "fn main {\n  h = Hash(Int, Int).new()\n  n = 0\n  for k, v in h {\n    n += 1\n  }\n  s = Set(Int).new()\n  for v in s {\n    n += 1\n  }\n  puts(n)\n}\n", "0\n"))
+  xs.push(accepted("walk-position-keeps-array", "fn main {\n  s: Set(Int) = [7, 8]\n  t = 0\n  for i, v in s {\n    t += i * v\n  }\n  h = [\"a\": 1, \"b\": 2]\n  for i, k in h.keys() {\n    t += i * 100\n  }\n  puts(t)\n}\n", "108\n"))
+  xs.push(traps("for-add", "fn main {\n  h = [1: 1, 2: 2]\n  for k, v in h {\n    h[k + 10] = v\n  }\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("for-delete-other", "fn main {\n  h = [1: 1, 2: 2, 3: 3]\n  for k, v in h {\n    _ = h.delete(3)\n  }\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(traps("for-clear", "fn main {\n  h = [1: 1, 2: 2]\n  for k, v in h {\n    h.clear()\n  }\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(traps("for-keys-add", "fn main {\n  h = [\"a\": 1]\n  for k in h.keys() {\n    h[\"\${k}\${k}\"] = 2\n  }\n}\n", "a key was added to a Hash during its walk"))
+  xs.push(traps("set-for-delete-other", "fn main {\n  s: Set(Int) = [1, 2, 3]\n  for v in s {\n    _ = s.delete(3)\n  }\n}\n", "an element other than the visited one was deleted from a Set during its walk"))
+  xs.push(accepted("for-clear-last", "fn main {\n  h = [1: 1]\n  n = 0\n  for k, v in h {\n    h.clear()\n    n += 1\n  }\n  puts(\"\${n} \${h.size}\")\n}\n", "1 0\n"))
+  xs.push(refused("for-one-name-hash", "fn main {\n  h = [1: 1]\n  for x in h {\n    puts(x)\n  }\n}\n", "for x in a Hash: a hash's walk names its key and its value (for k, v in h)", "3:3"))
+  xs.push(refused("for-hash-name-reused", "fn main {\n  k = 0\n  h = [1: 1]\n  for k, v in h {\n    puts(v)\n  }\n  puts(k)\n}\n", "k already names a variable here", "4:3"))
+  xs.push(refused("for-hash-assign-key", "fn main {\n  h = [1: 1]\n  for k, v in h {\n    v = 2\n  }\n}\n", "cannot assign to v", "4:7"))
+  xs.push(accepted("delete-if-hash", "fn main {\n  h = Hash(Int, Int).new()\n  for i in 0..10 {\n    h[i] = i * i\n  }\n  h.delete_if((k, v) { k % 2 == 0 || v > 50 })\n  line = \"\"\n  for k, v in h {\n    line = \"\${line}\${k} \"\n  }\n  puts(\"\${h.size} \${line}\")\n}\n", "4 1 3 5 7 \n"))
+  xs.push(accepted("delete-if-set-string", "fn main {\n  s: Set(String) = [\"a\", \"bb\", \"c\", \"dd\"]\n  s.delete_if (v) { v.size > 1 }\n  line = \"\"\n  for v in s {\n    line = \"\${line}\${v}\"\n  }\n  puts(\"\${s.size} \${line}\")\n}\n", "2 ac\n"))
+  xs.push(accepted("delete-if-return", "fn main {\n  h = [\"a\": 1, \"b\": 2, \"c\": 3]\n  h.delete_if (k, v) {\n    if k == \"b\" {\n      return true\n    }\n    false\n  }\n  puts(h.keys().size)\n}\n", "2\n"))
+  xs.push(traps("delete-if-changes-other", "fn main {\n  h = [1: 1, 2: 2, 3: 3]\n  g = h\n  h.delete_if (k, v) {\n    _ = g.delete(3)\n    false\n  }\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(refused("delete-if-pipes", "fn main {\n  h = [1: 1]\n  h.delete_if { |k, v| v > 0 }\n}\n", "a block in pipes is not Avant", "3:15"))
+  xs.push(refused("delete-if-not-bool", "fn main {\n  s: Set(Int) = [1]\n  s.delete_if (v) { v }\n}\n", "the predicate of delete_if must give a Bool, got Int", "3:15"))
+  xs.push(accepted("eq-hash", "fn main {\n  a = [\"x\": 1, \"y\": 2]\n  b = [\"y\": 2, \"x\": 1]\n  c = [\"x\": 1, \"y\": 3]\n  d = [\"x\": 1]\n  puts(\"\${a == b} \${a == c} \${a == d} \${a != c}\")\n  e = Hash(Int, Array(Int)).new()\n  f = Hash(Int, Array(Int)).new()\n  e[1] = [1, 2]\n  f[1] = [1, 2]\n  puts(e == f)\n  f[1] = [2, 1]\n  puts(e == f)\n}\n", "true false false true\ntrue\nfalse\n"))
+  xs.push(accepted("eq-set", "fn main {\n  a: Set(Int) = [1, 2, 3]\n  b: Set(Int) = [3, 2, 1]\n  c: Set(Int) = [1, 2]\n  puts(\"\${a == b} \${a == c} \${a != c}\")\n}\n", "true false true\n"))
+  xs.push(accepted("eq-hash-float-nan", "fn main {\n  a = Hash(Int, Float64).new()\n  a[1] = 0.0 / 0.0\n  puts(a == a)\n}\n", "false\n"))
+  xs.push(accepted("eq-struct-with-hash", "struct Bag {\n  name: String\n  items: Hash(String, Int)\n}\n\nfn main {\n  a = Bag { name: \"b\", items: [\"x\": 1] }\n  b = Bag { name: \"b\", items: [\"x\": 1] }\n  puts(a == b)\n}\n", "true\n"))
+  xs.push(refused("eq-hash-fn-values", "struct F {\n  f: fn(): Int\n}\n\nfn main {\n  a = Hash(Int, F).new()\n  b = Hash(Int, F).new()\n  puts(a == b)\n}\n", "cannot compare Hash(Int, F): fn(): Int (the field F.f) has no ==", "8:10"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/hw-${f.tag}.av"
+    _ = fs.write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/hw-${f.tag}.bin", "${dir}/hw-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind != 2 {
+      runs.push(run_job(dir, "hw-${f2.tag}.bin", "hw-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/hw-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/hw-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 3 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.expect(runs[k].code != 0, "${f3.tag}: fails")
+      c.expect(log_text("${dir}/hw-${f3.tag}.run.err").contains(f3.want), "${f3.tag}: says ${f3.want}")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/hw-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("hw-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_hash_walks.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

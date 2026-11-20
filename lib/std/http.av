@@ -6,18 +6,33 @@ lib httpc {
   fun avant_http_header_name_at(data: Bytes, index: Int): String
   fun avant_http_header_value_at(data: Bytes, index: Int): String
   fun avant_http_req_method(req: Ptr(Void)): String
-  fun avant_http_req_target(req: Ptr(Void)): String
+  fun avant_http_req_path(req: Ptr(Void)): String
+  fun avant_http_req_query(req: Ptr(Void)): String
+  fun avant_http_req_route(req: Ptr(Void)): Int
+  fun avant_http_route_add(srv: Ptr(Void), method: String, path: String)
   fun avant_http_req_body(req: Ptr(Void)): Bytes
-  fun avant_http_req_headers(req: Ptr(Void)): Bytes
-  fun avant_http_req_respond(req: Ptr(Void), status: Int, head: String, body: Bytes)
+  fun avant_http_req_headers_now(seq: Int): Bytes
+  fun avant_http_headers_peer(data: Bytes): String
+  fun avant_http_headers_pack(block: String): Bytes
+  fun avant_http_params_pack(text: String): Bytes
+  fun avant_http_decode_component(text: String): String
+  fun avant_http_param_has(data: Bytes, name: String): Int
+  fun avant_http_param_at(data: Bytes, name: String, index: Int): String
+  fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
+  fun avant_http_req_seq(req: Ptr(Void)): Int
+  fun avant_http_req_reply(seq: Int): Int
+  fun avant_http_req_later(req: Ptr(Void))
+  fun avant_http_reply_send(id: Int, status: Int, ctype: String, head: String, body: Bytes): Int
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
-  fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
+  fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void)), timer_cb: fn(HttpState, Ptr(Void))): Int
+  fun avant_http_add_timer(srv: Ptr(Void), ms: Int): Int
+  fun avant_http_timer_index(ev: Ptr(Void)): Int
   fun avant_http_close(srv: Ptr(Void)): Int
-  fun avant_http_route_while_serving(what: String)
-  fun avant_http_limit_while_serving(name: String)
-  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int)
-  fun avant_http_header_check(name: String, value: String)
+  fun avant_http_closer_id(srv: Ptr(Void)): Int
+  fun avant_http_close_by_id(id: Int): Int
+  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int): String?
+  fun avant_http_header_check(name: String, value: String): String?
   fun avant_http_token_bad(s: String): Int
   fun avant_http_value_bad(s: String): Int
   fun avant_http_url_bad(s: String): Int
@@ -42,15 +57,7 @@ lib httpc {
   fun avant_ws_send_text_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_send_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_close_by_id(id: Int, code: Int, reason: String): Int
-  fun avant_ws_client_connect(host: String, port: Int, target: String, key: String, timeout_ms: Int): Int
-  fun avant_ws_client_recv(id: Int, timeout_ms: Int): Bytes
-  fun avant_ws_client_last_is_text: Int
-  fun avant_ws_client_close_code(id: Int): Int
-  fun avant_ws_client_send_text(id: Int, data: String): Int
-  fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
-  fun avant_ws_client_close(id: Int): Int
-  fun avant_ws_client_key: String
-  fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int): Bytes
+  fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int, idle_ms: Int): Bytes
   fun avant_http_resp_status(raw: Bytes): Int
   fun avant_http_resp_headers(raw: Bytes): Bytes
   fun avant_http_resp_body(raw: Bytes): Bytes
@@ -125,60 +132,283 @@ pub struct Headers {
   }
 }
 
+// Parameters in the form of a query string or of a form body
+// (application/x-www-form-urlencoded): `a=1&b=x+y&c=%C3%A9`. Pieces are
+// separated by `&`, a name from its value by the first `=` (a piece
+// without one has an empty value), and empty pieces are skipped; `+` is
+// a space and `%XX` a byte, a `%` without two hex digits is kept as it
+// is, and bytes that are not UTF-8 read as U+FFFD (the WHATWG URL
+// standard's reading). Names are compared exactly; wire order and
+// repeats are kept.
+pub struct Params {
+  data: Bytes
+
+  pub fn self.parse(text: String): Params {
+    Params { data: httpc.avant_http_params_pack(text) }
+  }
+
+  pub fn count: Int {
+    httpc.avant_http_header_count(self.data)
+  }
+
+  pub fn has(name: String): Bool {
+    httpc.avant_http_param_has(self.data, name) != 0
+  }
+
+  // The first value of `name`, nil when there is none.
+  pub fn get(name: String): String? {
+    v = httpc.avant_http_param_at(self.data, name, 0)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn get_all(name: String): Array(String) {
+    out: Array(String) = []
+    i = 0
+    while true {
+      v = httpc.avant_http_param_at(self.data, name, i)
+      if httpc.avant_http_take_status() != 0 {
+        return out
+      }
+      out.push(v)
+      i += 1
+    }
+    out
+  }
+
+  pub fn name_at(index: Int): String? {
+    v = httpc.avant_http_header_name_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn value_at(index: Int): String? {
+    v = httpc.avant_http_header_value_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+}
+
 fn empty_headers: Headers {
   Headers { data: "".bytes }
 }
 
-// A received request. `method`, `path` and `body` are values copied out
-// of the socket buffer before the handler runs; `query` is the raw
-// query string without the `?`, or nil when the target has none.
+// A header set from "Name: value\r\n" lines whose every line was checked
+// as Response.header checks it.
+fn headers_of(block: String): Headers {
+  Headers { data: httpc.avant_http_headers_pack(block) }
+}
+
+struct TargetParts {
+  path: String
+  query: String?
+}
+
+// A request target split at its first `?`: the path, and the query
+// without the `?` (nil when there is none).
+fn split_target(target: String): TargetParts {
+  q = 0
+  while q < target.size {
+    if target[q] == 63 {
+      return TargetParts { path: target[..q], query: target[q + 1..] }
+    }
+    q += 1
+  }
+  TargetParts { path: target, query: nil }
+}
+
+// A received request. `method` and `path` are fields, read by every
+// route match; the rest is read through methods: `query()` is the raw
+// query string without the `?` (nil when the target has none),
+// `header(name)` the first value of a header, `headers()` all of them,
+// `body()` the body, `peer()` the peer's address. The query and the
+// body are copied out of the socket buffer before the handler runs. The
+// headers are not: a received request carries no header set (`hs` is
+// empty, `seq` names its dispatch), and its first header read while its
+// handler runs builds the set from the connection's buffer (the runtime
+// keeps it for the handler's next reads), so a handler that reads none
+// allocates nothing for them. Once the handler has returned, that buffer
+// holds the next requests, so a read then traps: a request handed to a
+// task takes its headers first (`req.headers()`, and `req.peer()`,
+// whose address travels in the header set's block). A request built in
+// memory (`Request.build`, `seq` 0) keeps its own set in `hs`.
 pub struct Request {
   pub method: String
   pub path: String
-  pub query: String?
-  pub headers: Headers
-  pub body: Bytes
+  raw_query: String?
+  hs: Headers
+  data: Bytes
+  seq: Int
+
+  pub fn query: String? {
+    self.raw_query
+  }
+
+  // The first value of the header `name` (in any case), nil when the
+  // request has none.
+  pub fn header(name: String): String? {
+    self.header_set("header(name)").get(name)
+  }
+
+  pub fn headers: Headers {
+    self.header_set("headers()")
+  }
+
+  // The header set: a built request's own, a received one's from its
+  // dispatch while its handler runs; `call` names the read for the trap.
+  fn header_set(call: String): Headers {
+    if self.seq == 0 {
+      return self.hs
+    }
+    packed = httpc.avant_http_req_headers_now(self.seq)
+    if packed.size == 0 {
+      panic("http.Request.${call} after the request's handler returned: a received request's headers and peer are read while its handler runs (the connection's buffer then holds the next requests); a request handed to a task takes them first (req.headers(), req.peer())")
+    }
+    Headers { data: packed }
+  }
+
+  // The query's parameters, decoded (Params); none without a query. The
+  // query is parsed on each call.
+  pub fn params: Params {
+    Params.parse(self.raw_query ?? "")
+  }
+
+  // The first decoded value of the query parameter `name`, nil when the
+  // query has none.
+  pub fn param(name: String): String? {
+    self.params().get(name)
+  }
+
+  pub fn body: Bytes {
+    self.data
+  }
+
+  // The body as text, nil when its bytes are not valid UTF-8.
+  pub fn body_text: String? {
+    String.from_utf8(self.data)
+  }
+
+  // The address of the peer that sent the request: an IPv4 address in
+  // dotted form ("127.0.0.1", also when a dual-stack listener received
+  // it as an IPv4-mapped IPv6 address) or an IPv6 address ("::1"). The
+  // port is not kept.
+  pub fn peer: String {
+    httpc.avant_http_headers_peer(self.header_set("peer()").data)
+  }
+
+  // The reply of this request, for answering it later: the handler
+  // hands it to a task and returns Response.later(); the task sends the
+  // answer through it (HttpReply.send), from any thread. Called by the
+  // request's own handler while it runs (anywhere else it traps); a
+  // second call gives the same reply.
+  pub fn reply: HttpReply {
+    id = httpc.avant_http_req_reply(self.seq)
+    if id == -1 {
+      panic("http.Request.reply() is called by the request's own handler while it runs: a request built in memory, or one kept past its handler, has no connection to answer")
+    }
+    if id == -2 {
+      panic("http.Request.reply(): a WebSocket upgrade's request is answered by the upgrade, never later")
+    }
+    HttpReply { id: id }
+  }
+
+  // A request built in memory, as the server would hand it to a handler:
+  // for a framework's or a program's tests, which call a handler or a
+  // router with it. `target` is the path with an optional query (`/a?b`);
+  // each header is checked as Response.header checks one (a name that is
+  // not a token, or a value with a control character but tab, traps).
+  // Its peer is "".
+  pub fn self.build(method: String, target: String, headers: Array(Header) = [], body: Bytes = "".bytes): Request {
+    block = Buf.new()
+    for h in headers {
+      if why = httpc.avant_http_header_check(h.name, h.value) {
+        panic(why)
+      }
+      block.push_str("${h.name}: ${h.value}\r\n")
+    }
+    parts = split_target(target)
+    Request { method: method, path: parts.path, raw_query: parts.query, hs: headers_of(block.to_s()), data: body, seq: 0 }
+  }
 }
 
 // A response, in both directions: a handler returns one, and the
-// client returns one. `headers` is the received header set (empty for
-// a response built in code); headers set with `header` are kept
-// separately until the response is written. Content-Length and
-// Connection are managed by the server and the client; setting them
-// with `header` has no effect. The header lines set are kept in `head`,
-// which is private: a response is built by `text` or `bytes` and
-// `header`, so every line went through `header`'s check, and a
-// `Response { ... }` literal outside this module does not
-// compile. A handler's status outside 200-599 traps when the answer
-// is written: a 1xx is an interim answer, never a handler's.
+// client returns one. `headers()` is the received header set of a
+// response the client returns, and the header lines of one built in
+// code, the server's own Content-Length and Connection aside.
+// Content-Length and Connection are managed by the server and the
+// client; setting them with `header` has no effect. A response has one
+// Content-Type, `ctype` (text/plain or application/octet-stream from
+// `text` and `bytes`): `header` replaces it, and an empty value sends
+// none. The other header lines set are kept in `head`, the received set
+// in `hs`. All three are private: a response is built by `text` or
+// `bytes` and `header`, so every line went through `header`'s check, and
+// a `Response { ... }` literal outside this module does not compile. A
+// handler's status outside 200-599 traps when the answer is written: a
+// 1xx is an interim answer, never a handler's.
 pub struct Response {
   pub status: Int
-  pub headers: Headers
+  hs: Headers
+  ctype: String
   head: String
   pub body: Bytes
+  deferred: Bool
+
+  // The response's headers: those received, or those a built response
+  // will send (its Content-Type first).
+  pub fn headers: Headers {
+    if self.ctype.size == 0 && self.head.size == 0 {
+      return self.hs
+    }
+    if self.ctype.size == 0 {
+      return headers_of(self.head)
+    }
+    headers_of("Content-Type: ${self.ctype}\r\n${self.head}")
+  }
+
+  // The body as text, nil when its bytes are not valid UTF-8.
+  pub fn body_text: String? {
+    String.from_utf8(self.body)
+  }
 
   pub fn self.text(body: String, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), head: "Content-Type: text/plain; charset=utf-8\r\n", body: body.bytes }
+    Response { status: status, hs: empty_headers(), ctype: "text/plain; charset=utf-8", head: "", body: body.bytes, deferred: false }
   }
 
   pub fn self.bytes(body: Bytes, status: Int = 200): Response {
-    Response { status: status, headers: empty_headers(), head: "Content-Type: application/octet-stream\r\n", body: body }
+    Response { status: status, hs: empty_headers(), ctype: "application/octet-stream", head: "", body: body, deferred: false }
+  }
+
+  // What a handler returns when it answers later: it took the request's
+  // reply (req.reply()) and handed it to a task, which sends the answer.
+  // Pipelined requests behind it wait, so answers keep their order; an
+  // answer that does not come within the server's reply_timeout is
+  // answered 503 by the server.
+  pub fn self.later: Response {
+    Response { status: 0, hs: empty_headers(), ctype: "", head: "", body: "".bytes, deferred: true }
   }
 
   // A name that is not a token, or a value with a control character
   // other than tab (CR and LF among them), traps: appended as it
   // came, such a value added header lines or a second answer to the
-  // response (response splitting).
+  // response (response splitting). A Content-Type replaces the one the
+  // response has (appended, it made a second Content-Type line).
   pub fn header(name: String, value: String): Response {
-    httpc.avant_http_header_check(name, value)
+    if why = httpc.avant_http_header_check(name, value) {
+      panic(why)
+    }
     if is_managed_header(name) {
       return self
     }
-    Response { status: self.status, headers: self.headers, head: "${self.head}${name}: ${value}\r\n", body: self.body }
-  }
-
-  fn head_block: String {
-    self.head
+    if name.eq_ignore_ascii_case("content-type") {
+      return Response { status: self.status, hs: self.hs, ctype: value, head: self.head, body: self.body, deferred: false }
+    }
+    Response { status: self.status, hs: self.hs, ctype: self.ctype, head: "${self.head}${name}: ${value}\r\n", body: self.body, deferred: false }
   }
 }
 
@@ -207,35 +437,79 @@ pub struct WsMessage {
   }
 }
 
+// Why a WebSocket send or close did not go: the connection is closed
+// (or closing: a close was sent, or it was cut), or its send queue is
+// full (a message that cannot go out at once and would leave more than
+// 1 MiB waiting is refused whole; the client's queue, when no memory is
+// left to hold it). A full queue is a slow reader: a program that may
+// drop such a message writes `_ = conn.send_text(x)`.
+pub enum WsSendError: Error {
+  closed,
+  full
+
+  fn message: String {
+    switch self {
+      case closed { "the WebSocket connection is closed" }
+      case full { "the WebSocket connection's send queue is full" }
+    }
+  }
+}
+
+// Why a send or close the runtime refused did not go: its answer 2 is
+// a full queue, 0 a closed connection (1, sent, never comes here: a send
+// that goes costs one compare).
+fn ws_failed(code: Int): WsSendError {
+  if code == 2 {
+    return WsSendError.full
+  }
+  WsSendError.closed
+}
+
 // The crossable half of a WsConn: a bare connection id, the one field
 // that may cross a `spawn` boundary (a spawn copies scalars, not the
 // pointer a WsConn also holds). Hand work to a task as a sender:
 //
 //   sender = conn.sender
-//   spawn { sender.send_text(answer) }
+//   spawn { _ = sender.send_text(answer) }
 //
 // Sends through a sender find the connection by id in the runtime and
 // behave exactly as sends through the WsConn.
 pub struct WsSender {
   id: Int
 
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_send_text_by_id(self.id, text) != 0
-  }
-
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_send_bytes_by_id(self.id, data) != 0
-  }
-
-  pub fn send_message(msg: WsMessage): Bool {
-    if msg.is_text {
-      return httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body) != 0
+  pub fn send_text(text: String): Void | WsSendError {
+    sent = httpc.avant_ws_send_text_by_id(self.id, text)
+    if sent != 1 {
+      return ws_failed(sent)
     }
-    httpc.avant_ws_send_bytes_by_id(self.id, msg.body) != 0
   }
 
-  pub fn close(code: Int = 1000, reason: String = ""): Bool {
-    httpc.avant_ws_close_by_id(self.id, code, reason) != 0
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    sent = httpc.avant_ws_send_bytes_by_id(self.id, data)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
+  }
+
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
+    if msg.is_text {
+      sent = httpc.avant_ws_send_text_bytes_by_id(self.id, msg.body)
+      if sent != 1 {
+        return ws_failed(sent)
+      }
+      return
+    }
+    sent = httpc.avant_ws_send_bytes_by_id(self.id, msg.body)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
+  }
+
+  pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
+    sent = httpc.avant_ws_close_by_id(self.id, code, reason)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 }
 
@@ -243,11 +517,12 @@ pub struct WsSender {
 // the address of its record in the runtime. The record is never freed
 // and the runtime checks the id against it on every operation, so a
 // value kept after its connection closed, or after `serve` returned,
-// answers false and touches nothing else. The value itself stays on
+// answers WsSendError.closed and touches nothing else. The value itself stays on
 // the loop thread (a raw pointer may not cross a `spawn` boundary);
 // `sender` above is the half that may cross.
-// `send_text` and `send_bytes` return false when the connection is
-// closed or its bounded send queue is full. They may be called from
+// `send_text`, `send_bytes`, `send_message` and `close` return a
+// WsSendError when the connection is closed (`closed`) or its bounded
+// send queue is full (`full`). They may be called from
 // any task: a send from a task other than the connection's loop thread
 // is queued in C (1 MiB per connection) and written in order when the
 // loop wakes. Ping is answered by the runtime, never delivered here;
@@ -261,25 +536,41 @@ pub struct WsConn {
     WsSender { id: self.id }
   }
 
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_send_text_direct(self.handle, self.id, text) != 0
+  pub fn send_text(text: String): Void | WsSendError {
+    sent = httpc.avant_ws_send_text_direct(self.handle, self.id, text)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_send_bytes_direct(self.handle, self.id, data) != 0
+  pub fn send_bytes(data: Bytes): Void | WsSendError {
+    sent = httpc.avant_ws_send_bytes_direct(self.handle, self.id, data)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
   // Sends a received message onward with its kind preserved, without
   // materializing a string for a text message.
-  pub fn send_message(msg: WsMessage): Bool {
+  pub fn send_message(msg: WsMessage): Void | WsSendError {
     if msg.is_text {
-      return httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body) != 0
+      sent = httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body)
+      if sent != 1 {
+        return ws_failed(sent)
+      }
+      return
     }
-    httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body) != 0
+    sent = httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 
-  pub fn close(code: Int = 1000, reason: String = ""): Bool {
-    httpc.avant_ws_close_direct(self.handle, self.id, code, reason) != 0
+  pub fn close(code: Int = 1000, reason: String = ""): Void | WsSendError {
+    sent = httpc.avant_ws_close_direct(self.handle, self.id, code, reason)
+    if sent != 1 {
+      return ws_failed(sent)
+    }
   }
 }
 
@@ -300,12 +591,16 @@ struct WsRoute {
 
 struct WsOpenRoute {
   path: String
-  handler: fn(WsConn)
+  handler: fn(WsConn, Request)
 }
 
 struct WsCloseRoute {
   path: String
   handler: fn(WsConn, Int, String)
+}
+
+struct Hook {
+  handler: fn()
 }
 
 // The mutable half of a Server, held by reference so every copy of the
@@ -316,6 +611,10 @@ class HttpState {
   ws_routes: Array(WsRoute) = []
   ws_open_routes: Array(WsOpenRoute) = []
   ws_close_routes: Array(WsCloseRoute) = []
+  fallbacks: Array(Route) = []
+  timers: Array(Hook) = []
+  close_hooks: Array(Hook) = []
+  hooks_ran: Bool = false
   closed: Bool = false
   serving: Bool = false
   bound_port: Int = 0
@@ -329,14 +628,47 @@ class HttpState {
   // path.
   fn add(method: String, path: String, handler: fn(Request): Response) {
     if self.serving {
-      httpc.avant_http_route_while_serving("route ${method} ${path}")
+      panic("route ${method} ${path} registered while the server is serving: register every route before serve")
     }
     self.routes.push(Route { method: method, path: path, handler: handler })
   }
 
+  fn set_fallback(handler: fn(Request): Response) {
+    if self.serving {
+      panic("fallback route registered while the server is serving: register every route before serve")
+    }
+    self.fallbacks.clear()
+    self.fallbacks.push(Route { method: "", path: "", handler: handler })
+  }
+
+  fn add_timer(handler: fn()) {
+    if self.serving {
+      panic("every timer registered while the server is serving: register every route before serve")
+    }
+    self.timers.push(Hook { handler: handler })
+  }
+
+  fn add_close_hook(handler: fn()) {
+    if self.serving {
+      panic("on_close hook registered while the server is serving: register every route before serve")
+    }
+    self.close_hooks.push(Hook { handler: handler })
+  }
+
+  // The close hooks, once, in the order they were registered.
+  fn run_close_hooks {
+    if self.hooks_ran {
+      return
+    }
+    self.hooks_ran = true
+    for h in self.close_hooks {
+      (h.handler)()
+    }
+  }
+
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket route ${path}")
+      panic("websocket route ${path} registered while the server is serving: register every route before serve")
     }
     k = self.ws_routes.size
     i = self.first_ws_route(path)
@@ -361,16 +693,16 @@ class HttpState {
     -1
   }
 
-  fn add_ws_open(path: String, handler: fn(WsConn)) {
+  fn add_ws_open(path: String, handler: fn(WsConn, Request)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket_open route ${path}")
+      panic("websocket_open route ${path} registered while the server is serving: register every route before serve")
     }
     self.ws_open_routes.push(WsOpenRoute { path: path, handler: handler })
   }
 
   fn add_ws_close(path: String, handler: fn(WsConn, Int, String)) {
     if self.serving {
-      httpc.avant_http_route_while_serving("websocket_close route ${path}")
+      panic("websocket_close route ${path} registered while the server is serving: register every route before serve")
     }
     self.ws_close_routes.push(WsCloseRoute { path: path, handler: handler })
   }
@@ -400,21 +732,45 @@ class HttpState {
     false
   }
 
-  fn ws_open_dispatch(path: String, conn: WsConn) {
+  fn has_ws_open_route(path: String): Bool {
     for r in self.ws_open_routes {
       if r.path == path {
-        (r.handler)(conn)
+        return true
+      }
+    }
+    false
+  }
+
+  fn ws_open_dispatch(path: String, conn: WsConn, req: Request) {
+    for r in self.ws_open_routes {
+      if r.path == path {
+        (r.handler)(conn, req)
       }
     }
   }
 
-  fn dispatch(req: Request): Response {
-    for r in self.routes {
-      if r.method == req.method && r.path == req.path {
-        return (r.handler)(req)
-      }
+  // A request no route names (the C loop matched none): the fallback's,
+  // or 404.
+  fn unrouted(req: Request): Response {
+    if self.fallbacks.size > 0 {
+      return (self.fallbacks[0].handler)(req)
     }
     Response.text("not found", 404)
+  }
+}
+
+// The request the C loop parsed, as a handler gets it, its method made
+// from the request's bytes (a routed request's are its route's).
+fn received_request(raw: Ptr(Void), path: String, query: String?): Request {
+  method = httpc.avant_http_req_method(raw)
+  req_body = httpc.avant_http_req_body(raw)
+  Request {
+    method: method,
+    path: path,
+    raw_query: query,
+    hs: empty_headers(),
+    data: req_body,
+    seq: httpc.avant_http_req_seq(raw)
   }
 }
 
@@ -422,57 +778,76 @@ class HttpState {
 // is a plain function, not a closure: the server state arrives as its
 // first argument, in the shape the C callback rule allows.
 fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
-  target = httpc.avant_http_req_target(raw)
-  path = target
+  // The route, found in C on the request's own bytes (its method and
+  // path, before anything is allocated), and whether the target has a
+  // query and the request is a WebSocket handshake, in one word. A
+  // routed request's method and path are its route's own strings, so
+  // nothing is allocated for them.
+  found = httpc.avant_http_req_route(raw)
+  i = (found >> 2) - 1
   query: String? = nil
-  q = 0
-  while q < target.size {
-    if target[q] == 63 {
-      path = str_slice(target, 0, q)
-      query = str_slice(target, q + 1, target.size)
-      q = target.size
-    } else {
-      q += 1
-    }
+  if found & 1 != 0 {
+    query = httpc.avant_http_req_query(raw)
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
   // to ordinary routing and its 404. The connection's C record keeps
   // its path's first message route (the loop threads share no table of
   // connections; the route tables are only read while serving).
-  if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
-    if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
-      wid = httpc.avant_http_req_ws_id(raw)
-      whandle = httpc.avant_http_req_ws_conn(raw)
-      conn = WsConn { id: wid, handle: whandle }
-      state.ws_open_dispatch(path, conn)
+  // The open handlers get the handshake request (its headers, a cookie
+  // or an Authorization, and its peer), made only when the path has one.
+  if found & 2 != 0 {
+    path = httpc.avant_http_req_path(raw)
+    if state.has_ws_route(path) {
+      if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
+        wid = httpc.avant_http_req_ws_id(raw)
+        whandle = httpc.avant_http_req_ws_conn(raw)
+        conn = WsConn { id: wid, handle: whandle }
+        if state.has_ws_open_route(path) {
+          state.ws_open_dispatch(path, conn, received_request(raw, path, query))
+        }
+      }
+      return
     }
+  }
+  resp = if i >= 0 {
+    r = state.routes[i]
+    req = Request {
+      method: r.method,
+      path: r.path,
+      raw_query: query,
+      hs: empty_headers(),
+      data: httpc.avant_http_req_body(raw),
+      seq: httpc.avant_http_req_seq(raw)
+    }
+    (r.handler)(req)
+  } else {
+    // No route: the method and path are made, for the fallback or 404.
+    state.unrouted(received_request(raw, httpc.avant_http_req_path(raw), query))
+  }
+  if resp.deferred {
+    // Answered later, through the reply a task holds.
+    httpc.avant_http_req_later(raw)
     return
   }
-  // Without a query the path is the target; the slice above is the
-  // only copy, so a plain request allocates no second string here.
-  method = httpc.avant_http_req_method(raw)
-  raw_headers = httpc.avant_http_req_headers(raw)
-  req_body = httpc.avant_http_req_body(raw)
-  req = Request {
-    method: method,
-    path: path,
-    query: query,
-    headers: Headers { data: raw_headers },
-    body: req_body
-  }
-  resp = state.dispatch(req)
   // The response head and body travel into C as raw heap pointers; the
   // respond entry is no safepoint, so no thread collects while it writes
   // (until the handshake a defer region here and a second one in the
   // entry kept other loop threads' collections off).
-  httpc.avant_http_req_respond(raw, resp.status, resp.head_block(), resp.body)
+  httpc.avant_http_req_respond(raw, resp.status, resp.ctype, resp.head, resp.body)
+}
+
+// The C loop calls this named function each time a timer of `every`
+// fires, on the server's first loop thread.
+fn timer_dispatch(state: HttpState, raw: Ptr(Void)) {
+  i = httpc.avant_http_timer_index(raw)
+  (state.timers[i].handler)()
 }
 
 // The C loop calls this named function once per WebSocket message and
 // once per connection close. Open is dispatched from http_dispatch at
 // upgrade time instead. The first getter is the collector's heap-goal
-// boundary for the message path, in the avant_http_req_target position.
+// boundary for the message path, as avant_http_req_route is a batch's.
 fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
   kind = httpc.avant_ws_event_kind(raw)
   wid = httpc.avant_ws_event_conn_id(raw)
@@ -505,6 +880,46 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
       if rc.path == path {
         (rc.handler)(conn, code, reason)
       }
+    }
+  }
+}
+
+// Why a reply's answer was not sent: the reply has nothing left to
+// answer, since its request was answered already (a send before, or
+// the server's 503 at its reply_timeout) or its connection closed.
+pub enum ReplyError: Error {
+  gone
+
+  fn message: String {
+    "the request was answered already or its connection closed"
+  }
+}
+
+// The reply of a request answered later (Request.reply): a number, so
+// it crosses to any task, as WsSender does. `send` gives the answer, once;
+// it is written by the connection's loop, in order with the requests
+// pipelined behind it.
+pub struct HttpReply {
+  id: Int
+
+  pub fn send(resp: Response): Void | ReplyError {
+    if resp.deferred {
+      panic("http.HttpReply.send(Response.later()): a reply sends the final answer")
+    }
+    if httpc.avant_http_reply_send(self.id, resp.status, resp.ctype, resp.head, resp.body) == 0 {
+      return ReplyError.gone
+    }
+  }
+}
+
+// Stops a server from any task (Server.closer). Closing a server that
+// stopped already, or through a second copy, does nothing.
+pub struct ServerCloser {
+  id: Int
+
+  pub fn close {
+    if self.id != 0 {
+      _ = httpc.avant_http_close_by_id(self.id)
     }
   }
 }
@@ -562,6 +977,39 @@ pub struct Server {
     self
   }
 
+  // The handler of every request no route names, by its method and path
+  // (404 without one): a framework's router, given every request it has
+  // to route (`/messages/42`). A second call replaces the first.
+  pub fn fallback(handler: fn(Request): Response): Server {
+    self.state.set_fallback(handler)
+    self
+  }
+
+  // Runs `handler` every `ms` milliseconds while the server serves, the
+  // first time `ms` after `serve` starts, on the server's first loop
+  // thread: like a handler it must not block, what it captures is
+  // checked as a handler's, and a trap in it is printed and the server
+  // goes on. Registered before `serve`, like a route; `ms` is 1 or more.
+  pub fn every(ms: Int, handler: fn()): Server {
+    if ms < 1 {
+      panic("http.Server.every(${ms}): a period is 1 ms or more")
+    }
+    self.state.add_timer(handler)
+    if !self.state.closed {
+      _ = httpc.avant_http_add_timer(self.handle, ms)
+    }
+    self
+  }
+
+  // Runs `handler` once when the server stops: after `close`, on the
+  // thread that called `serve`, when its loops have stopped and before
+  // `serve` returns (in `close` itself for a server never served).
+  // Hooks run in the order they were registered.
+  pub fn on_close(handler: fn()): Server {
+    self.state.add_close_hook(handler)
+    self
+  }
+
   // Registers a WebSocket route on an exact path. The handler runs on
   // a loop thread once per complete message (fragmentation is the
   // runtime's) and must not block the loop, in the rule for HTTP
@@ -573,7 +1021,10 @@ pub struct Server {
     self
   }
 
-  pub fn websocket_open(path: String, handler: fn(WsConn)): Server {
+  // The handler runs once per connection, after the upgrade, with the
+  // handshake request: its headers (a cookie, an Authorization), its
+  // query and its peer, which a handler may check and close on.
+  pub fn websocket_open(path: String, handler: fn(WsConn, Request)): Server {
     self.state.add_ws_open(path, handler)
     self
   }
@@ -603,7 +1054,9 @@ pub struct Server {
   // began to wait, else the request is answered 408 and the connection
   // closed; an answer the client is slow to read must leave at the same
   // rate, else its connection is closed (240 bytes a second over 5000
-  // ms by default). 0 bytes a second turns it off.
+  // ms by default). The same for a WebSocket connection: a message
+  // arriving in parts, and what its send queue holds, at that rate, else
+  // the connection is closed. 0 bytes a second turns it off.
   pub fn min_rate(bytes_per_second: Int, grace_ms: Int = 5000): Server {
     self.set_limit("min_rate", 2, bytes_per_second, grace_ms)
   }
@@ -631,6 +1084,26 @@ pub struct Server {
     self.set_limit("max_connections", 5, n, 0)
   }
 
+  // How long an HTTP connection may stay idle, with no request bytes
+  // arriving and no answer bytes leaving, before it is closed (30000 ms
+  // by default; at most 14280000). uSockets counts in 4-second ticks:
+  // the close comes no earlier than `ms` and less than 8 s after it
+  // (past 952000 ms, in minutes: less than 2 minutes after it).
+  pub fn idle_timeout(ms: Int): Server {
+    self.set_limit("idle_timeout", 7, ms, 0)
+  }
+
+  // How long a WebSocket connection may go without receiving anything
+  // before the server pings it (30000 ms by default, at most 14280000,
+  // counted as `idle_timeout` counts): a pong, or anything else that
+  // arrives, starts it again; when it passes again with nothing
+  // received the connection is closed (1006 to its close handler). A
+  // peer gone without a FIN or a reset (a pulled cable, a NAT that
+  // forgot the flow) is noticed so; one that answers pings stays.
+  pub fn websocket_idle_timeout(ms: Int): Server {
+    self.set_limit("websocket_idle_timeout", 8, ms, 0)
+  }
+
   // How long `close` waits for the connections it leaves to finish (an
   // answer being sent, a WebSocket's closing handshake) before it closes
   // them, so `serve` returns by then (30000 ms by default).
@@ -638,14 +1111,23 @@ pub struct Server {
     self.set_limit("shutdown_timeout", 6, ms, 0)
   }
 
+  // How long a request answered later (Request.reply, Response.later)
+  // may wait for its answer before the server answers it 503 (30000 ms
+  // by default; read about once a second).
+  pub fn reply_timeout(ms: Int): Server {
+    self.set_limit("reply_timeout", 9, ms, 0)
+  }
+
   fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
     if self.state.serving {
-      httpc.avant_http_limit_while_serving(name)
+      panic("http.Server.${name} called while the server is serving: set every limit before serve")
     }
     // A closed server's C record is gone (close released it, or serve
     // did when it returned): nothing is left to limit.
     if !self.state.closed {
-      httpc.avant_http_set_limit(self.handle, name, which, a, b)
+      if why = httpc.avant_http_set_limit(self.handle, name, which, a, b) {
+        panic(why)
+      }
     }
     self
   }
@@ -660,10 +1142,35 @@ pub struct Server {
       return
     }
     self.state.serving = true
+    // The C loop matches each request's route on its own bytes.
+    for r in self.state.routes {
+      httpc.avant_http_route_add(self.handle, r.method, r.path)
+    }
+    served = 0
     pin(self.state) {
-      httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch)
+      served = httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch, timer_dispatch)
     }
     self.state.serving = false
+    if served == 2 {
+      // A closer stopped it before it served: nothing ran, release it.
+      _ = httpc.avant_http_close(self.handle)
+    }
+    // The C record is gone now (serve released it): a later close must
+    // not reach it.
+    self.state.closed = true
+    self.state.run_close_hooks()
+  }
+
+  // A closer: a value that may cross to any task (a number, as WsSender
+  // is) whose `close()` stops this server as `close` does. A task that
+  // waits for a signal, a deadline or a message on a channel stops the
+  // server through it; `spawn { server.close() }` is refused, since a
+  // Server holds the routes' state.
+  pub fn closer: ServerCloser {
+    if self.state.closed {
+      return ServerCloser { id: 0 }
+    }
+    ServerCloser { id: httpc.avant_http_closer_id(self.handle) }
   }
 
   // Stops the server: wakes the loop, closes the listen socket and
@@ -679,6 +1186,9 @@ pub struct Server {
     }
     self.state.closed = true
     httpc.avant_http_close(self.handle)
+    if !self.state.serving {
+      self.state.run_close_hooks()
+    }
   }
 }
 
@@ -689,25 +1199,24 @@ struct UrlParts {
   target: String
 }
 
-fn parse_port(text: String): Int {
+// A URL's port, 1 to 65535 in decimal digits; nil for anything else.
+fn parse_port(text: String): Int? {
   n = 0
-  i = 0
   if text.size == 0 {
-    return -1
+    return nil
   }
-  while i < text.size {
+  for i in 0..text.size {
     c = text[i]
     if c < 48 || c > 57 {
-      return -1
+      return nil
     }
     n = n * 10 + (c - 48)
     if n > 65535 {
-      return -1
+      return nil
     }
-    i += 1
   }
   if n == 0 {
-    return -1
+    return nil
   }
   n
 }
@@ -716,7 +1225,7 @@ fn parse_port(text: String): Int {
 // well-formed absolute http URL with a host; the caller turns that
 // into an HttpError with a message.
 fn http_parse_url(url: String): UrlParts? {
-  rest = str_slice(url, 7, url.size)
+  rest = url[7..]
   auth_end = rest.size
   i = 0
   while i < rest.size {
@@ -728,8 +1237,8 @@ fn http_parse_url(url: String): UrlParts? {
       i += 1
     }
   }
-  authority = str_slice(rest, 0, auth_end)
-  tail = str_slice(rest, auth_end, rest.size)
+  authority = rest[..auth_end]
+  tail = rest[auth_end..]
   if authority.size == 0 {
     return nil
   }
@@ -740,7 +1249,7 @@ fn http_parse_url(url: String): UrlParts? {
   }
   host = authority
   port = 80
-  if str_slice(authority, 0, 1) == "[" {
+  if authority[..1] == "[" {
     close = 0
     j = 0
     while j < authority.size {
@@ -754,15 +1263,12 @@ fn http_parse_url(url: String): UrlParts? {
     if close == 0 {
       return nil
     }
-    host = str_slice(authority, 1, close)
+    host = authority[1..close]
     if close + 1 < authority.size {
       if authority[close + 1] != 58 {
         return nil
       }
-      port = parse_port(str_slice(authority, close + 2, authority.size))
-      if port < 0 {
-        return nil
-      }
+      port = parse_port(authority[close + 2..]) ?? return nil
     }
   } else {
     colon = -1
@@ -772,11 +1278,8 @@ fn http_parse_url(url: String): UrlParts? {
       }
     }
     if colon >= 0 {
-      host = str_slice(authority, 0, colon)
-      port = parse_port(str_slice(authority, colon + 1, authority.size))
-      if port < 0 {
-        return nil
-      }
+      host = authority[..colon]
+      port = parse_port(authority[colon + 1..]) ?? return nil
     }
   }
   if host.size == 0 {
@@ -785,13 +1288,13 @@ fn http_parse_url(url: String): UrlParts? {
   target = tail
   if target.size == 0 {
     target = "/"
-  } else if str_slice(target, 0, 1) == "?" {
+  } else if target[..1] == "?" {
     target = "/${target}"
   }
   hash = 0
   while hash < target.size {
     if target[hash] == 35 {
-      target = str_slice(target, 0, hash)
+      target = target[..hash]
       hash = target.size
     } else {
       hash += 1
@@ -814,7 +1317,7 @@ fn remove_dot_segments(path: String): String {
       kept.push(seg)
     }
   }
-  buf = buf_new()
+  buf = Buf.new()
   for i in 0..kept.size {
     if i > 0 {
       buf.push_str("/")
@@ -825,7 +1328,7 @@ fn remove_dot_segments(path: String): String {
   if out.size == 0 {
     return "/"
   }
-  if str_slice(out, 0, 1) != "/" {
+  if out[..1] != "/" {
     out = "/${out}"
   }
   out
@@ -858,7 +1361,7 @@ fn resolve_url(base: String, loc: String): String? {
     qi = 0
     while qi < base_path.size {
       if base_path[qi] == 63 {
-        base_path = str_slice(base_path, 0, qi)
+        base_path = base_path[..qi]
         qi = base_path.size
       } else {
         qi += 1
@@ -870,7 +1373,7 @@ fn resolve_url(base: String, loc: String): String? {
         slash = j
       }
     }
-    merged = "${str_slice(base_path, 0, slash + 1)}${loc}"
+    merged = "${base_path[..slash + 1]}${loc}"
     return "${origin}${remove_dot_segments(merged)}"
   }
   nil
@@ -882,6 +1385,44 @@ fn bad_byte(s: String, i: Int): String {
     return "empty"
   }
   "byte ${s[i]} at ${i}"
+}
+
+// A request body as the bytes sent: a String's bytes, or Bytes as they
+// are (both types are accepted wherever a body is).
+fn body_bytes(body: String | Bytes): Bytes {
+  switch body {
+    case s: String { s.bytes }
+    case b: Bytes { b }
+  }
+}
+
+// The headers that carry a credential for the server they were set
+// for (RFC 9110 11.6.2, 11.7.2; RFC 6265 5.4).
+fn is_credential_header(name: String): Bool {
+  name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("proxy-authorization") || name.eq_ignore_ascii_case("cookie")
+}
+
+// Whether two parsed URLs name one authority: the host in any case and
+// the port (80 when the URL names none).
+fn same_authority(a: UrlParts?, b: UrlParts?): Bool {
+  if x = a {
+    if y = b {
+      return x.port == y.port && x.host.size == y.host.size && ascii_lower(x.host) == ascii_lower(y.host)
+    }
+  }
+  false
+}
+
+fn ascii_lower(s: String): String {
+  buf = Buf.new()
+  for i in 0..s.size {
+    ch = s[i]
+    if ch >= 65 && ch <= 90 {
+      ch += 32
+    }
+    buf.push_byte(ch)
+  }
+  buf.to_s()
 }
 
 // The client's request checks: the method, the URL's target and each
@@ -924,7 +1465,7 @@ fn url_refusal(url: String): HttpError? {
 
 // One exchange, no redirects. `deadline` is a reading of `now_ms()`:
 // the exchange gets what is left until then when it starts.
-fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
+fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int, idle_ms: Int): Response | HttpError {
   if refused = request_refusal(method, url, headers) {
     return refused
   }
@@ -936,7 +1477,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
   }
   parsed = http_parse_url(url)
   if p = parsed {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str(method)
     buf.push_str(" ")
     buf.push_str(p.target)
@@ -976,13 +1517,16 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left)
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left, idle_ms)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
     }
     if code == 2 {
       return HttpError.new("request to ${p.authority} timed out")
+    }
+    if code == 3 {
+      return HttpError.new("request to ${p.authority} stalled: nothing arrived or left for ${idle_ms} ms")
     }
     if code != 0 {
       return HttpError.new("request to ${p.authority} failed")
@@ -1004,9 +1548,11 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     resp_headers = httpc.avant_http_resp_headers(raw)
     return Response {
       status: status,
-      headers: Headers { data: resp_headers },
+      hs: Headers { data: resp_headers },
+      ctype: "",
       head: "",
-      body: resp_body
+      body: resp_body,
+      deferred: false
     }
   }
   HttpError.new("invalid URL: ${url}")
@@ -1018,153 +1564,135 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
 // so do not call it from a server handler; hand the work to `spawn`
 // first. Redirects are followed at most five times when `follow` is
 // set. There is no connection pooling and no TLS in this wave.
-pub class Http {
-  fn initialize {
+// Binds a server now (so a bad port fails here, and an ephemeral
+// port is known through `server.port` before serving) and returns
+// it ready for routes. The body limit is in bytes; a larger request
+// body is answered 413. `loops` is the number of event loops (one
+// thread each, all bound to the same port); when it is 0 the
+// thread pool's size is used (`--avant-threads=N` or std.sync's
+// set_pool_size, else the CPUs; it is fixed from then on). Loops plus `spawn` workers can
+// oversubscribe the machine; that is the documented consequence of
+// one chosen count.
+pub fn listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0, max_message: Int = 1048576): Server | HttpError {
+  handle = httpc.avant_http_listen(host, port, max_body, loops, max_message)
+  if httpc.avant_http_take_status() != 0 {
+    return HttpError.new("could not listen on ${host}:${port}")
   }
-
-  // Binds a server now (so a bad port fails here, and an ephemeral
-  // port is known through `server.port` before serving) and returns
-  // it ready for routes. The body limit is in bytes; a larger request
-  // body is answered 413. `loops` is the number of event loops (one
-  // thread each, all bound to the same port); when it is 0 the
-  // thread pool's size is used (`--avant-threads=N` or std.sync's
-  // set_pool_size, else the CPUs; it is fixed from then on). Loops plus `spawn` workers can
-  // oversubscribe the machine; that is the documented consequence of
-  // one chosen count.
-  pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0, max_message: Int = 1048576): Server | HttpError {
-    handle = httpc.avant_http_listen(host, port, max_body, loops, max_message)
-    if httpc.avant_http_take_status() != 0 {
-      return HttpError.new("could not listen on ${host}:${port}")
-    }
-    state = HttpState.new()
-    state.bound_port = httpc.avant_http_port(handle)
-    Server { handle: handle, state: state }
-  }
-
-  pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
-    hs: Array(Header) = []
-    Http.request("GET", url, "".bytes, hs, follow, timeout_ms)
-  }
-
-  pub fn self.post(url: String, body: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
-    hs: Array(Header) = []
-    hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" })
-    Http.request("POST", url, body.bytes, hs, follow, timeout_ms)
-  }
-
-  // `timeout_ms` is a deadline for the whole call: every redirect it
-  // follows, each one's connect, request and complete response. When
-  // it passes first the call returns an HttpError, whatever has
-  // arrived. Zero or less means the default, 10000.
-  pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
-    cur_method = method
-    cur_url = url
-    cur_body = body
-    hops = 0
-    limit = timeout_ms
-    if limit <= 0 {
-      limit = 10000
-    }
-    deadline = now_ms() + limit
-    while true {
-      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, deadline)?
-      redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
-      if !follow || !redirect {
-        return resp
-      }
-      location = resp.headers.get("Location") ?? return resp
-      hops += 1
-      if hops > 5 {
-        return HttpError.new("too many redirects")
-      }
-      next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
-      if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
-        cur_method = "GET"
-        cur_body = "".bytes
-      }
-      cur_url = next_url
-    }
-    HttpError.new("too many redirects")
-  }
+  state = HttpState.new()
+  state.bound_port = httpc.avant_http_port(handle)
+  Server { handle: handle, state: state }
 }
 
-// A WebSocket client connection, the client's counterpart of WsConn.
-// `recv` blocks the calling thread until a message arrives, so do not
-// call it from a server handler. There is no TLS: a `wss://` URL is an
-// HttpError, never a silent downgrade. A connection that is never
-// closed leaks its loop thread until the process exits; there is no
-// finalizer.
-// The value is the connection's id in the runtime, a number that is
-// never given twice: after `close`, every copy of the value finds
-// nothing there, so `send_text` and `send_bytes` return false, `recv`
-// returns nil, `close_code` is 1006 and a second `close` does nothing,
-// whatever connections were opened since.
-pub struct WsConnection {
-  id: Int
-
-  pub fn send_text(text: String): Bool {
-    httpc.avant_ws_client_send_text(self.id, text) != 0
-  }
-
-  pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_client_send_bytes(self.id, data) != 0
-  }
-
-  // The next message, or nil when the connection has closed. With a
-  // timeout, nil also means the timeout passed; `close_code` says
-  // which: it is 1006 until a close frame arrives.
-  pub fn recv(timeout_ms: Int = -1): WsMessage? {
-    data = httpc.avant_ws_client_recv(self.id, timeout_ms)
-    if httpc.avant_http_take_status() != 0 {
-      return nil
-    }
-    is_text = httpc.avant_ws_client_last_is_text() != 0
-    WsMessage { is_text: is_text, body: data }
-  }
-
-  pub fn close_code: Int {
-    httpc.avant_ws_client_close_code(self.id)
-  }
-
-  // Safe to call more than once, through any copy: a second close
-  // does nothing. A `recv` waiting in another task returns nil.
-  pub fn close {
-    httpc.avant_ws_client_close(self.id)
-  }
+// A URL component percent-decoded, as a router decodes a path segment
+// (`caf%C3%A9` is `café`): `%XX` is a byte, `+` stays `+`, a `%`
+// without two hex digits is kept, and bytes that are not UTF-8 read as
+// U+FFFD. For a query or a form body, Params.parse.
+pub fn decode_component(text: String): String {
+  httpc.avant_http_decode_component(text)
 }
 
-pub class Ws {
-  fn initialize {
-  }
-
-  pub fn self.connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
-    if url.starts_with("wss://") {
-      return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
-    }
-    if !url.starts_with("ws://") {
-      return HttpError.new("only ws:// URLs are supported")
-    }
-    // The handshake's request line and Host are the URL's.
-    if refused = url_refusal(url) {
-      return refused
-    }
-    parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
-    if p = parsed {
-      key = httpc.avant_ws_client_key()
-      id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
-      code = httpc.avant_http_take_status()
-      if code == 1 {
-        return HttpError.new("could not connect to ${p.authority}")
-      }
-      if code == 2 {
-        return HttpError.new("connection to ${p.authority} timed out")
-      }
-      if code != 0 {
-        return HttpError.new("websocket handshake with ${p.authority} failed")
-      }
-      return WsConnection { id: id }
-    }
-    HttpError.new("invalid URL: ${url}")
-  }
+// `headers` on every client call: a Hash of names to values, sent in
+// its order (a header that must repeat is one line with a comma list,
+// RFC 9110 5.3; `request` also takes an Array(Header) for a line that
+// must repeat as lines).
+pub fn get(url: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0, headers: Hash(String, String) = [:]): Response | HttpError {
+  request_lines("GET", url, "".bytes, header_lines(headers), follow, timeout_ms, idle_ms)
 }
 
+// The body is a String (sent as text/plain; charset=utf-8) or Bytes
+// (application/octet-stream), its bytes as they are; a Content-Type in
+// `headers` replaces that one.
+pub fn post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0, headers: Hash(String, String) = [:]): Response | HttpError {
+  hs: Array(Header) = []
+  typed = false
+  for name, _ in headers {
+    if name.eq_ignore_ascii_case("content-type") {
+      typed = true
+    }
+  }
+  if !typed {
+    switch body {
+      case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
+      case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
+    }
+  }
+  for name, value in headers {
+    hs.push(Header { name: name, value: value })
+  }
+  request_lines("POST", url, body, hs, follow, timeout_ms, idle_ms)
+}
+
+fn header_lines(headers: Hash(String, String)): Array(Header) {
+  out: Array(Header) = []
+  for name, value in headers {
+    out.push(Header { name: name, value: value })
+  }
+  out
+}
+
+// `timeout_ms` is a deadline for the whole call: every redirect it
+// follows, each one's connect, request and complete response. When
+// it passes first the call returns an HttpError, whatever has
+// arrived. Zero or less means the default, 10000. `idle_ms`, when
+// more than 0, is a second limit: an exchange that sees no byte
+// arrive or leave for that long (its connect included) ends with an
+// HttpError, however much of the deadline is left, so a long transfer
+// that moves can be given a large deadline and one that stalls is
+// still cut soon (to within a quarter of `idle_ms`).
+//
+// A redirect to another authority (another host or port) is sent the
+// caller's headers without its credentials and its Host: an
+// Authorization, a Proxy-Authorization, a Cookie or a Host set for one
+// server reached the server a redirect named, as browsers and curl
+// never let them.
+pub fn request(method: String, url: String, body: String | Bytes, headers: Hash(String, String), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  request_lines(method, url, body, header_lines(headers), follow, timeout_ms, idle_ms)
+}
+
+// The same with the header lines as an Array, for a header that must be
+// sent as repeated lines.
+pub fn request(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  request_lines(method, url, body, headers, follow, timeout_ms, idle_ms)
+}
+
+fn request_lines(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool, timeout_ms: Int, idle_ms: Int): Response | HttpError {
+  cur_method = method
+  cur_url = url
+  cur_body = body_bytes(body)
+  hops = 0
+  limit = timeout_ms
+  if limit <= 0 {
+    limit = 10000
+  }
+  deadline = now_ms() + limit
+  origin = http_parse_url(url)
+  elsewhere: Array(Header) = []
+  for h in headers {
+    if !is_credential_header(h.name) && !h.name.eq_ignore_ascii_case("host") {
+      elsewhere.push(h)
+    }
+  }
+  while true {
+    hop_headers = headers
+    if hops > 0 && !same_authority(origin, http_parse_url(cur_url)) {
+      hop_headers = elsewhere
+    }
+    resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline, idle_ms)?
+    redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
+    if !follow || !redirect {
+      return resp
+    }
+    location = resp.headers().get("Location") ?? return resp
+    hops += 1
+    if hops > 5 {
+      return HttpError.new("too many redirects")
+    }
+    next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
+    if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
+      cur_method = "GET"
+      cur_body = "".bytes
+    }
+    cur_url = next_url
+  }
+  HttpError.new("too many redirects")
+}

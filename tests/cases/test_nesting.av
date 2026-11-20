@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 // The parser's nesting bound (Valk's bound of 1,000 levels): a
 // program nested deeper is one compile error at the place it
@@ -12,7 +14,7 @@ import harness
 // the bound compile, in every shape; the inputs are generated.
 
 fn rep(s: String, n: Int): String {
-  b = buf_new()
+  b = Buf.new()
   for i in 0..n {
     b.push_str(s)
   }
@@ -41,28 +43,28 @@ fn shape(kind: String, n: Int): String {
 
 fn test_nesting(c: Checks) {
   c.suite("tests/cases/test_nesting.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     kinds = ["block", "paren", "chain", "index", "type", "unary"]
     for kind in kinds {
       ok_src = "${scratch()}/nesting-${stamp}-${kind}-ok.av"
       ok_bin = "${scratch()}/nesting-${stamp}-${kind}-ok.bin"
       ok_log = "${scratch()}/nesting-${stamp}-${kind}-ok.log"
-      c.wrote(file_write(ok_src, shape(kind, 990)), "write ${kind} 990")
+      c.wrote(fs.write(ok_src, shape(kind, 990)), "write ${kind} 990")
       ok_code = compile_nest(compiler, ok_src, ok_bin, ok_log)
       c.eq_int(ok_code, 0, "${kind}: 990 levels compile")
-      c.expect(file_exists(ok_bin), "${kind}: 990 levels: the program is written")
+      c.expect(fs.exists(ok_bin), "${kind}: 990 levels: the program is written")
       for n in [1001, 100000] {
         src = "${scratch()}/nesting-${stamp}-${kind}-${n}.av"
         bin = "${scratch()}/nesting-${stamp}-${kind}-${n}.bin"
         log = "${scratch()}/nesting-${stamp}-${kind}-${n}.log"
-        c.wrote(file_write(src, shape(kind, n)), "write ${kind} ${n}")
+        c.wrote(fs.write(src, shape(kind, n)), "write ${kind} ${n}")
         code = compile_nest(compiler, src, bin, log)
         c.eq_int(code, 1, "${kind}: ${n} levels: a compile error (status 1), not a crash")
-        c.expect(!file_exists(bin), "${kind}: ${n} levels: no program")
+        c.expect(!fs.exists(bin), "${kind}: ${n} levels: no program")
         err = read_text(log)
         c.expect(err.contains("error[E2000]: this program nests deeper than 1000 levels"), "${kind}: ${n} levels: the error states the bound")
-        c.eq_int(count_of(err, "error["), 1, "${kind}: ${n} levels: one error")
+        c.eq_int(err.count("error["), 1, "${kind}: ${n} levels: one error")
       }
     }
     // A string interpolation inside another one: two levels compile and
@@ -72,24 +74,24 @@ fn test_nesting(c: Checks) {
     // SIGSEGV.
     for n in [2, 100000] {
       src = "${scratch()}/nesting-${stamp}-interp-${n}.av"
-      c.wrote(file_write(src, "fn main {\n  x = 1\n  puts(${rep("\"\${", n)}x${rep("}\"", n)})\n}\n"), "write interpolation ${n}")
+      c.wrote(fs.write(src, "fn main {\n  x = 1\n  puts(${rep("\"\${", n)}x${rep("}\"", n)})\n}\n"), "write interpolation ${n}")
       for cmd in ["compile", "format"] {
         log = "${scratch()}/nesting-${stamp}-interp-${n}-${cmd}.log"
         args = [cmd, src]
         if cmd == "compile" {
           args.push("${scratch()}/nesting-${stamp}-interp-${n}.bin")
         }
-        code = process_run_out(compiler, args, log) ?? -1
+        code = run_out(compiler, args, log) ?? -1
         err = read_text(log)
         if n == 2 {
           c.eq_int(code, 0, "interpolation 2 levels: ${cmd} takes it")
           continue
         }
         c.eq_int(code, 1, "interpolation ${n} levels: ${cmd} refuses it (status 1), not a crash")
-        c.eq_int(count_of(err, "this program nests string interpolations deeper than 1000 levels"), 1, "interpolation ${n} levels: ${cmd} gives one error")
+        c.eq_int(err.count("this program nests string interpolations deeper than 1000 levels"), 1, "interpolation ${n} levels: ${cmd} gives one error")
         c.expect(err.contains("${src}:3:3008"), "interpolation ${n} levels: ${cmd} points at the 1,001st string")
         if cmd == "compile" {
-          c.eq_int(count_of(err, "error["), 1, "interpolation ${n} levels: no other error follows")
+          c.eq_int(err.count("error["), 1, "interpolation ${n} levels: no other error follows")
         }
       }
     }
@@ -99,7 +101,7 @@ fn test_nesting(c: Checks) {
     // (column 6 + 1,000).
     at_src = "${scratch()}/nesting-${stamp}-at.av"
     at_log = "${scratch()}/nesting-${stamp}-at.log"
-    c.wrote(file_write(at_src, shape("paren", 1200)), "write paren 1200")
+    c.wrote(fs.write(at_src, shape("paren", 1200)), "write paren 1200")
     _ = compile_nest(compiler, at_src, "${scratch()}/nesting-${stamp}-at.bin", at_log)
     c.expect(read_text(at_log).contains("--> ${at_src}:2:1006"), "the error is at the level past the bound")
   } else {
@@ -119,25 +121,11 @@ fn compile_nest(compiler: String, src: String, bin: String, log: String): Int {
     return compile_av(compiler, src, bin, log)
   }
   args = ["-u", "AVANT_GC_STRESS", compiler, "compile", src, bin, "--debug"]
-  process_run_out("/usr/bin/env", args, log) ?? -1
-}
-
-fn count_of(hay: String, needle: String): Int {
-  n = 0
-  i = 0
-  while i + needle.size <= hay.size {
-    if str_slice(hay, i, i + needle.size) == needle {
-      n += 1
-      i += needle.size
-    } else {
-      i += 1
-    }
-  }
-  n
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn read_text(path: String): String {
-  if t = file_read(path) {
+  if t = fs.read(path) {
     return t
   }
   ""

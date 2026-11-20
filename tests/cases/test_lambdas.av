@@ -1,5 +1,7 @@
 import harness
 import backends
+import std.fs
+import std.process
 
 // Lambdas written as functions without a name, `(x) { ... }`, as every
 // function's argument (the shorthand `xs.each (x) { ... }` when it is the
@@ -47,13 +49,16 @@ fn cases: Array(LCase) {
   xs.push(accepted("shorthand", "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn main {\n  xs = [3, 1, 2]\n  xs.each (x) {\n    puts(x)\n  }\n  puts(twice (n) { n * 3 })\n  puts(xs.any (x) { x > 2 })\n  xs.sort (a, b) { a < b }\n  puts(xs[0])\n  n = twice (x) { x - 5 }.abs()\n  puts(n)\n  ok = twice (x) { x + 2 } > 4\n  puts(ok)\n}\n", "3\n1\n2\n9\ntrue\n1\n9\ntrue\n"))
   xs.push(accepted("shorthand-declaration", "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn main {\n  xs = [1, 2]\n  base = 100\n  lam = xs.parallel (x) {\n    f: fn(Int): Int = (y) { y * x + base }\n    f(2)\n  }\n  puts(lam[1])\n  puts(twice (n) {\n    k: Int = n * 3\n    k\n  })\n}\n", "104\n9\n"))
   xs.push(accepted("full-in-head", "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn main {\n  xs = [3, 1, 2]\n  if xs.any((x) { x > 2 }) {\n    puts(\"big\")\n  }\n  if 4 < twice((x) { x + 2 }) {\n    puts(\"five\")\n  }\n  while xs.all((x) { x > 0 }) && xs.size < 5 {\n    xs.push(1)\n  }\n  for v in xs.sorted((a, b) { a > b }) {\n    puts(v)\n  }\n}\n", "big\nfive\n3\n2\n1\n1\n1\n"))
-  xs.push(refused("shorthand-in-head", "fn main {\n  xs = [3, 1, 2]\n  if xs.any (x) { x > 2 } {\n    puts(\"big\")\n  }\n}\n", "", "3:"))
+  xs.push(refused("shorthand-in-head", "fn main {\n  xs = [3, 1, 2]\n  if xs.any (x) { x > 2 } {\n    puts(\"big\")\n  }\n}\n", "a lambda in a condition goes inside the call's parentheses: write any((x) { ... })", "3:13"))
+  xs.push(refused("shorthand-in-head-operator", "fn main {\n  xs = [3, 1, 2]\n  while xs.all (x) {\n    x > 0\n  } && xs.size < 5 {\n    xs.push(1)\n  }\n}\n", "a lambda in a condition goes inside the call's parentheses: write all((x) { ... })", "3:16"))
+  xs.push(refused("shorthand-in-for", "fn main {\n  for v in [3, 1].sorted (a, b) { a > b } {\n    puts(v)\n  }\n}\n", "a lambda in a `for` goes inside the call's parentheses: write sorted((a, b) { ... })", "2:26"))
+  xs.push(accepted("call-then-body-in-head", "fn ok(n: Int): Bool {\n  n > 1\n}\n\nfn show(x: Int) { if ok(x) { puts(\"in\") } }\n\nfn main {\n  x = 2\n  if ok (x) { puts(\"yes\") }\n  if ok(x) { puts(\"two\") } else { puts(\"no\") }\n  show(x)\n}\n", "yes\ntwo\nin\n"))
   xs.push(accepted("each-return", "fn report(xs: Array(Int)): Int {\n  seen = 0\n  xs.each (x) {\n    if x < 0 {\n      return\n    }\n    seen += x\n  }\n  seen\n}\n\nfn main {\n  puts(report([1, -2, 3]))\n}\n", "4\n"))
   xs.push(accepted("each-return-nested", "fn main {\n  total = 0\n  [[1, 2], [3, -1, 4], [5]].each (row) {\n    for v in row {\n      if v < 0 {\n        return\n      }\n      total += v\n    }\n    total += 100\n  }\n  puts(total)\n}\n", "211\n"))
   xs.push(accepted("value-return", "fn main {\n  xs = [4, 9, 16]\n  puts(xs.any (x) {\n    if x > 10 {\n      return true\n    }\n    false\n  })\n  puts(xs.all((x) {\n    if x == 9 {\n      return false\n    }\n    true\n  }))\n  xs.sort (a, b) {\n    if a == 9 {\n      return true\n    }\n    a > b\n  }\n  puts(\"\${xs[0]} \${xs[1]} \${xs[2]}\")\n  ys = Array(Int).new(4, (i) {\n    if i == 2 {\n      return 0\n    }\n    i * 10\n  })\n  puts(\"\${ys[0]} \${ys[1]} \${ys[2]} \${ys[3]}\")\n  zs = xs.sorted (a, b) { return a < b }\n  puts(zs[0])\n}\n", "true\nfalse\n16 9 4\n0 10 0 30\n4\n"))
   xs.push(accepted("hash-set-each", "fn main {\n  h = [\"a\": 1, \"b\": 2, \"c\": 3]\n  total = 0\n  h.each (k, v) {\n    if k == \"b\" {\n      return\n    }\n    total += v\n  }\n  puts(total)\n  s: Set(Int) = [1, 2, 3]\n  n = 0\n  s.each((v) {\n    if v == 2 {\n      return\n    }\n    n += v\n  })\n  puts(n)\n}\n", "4\n4\n"))
   xs.push(accepted("array-build", "fn main {\n  sq = Array(Int).new(4, (i) { i * i })\n  puts(sq[3])\n  names = Array(String).new(2, (i) { \"n\${i}\" })\n  puts(names[1])\n}\n", "9\nn1\n"))
-  xs.push(accepted("mutex-with", "import std.sync\n\nfn main {\n  m = Mutex(Int).new(5)\n  m.with((v) {\n    if v > 10 {\n      return\n    }\n    v += 1\n  })\n  got = m.with((v): Int {\n    if v == 6 {\n      return 60\n    }\n    v\n  })\n  puts(got)\n  m.with (v) { v += 4 }\n  puts(m.with((v): Int { v }))\n}\n", "60\n10\n"))
+  xs.push(accepted("mutex-with", "import std.sync\n\nfn main {\n  m = sync.Mutex(Int).new(5)\n  m.with((v) {\n    if v > 10 {\n      return\n    }\n    v += 1\n  })\n  got = m.with((v): Int {\n    if v == 6 {\n      return 60\n    }\n    v\n  })\n  puts(got)\n  m.with (v) { v += 4 }\n  puts(m.with((v): Int { v }))\n}\n", "60\n10\n"))
   xs.push(accepted("parallel", "fn main {\n  xs = [1, 2, 3, 4]\n  ys = xs.parallel((x): Int {\n    if x % 2 == 0 {\n      return 0\n    }\n    x * 10\n  })\n  puts(\"\${ys[0]} \${ys[1]} \${ys[2]} \${ys[3]}\")\n  zs = xs.parallel (x) { x + 1 }\n  puts(zs[3])\n}\n", "10 0 30 0\n5\n"))
   xs.push(refused("each-break", "fn main {\n  [1, 2].each (x) {\n    break\n  }\n}\n", "break inside a lambda given to each: the lambda has no loop of its own to leave; to leave the walk or the function early, write it as a for loop", "3:5"))
   xs.push(refused("each-continue", "fn main {\n  [1, 2].each (x) {\n    continue\n  }\n}\n", "continue inside a lambda given to each: the lambda has no loop of its own; return ends this run of it", "3:5"))
@@ -61,10 +66,16 @@ fn cases: Array(LCase) {
   xs.push(refused("each-return-value", "fn f: Int {\n  [1, 2].each (x) {\n    return x\n  }\n  0\n}\n\nfn main {\n  puts(f())\n}\n", "return type is Int, expected Void", "3:5"))
   xs.push(refused("parallel-return-untyped", "fn main {\n  ys = [1, 2].parallel (x) {\n    if x > 1 {\n      return 0\n    }\n    x\n  }\n  puts(ys[0])\n}\n", "return inside a lambda given to parallel, whose value is its last expression: to return early, write the lambda's result type", "4:7"))
   xs.push(refused("build-break", "fn main {\n  ys = Array(Int).new(3, (i) {\n    if i > 1 {\n      break\n    }\n    i\n  })\n  puts(ys[0])\n}\n", "break inside a lambda given to Array(T).new: the lambda has no loop of its own to leave; handle it with if-assign or ??", "4:7"))
-  xs.push(refused("inferred-bare-return", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
-  xs.push(refused("inferred-two-types", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return \"one\"\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns String at 4:7", "6:5"))
-  xs.push(refused("inferred-no-end-value", "fn main {\n  pf = () {\n    if argv().size > 5 {\n      return 1\n    }\n    puts(2)\n  }\n  pf()\n}\n", "this lambda ends without a value here and returns Int at 4:7", "6:5"))
-  xs.push(refused("inferred-pipes-bare-return", "fn main {\n  pf = { ||\n    if argv().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
+  // The braces with pipes and a block after a call are not Avant: the
+  // parser refuses them, and the hint names the lambda form and `for`.
+  xs.push(refused("pipes-value", "fn main {\n  f = { |x: Int| x + 1 }\n  puts(f(1))\n}\n", "a block in pipes is not Avant: write a lambda in parentheses, `(x) { ... }`", "2:7"))
+  xs.push(refused("pipes-method", "fn main {\n  xs = [1, 2]\n  xs.each { |x| puts(x) }\n}\n", "or `xs.each (x) { ... }` when it is the call's only argument); a block that leaves its function with `return`, `break` or `?` is a `for` loop (`for x in xs { ... }`)", "3:11"))
+  xs.push(refused("pipes-empty", "fn main {\n  f = { || 1 }\n  puts(f())\n}\n", "a block in pipes is not Avant", "2:7"))
+  xs.push(refused("block-after-call", "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn main {\n  puts(twice(3) { 1 })\n}\n", "a block after a call is not an argument: pass a lambda in parentheses, `f(a, (x) { ... })`, or `f (x) { ... }` when it is the call's only argument; a block that leaves its function with `return`, `break` or `?` is a `for` loop", "6:17"))
+  xs.push(refused("block-after-method", "fn main {\n  xs = [1, 2]\n  xs.each {\n    puts(1)\n  }\n}\n", "a block after a call is not an argument", "3:11"))
+  xs.push(refused("inferred-bare-return", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return\n    }\n    0\n  }\n  puts(pf())\n}\nimport std.process\n", "this lambda ends with Int here and returns nothing at 4:7", "6:5"))
+  xs.push(refused("inferred-two-types", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return \"one\"\n    }\n    0\n  }\n  puts(pf())\n}\nimport std.process\n", "this lambda ends with Int here and returns String at 4:7", "6:5"))
+  xs.push(refused("inferred-no-end-value", "fn main {\n  pf = () {\n    if process.args().size > 5 {\n      return 1\n    }\n    puts(2)\n  }\n  pf()\n}\nimport std.process\n", "this lambda ends without a value here and returns Int at 4:7", "6:5"))
   xs.push(accepted("inferred-agree", "fn main {\n  pf = (n: Int) {\n    if n > 5 {\n      return n * 2\n    }\n    n\n  }\n  puts(pf(3) + pf(6))\n}\n", "15\n"))
   xs.push(refused("inferred-question", "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn main {\n  pf = () { parse_age(\"1\")? }\n  puts(1)\n}\n", "postfix ? inside a lambda whose result type is inferred cannot return the failure: write the result type with the failure in it", "15:27"))
   xs.push(accepted("question-written-result", "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn main {\n  pf = (): Int | ParseError { parse_age(\"12\")? + 1 }\n  bad = (): Int | ParseError { parse_age(\"x\")? + 1 }\n  puts(pf() ?? -1)\n  puts(bad() ?? -1)\n}\n", "13\n-1\n"))
@@ -72,50 +83,15 @@ fn cases: Array(LCase) {
   xs.push(accepted("for-capture-shared-body", "fn main {\n  fs: Array(fn(): Int) = []\n  n = 0\n  for i in 0..3 {\n    k = i * 2\n    fs.push(() { k + n })\n  }\n  n = 1\n  for f in fs {\n    puts(f())\n  }\n}\n", "1\n3\n5\n"))
   xs.push(refused("default-assigns", "fn count(a: Int, f: fn(): Int = () {\n  a = a + 1\n  a\n}): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "the default of f assigns to the earlier parameter a: a default only reads the parameters before it", "1:33"))
   xs.push(accepted("default-reads", "fn count(a: Int, f: fn(): Int = () { a + 1 }): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "11\n"))
-  xs.push(accepted("rebound-captured", "class Server {\n  pub n: Int = 7\n}\n\nfn main {\n  if argv().size < 5 {\n    server = Server.new()\n    f = () { server.n }\n    puts(f())\n  }\n  if argv().size < 6 {\n    server = \"text\"\n    puts(server)\n  }\n  if argv().size < 7 {\n    server = 3\n    g = () { server + 1 }\n    puts(g())\n  }\n}\n", "7\ntext\n4\n"))
-  xs.push(accepted("pipes-transition", "fn first_big(xs: Array(Int)): Int {\n  found = -1\n  xs.each { |x|\n    if x > 10 {\n      found = x\n      break\n    }\n  }\n  found\n}\n\nfn report(xs: Array(Int)) {\n  xs.each { |x|\n    if x < 0 {\n      puts(\"negative: \${x}\")\n      return\n    }\n  }\n  puts(\"all good\")\n}\n\nfn main {\n  puts(first_big([3, 12, 40]))\n  report([1, -2, 3])\n  report([1, 2])\n  f = { |a: Int, b: Int| a + b }\n  puts(f(1, 2))\n}\n", "12\nnegative: -2\nall good\n3\n"))
+  xs.push(accepted("rebound-captured", "class Server {\n  pub n: Int = 7\n}\n\nfn main {\n  if process.args().size < 5 {\n    server = Server.new()\n    f = () { server.n }\n    puts(f())\n  }\n  if process.args().size < 6 {\n    server = \"text\"\n    puts(server)\n  }\n  if process.args().size < 7 {\n    server = 3\n    g = () { server + 1 }\n    puts(g())\n  }\n}\nimport std.process\n", "7\ntext\n4\n"))
   xs
-}
-
-// `avant format --lambdas`: every block in pipes rewritten (a value, a
-// call's last argument, the shorthand, the full form in a head, a
-// building block), a builtin's loop body that returns made a for, a
-// hash walk that returns and a generic body the checker never reaches
-// left and reported; a second run changes nothing; the program prints
-// what it printed.
-fn check_format_lambdas(c: Checks, compiler: String, dir: String) {
-  src = "${dir}/lam-format.av"
-  before = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  xs.each { |x|\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each { |x| puts(x) } // a comment\n  puts(twice(3) { |n| n * 2 })\n  if xs.any { |x| x > 2 } {\n    puts(\"big\")\n  }\n  f = { |a: Int, b: Int| a + b }\n  g = { || 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3) { |i| i * i }\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  h.each { |k, v|\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort { |a, b| a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each { |x| n += 1 }\n  n\n}\n"
-  after = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  for x in xs {\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each (x) { puts(x) } // a comment\n  puts(twice(3, (n) { n * 2 }))\n  if xs.any((x) { x > 2 }) {\n    puts(\"big\")\n  }\n  f = (a: Int, b: Int) { a + b }\n  g = () { 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3, (i) { i * i })\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  h.each { |k, v|\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort (a, b) { a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each (x) { n += 1 }\n  n\n}\n"
-  _ = file_write(src, before)
-  _ = file_write("${dir}/lam-format-before.av", before)
-  args: Array(String) = []
-  args.push("format")
-  args.push("--lambdas")
-  args.push(src)
-  code = process_run_out(compiler, args, "${dir}/lam-format.log") ?? -1
-  log = log_text("${dir}/lam-format.log")
-  c.eq_int(code, 1, "format --lambdas: exits 1 for the blocks it leaves")
-  c.eq_str(log_text(src), after, "format --lambdas: the lambdas written")
-  c.expect(log.contains("count for: array each that leaves with return: 1"), "format --lambdas: counts the for")
-  c.expect(log.contains("lam-format.av:28:10: a hash each block whose body leaves its function with return"), "format --lambdas: reports the hash walk")
-  c.expect(log.contains("lam-format.av:38:11: a block the checker does not reach whose body leaves with return"), "format --lambdas: reports the unreached body")
-  code2 = process_run_out(compiler, args, "${dir}/lam-format2.log") ?? -1
-  c.eq_int(code2, 1, "format --lambdas again: exits 1")
-  c.eq_str(log_text(src), after, "format --lambdas again: changes nothing")
-  c.eq_int(compile_av(compiler, src, "${dir}/lam-format.bin", "${dir}/lam-format.clog"), 0, "format --lambdas: the result compiles")
-  c.eq_int(compile_av(compiler, "${dir}/lam-format-before.av", "${dir}/lam-format-before.bin", "${dir}/lam-format-before.clog"), 0, "format --lambdas: the source compiles")
-  none: Array(String) = []
-  _ = process_run_out("${dir}/lam-format.bin", none, "${dir}/lam-format.out")
-  _ = process_run_out("${dir}/lam-format-before.bin", none, "${dir}/lam-format-before.out")
-  c.eq_str(log_text("${dir}/lam-format.out"), log_text("${dir}/lam-format-before.out"), "format --lambdas: the same output")
 }
 
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/lam-${f.tag}.av"
-    _ = file_write(src, f.src)
+    _ = fs.write(src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/lam-${f.tag}.bin", "${dir}/lam-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -136,7 +112,7 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
       c.eq_str(log_text("${dir}/lam-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
       k += 1
     } else {
-      c.expect(jobs[i].code != 0 && !file_exists("${dir}/lam-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/lam-${f3.tag}.bin"), "${f3.tag}: refused")
       c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
       c.expect(log.contains("lam-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
     }
@@ -145,9 +121,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_lambdas.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
-    check_format_lambdas(c, compiler, scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

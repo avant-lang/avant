@@ -2,7 +2,7 @@
 // text both ways, and sleeping.
 //
 // A `Time` is seconds and nanoseconds since 1970-01-01T00:00:00Z (UTC,
-// no leap seconds, as the system clock counts): `Time.now()` reads the
+// no leap seconds, as the system clock counts): `time.now()` reads the
 // wall clock; two times compare with ==, <, <= and the others, and sort
 // in order; `t.iso()` writes RFC 3339 text in UTC
 // (`2026-11-18T09:30:00Z`, with the fraction of a second when there is
@@ -21,13 +21,6 @@ pub struct Time {
   pub sec: Int
   // Nanoseconds within that second, 0 to 999_999_999.
   pub nsec: Int
-
-  // The wall clock, now.
-  pub fn self.now: Time {
-    ns = time_os.avant_os_wall_ns()
-    s = floor_div(ns, 1000000000)
-    Time { sec: s, nsec: ns - s * 1000000000 }
-  }
 
   // RFC 3339 text: `YYYY-MM-DDTHH:MM:SS`, then a fraction of a second
   // (one to nine digits, more are cut), then `Z` or an offset `+HH:MM`
@@ -140,11 +133,17 @@ pub struct Time {
   }
 }
 
+// The wall clock, now.
+pub fn now: Time {
+  ns = time_os.avant_os_wall_ns()
+  s = floor_div(ns, 1000000000)
+  Time { sec: s, nsec: ns - s * 1000000000 }
+}
+
 // Sleeps ms milliseconds (0 or more); other tasks run meanwhile.
 pub fn sleep_ms(ms: Int) {
   if ms < 0 {
-    none: Int? = nil
-    _ = none.expect("sleep_ms(ms) needs ms >= 0, got ${ms}")
+    panic("time.sleep_ms(ms) needs ms >= 0, got ${ms}")
     return
   }
   time_os.avant_os_sleep_ms(ms)

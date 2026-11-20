@@ -117,7 +117,8 @@ static uint64_t make_large_chunk(void) {
 }
 
 /* Take a run for PAYLOAD bytes; returns the header (8 bytes into the
- * run), the payload zeroed, the start bit not yet set. */
+ * run), the payload zeroed (left as its pages were for the thread's
+ * unzeroed Bytes, gc_thread.los_nozero), the start bit not yet set. */
 static AvantHeader *take_run(size_t payload) {
   uint64_t n = run_pages(payload);
   if (n <= PAGES_PER_CHUNK) {
@@ -162,7 +163,9 @@ static AvantHeader *take_run(size_t payload) {
       uint32_t pg = (uint32_t)p + k;
       gc_heap.pages[c * PAGES_PER_CHUNK + pg] = (uint32_t)p + 1;
       if ((ch->dirty_pages[pg >> 6] >> (pg & 63)) & 1ULL) {
-        memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        if (!gc_thread.los_nozero) {
+          memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        }
         gc_heap.free_resident_other -= PAGE_SIZE;
       }
     }
@@ -180,7 +183,7 @@ static AvantHeader *take_run(size_t payload) {
       memset(ch, 0, sizeof(GcChunk));
       ch->kind = k ? CHUNK_HUGE_CONT : CHUNK_HUGE;
       ch->head = k ? (uint32_t)c : (uint32_t)nch;
-      if (dirty) {
+      if (dirty && !gc_thread.los_nozero) {
         uint64_t used = (n << PAGE_SHIFT) - k * (uint64_t)CHUNK_SIZE;
         memset(chunk_base(c + k), 0, (size_t)(used < CHUNK_SIZE ? used : CHUNK_SIZE));
       }
@@ -508,11 +511,14 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   if (gc_heap.los_spare && gc_heap.los_spare->size == (uint32_t)payload) {
     h = gc_heap.los_spare;
     gc_heap.los_spare = NULL;
-    memset(payload_of(h), 0, payload);
+    if (!gc_thread.los_nozero) {
+      memset(payload_of(h), 0, payload);
+    }
     gc_heap.ctr.los.spare_hits++;
   } else {
     h = take_run(payload);
     gc_heap.heap_bytes += bytes;
+    gc_note_cycle_peak();
     gc_heap.ctr.los.callocs++;
   }
   h->size = (uint32_t)payload;
@@ -629,6 +635,149 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
   return done;
 }
 
+static int thread_roots_name(const uint8_t *lo, const uint8_t *hi);
+
+/* Grow the young large object H in place to NEW_SIZE payload bytes (more
+ * than its size), when the pages after its run are free: the rest of its
+ * large-object chunk, or the chunks after a huge run (free ones, or new
+ * ones past the high-water mark), as a realloc that finds room after the
+ * block. The added bytes are zeroed unless NOZERO (a type with no
+ * reference word whose caller writes them before reading). Returns 1 when
+ * grown, 0 when the room is not there (nothing changed). */
+static int extend_run(AvantHeader *h, size_t new_size, int nozero) {
+  uint64_t c = chunk_index(h);
+  GcChunk *ch = &gc_heap.chunks[c];
+  uint64_t n_old = run_pages((size_t)h->size);
+  uint64_t n_new = run_pages(new_size);
+  uint8_t *run = (uint8_t *)h - 8;
+  size_t added = (size_t)((n_new - n_old) << PAGE_SHIFT);
+  if (ch->kind == CHUNK_LARGE) {
+    uint32_t p = (uint32_t)((((uintptr_t)h - 8) >> PAGE_SHIFT) & (PAGES_PER_CHUNK - 1));
+    uint32_t k;
+    if (p + n_new > PAGES_PER_CHUNK) {
+      return 0;
+    }
+    for (k = (uint32_t)n_old; k < n_new; k++) {
+      uint32_t pg = p + k;
+      if ((ch->alloc[pg >> 6] >> (pg & 63)) & 1ULL) {
+        return 0;
+      }
+    }
+    for (k = (uint32_t)n_old; k < n_new; k++) {
+      uint32_t pg = p + k;
+      gc_heap.pages[c * PAGES_PER_CHUNK + pg] = p + 1;
+      if ((ch->dirty_pages[pg >> 6] >> (pg & 63)) & 1ULL) {
+        if (!nozero) {
+          memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        }
+        gc_heap.free_resident_other -= PAGE_SIZE;
+      }
+    }
+    bits_set(ch->alloc, p + (uint32_t)n_old, (uint32_t)(n_new - n_old), 1);
+    bits_set(ch->dirty_pages, p + (uint32_t)n_old, (uint32_t)(n_new - n_old), 1);
+    ch->used = (uint16_t)(ch->used + (n_new - n_old));
+  } else if (ch->kind == CHUNK_HUGE) {
+    uint64_t nch = ch->head;
+    uint64_t nch_new = (n_new + PAGES_PER_CHUNK - 1) / PAGES_PER_CHUNK;
+    uint64_t k;
+    if (nch_new > nch && !gc_chunk_take_at(c + nch, nch_new - nch)) {
+      return 0;
+    }
+    /* The old last chunk's pages past the old run (a reused chunk's may
+     * hold anything), then the new chunks. */
+    if (!nozero) {
+      size_t from = (size_t)(n_old << PAGE_SHIFT);
+      size_t to = (size_t)(nch << CHUNK_SHIFT);
+      if ((size_t)(n_new << PAGE_SHIFT) < to) {
+        to = (size_t)(n_new << PAGE_SHIFT);
+      }
+      if (to > from) {
+        memset(run + from, 0, to - from);
+      }
+    }
+    for (k = nch; k < nch_new; k++) {
+      GcChunk *ck = &gc_heap.chunks[c + k];
+      int dirty = ck->dirty;
+      memset(&gc_heap.starts[(c + k) * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+      memset(ck, 0, sizeof(GcChunk));
+      ck->kind = CHUNK_HUGE_CONT;
+      ck->head = (uint32_t)c;
+      if (dirty && !nozero) {
+        uint64_t used = (n_new << PAGE_SHIFT) - k * (uint64_t)CHUNK_SIZE;
+        memset(chunk_base(c + k), 0, (size_t)(used < CHUNK_SIZE ? used : CHUNK_SIZE));
+      }
+    }
+    ch->head = (uint32_t)nch_new;
+  } else {
+    return 0;
+  }
+  /* The old run's bytes past its payload become payload too, and nothing
+   * zeroed them: a run is zeroed over its payload only when it is reused
+   * at once for an object of its size (the spare, gc_los_alloc), and a
+   * byte buffer's run not at all, so they hold what the pages held
+   * before, such as a freed pointer buffer's words. In a buffer of
+   * references the collector would read them as references (a stale
+   * one names freed memory, or keeps a dead object alive). */
+  if (!nozero) {
+    size_t from = sizeof(AvantHeader) + 8 + (size_t)h->size;
+    size_t to = (size_t)(n_old << PAGE_SHIFT);
+    if (sizeof(AvantHeader) + 8 + new_size < to) {
+      to = sizeof(AvantHeader) + 8 + new_size;
+    }
+    if (to > from) {
+      memset(run + from, 0, to - from);
+    }
+  }
+  h->size = (uint32_t)new_size;
+  gc_heap.heap_bytes += added;
+  gc_note_cycle_peak();
+  gc_heap.large_bytes += added;
+  gc_heap.young_large += added;
+  /* The young budget, as an allocation of the added bytes. */
+  avant_nursery_held += added;
+  gc_note_peak();
+  return 1;
+}
+
+/* A runtime helper growing a buffer (an array's or a Buf's storage) asks
+ * for PAYLOAD, a large object it alone names, to be NEW_SIZE bytes long
+ * in place first: 1 when it was (avant_gc_large_extend's room is there),
+ * 0 when the helper allocates and copies as before. Only a young,
+ * unpinned object in a program that is not shared, outside a collection,
+ * the check modes (the verifier's paged storage and quarantines, the
+ * stress mode's collection at every allocation) and a heap limit.
+ * Before, every growth past a few kilobytes took fresh storage and copied
+ * (Binarytrees::Arena's arena grown by push to 25 MB: 161,787 page
+ * faults, against 12,400 for C and Rust, whose realloc grows in place).
+ * Takes the world lock; not a collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_extend(void *payload, uint64_t new_size, int nozero) {
+  AvantHeader *h;
+  int done = 0;
+  if (!payload || new_size > UINT32_MAX || gc_heap.set.verify || gc_heap.set.stress || gc_heap.set.heap_max ||
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
+    return 0;
+  }
+  h = (AvantHeader *)payload - 1;
+  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED | AVANT_FLAG_YOUNG)) !=
+          (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_YOUNG) ||
+      new_size <= (uint64_t)h->size) {
+    return 0;
+  }
+  gc_alloc_sync();
+  gc_lock(&gc_heap.world);
+  /* Not when a root of this thread names the storage: a place the
+   * program formed before the growth (`b[3] += f(b)`) is stored through
+   * after it, into the old storage, which a growth by copy leaves behind;
+   * grown in place it would land in the live one, and the result would
+   * hang on where the pages lie. */
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && h != gc_heap.los_spare &&
+      !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {
+    done = extend_run(h, (size_t)new_size, nozero);
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+  return done;
+}
+
 /* Whether a root of this thread names an address inside [LO, HI): a
  * slot of its frame chain (generated code's frames, user C's, runtime C's
  * handle scopes) or a runtime root. */
@@ -680,8 +829,23 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
   if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
     return 0;
   }
-  gc_lock(&gc_heap.world);
+  /* A small buffer is never dropped: read before the lock, while no
+   * collection can have run. */
   h = (AvantHeader *)payload - 1;
+  if (!(h->flags & AVANT_FLAG_LARGE)) {
+    return 0;
+  }
+  /* A contended lock is waited for natively: a thread that registers
+   * meanwhile (a C thread's first callback) completes its handshake
+   * there, so the program may be shared when the lock is held, and that
+   * thread may have collected (freed or moved the buffer). The flag is
+   * read again under the lock, where no registration completes, before
+   * the buffer is. */
+  gc_lock(&gc_heap.world);
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+    pthread_mutex_unlock(&gc_heap.world);
+    return 0;
+  }
   if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
       ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) && h != gc_heap.los_spare &&
       !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {

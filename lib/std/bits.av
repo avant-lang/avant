@@ -1,0 +1,101 @@
+// std.bits: the 64-bit operations a CPU does in one or two instructions
+// and a language without a 128-bit integer cannot write in one
+// expression: a multiply's high half, an add and a subtract that carry
+// into the next word, a 128-by-64 division, rotations and reversals. As
+// Go's math/bits, on UInt64. Each is one LLVM operation, no call: the
+// avant_bits_* names below have no C function; the compiler writes each
+// as its instruction (llvm/emit.av ll_bits_op): a widening multiply, an
+// add or subtract with overflow, a 128-bit division, a funnel shift, a
+// bit or byte reversal.
+//
+// The bit counts are methods of every integer type: x.count_ones(),
+// x.leading_zeros(), x.trailing_zeros().
+lib bitsc {
+  fun avant_bits_mulhi_u64(x: UInt64, y: UInt64): UInt64
+  fun avant_bits_carry_u64(x: UInt64, y: UInt64, carry: UInt64): UInt64
+  fun avant_bits_borrow_u64(x: UInt64, y: UInt64, borrow: UInt64): UInt64
+  fun avant_bits_divq_u64(hi: UInt64, lo: UInt64, y: UInt64): UInt64
+  fun avant_bits_divr_u64(hi: UInt64, lo: UInt64, y: UInt64): UInt64
+  fun avant_bits_rotl_u64(x: UInt64, k: UInt64): UInt64
+  fun avant_bits_bitrev_u64(x: UInt64): UInt64
+  fun avant_bits_bswap_u64(x: UInt64): UInt64
+}
+
+// x + y + carry: the low 64 bits, and the carry out (0 or 1).
+pub struct Sum {
+  pub sum: UInt64
+  pub carry: UInt64
+}
+
+// x - y - borrow: the low 64 bits, and the borrow out (0 or 1).
+pub struct Diff {
+  pub diff: UInt64
+  pub borrow: UInt64
+}
+
+// x * y as 128 bits: the high and the low 64.
+pub struct Product {
+  pub hi: UInt64
+  pub lo: UInt64
+}
+
+// (hi, lo) / y: the quotient and the remainder.
+pub struct Quotient {
+  pub quo: UInt64
+  pub rem: UInt64
+}
+
+// x + y + carry, with the carry out; carry is 0 or 1 (it traps
+// otherwise). Chained over words, it adds numbers of any width.
+pub fn add(x: UInt64, y: UInt64, carry: UInt64): Sum {
+  if carry > 1 {
+    panic("bits.add: the carry must be 0 or 1, got ${carry}")
+  }
+  Sum { sum: x &+ y &+ carry, carry: bitsc.avant_bits_carry_u64(x, y, carry) }
+}
+
+// x - y - borrow, with the borrow out; borrow is 0 or 1 (it traps
+// otherwise).
+pub fn sub(x: UInt64, y: UInt64, borrow: UInt64): Diff {
+  if borrow > 1 {
+    panic("bits.sub: the borrow must be 0 or 1, got ${borrow}")
+  }
+  Diff { diff: x &- y &- borrow, borrow: bitsc.avant_bits_borrow_u64(x, y, borrow) }
+}
+
+// The full 128-bit product of x and y.
+pub fn mul(x: UInt64, y: UInt64): Product {
+  Product { hi: bitsc.avant_bits_mulhi_u64(x, y), lo: x &* y }
+}
+
+// The 128-bit number (hi, lo) divided by y. Traps when y is 0 or the
+// quotient would not fit 64 bits (y <= hi), as Go's Div64 panics.
+pub fn div(hi: UInt64, lo: UInt64, y: UInt64): Quotient {
+  if y == 0 {
+    panic("bits.div: division by zero")
+  }
+  if y <= hi {
+    panic("bits.div: the quotient of (${hi}, ${lo}) / ${y} does not fit 64 bits")
+  }
+  Quotient { quo: bitsc.avant_bits_divq_u64(hi, lo, y), rem: bitsc.avant_bits_divr_u64(hi, lo, y) }
+}
+
+// x rotated left by k bits (k modulo 64); a negative k rotates right.
+pub fn rotate_left(x: UInt64, k: Int): UInt64 {
+  bitsc.avant_bits_rotl_u64(x, k.wrap_u64())
+}
+
+// x with its 64 bits in reverse order.
+pub fn reverse(x: UInt64): UInt64 {
+  bitsc.avant_bits_bitrev_u64(x)
+}
+
+// x with its 8 bytes in reverse order (a byte swap).
+pub fn reverse_bytes(x: UInt64): UInt64 {
+  bitsc.avant_bits_bswap_u64(x)
+}
+
+// The bits needed to write x: 0 for 0, else 64 - x.leading_zeros().
+pub fn len(x: UInt64): Int {
+  64 - x.leading_zeros()
+}

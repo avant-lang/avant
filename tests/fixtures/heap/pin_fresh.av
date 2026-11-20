@@ -1,0 +1,28 @@
+// A pin of an object the inline allocation path has just built, before
+// anything synced the path's allocations, with an allocation inside the
+// pin. The program spawns, so its inline sequence sets each object's
+// start bit itself and the pin's lookup does not sync on its own: the
+// pin must sync first, or the sync inside the block reads a pinned
+// header in the run of fresh young objects and the check modes stop the
+// program ("a header that is not a fresh young object's").
+
+fn main {
+  names = ["ada", "bob", "cy"]
+  pin(names) {
+    more = ["x"]
+    puts("${names[1]} ${more[0]}")
+  }
+  i = 0
+  total = 0
+  while i < 20 {
+    xs = [i, i + 1]
+    pin(xs) {
+      ys = [xs[1], i]
+      total += xs[0] + ys[0]
+    }
+    i += 1
+  }
+  puts(total)
+  h = spawn { 1 + 1 }
+  puts(h.join() ?? -1)
+}

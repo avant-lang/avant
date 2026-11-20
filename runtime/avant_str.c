@@ -4,6 +4,7 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "avant_fmt.h"
+#include "third_party/yyjson/f64_to_dec.h"
 
 #include <math.h>
 #include <stdatomic.h>
@@ -22,145 +23,52 @@ static char *g_empty;
 
 static char *empty_str(void);
 
+/* memcpy of N bytes for the short strings most copies are: up to 16
+ * bytes in two overlapping loads and stores of each width, inline, where
+ * the libc call cost more than the copy (a tokenizer's names, a key's
+ * prefix and digits); a longer one is memcpy's. */
+static inline __attribute__((always_inline)) void copy_short(char *d, const char *s, size_t n) {
+  if (n <= 16) {
+    if (n >= 8) {
+      uint64_t a, b;
+      memcpy(&a, s, 8);
+      memcpy(&b, s + n - 8, 8);
+      memcpy(d, &a, 8);
+      memcpy(d + n - 8, &b, 8);
+    } else if (n >= 4) {
+      uint32_t a, b;
+      memcpy(&a, s, 4);
+      memcpy(&b, s + n - 4, 4);
+      memcpy(d, &a, 4);
+      memcpy(d + n - 4, &b, 4);
+    } else if (n > 0) {
+      char a = s[0], b = s[n >> 1], c = s[n - 1];
+      d[0] = a;
+      d[n >> 1] = b;
+      d[n - 1] = c;
+    }
+    return;
+  }
+  memcpy(d, s, n);
+}
+
 /* A string's length is its header's: every String and Bytes value a
  * program holds is a string object (a heap one, or a literal the
  * compiler emitted with the same header), whose header size is the bytes
- * and the terminator. A C function's result, a C field's string and a C
- * callback's string argument are copied into the heap on the way in
- * (avant_c_str), so no bare C pointer is ever a String.
- *
- * The program says so by defining avant_str_headered as 1 (the compiler
- * emits it beside `main`). This weak 0 is what the previous release's
- * compiler gets, whose code still passes literals without a header and
- * C strings as they are: the bootstrap's B is that code, and for it the
- * length is read as before (str_n_compat, below). Not `const`: GCC
- * folds a weak constant's value into its readers. */
-__attribute__((weak)) int32_t avant_str_headered = 0;
-
-static size_t str_n_compat(const char *s);
-
+ * and the terminator, or a view (AvantStrView) holding its length. A C
+ * function's result, a C field's string and a C callback's string
+ * argument are copied into the heap on the way in (avant_c_str), so no
+ * bare C pointer is ever a String. */
 size_t avant_str_n(const char *s) {
+  const AvantHeader *h;
   if (!s) {
-    return 0;
-  }
-  if (__builtin_expect(avant_str_headered != 0, 1)) {
-    const AvantHeader *h = avant_header((void *)s);
-    if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
-      return ((const AvantStrView *)(const void *)s)->len;
-    }
-    return (size_t)h->size - 1;
-  }
-  return str_n_compat(s);
-}
-
-/* ---- the previous compiler's strings (avant_str_headered 0) ---- */
-
-/* Short tagged strings keep the length in the header. The NUL check stays
- * inside the same page, so a lookalike header cannot fault. Longer strings
- * and raw C pointers still take the block walk or strlen. */
-static int str_meta_len(const char *s, size_t *out) {
-  uintptr_t u;
-  AvantHeader *h;
-  uint32_t sz;
-  uintptr_t last;
-  if (!s) {
-    return 0;
-  }
-  u = (uintptr_t)s;
-  if (u & 7u) {
     return 0;
   }
   h = avant_header((void *)s);
-  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) != (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) {
-    return 0;
+  if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
+    return ((const AvantStrView *)(const void *)s)->len;
   }
-  if (h->type_id != AVANT_TYPE_BYTES) {
-    return 0;
-  }
-  sz = h->size;
-  if (sz == 0 || sz > 128) {
-    return 0;
-  }
-  last = u + (sz - 1);
-  if (((last ^ u) & ~(uintptr_t)4095) != 0) {
-    return 0;
-  }
-  if (s[sz - 1] != 0) {
-    return 0;
-  }
-  *out = (size_t)sz - 1;
-  return 1;
-}
-
-/* One-entry length cache. A hit needs the same pointer, a generation
- * with no collection since the entry was stored (so the object cannot
- * have moved or been freed: both happen only inside a collection),
- * the identical 8 header bytes, and the terminator still in place.
- * Strings are immutable, so that object still has the stored length.
- * Entries are stored only after avant_is_heap or str_meta_len has
- * validated the pointer, so a raw C pointer is never promoted into a
- * heap reading: it reaches the cache only by occupying the exact
- * address of a validated heap string with its header bytes untouched
- * and no collection in between, in which case the uncached heap path
- * would read the same header and return the same length. */
-typedef struct {
-  const char *ptr;
-  size_t n;
-  uint64_t hdr;
-  uint32_t gen;
-} LenSlot;
-
-static __thread LenSlot g_len_slots[4];
-static __thread unsigned g_len_victim;
-
-static void len_cache_store(const char *s, size_t n) {
-  LenSlot *slot = &g_len_slots[g_len_victim & 3u];
-  uint64_t hdr = 0;
-  g_len_victim++;
-  memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
-  slot->ptr = s;
-  slot->n = n;
-  slot->hdr = hdr;
-  slot->gen = avant_str_generation();
-}
-
-static size_t str_n_long(const char *s) __attribute__((noinline));
-static size_t str_n_long(const char *s) {
-  uint32_t gen = avant_str_generation();
-  int i;
-  for (i = 0; i < 4; i++) {
-    LenSlot *slot = &g_len_slots[i];
-    uint64_t hdr = 0;
-    if (s != slot->ptr || gen != slot->gen) {
-      continue;
-    }
-    memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
-    if (hdr == slot->hdr && s[slot->n] == 0) {
-      return slot->n;
-    }
-  }
-  if (((uintptr_t)s % 8) == 0) {
-    AvantHeader *h = avant_header((void *)s);
-    if ((h->flags & AVANT_FLAG_HEAP) && h->type_id == AVANT_TYPE_BYTES && h->size > 0
-        && avant_is_heap((void *)s)) {
-      size_t n = (size_t)h->size - 1;
-      len_cache_store(s, n);
-      return n;
-    }
-  }
-  /* A C string: within the String ceiling, or a trap (a heap string is
-   * within it by construction). */
-  size_t n = strlen(s);
-  avant_size_check(n, AVANT_SIZE_STRING);
-  return n;
-}
-
-static size_t str_n_compat(const char *s) {
-  size_t meta = 0;
-  if (str_meta_len(s, &meta)) {
-    return meta;
-  }
-  return str_n_long(s);
+  return (size_t)h->size - 1;
 }
 
 char *avant_str_empty(void) {
@@ -173,11 +81,17 @@ char *avant_str_empty(void) {
  * inside address lies in) and the source is formed from it after the
  * allocation. */
 static char *dup_raw_at(const char *s, size_t off, size_t n) {
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &s);
-  char *p = avant_str_alloc((uint64_t)n);
+  char *p;
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with s a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(n));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &s);
+    p = avant_str_alloc((uint64_t)(n));
+  }
   if (n) {
-    memcpy(p, s + off, n);
+    copy_short(p, s + off, n);
   }
   p[n] = 0;
   avant_str_tag(p);
@@ -193,11 +107,17 @@ static char *dup_bytes(const char *s, size_t n) {
  * again after it. */
 static char *dup_bytes_at(const char *s, size_t off, size_t n) {
   size_t sn;
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &s);
-  char *p = avant_str_alloc((uint64_t)n);
+  char *p;
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with s a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(n));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &s);
+    p = avant_str_alloc((uint64_t)(n));
+  }
   if (n) {
-    memcpy(p, avant_str_bytes(s, &sn) + off, n);
+    copy_short(p, avant_str_bytes(s, &sn) + off, n);
   }
   p[n] = 0;
   avant_str_tag(p);
@@ -208,7 +128,7 @@ static char *dup_bytes_at(const char *s, size_t off, size_t n) {
  * worth an object and cannot hold a much larger parent alive (avant_rt.h,
  * AvantStrView), else a copy. S is the whole string N and OFF lie in;
  * a view of a view names the first one's base. */
-static char *str_part(const char *s, size_t off, size_t n) {
+static inline __attribute__((always_inline)) char *str_part(const char *s, size_t off, size_t n) {
   size_t sn;
   char *base;
   uint32_t boff;
@@ -217,11 +137,19 @@ static char *str_part(const char *s, size_t off, size_t n) {
   if (n == 0) {
     return empty_str();
   }
-  avant_str_bytes(s, &sn);
+  const char *bytes = avant_str_bytes(s, &sn);
   if (off == 0 && n == sn) {
     return (char *)s;
   }
-  if (!avant_str_headered || n < AVANT_VIEW_MIN) {
+  if (n < AVANT_VIEW_MIN) {
+    /* A short copy inline when the inline allocation serves it (nothing
+     * collects, so the bytes stay where they are): a tokenizer's names. */
+    char *p = avant_str_alloc_try((uint64_t)n);
+    if (p) {
+      copy_short(p, bytes + off, n);
+      p[n] = 0;
+      return p;
+    }
     return dup_bytes_at(s, off, n);
   }
   if (avant_str_is_view(s)) {
@@ -339,13 +267,16 @@ char *avant_str_concat(const char *a, const char *b) {
   if (nb == 0) {
     return (char *)a;
   }
-  AVANT_GC_SCOPE(2);
-  AVANT_GC_ROOT(0, &a);
-  AVANT_GC_ROOT(1, &b);
-  char *p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
+  char *p = avant_str_alloc_try((uint64_t)na + (uint64_t)nb);
+  if (!p) {
+    AVANT_GC_SCOPE(2);
+    AVANT_GC_ROOT(0, &a);
+    AVANT_GC_ROOT(1, &b);
+    p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
+  }
   /* RC2: the bytes are formed after the allocation (a view's too). */
-  memcpy(p, avant_str_bytes(a, &na), na);
-  memcpy(p + na, avant_str_bytes(b, &nb), nb);
+  copy_short(p, avant_str_bytes(a, &na), na);
+  copy_short(p + na, avant_str_bytes(b, &nb), nb);
   p[na + nb] = 0;
   avant_str_tag(p);
   return p;
@@ -423,22 +354,46 @@ char *avant_str_slice(const char *s, avant_int start, avant_int stop) {
   return str_part(s, i, len);
 }
 
-char *avant_str_from_int(avant_int n) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%lld", (long long)n);
-  if (k < 0) {
-    k = 0;
+/* An integer's text, its digits two at a time (avant_fmt.h's
+ * avant_fmt_u64), at the end of buf: printf's parsing of "%lld" cost more
+ * than the digits. Returns the start; the text runs to end. */
+static char *int_text(char *end, int64_t n) {
+  uint64_t u = n < 0 ? 0u - (uint64_t)n : (uint64_t)n;
+  char *o = avant_fmt_u64(end, u);
+  if (n < 0) {
+    *--o = '-';
   }
-  return dup_bytes(buf, (size_t)k);
+  return o;
+}
+
+int avant_fmt_int_text(char *out, int64_t n) {
+  char buf[24];
+  char *o = int_text(buf + sizeof(buf), n);
+  int k = (int)(buf + sizeof(buf) - o);
+  memcpy(out, o, (size_t)k);
+  return k;
+}
+
+char *avant_str_from_int(avant_int n) {
+  char buf[24];
+  char *o = int_text(buf + sizeof(buf), n);
+  return dup_bytes(o, (size_t)(buf + sizeof(buf) - o));
 }
 
 char *avant_str_from_u64(uint64_t n) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)n);
-  if (k < 0) {
-    k = 0;
-  }
-  return dup_bytes(buf, (size_t)k);
+  char buf[24];
+  char *o = avant_fmt_u64(buf + sizeof(buf), n);
+  return dup_bytes(o, (size_t)(buf + sizeof(buf) - o));
+}
+
+/* v (below 10^8) as exactly eight digits at p. */
+static void put8_digits(char *p, uint32_t v) {
+  uint32_t a = v / 10000;
+  uint32_t b = v % 10000;
+  memcpy(p, avant_fmt_d2 + 2 * (a / 100), 2);
+  memcpy(p + 2, avant_fmt_d2 + 2 * (a % 100), 2);
+  memcpy(p + 4, avant_fmt_d2 + 2 * (b / 100), 2);
+  memcpy(p + 6, avant_fmt_d2 + 2 * (b % 100), 2);
 }
 
 /* The one text of a Float64: the shortest
@@ -447,64 +402,12 @@ char *avant_str_from_u64(uint64_t n) {
  * in the exponent (the layout yyjson's writer gives Json.text, so a float
  * reads the same in puts, interpolation and JSON): `0.1`, `2.0`, `-0.0`,
  * `100000000000000000000.0`, `1e21`, `1.5e-7`, `5e-324`; NaN is `nan`, the
- * infinities `inf` and `-inf`. The digits: %.15g when it reads back (by
- * DBL_DIG every decimal of 15 or fewer digits that reads back is that
- * one), else the 16-digit correctly rounded decimal or a neighbour one
- * unit away that reads back, else the 17-digit one, which always does.
+ * infinities `inf` and `-inf`. The digits are Schubfach's (yyjson's
+ * f64_bin_to_dec, third_party/yyjson/f64_to_dec.h): the shortest decimal
+ * inside the number's rounding interval, the closest one when several
+ * are as short, as a search of %.15g, %.16g and %.17g with a read back
+ * finds them, without printing or reading anything.
  * out holds at least 40 bytes; returns the length (out is NUL-terminated). */
-static int fmt_digits(double v, int p, char *dig, int *exp10) {
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%.*e", p - 1, v);
-  int k = 0;
-  const char *s = buf;
-  if (*s == '-') {
-    s++;
-  }
-  for (; *s && *s != 'e'; s++) {
-    if (*s >= '0' && *s <= '9') {
-      dig[k++] = *s;
-    }
-  }
-  dig[k] = 0;
-  *exp10 = (*s == 'e') ? atoi(s + 1) : 0;
-  return k;
-}
-
-static int reads_back(const char *dig, int n, int exp10, double av) {
-  char buf[48];
-  snprintf(buf, sizeof(buf), "%.*se%d", n, dig, exp10 - n + 1);
-  return strtod(buf, NULL) == av;
-}
-
-/* dig += delta (+1 or -1) as an n-digit integer; 0 when the digit count
- * would change. */
-static int step_digits(char *dig, int n, int delta) {
-  int i = n - 1;
-  if (delta > 0) {
-    while (i >= 0 && dig[i] == '9') {
-      dig[i] = '0';
-      i--;
-    }
-    if (i < 0) {
-      return 0;
-    }
-    dig[i]++;
-  } else {
-    while (i >= 0 && dig[i] == '0') {
-      dig[i] = '9';
-      i--;
-    }
-    if (i < 0) {
-      return 0;
-    }
-    dig[i]--;
-    if (dig[0] == '0') {
-      return 0;
-    }
-  }
-  return 1;
-}
-
 int avant_fmt_float_text(char *out, double v) {
   char *o = out;
   if (v != v) {
@@ -523,44 +426,35 @@ int avant_fmt_float_text(char *out, double v) {
     memcpy(o, "0.0", 4);
     return (int)(o - out) + 3;
   }
-  char dig[24];
-  int e10 = 0;
-  int n = 0;
-  if (v < 2.2250738585072014e-308) {
-    /* A subnormal has fewer digits of precision than DBL_DIG: search. */
-    for (int p = 1; p <= 17; p++) {
-      n = fmt_digits(v, p, dig, &e10);
-      if (reads_back(dig, n, e10, v)) {
-        break;
-      }
-      char nb[24];
-      memcpy(nb, dig, sizeof(dig));
-      if (step_digits(nb, n, 1) && reads_back(nb, n, e10, v)) {
-        memcpy(dig, nb, sizeof(dig));
-        break;
-      }
-      memcpy(nb, dig, sizeof(dig));
-      if (step_digits(nb, n, -1) && reads_back(nb, n, e10, v)) {
-        memcpy(dig, nb, sizeof(dig));
-        break;
-      }
-    }
-  } else if (!(n = fmt_digits(v, 15, dig, &e10), reads_back(dig, n, e10, v))) {
-    n = fmt_digits(v, 16, dig, &e10);
-    if (!reads_back(dig, n, e10, v)) {
-      char up[24];
-      char down[24];
-      memcpy(up, dig, sizeof(dig));
-      memcpy(down, dig, sizeof(dig));
-      if (step_digits(up, n, 1) && reads_back(up, n, e10, v)) {
-        memcpy(dig, up, sizeof(dig));
-      } else if (step_digits(down, n, -1) && reads_back(down, n, e10, v)) {
-        memcpy(dig, down, sizeof(dig));
-      } else {
-        n = fmt_digits(v, 17, dig, &e10);
-      }
-    }
+  uint64_t raw;
+  memcpy(&raw, &v, sizeof raw);
+  uint64_t sig_raw = raw & (((uint64_t)1 << 52) - 1);
+  uint32_t exp_raw = (uint32_t)(raw >> 52) & 0x7ff;
+  uint64_t sig_bin = sig_raw;
+  int32_t exp_bin = 1 - 1023 - 52;
+  if (exp_raw != 0) {
+    sig_bin = sig_raw | ((uint64_t)1 << 52);
+    exp_bin = (int32_t)exp_raw - 1023 - 52;
   }
+  uint64_t sig_dec = 0;
+  int32_t exp_dec = 0;
+  f64_bin_to_dec(sig_raw, exp_raw, sig_bin, exp_bin, &sig_dec, &exp_dec);
+  /* Its digits (at most 17), two at a time from a table of pairs in
+   * two halves of eight (the pairs of avant_fmt.h), as yyjson's writer
+   * writes them: a digit a time was a chain of 17 dependent divisions. */
+  char all[17];
+  uint64_t top = sig_dec / 100000000;
+  all[0] = (char)('0' + (uint32_t)(top / 100000000));
+  put8_digits(all + 1, (uint32_t)(top % 100000000));
+  put8_digits(all + 9, (uint32_t)(sig_dec % 100000000));
+  int lead = 0;
+  while (lead < 16 && all[lead] == '0') {
+    lead++;
+  }
+  int n = 17 - lead;
+  char dig[24];
+  memcpy(dig, all + lead, (size_t)n);
+  int e10 = exp_dec + n - 1;
   while (n > 1 && dig[n - 1] == '0') {
     n--;
   }
@@ -613,7 +507,7 @@ void avant_puts_f64(double v) {
   char buf[48];
   int k = avant_fmt_float_text(buf, v);
   buf[k] = '\n';
-  fwrite(buf, 1, (size_t)k + 1, stdout);
+  avant_out_whole(buf, (size_t)k + 1, 0);
   avant_out_check();
 }
 
@@ -622,15 +516,10 @@ void avant_puts_f64(double v) {
 void avant_puts_str(const char *s) {
   size_t n;
   s = avant_str_bytes(s, &n);
-  /* The text and its newline under one hold of stdout's lock: another
-   * thread's flush between them (a task's trap flushes stdout) would
-   * write the line without its end, and the trap's line after it. */
-  flockfile(stdout);
-  if (n) {
-    fwrite_unlocked(s, 1, n, stdout);
-  }
-  putc_unlocked('\n', stdout);
-  funlockfile(stdout);
+  /* The text and its newline in one whole write (avant_out_whole): a
+   * task's trap flushes stdout, and a flush between them would write the
+   * line without its end, and the trap's line after it. */
+  avant_out_whole(s, n, 1);
   avant_out_check();
 }
 
@@ -642,34 +531,22 @@ void avant_puts_str(const char *s) {
  * bits as an unsigned number at their own width. */
 void avant_puts_u64(uint64_t v) {
   char buf[24];
-  char *o = buf + sizeof(buf);
-  *--o = '\n';
-  do {
-    *--o = (char)('0' + (int)(v % 10u));
-    v /= 10u;
-  } while (v);
-  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  buf[sizeof(buf) - 1] = '\n';
+  char *o = avant_fmt_u64(buf + sizeof(buf) - 1, v);
+  avant_out_whole(o, (size_t)(buf + sizeof(buf) - o), 0);
   avant_out_check();
 }
 
 void avant_puts_i64(int64_t v) {
   char buf[24];
-  char *o = buf + sizeof(buf);
-  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
-  *--o = '\n';
-  do {
-    *--o = (char)('0' + (int)(u % 10u));
-    u /= 10u;
-  } while (u);
-  if (v < 0) {
-    *--o = '-';
-  }
-  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  buf[sizeof(buf) - 1] = '\n';
+  char *o = int_text(buf + sizeof(buf) - 1, v);
+  avant_out_whole(o, (size_t)(buf + sizeof(buf) - o), 0);
   avant_out_check();
 }
 
 void avant_puts_bool(int32_t v) {
-  fputs(v ? "true\n" : "false\n", stdout);
+  avant_out_whole(v ? "true\n" : "false\n", v ? 5u : 6u, 0);
   avant_out_check();
 }
 
@@ -694,45 +571,29 @@ char *avant_str_from_byte(avant_int b) {
 }
 
 char *avant_str_cat_int(const char *prefix, avant_int n) {
-  char digs[24];
-  int nd = 0;
-  uint64_t u;
-  /* RC1: the prefix is a handle across the allocation (digs is C
-   * memory). */
-  AVANT_GC_SCOPE(1);
-  AVANT_GC_ROOT(0, &prefix);
-  if (n < 0) {
-    u = (uint64_t)(-((int64_t)n + 1)) + 1u;
-  } else {
-    u = (uint64_t)n;
-  }
-  if (u == 0) {
-    digs[nd++] = '0';
-  } else {
-    while (u) {
-      digs[nd++] = (char)('0' + (u % 10u));
-      u /= 10u;
-    }
-  }
+  char buf[24];
+  char *p;
+  char *o = int_text(buf + sizeof(buf), n);
+  size_t nd = (size_t)(buf + sizeof(buf) - o);
   if (!prefix) {
     prefix = AVANT_STR_EMPTY;
   }
   size_t np = avant_str_n(prefix);
-  size_t neg = n < 0 ? 1u : 0u;
-  size_t total = np + neg + (size_t)nd;
-  char *p = avant_str_alloc((uint64_t)total);
+  /* RC1: the prefix is a handle across the allocation (buf is C
+   * memory). */
+  /* The inline allocation when it serves (it cannot collect), else
+   * the one that may, with prefix a handle across it. */
+  p = avant_str_alloc_try((uint64_t)(np + nd));
+  if (!p) {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &prefix);
+    p = avant_str_alloc((uint64_t)(np + nd));
+  }
   if (np) {
-    memcpy(p, avant_str_bytes(prefix, &np), np);
+    copy_short(p, avant_str_bytes(prefix, &np), np);
   }
-  size_t k = np;
-  if (neg) {
-    p[k++] = '-';
-  }
-  while (nd > 0) {
-    nd--;
-    p[k++] = digs[nd];
-  }
-  p[k] = 0;
+  copy_short(p + np, o, nd);
+  p[np + nd] = 0;
   avant_str_tag(p);
   return p;
 }
@@ -1080,34 +941,6 @@ avant_int avant_str_byte(const char *s, avant_int i) {
     return 0;
   }
   return (avant_int)(unsigned char)s[i];
-}
-
-static int32_t checksum_bytes(const char *s, size_t n) {
-  uint32_t hash = 5381u;
-  size_t i;
-  for (i = 0; i < n; i++) {
-    hash = ((hash << 5) + hash) + (unsigned char)s[i];
-  }
-  return (int32_t)hash;
-}
-
-int32_t avant_checksum_str(const char *s) {
-  size_t n;
-  s = avant_str_bytes(s, &n);
-  return checksum_bytes(s, n);
-}
-
-int32_t avant_checksum_f64(double v) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%.7f", v);
-  if (k < 0) {
-    k = 0;
-  }
-  if ((size_t)k >= sizeof(buf)) {
-    k = (int)sizeof(buf) - 1;
-  }
-  /* A C buffer, not a String: its bytes by its own length. */
-  return checksum_bytes(buf, (size_t)k);
 }
 
 static int is_ascii_space(unsigned char c) {
@@ -1577,17 +1410,6 @@ char *avant_str_from_c(const void *p, avant_int n) {
   s[n] = 0;
   avant_str_tag(s);
   return s;
-}
-
-/* The names the seed's compiler calls: the compiler B, built by the seed
- * release, links this runtime. They go when a release that emits
- * avant_str_cat_int and avant_str_from_int_bytes is the seed. */
-char *avant_str_cat_i32(const char *prefix, avant_int n) {
-  return avant_str_cat_int(prefix, n);
-}
-
-char *avant_str_from_i32_bytes(void *arr) {
-  return avant_str_from_int_bytes(arr);
 }
 
 /* s.replace(from, to): every FROM in S, left to right and without

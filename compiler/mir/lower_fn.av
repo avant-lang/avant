@@ -137,7 +137,7 @@ pub fn (lw: MirLower) lam_base(fnn: Function): String {
   if got = lw.lw_fn_syms.get(fnn.emit_name) {
     sym = got
   }
-  if str_starts(sym, "av.") {
+  if sym.starts_with("av.") {
     return sym
   }
   "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
@@ -157,7 +157,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
       lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.body, encl)
-    } else if k == st_pin() || k == st_hold() {
+    } else if k == st_pin() || k == st_hold() || k == st_defer() {
       lw.prewalk_opt(st.expr, encl)
       lw.prewalk_stmts(st.body, encl)
     } else if k == st_release() {
@@ -277,7 +277,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
       continue
     }
     key = "${encl}|${e.cap_names[i]}"
-    if !lw.lw_cl.cap_at.has_key(key) {
+    if !lw.lw_cl.cap_at.has(key) {
       lw.lw_cl.cap_at[key] = lw.lw_cl.cap_tys.size
       lw.lw_cl.cap_tys.push(e.cap_tys[i])
     }
@@ -337,7 +337,7 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
 // (lower.av var_key; before, the second stored into the first's box and
 // stopped the MIR verifier).
 pub fn mir_box_key(name: String, t: Ty): String {
-  "${name}|${t.show()}"
+  "${name}|${t.show_bare()}"
 }
 
 // ensure_box (calls.av:1740-1754): the box of a boxed variable of this
@@ -345,7 +345,7 @@ pub fn mir_box_key(name: String, t: Ty): String {
 // the old back end's explicit zero store).
 pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   k = lw.box_local_of(name, t, loc)
-  if lw.failed() || lw.lw_cl.box_ready.has_key(mir_box_key(name, t)) {
+  if lw.failed() || lw.lw_cl.box_ready.has(mir_box_key(name, t)) {
     return k
   }
   b = lw.lw_b
@@ -355,7 +355,7 @@ pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
   args.push(b.c_u32(b.type_id(bl)))
   b.call(k, "avant_alloc", args)
-  lw.lw_cl.box_ready[mir_box_key(name, t)] = 1
+  lw.lw_cl.box_ready.add(mir_box_key(name, t))
   k
 }
 
@@ -406,7 +406,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
   if lw.name_in_box(name) {
     if mir_name_index(lw.lw_cl.caps, name) < 0 {
       if fresh {
-        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, mir_box_key(name, t))
+        lw.lw_cl.box_ready.delete(mir_box_key(name, t))
       }
       lw.ensure_box(name, t, loc)
     }
@@ -416,13 +416,6 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
   k = lw.var_get(name, ty)
   lw.at(loc)
   lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(v))
-}
-
-pub fn mir_without_key(h: Hash(String, Int), key: String): Hash(String, Int) {
-  if h.has_key(key) {
-    h.delete(key)
-  }
-  h
 }
 
 // The frame's boxed variables (the old back end's begin_fn_frame; the receiver is
@@ -551,7 +544,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     return zero
   }
   sym = e.resolved
-  if !str_starts(sym, "av.") {
+  if !sym.starts_with("av.") {
     base = lw.lw_cl.base
     if base.size == 0 {
       base = b.func.symbol
@@ -563,8 +556,10 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   if lw.failed() {
     return zero
   }
-  lam = MirLam.new(e, sym)
-  lw.lw_cl.pending.push(lam)
+  if !lw.lw_cl.queued.has(sym) {
+    lw.lw_cl.queued.add(sym)
+    lw.lw_cl.pending.push(MirLam.new(e, sym))
+  }
   fty = b.types.agg(l)
   if e.cap_names.size == 0 {
     lw.at(e.loc)
@@ -685,7 +680,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   lw.at(e.loc)
   h = b.temp(fty)
   b.assign(b.pl(h), b.rv_use(f))
-  args = lw.lower_args_to(e.args, e.cap_tys, 0u64)
+  args = lw.lower_args_to(e.args, e.cap_tys, 0)
   if lw.failed() {
     return zero
   }
@@ -708,11 +703,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
 pub fn (lw: MirLower) lower_pending_lambdas {
   while lw.lw_cl.pending.size > 0 && !lw.failed() {
     lam = lw.lw_cl.pending[0]
-    rest: Array(MirLam) = []
-    for i in 1..lw.lw_cl.pending.size {
-      rest.push(lw.lw_cl.pending[i])
-    }
-    lw.lw_cl.pending = rest
+    lw.lw_cl.pending = lw.lw_cl.pending[1..]
     lw.lower_thunk(lam)
   }
 }

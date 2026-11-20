@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 quote {
   fn doubled(n: Int): Int {
@@ -34,7 +36,7 @@ fn test_macros(c: Checks) {
   b = Box { n: 3 }
   c.eq_int(b.doubled(), 6, "quoted method")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     stamp = now_ms()
     dir = "${scratch()}/macros-${stamp}"
     mkdir_p(dir)
@@ -45,13 +47,29 @@ fn test_macros(c: Checks) {
     fields_out = "${dir}/fields.out"
     fields_code = compile_av(compiler, "${dir}/fields.av", fields_bin, fields_log)
     c.eq_int(fields_code, 0, "field walk compile")
-    c.expect(file_exists(fields_bin), "field walk bin")
+    c.expect(fs.exists(fields_bin), "field walk bin")
     chmod_x(fields_bin)
     run_av_bin(fields_bin, fields_out)
-    if got = file_read(fields_out) {
+    if got = fs.read(fields_out) {
       c.eq_str(got, "3\n4\n", "field walk accessors")
     } else {
       c.expect(false, "field walk accessors")
+    }
+
+    // A walk over a generic type: f.type names the type's parameters, so
+    // the functions it writes are generic and each instance reads its own
+    // field types (Box(String), Box(Float64), Pair(Int, String)).
+    write_av(dir, "generic_walk", "struct Box(T) {\n  value: T\n  count: Int\n}\nclass Pair(A, B) {\n  left: A\n  right: B\n  fn initialize(self.left, self.right) {\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn #(f.name)(b: Box(T)): #(f.type) {\n        b.#(f.name)\n      }\n    }\n  }\n}\ncomptime {\n  for f in Pair.fields {\n    quote {\n      fn #(f.name)(p: Pair(A, B)): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  a = Box { value: \"text\", count: 2 }\n  b = Box { value: 1.5, count: 3 }\n  puts(value(a) + \"!\")\n  puts(count(a) + count(b))\n  puts(value(b) * 2.0)\n  p = Pair.new(7, \"seven\")\n  puts(left(p) + 1)\n  puts(right(p).size)\n}\n")
+    gen_bin = "${dir}/generic_walk.bin"
+    gen_log = "${dir}/generic_walk.log"
+    gen_out = "${dir}/generic_walk.out"
+    c.eq_int(compile_av(compiler, "${dir}/generic_walk.av", gen_bin, gen_log), 0, "field walk over a generic type compiles")
+    chmod_x(gen_bin)
+    run_av_bin(gen_bin, gen_out)
+    if got = fs.read(gen_out) {
+      c.eq_str(got, "text!\n5\n3.0\n8\n5\n", "field walk over a generic type: each instance's field types")
+    } else {
+      c.expect(false, "field walk over a generic type: each instance's field types")
     }
 
     write_av(dir, "splice_out", "fn #(name): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n")
@@ -59,8 +77,8 @@ fn test_macros(c: Checks) {
     splice_log = "${dir}/splice.log"
     splice_code = compile_av(compiler, "${dir}/splice_out.av", splice_bin, splice_log)
     c.expect(splice_code != 0, "splice outside quote exits non-zero")
-    c.expect(!file_exists(splice_bin), "splice outside quote bin absent")
-    if err = file_read(splice_log) {
+    c.expect(!fs.exists(splice_bin), "splice outside quote bin absent")
+    if err = fs.read(splice_log) {
       c.expect(err.contains("splice #() only belongs in quote"), "splice outside quote")
     } else {
       c.expect(false, "splice outside quote")
@@ -71,8 +89,8 @@ fn test_macros(c: Checks) {
     bad_log = "${dir}/bad.log"
     bad_code = compile_av(compiler, "${dir}/bad_comptime.av", bad_bin, bad_log)
     c.expect(bad_code != 0, "bad comptime exits non-zero")
-    c.expect(!file_exists(bad_bin), "bad comptime bin absent")
-    if err = file_read(bad_log) {
+    c.expect(!fs.exists(bad_bin), "bad comptime bin absent")
+    if err = fs.read(bad_log) {
       c.expect(err.contains("a comptime block is a field walk: comptime { for f in Type.fields { quote { ... } } }"), "comptime field walk")
     } else {
       c.expect(false, "comptime field walk")
@@ -83,11 +101,36 @@ fn test_macros(c: Checks) {
     nest_log = "${dir}/nest.log"
     nest_code = compile_av(compiler, "${dir}/nested.av", nest_bin, nest_log)
     c.expect(nest_code != 0, "nested quote exits non-zero")
-    c.expect(!file_exists(nest_bin), "nested quote bin absent")
-    if err = file_read(nest_log) {
+    c.expect(!fs.exists(nest_bin), "nested quote bin absent")
+    if err = fs.read(nest_log) {
       c.expect(err.contains("quote cannot nest"), "nested quote")
     } else {
       c.expect(false, "nested quote")
+    }
+
+    // A member the splice names is held to the rule for a written one: a
+    // method takes parentheses, a field is read without them.
+    write_av(dir, "splice_bare", "struct P {\n  n: Int\n\n  fn twice: Int {\n    self.n * 2\n  }\n}\n\nquote {\n  fn via(p: P): Int {\n    p.#(\"twice\")\n  }\n}\n\nfn main {\n  puts(via(P { n: 2 }))\n}\n")
+    bare_bin = "${dir}/splice_bare.bin"
+    bare_log = "${dir}/splice_bare.log"
+    c.expect(compile_av(compiler, "${dir}/splice_bare.av", bare_bin, bare_log) != 0, "spliced method without parentheses exits non-zero")
+    if err = fs.read(bare_log) {
+      c.expect(err.contains("a method call takes parentheses: write twice()"), "spliced method without parentheses")
+      c.expect(err.contains("splice_bare.av:11:7"), "spliced method without parentheses: at the splice")
+    } else {
+      c.expect(false, "spliced method without parentheses")
+    }
+    write_av(dir, "splice_call", "struct P {\n  n: Int\n\n  fn twice: Int {\n    self.n * 2\n  }\n}\n\nquote {\n  fn via(p: P): Int {\n    p.#(\"twice\")() + p.#(\"n\")\n  }\n}\n\nfn main {\n  puts(via(P { n: 2 }))\n}\n")
+    call_bin = "${dir}/splice_call.bin"
+    call_log = "${dir}/splice_call.log"
+    call_out = "${dir}/splice_call.out"
+    c.eq_int(compile_av(compiler, "${dir}/splice_call.av", call_bin, call_log), 0, "spliced method with parentheses and spliced field compile")
+    chmod_x(call_bin)
+    run_av_bin(call_bin, call_out)
+    if got = fs.read(call_out) {
+      c.eq_str(got, "6\n", "spliced method with parentheses and spliced field")
+    } else {
+      c.expect(false, "spliced method with parentheses and spliced field")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

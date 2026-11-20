@@ -1,3 +1,6 @@
+import std.fs
+import std.process
+
 fn fmt_counts(bad: Int, ok: Int): String {
   total = bad + ok
   if bad == 0 {
@@ -16,7 +19,7 @@ pub fn nth_line(s: String, n: Int): String {
   while i < s.size {
     if s[i] == 10 {
       if line == n {
-        return str_slice(s, start, i)
+        return s[start..i]
       }
       line += 1
       start = i + 1
@@ -24,7 +27,7 @@ pub fn nth_line(s: String, n: Int): String {
     i += 1
   }
   if line == n {
-    return str_slice(s, start, s.size)
+    return s[start..]
   }
   ""
 }
@@ -111,14 +114,14 @@ pub fn scratch_dir: String {
 }
 
 pub fn avant_test_root: String {
-  if v = env_get("AVANT_ROOT") {
+  if v = process.env("AVANT_ROOT") {
     return v
   }
   "."
 }
 
 pub fn list_only: Bool {
-  if v = env_get("AVANT_TEST_LIST"), v == "1" {
+  if v = process.env("AVANT_TEST_LIST"), v == "1" {
     return true
   }
   false
@@ -143,7 +146,7 @@ pub fn gc_env_names: Array(String) {
 // test_gc_behavior.av, test_gc_checks.av's limit_defer.av); the
 // gate builds and checks the compiler outside the GC environment.
 pub fn gc_stress_outer: Bool {
-  if v = env_get("AVANT_GC_STRESS") {
+  if v = process.env("AVANT_GC_STRESS") {
     return v.size > 0
   }
   false
@@ -161,7 +164,7 @@ pub fn gc_env_outer(stated: String): String {
   own = " ${stated} "
   out = ""
   for nm in names {
-    if v = env_get(nm), v.size > 0 && !own.contains(" ${nm} ") {
+    if v = process.env(nm), v.size > 0 && !own.contains(" ${nm} ") {
       if out.size > 0 {
         out = "${out} "
       }
@@ -284,7 +287,7 @@ pub class Checks {
   }
 
   fn junit_escape(s: String): String {
-    b = buf_new()
+    b = Buf.new()
     i = 0
     while i < s.size {
       c = s[i]
@@ -326,7 +329,7 @@ pub class Checks {
 
   fn write_junit {
     frag = ""
-    if v = env_get("AVANT_JUNIT_FRAGMENT") {
+    if v = process.env("AVANT_JUNIT_FRAGMENT") {
       frag = v
     }
     if frag.size == 0 {
@@ -335,7 +338,7 @@ pub class Checks {
     if self.rec_name.size == 0 {
       return
     }
-    b = buf_new()
+    b = Buf.new()
     i = 0
     while i < self.rec_name.size {
       suite = self.rec_suite[i]
@@ -363,7 +366,7 @@ pub class Checks {
       b.push_str("</testsuite>\n")
       i = j
     }
-    _ = file_write(frag, b.to_s())
+    _ = fs.write(frag, b.to_s())
   }
 
   pub fn expect(cond: Bool, msg: String) {
@@ -481,6 +484,17 @@ pub fn cwd_here: String {
   harness_rt.avant_fs_cwd()
 }
 
+// Runs the program with its stdout and stderr both written to the file
+// out, in the order it wrote them (through sh's redirection, which is
+// what the file then holds): the exit status, or the failure to start sh.
+pub fn run_out(program: String, args: Array(String), out: String): Int | ProcessError {
+  sh_args = ["-c", "out=$1; shift; exec \"$@\" > \"$out\" 2>&1", "sh", out, program]
+  for a in args {
+    sh_args.push(a)
+  }
+  process.run("/bin/sh", sh_args)
+}
+
 pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
   args: Array(String) = []
   args.push("compile")
@@ -489,7 +503,7 @@ pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int 
   // Test programs are compiled fast (--debug); a bare compile is
   // --release. test_toolchain.av covers the verb defaults.
   args.push("--debug")
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String, extra: Array(String)): Int {
@@ -515,7 +529,7 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   if !has_codegen {
     args.push("--debug")
   }
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 // `dump`: the MIR text, which the callers inspect (the old back
@@ -524,7 +538,7 @@ pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
   args.push(src)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 // `__emit-ll SRC OUT` (internal): the pre-optimization .ll
@@ -535,7 +549,7 @@ pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
   args.push("__emit-ll")
   args.push(src)
   args.push(out)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 // A hidden front-end dump: flag is --tokens, --ast, or --check.
@@ -544,7 +558,7 @@ pub fn dump_layer(compiler: String, flag: String, src: String, log: String): Int
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 pub fn compiler_abs(tag: String, path: String): String {
@@ -559,14 +573,14 @@ pub fn compiler_abs(tag: String, path: String): String {
 }
 
 pub fn run_av_bin(bin: String, log: String): Int {
-  process_run_out(bin, empty_strs(), log) ?? -1
+  run_out(bin, empty_strs(), log) ?? -1
 }
 
 pub fn run_av_cmd(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("run")
   args.push(src)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array(String)): Int {
@@ -574,7 +588,7 @@ pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array
   args.push("run")
   args.push(src)
   args.concat(extra)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): Int {
@@ -584,7 +598,7 @@ pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): 
   args.push("compile")
   args.push(src)
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // The MIR with coverage on (as dump_av).
@@ -594,12 +608,12 @@ pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
   path = "${scratch()}/${stem}-${stamp}-${name}"
-  _ = file_write(path, body)
+  _ = fs.write(path, body)
   path
 }
 
@@ -608,7 +622,7 @@ pub fn mkdir_p(path: String) {
 }
 
 pub fn write_av(dir: String, name: String, body: String) {
-  _ = file_write("${dir}/${name}.av", body)
+  _ = fs.write("${dir}/${name}.av", body)
 }
 
 pub class Held {
@@ -645,7 +659,7 @@ pub class GoldenRow {
         at = i + 1
       }
     }
-    str_slice(self.stem, at, self.stem.size)
+    self.stem[at..]
   }
 
   pub fn has(layer: String): Bool {
@@ -664,7 +678,7 @@ pub class GoldenRow {
 pub fn golden_rows(c: Checks, test: String): Array(GoldenRow) {
   rows: Array(GoldenRow) = []
   path = "${avant_test_root()}/tests/goldens/list.txt"
-  if text = file_read(path) {
+  if text = fs.read(path) {
     for line in text.split("\n") {
       if line.size == 0 || line[0] == 35 {
         continue

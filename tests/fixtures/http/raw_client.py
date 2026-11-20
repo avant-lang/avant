@@ -24,6 +24,12 @@ def get(path, extra=""):
 def read_answers(s, want):
     """Reads `want` answers framed by Content-Length; returns their
     (status, body) pairs, fewer when the server closes first."""
+    return read_answers_rest(s, want)[0]
+
+
+def read_answers_rest(s, want):
+    """read_answers, and the bytes read past the last answer (what the
+    server sent behind them, which may have come in the same read)."""
     buf = b""
     out = []
     while len(out) < want:
@@ -46,7 +52,7 @@ def read_answers(s, want):
         if not chunk:
             break
         buf += chunk
-    return out
+    return out, buf
 
 
 def ping_ok():
@@ -71,6 +77,42 @@ def close_unread(count):
     s.close()
     time.sleep(0.1)
     return "alive" if ping_ok() else "gone"
+
+
+def pipeline_mix():
+    # Pipelined answers are gathered and written together: they must
+    # still come whole and in order, a large one among them included, a
+    # WebSocket upgrade behind them must come after them (its 101 is
+    # written by the upgrade itself), and a request with Connection:
+    # close must end the connection after its answer.
+    s = connect()
+    s.settimeout(5)
+    batch = get("/ping") * 3 + get("/echo-size?70000") + get("/ping") * 12
+    up = b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    s.sendall(batch + up)
+    got, buf = read_answers_rest(s, 16)
+    want = [(200, b"pong")] * 3 + [(200, b"x" * 70000)] + [(200, b"pong")] * 12
+    if got != want:
+        return "answers %r" % [(st, len(b)) for st, b in got]
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            return "no 101"
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        return "not 101: %r" % head[:40]
+    ws_frame(s, 1, b"hi")
+    op, payload, buf = ws_read_frame(s, buf)
+    s.close()
+    if payload != b"hi":
+        return "echo %r" % payload
+    t = connect()
+    t.settimeout(5)
+    t.sendall(get("/ping") * 2 + get("/ping", "Connection: close\r\n") + get("/ping"))
+    got = read_answers(t, 3)
+    closed = wait_closed(t, 2)
+    return "16 in order,101,echo,%d then %s" % (len(got), "closed" if closed else "open")
 
 
 BIG = 8 * 1024 * 1024
@@ -203,8 +245,8 @@ def wait_closed(s, limit):
 
 def idle():
     # The server's timeout is an idle timeout. The test's server
-    # runs with it shortened to 8 s (two of uSockets' 4-second ticks, so
-    # a connection is closed between 4 and 8 s after its last activity).
+    # runs with it shortened to 4000 ms (two of uSockets' 4-second ticks,
+    # so a connection is closed between 4 and 8 s after its last activity).
     # Four connections, opened together: `busy` sends a request every
     # 0.4 s; `quiet` never sends; `once` sends one request and reads its
     # answer; `stalled` asks for 8 MiB and never reads. The server must
@@ -574,7 +616,8 @@ def handler_trap(port_file):
     # request on it is answered; a trap in a request that closes (or an
     # HTTP/1.0 one) is answered 500 and closed; a trap in a WebSocket
     # message handler closes that connection with 1011, and a new one
-    # echoes. Then the server is stopped.
+    # echoes. A panic does the same as each trap. Then the server is
+    # stopped.
     if not wait_port(port_file):
         return "no port"
     out = []
@@ -586,7 +629,7 @@ def handler_trap(port_file):
         got = read_answers(s, 1)
         return (got[0][0], got[0][1].decode("latin1")) if got else (0, "")
 
-    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route"]:
+    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route", "panic", "panic-or", "fb-panic"]:
         st, _ = ask("/" + name)
         st2, body = ask("/ok")
         out.append("%s:%d,ok:%d %s" % (name, st, st2, body))
@@ -615,6 +658,13 @@ def handler_trap(port_file):
     w.close()
     w, buf = ws_open("/ws")
     w.settimeout(5)
+    ws_frame(w, 1, b"panic")
+    op, payload, buf = ws_read_frame(w, buf)
+    code = (payload[0] << 8 | payload[1]) if op == 8 and len(payload) >= 2 else -1
+    out.append("ws-panic:%d %d" % (op, code))
+    w.close()
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
     ws_frame(w, 1, b"again")
     op, payload, buf = ws_read_frame(w, buf)
     out.append("ws-after:%d %s" % (op, payload.decode("latin1")))
@@ -622,6 +672,31 @@ def handler_trap(port_file):
     status, data, closed = exchange(get("/__stop"))
     out.append("stop:%d" % status)
     return ",".join(out)
+
+
+def later():
+    # Requests answered later (req.reply, Response.later): pipelined
+    # behind a slow one, a fast one waits, so answers keep their order;
+    # an answer the handler sends itself before returning later; one
+    # that never comes is answered 503 at the reply timeout; later
+    # without a reply is the handler's trap (500); a request that closes
+    # is answered later and closed. The connection goes on after each.
+    s = connect()
+    s.settimeout(5)
+    s.sendall(get("/slow?who=a") + get("/fast") + get("/slow?who=b") + get("/inline"))
+    got = read_answers(s, 4)
+    out = ["%d %s" % (st, body.decode("latin1")) for st, body in got]
+    t0 = time.time()
+    s.sendall(get("/expire"))
+    got = read_answers(s, 1)
+    waited = time.time() - t0
+    out += ["%d %s %s" % (st, body.decode("latin1"), "in time" if 0.25 <= waited < 2.5 else "after %.2f s" % waited) for st, body in got]
+    s.sendall(get("/bare-later") + get("/fast"))
+    out += ["%d %s" % (st, body.decode("latin1")) for st, body in read_answers(s, 2)]
+    s.close()
+    status, data, closed = exchange(get("/slow?who=c", "Connection: close\r\n"))
+    out.append("%d %s %s" % (status, data.split(b"\r\n\r\n", 1)[-1].decode("latin1"), "closed" if closed else "open"))
+    return "|".join(out)
 
 
 def callback_trap(port_file):
@@ -667,6 +742,186 @@ def ws_big(size):
         return "whole,then %s" % e
     s.close()
     return "whole,then %s" % payload.decode("latin1")
+
+
+def ws_cut(port_file):
+    # tests/fixtures/http/ws_cut.av under the malloc_fail shim: a frame of
+    # 8 MiB to a client that does not read for 0.3 s, whose rest the
+    # server cannot copy. The connection must end before the frame does
+    # (it stayed open, the next frame's bytes read as this one's
+    # payload); a second connection then reads what the sends returned.
+    if not wait_port(port_file):
+        return "no port"
+    s = small_rcvbuf()
+    s.sendall(b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            return "no handshake"
+        buf += chunk
+    buf = buf.split(b"\r\n\r\n", 1)[1]
+    ws_frame(s, 1, b"big 8388608")
+    time.sleep(0.3)
+    s.settimeout(3)
+    try:
+        op, payload, buf = ws_read_frame(s, buf)
+        first = "a whole frame of %d bytes" % len(payload)
+    except EOFError:
+        first = "closed mid-frame"
+    except OSError as e:
+        first = "still open mid-frame (%s)" % e
+    s.close()
+    time.sleep(0.2)
+    t, buf = ws_open("/ws")
+    ws_frame(t, 1, b"said")
+    op, payload, buf = ws_read_frame(t, buf)
+    t.close()
+    return "%s; %s" % (first, payload.decode("latin1"))
+
+
+def emfile(port_file):
+    # tests/fixtures/http/emfile.av: a connection made while the server
+    # has no descriptor left waits in the backlog; it is accepted and
+    # answered once the server gives its descriptors back (about 1.3 s
+    # later), then the server is stopped.
+    if not wait_port(port_file):
+        return "no port"
+    start = time.time()
+    s = connect()
+    s.sendall(get("/ping"))
+    data = b""
+    try:
+        while not data.endswith(b"pong") and time.time() - start < 8:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        pass
+    s.close()
+    exchange(get("/__stop"))
+    return "answered" if data.endswith(b"pong") else "not answered (%r)" % data[:40]
+
+
+def ws_live():
+    # A WebSocket connection had no deadline at all. Against a server
+    # with websocket_idle_timeout(4000) and min_rate(1000, 500), four
+    # clients at once: `quiet` connects and then neither sends nor
+    # answers pings (a peer gone without a FIN): pinged 4 to 8 s later
+    # and closed 4 to 8 s after that; `ponger` answers each ping (with
+    # the pong the RFC asks for) and stays open past that; `trickle`
+    # sends a frame a byte every 0.2 s, under the rate: closed; `stuck`
+    # asks for more than the kernel and its queue hold and never reads:
+    # closed (by the rate once the queue holds bytes the client does not
+    # take, or by the ping it cannot answer).
+    import threading
+    import struct
+    out = {}
+
+    def ended(s, limit):
+        # (seconds until the server ended the connection or None, pings seen)
+        s.settimeout(0.1)
+        start = time.time()
+        buf = b""
+        pings = 0
+        while time.time() - start < limit:
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                return time.time() - start, pings
+            if not chunk:
+                return time.time() - start, pings
+            buf += chunk
+            while len(buf) >= 2 and len(buf) >= 2 + (buf[1] & 127):
+                n = buf[1] & 127
+                if n >= 126:
+                    break
+                if buf[0] & 15 == 9:
+                    pings += 1
+                buf = buf[2 + n:]
+        return None, pings
+
+    def quiet():
+        s, _ = ws_open("/ws")
+        took, pings = ended(s, 20)
+        out["quiet"] = "closed" if took is not None and 7 < took < 17 and pings == 1 else "took %s, %d pings" % (took, pings)
+
+    def ponger():
+        s, buf = ws_open("/ws")
+        s.settimeout(0.1)
+        start = time.time()
+        pings = 0
+        while time.time() - start < 18:
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                continue
+            except OSError:
+                chunk = b""
+            if not chunk:
+                out["ponger"] = "closed after %.0f s" % (time.time() - start)
+                return
+            buf += chunk
+            while len(buf) >= 2 and buf[0] & 15 == 9:
+                n = buf[1] & 127
+                pings += 1
+                ws_frame(s, 10, buf[2:2 + n])
+                buf = buf[2 + n:]
+        s.close()
+        out["ponger"] = "open, pinged" if pings >= 2 else "open, %d pings" % pings
+
+    def trickle():
+        s, _ = ws_open("/ws")
+        m = b"\x01\x02\x03\x04"
+        frame = struct.pack("!BB", 0x81, 0x80 | 100) + m + bytes(x ^ m[i & 3] for i, x in enumerate(b"x" * 100))
+        start = time.time()
+        for b in frame:
+            try:
+                s.sendall(bytes([b]))
+            except OSError:
+                break
+            time.sleep(0.2)
+            if time.time() - start > 15:
+                break
+        took = time.time() - start
+        s.settimeout(1)
+        try:
+            closed = s.recv(1) == b""
+        except socket.timeout:
+            closed = False
+        except OSError:
+            closed = True
+        out["trickle"] = "closed" if closed and took < 6 else "took %.0f s, closed %s" % (took, closed)
+
+    def stuck():
+        # Asks for more than its queue holds and never reads; the
+        # server's close handler of /ws-stuck notes the close, read
+        # through GET /stuck.
+        s = small_rcvbuf()
+        s.sendall(b"GET /ws-stuck HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            buf += s.recv(4096)
+        ws_frame(s, 1, b"flood")
+        start = time.time()
+        said = b""
+        while time.time() - start < 20:
+            time.sleep(0.5)
+            status, said, _ = exchange(get("/stuck", "Connection: close\r\n"))
+            if said.endswith(b"closed"):
+                break
+        s.close()
+        out["stuck"] = "closed" if said.endswith(b"closed") else "open"
+
+    threads = [threading.Thread(target=f) for f in (quiet, ponger, trickle, stuck)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return ",".join("%s:%s" % (k, out.get(k, "?")) for k in ("quiet", "ponger", "trickle", "stuck"))
 
 
 def until_closed(s, limit):
@@ -816,6 +1071,16 @@ try:
         result = handler_trap(arg)
     elif mode == "callback_trap":
         result = callback_trap(arg)
+    elif mode == "pipeline_mix":
+        result = pipeline_mix()
+    elif mode == "ws_live":
+        result = ws_live()
+    elif mode == "emfile":
+        result = emfile(arg)
+    elif mode == "ws_cut":
+        result = ws_cut(arg)
+    elif mode == "later":
+        result = later()
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:

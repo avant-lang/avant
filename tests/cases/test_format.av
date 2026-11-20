@@ -1,4 +1,6 @@
 import harness
+import std.fs
+import std.process
 
 fn run_format(compiler: String, cmd: String, src: String, log: String, flags: Array(String)): Int {
   args: Array(String) = []
@@ -7,11 +9,11 @@ fn run_format(compiler: String, cmd: String, src: String, log: String, flags: Ar
     args.push(src)
   }
   args.concat(flags)
-  process_run_out(compiler, args, log) ?? -1
+  run_out(compiler, args, log) ?? -1
 }
 
 fn read_or_empty(path: String): String {
-  if text = file_read(path) {
+  if text = fs.read(path) {
     return text
   }
   ""
@@ -32,13 +34,13 @@ fn format_corpus(compiler: String, dir: String, flag: String, log: String): Int 
   args.push("format")
   args.push(dir)
   args.push(flag)
-  process_run_out("/usr/bin/env", args, log) ?? -1
+  run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn test_format(c: Checks) {
   c.suite("tests/cases/test_format.av")
-  if compiler = env_get("AVANT_COMPILER") {
-    c.expect(file_exists(compiler), "AVANT_COMPILER exists")
+  if compiler = process.env("AVANT_COMPILER") {
+    c.expect(fs.exists(compiler), "AVANT_COMPILER exists")
     root = avant_test_root()
     stamp = now_ms()
     messy = "${root}/tests/fixtures/format/surface.av"
@@ -47,8 +49,8 @@ fn test_format(c: Checks) {
     empty_flags: Array(String) = []
     code = run_format(compiler, "format", messy, log, empty_flags)
     c.eq_int(code, 0, "format surface exits 0")
-    if got = file_read(log) {
-      if want = file_read(want_path) {
+    if got = fs.read(log) {
+      if want = fs.read(want_path) {
         c.eq_str(got, want, "surface spacing")
         c.expect(got.contains("import zebra\nimport alpha"), "import order stays")
         c.expect(got.contains("fn (c: Counter) scaled"), "receiver keeps a space")
@@ -99,7 +101,7 @@ fn test_format(c: Checks) {
     check_log = "${scratch()}/format-${stamp}-check.log"
     check_code = run_format(compiler, "format", messy, check_log, check_flags)
     c.eq_int(check_code, 1, "check messy exits 1")
-    if check_out = file_read(check_log) {
+    if check_out = fs.read(check_log) {
       c.expect(check_out.contains("would change ${messy}"), "check reports drift")
     } else {
       c.expect(false, "read check log")
@@ -109,14 +111,23 @@ fn test_format(c: Checks) {
     // each line, and with it where a statement begins, never changes.
     lead_src = "${scratch()}/format-${stamp}-lead.av"
     lead_log = "${scratch()}/format-${stamp}-lead.log"
-    _ = file_write(lead_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
+    _ = fs.write(lead_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each (v) { puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
     lead_code = run_format(compiler, "format", lead_src, lead_log, empty_flags)
     c.eq_int(lead_code, 0, "format of lines that start with an operator exits 0")
-    c.eq_str(read_or_empty(lead_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n    1,\n    -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line")
+    c.eq_str(read_or_empty(lead_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n    1,\n    -2\n  ]\n  [1, 2].each (v) { puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line")
+    // A block in pipes is not Avant, so the formatter gives `|` no
+    // meaning as a lambda's parameters: it is spaced as the operator,
+    // and a lambda's own parameters are in parentheses.
+    pipes_src = "${scratch()}/format-${stamp}-pipes.av"
+    pipes_log = "${scratch()}/format-${stamp}-pipes.log"
+    _ = fs.write(pipes_src, "fn main {\nxs.each { |x| puts(x) }\nxs.each (x) { puts(x|1) }\n}\n")
+    pipes_code = run_format(compiler, "format", pipes_src, pipes_log, empty_flags)
+    c.eq_int(pipes_code, 0, "format of a block in pipes exits 0")
+    c.eq_str(read_or_empty(pipes_log), "fn main {\n  xs.each { | x | puts(x) }\n  xs.each (x) { puts(x | 1) }\n}\n", "format gives pipes no lambda meaning")
     // `pub` before a field formats like `pub` before fn.
     pubf_src = "${scratch()}/format-${stamp}-pubf.av"
     pubf_log = "${scratch()}/format-${stamp}-pubf.log"
-    _ = file_write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
+    _ = fs.write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
     pubf_code = run_format(compiler, "format", pubf_src, pubf_log, empty_flags)
     c.eq_int(pubf_code, 0, "format pub fields exits 0")
     c.eq_str(read_or_empty(pubf_log), "pub struct P {\n  pub x: Int\n  kept: Int = 2\n  pub fn get: Int { x }\n}\n", "format pub fields")
@@ -128,22 +139,22 @@ fn test_format(c: Checks) {
     canon_log = "${scratch()}/format-${stamp}-canon.log"
     canon_code = run_format(compiler, "f", want_path, canon_log, check_flags)
     c.eq_int(canon_code, 0, "f --check exits 0")
-    if canon_out = file_read(canon_log) {
+    if canon_out = fs.read(canon_log) {
       c.eq_str(canon_out, "canonical\n", "want file is canonical")
     } else {
       c.expect(false, "read canonical log")
     }
 
     copy = "${scratch()}/format-${stamp}-copy.av"
-    if body = file_read(want_path) {
-      c.wrote(file_write(copy, body), "write copy")
+    if body = fs.read(want_path) {
+      c.wrote(fs.write(copy, body), "write copy")
       write_flags: Array(String) = []
       write_flags.push("--write")
       write_log = "${scratch()}/format-${stamp}-write.log"
       write_code = run_format(compiler, "format", copy, write_log, write_flags)
       c.eq_int(write_code, 0, "write canonical exits 0")
       c.eq_str(read_or_empty(write_log), "", "write is silent")
-      if again = file_read(copy) {
+      if again = fs.read(copy) {
         c.eq_str(again, body, "format is idempotent")
       } else {
         c.expect(false, "read written copy")
@@ -153,10 +164,10 @@ fn test_format(c: Checks) {
       both.push("--write")
       both_log = "${scratch()}/format-${stamp}-both.log"
       dirty = "${scratch()}/format-${stamp}-dirty.av"
-      c.wrote(file_write(dirty, "fn main{\n}\n"), "write dirty")
+      c.wrote(fs.write(dirty, "fn main{\n}\n"), "write dirty")
       both_code = run_format(compiler, "format", dirty, both_log, both)
       c.eq_int(both_code, 1, "--check with --write is a usage error and exits 1")
-      if still = file_read(dirty) {
+      if still = fs.read(dirty) {
         c.eq_str(still, "fn main{\n}\n", "check does not write")
       } else {
         c.expect(false, "read dirty")
@@ -167,11 +178,11 @@ fn test_format(c: Checks) {
 
     op_src = "${scratch()}/format-${stamp}-op.av"
     op_body = "fn (v:Vec2) +(other:Vec2):Vec2{\nv\n}\n"
-    c.wrote(file_write(op_src, op_body), "write operator receiver")
+    c.wrote(fs.write(op_src, op_body), "write operator receiver")
     op_log = "${scratch()}/format-${stamp}-op.log"
     op_code = run_format(compiler, "format", op_src, op_log, empty_flags)
     c.eq_int(op_code, 0, "format operator receiver")
-    if op = file_read(op_log) {
+    if op = fs.read(op_log) {
       c.eq_str(op, "fn (v: Vec2) +(other: Vec2): Vec2 {\n  v\n}\n", "operator receiver")
     } else {
       c.expect(false, "read operator receiver")
@@ -179,11 +190,11 @@ fn test_format(c: Checks) {
 
     tab_src = "${scratch()}/format-${stamp}-tab.av"
     tab_body = "fn main {\n\tx = 1\n}\n"
-    c.wrote(file_write(tab_src, tab_body), "write tab")
+    c.wrote(fs.write(tab_src, tab_body), "write tab")
     tab_log = "${scratch()}/format-${stamp}-tab.log"
     tab_code = run_format(compiler, "format", tab_src, tab_log, empty_flags)
     c.eq_int(tab_code, 0, "format tab")
-    if tab = file_read(tab_log) {
+    if tab = fs.read(tab_log) {
       c.eq_str(tab, "fn main {\n  x = 1\n}\n", "tab becomes two spaces")
     } else {
       c.expect(false, "read tab")
@@ -191,11 +202,11 @@ fn test_format(c: Checks) {
 
     blank_src = "${scratch()}/format-${stamp}-blank.av"
     blank_body = "fn a {\n}\n\n\n\nfn b {\n}\n"
-    c.wrote(file_write(blank_src, blank_body), "write blanks")
+    c.wrote(fs.write(blank_src, blank_body), "write blanks")
     blank_log = "${scratch()}/format-${stamp}-blank.log"
     blank_code = run_format(compiler, "format", blank_src, blank_log, empty_flags)
     c.eq_int(blank_code, 0, "format blanks")
-    if blanks = file_read(blank_log) {
+    if blanks = fs.read(blank_log) {
       c.eq_str(blanks, "fn a {\n}\n\nfn b {\n}\n", "blank lines collapse to one")
     } else {
       c.expect(false, "read blanks")
@@ -203,20 +214,20 @@ fn test_format(c: Checks) {
 
     tail_src = "${scratch()}/format-${stamp}-tail.av"
     tail_body = "fn main {\n}"
-    c.wrote(file_write(tail_src, tail_body), "write no trailing newline")
+    c.wrote(fs.write(tail_src, tail_body), "write no trailing newline")
     tail_flags: Array(String) = []
     tail_flags.push("--write")
     tail_log = "${scratch()}/format-${stamp}-tail.log"
     tail_code = run_format(compiler, "format", tail_src, tail_log, tail_flags)
     c.eq_int(tail_code, 0, "write no trailing newline exits 0")
-    if tail = file_read(tail_src) {
+    if tail = fs.read(tail_src) {
       c.eq_str(tail, "fn main {\n}", "author newline is kept")
     } else {
       c.expect(false, "read no trailing newline")
     }
 
     empty_src = "${scratch()}/format-${stamp}-empty.av"
-    c.wrote(file_write(empty_src, ""), "write empty")
+    c.wrote(fs.write(empty_src, ""), "write empty")
     empty_log = "${scratch()}/format-${stamp}-empty.log"
     empty_code = run_format(compiler, "format", empty_src, empty_log, empty_flags)
     c.eq_int(empty_code, 0, "format empty")
@@ -224,30 +235,30 @@ fn test_format(c: Checks) {
 
     bad_src = "${scratch()}/format-${stamp}-bad.av"
     bad_body = "fn main { @ }\n"
-    c.wrote(file_write(bad_src, bad_body), "write lex error")
+    c.wrote(fs.write(bad_src, bad_body), "write lex error")
     bad_log = "${scratch()}/format-${stamp}-bad.log"
     bad_flags: Array(String) = []
     bad_flags.push("--write")
     bad_code = run_format(compiler, "format", bad_src, bad_log, bad_flags)
     c.eq_int(bad_code, 1, "lex error exits 1")
-    if bad = file_read(bad_log) {
+    if bad = fs.read(bad_log) {
       c.expect(bad.contains("unexpected character"), "lex error diagnostic")
       c.expect(!bad.contains("would change"), "lex error is not a diff")
     } else {
       c.expect(false, "read lex error")
     }
-    if bad_file = file_read(bad_src) {
+    if bad_file = fs.read(bad_src) {
       c.eq_str(bad_file, bad_body, "lex error does not write")
     } else {
       c.expect(false, "read bad file")
     }
 
     str_src = "${scratch()}/format-${stamp}-str.av"
-    c.wrote(file_write(str_src, "fn main {\n  s = \"hi\n}\n"), "write unterminated string")
+    c.wrote(fs.write(str_src, "fn main {\n  s = \"hi\n}\n"), "write unterminated string")
     str_log = "${scratch()}/format-${stamp}-str.log"
     str_code = run_format(compiler, "format", str_src, str_log, empty_flags)
     c.eq_int(str_code, 1, "unterminated string exits 1")
-    if str_err = file_read(str_log) {
+    if str_err = fs.read(str_log) {
       c.expect(str_err.contains("unterminated string"), "unterminated string diagnostic")
     } else {
       c.expect(false, "read unterminated string")
@@ -257,22 +268,22 @@ fn test_format(c: Checks) {
     // as written.
     nest_src = "${scratch()}/format-${stamp}-nest.av"
     nest_body = "fn main {\n  x = 1\n  s = \"a \${\"b \${x + 1}\"} c\"\n  puts(s)\n}\n"
-    c.wrote(file_write(nest_src, nest_body), "write nested interpolation")
+    c.wrote(fs.write(nest_src, nest_body), "write nested interpolation")
     nest_log = "${scratch()}/format-${stamp}-nest.log"
     nest_code = run_format(compiler, "format", nest_src, nest_log, empty_flags)
     c.eq_int(nest_code, 0, "nested interpolation formats")
-    if nest = file_read(nest_src) {
+    if nest = fs.read(nest_src) {
       c.eq_str(nest, nest_body, "nested interpolation is kept as written")
     } else {
       c.expect(false, "read nested interpolation")
     }
 
     esc_src = "${scratch()}/format-${stamp}-esc.av"
-    c.wrote(file_write(esc_src, "fn main {\n  s = \"\\q\"\n}\n"), "write bad escape")
+    c.wrote(fs.write(esc_src, "fn main {\n  s = \"\\q\"\n}\n"), "write bad escape")
     esc_log = "${scratch()}/format-${stamp}-esc.log"
     esc_code = run_format(compiler, "format", esc_src, esc_log, empty_flags)
     c.eq_int(esc_code, 1, "bad escape exits 1")
-    if esc = file_read(esc_log) {
+    if esc = fs.read(esc_log) {
       c.expect(esc.contains("unknown string escape"), "bad escape diagnostic")
     } else {
       c.expect(false, "read bad escape")
@@ -280,7 +291,7 @@ fn test_format(c: Checks) {
 
     dump_src = "${scratch()}/format-${stamp}-dump.av"
     dump_body = "fn main{\nputs( \"ok\" )\n}\n"
-    c.wrote(file_write(dump_src, dump_body), "write dump fixture")
+    c.wrote(fs.write(dump_src, dump_body), "write dump fixture")
     // The emitted .ll (no source locations, unlike the MIR dump; the old
     // back end's IR until it retired): formatting changes no code.
     before = "${scratch()}/format-${stamp}-before.ll"
@@ -292,15 +303,15 @@ fn test_format(c: Checks) {
     dump_log = "${scratch()}/format-${stamp}-dump.log"
     dump_fmt = run_format(compiler, "format", dump_src, dump_log, dump_flags)
     c.eq_int(dump_fmt, 0, "format dump fixture")
-    if dumped = file_read(dump_src) {
+    if dumped = fs.read(dump_src) {
       c.eq_str(dumped, "fn main {\n  puts(\"ok\")\n}\n", "dump fixture spacing")
     } else {
       c.expect(false, "read dump fixture")
     }
     after_code = emit_ll(compiler, dump_src, after, "${after}.log")
     c.eq_int(after_code, 0, "dump after format")
-    if ir0 = file_read(before) {
-      if ir1 = file_read(after) {
+    if ir0 = fs.read(before) {
+      if ir1 = fs.read(after) {
         c.eq_str(ir0, ir1, "the emitted .ll is unchanged")
       } else {
         c.expect(false, "read dump after")
@@ -313,7 +324,7 @@ fn test_format(c: Checks) {
     missing = "${scratch()}/format-${stamp}-missing.av"
     missing_code = run_format(compiler, "format", missing, missing_log, empty_flags)
     c.eq_int(missing_code, 1, "missing file exits 1")
-    if missing_out = file_read(missing_log) {
+    if missing_out = fs.read(missing_log) {
       c.expect(missing_out.contains("cannot read ${missing}"), "missing file diagnostic")
     } else {
       c.expect(false, "read missing log")
@@ -324,7 +335,7 @@ fn test_format(c: Checks) {
     two_flags.push(want_path)
     two_code = run_format(compiler, "format", messy, two_log, two_flags)
     c.eq_int(two_code, 1, "two files without --check or --write exit 1")
-    if two = file_read(two_log) {
+    if two = fs.read(two_log) {
       c.expect(two.contains("format prints one file; use --check or --write"), "two files diagnostic")
     } else {
       c.expect(false, "read two files")
@@ -333,7 +344,7 @@ fn test_format(c: Checks) {
     none_log = "${scratch()}/format-${stamp}-none.log"
     none_code = run_format(compiler, "format", "", none_log, empty_flags)
     c.eq_int(none_code, 1, "format with no file exits 1")
-    if none = file_read(none_log) {
+    if none = fs.read(none_log) {
       c.expect(none.contains("format needs a .av file"), "format needs a file")
       c.expect(none.contains("avant format PATH... [--check|--write]"), "usage lists format and names avant")
       c.expect(!none.contains("avant-av"), "usage does not say avant-av")
@@ -346,18 +357,18 @@ fn test_format(c: Checks) {
     mkdir_p("${many}/sub")
     mkdir_p("${many}/deps")
     mkdir_p("${many}/.hidden")
-    _ = file_write("${many}/a.av", "fn main {\n}\n")
-    _ = file_write("${many}/sub/b.av", "fn main{\n}\n")
-    _ = file_write("${many}/deps/c.av", "fn main{\n}\n")
-    _ = file_write("${many}/.hidden/d.av", "fn main{\n}\n")
-    _ = file_write("${many}/sub/e.av", "fn main{\n}\n")
+    _ = fs.write("${many}/a.av", "fn main {\n}\n")
+    _ = fs.write("${many}/sub/b.av", "fn main{\n}\n")
+    _ = fs.write("${many}/deps/c.av", "fn main{\n}\n")
+    _ = fs.write("${many}/.hidden/d.av", "fn main{\n}\n")
+    _ = fs.write("${many}/sub/e.av", "fn main{\n}\n")
     // Symbolic links to directories are not followed: one leads out of
     // the tree, one back into it (a cycle the walk must not enter).
     outside = "${scratch()}/format-${stamp}-outside"
     mkdir_p(outside)
-    _ = file_write("${outside}/x.av", "fn main{\n}\n")
-    _ = process_run("/bin/ln", ["-s", outside, "${many}/linked"])
-    _ = process_run("/bin/ln", ["-s", many, "${many}/sub/loop"])
+    _ = fs.write("${outside}/x.av", "fn main{\n}\n")
+    _ = process.run("/bin/ln", ["-s", outside, "${many}/linked"])
+    _ = process.run("/bin/ln", ["-s", many, "${many}/sub/loop"])
     dir_log = "${scratch()}/format-${stamp}-dir.log"
     dir_code = run_format(compiler, "format", many, dir_log, check_flags)
     c.eq_int(dir_code, 1, "a directory with drift: --check exits 1")
@@ -389,7 +400,7 @@ fn test_format(c: Checks) {
     // before, `. ..` became `...`, `? ?` became `??`, `! ==`
     // became `!==` (`!=` and `=`) and `- ==` became `-==`.
     join_src = "${scratch()}/format-${stamp}-join.av"
-    c.wrote(file_write(join_src, "fn main {\n  a = b . ..c\n  d = e ?? ? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n ?. ..<\n}\n"), "write joining tokens")
+    c.wrote(fs.write(join_src, "fn main {\n  a = b . ..c\n  d = e ?? ? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n ?. ..<\n}\n"), "write joining tokens")
     join_log = "${scratch()}/format-${stamp}-join.log"
     join_code = run_format(compiler, "format", join_src, join_log, empty_flags)
     c.eq_int(join_code, 0, "joining tokens: format exits 0")
@@ -405,10 +416,10 @@ fn test_format(c: Checks) {
     for fi in 0..faults.size {
       fault = faults[fi]
       fault_src = "${scratch()}/format-${stamp}-fault-${fault}.av"
-      c.wrote(file_write(fault_src, fault_body), "write fault ${fault}")
+      c.wrote(fs.write(fault_src, fault_body), "write fault ${fault}")
       fault_log = "${scratch()}/format-${stamp}-fault-${fault}.log"
       fault_args = ["AVANT_FORMAT_FAULT=${fault}", compiler, "format", fault_src, "--write"]
-      fault_code = process_run_out("/usr/bin/env", fault_args, fault_log) ?? -1
+      fault_code = run_out("/usr/bin/env", fault_args, fault_log) ?? -1
       c.eq_int(fault_code, 1, "self-check (${fault}): format exits 1")
       fault_out = read_or_empty(fault_log)
       c.expect(fault_out.contains("format would change this program"), "self-check (${fault}): the error says so")
@@ -423,7 +434,7 @@ fn test_format(c: Checks) {
     corpus = "${scratch()}/format-${stamp}-corpus"
     mkdir_p(corpus)
     tar_args = ["-c", "cd '${root}' && find compiler lib examples bench tests -name '*.av' | tar cf - -T - | tar xf - -C '${corpus}'"]
-    tar_code = process_run_out("/bin/sh", tar_args, "${corpus}.tar.log") ?? -1
+    tar_code = run_out("/bin/sh", tar_args, "${corpus}.tar.log") ?? -1
     c.eq_int(tar_code, 0, "copy the corpus")
     cw_log = "${scratch()}/format-${stamp}-corpus-write.log"
     cw_code = format_corpus(compiler, corpus, "--write", cw_log)
@@ -442,7 +453,7 @@ fn test_format(c: Checks) {
     flag_flags.push("--nope")
     flag_code = run_format(compiler, "format", want_path, flag_log, flag_flags)
     c.eq_int(flag_code, 1, "unknown flag exits 1")
-    if flag = file_read(flag_log) {
+    if flag = fs.read(flag_log) {
       c.expect(flag.contains("unknown format argument --nope"), "unknown flag diagnostic")
     } else {
       c.expect(false, "read unknown flag")

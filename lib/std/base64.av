@@ -10,19 +10,26 @@ lib base64c {
   fun avant_base64url_decode_into(data: Bytes, dst: Buf): Int
 }
 
-pub class Base64Error: Error {
-  pub message: String
+// Why a base64 call failed: the input is not Base64 data (invalid_data),
+// or the result would not fit a Buf's size limit (too_large). The
+// runtime's status codes are 1 and 2.
+pub enum Base64Error: Error {
+  invalid_data
+  too_large
 
-  fn initialize(message: String) {
-    self.message = message
+  pub fn message: String {
+    switch self {
+      case invalid_data { "invalid base64 data" }
+      case too_large { "the base64 result would pass a Buf's size limit" }
+    }
   }
 }
 
 fn base64_error(code: Int): Base64Error {
   if code == 1 {
-    return Base64Error.new("invalid base64 data")
+    return Base64Error.invalid_data
   }
-  Base64Error.new("base64 error")
+  Base64Error.too_large
 }
 
 pub fn (b: Bytes) to_base64: String {

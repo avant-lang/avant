@@ -1,0 +1,1015 @@
+// std.json's typed decode and encode:
+//
+//   json.decode(text, T, ignore_unknown = false, ...)  T | JsonError
+//   json.encode(value)                                  String
+//   json.encode_into(buf, value)                        appends to a Buf
+//
+// The checker writes, the first time a program decodes or encodes a type,
+// the functions that read or write it, from the type's fields as a field
+// walk from std.json sees them (its pub fields; a generic type's instance
+// with its own field types): one function per struct, class, Array,
+// Hash and enum reached, each calling the next, in std.json's module,
+// with no run-time description of any type. The text of each is Avant,
+// parsed here; the types it names are placeholders (T0, T1, ...) that
+// become the program's own types, pinned, as a generic function's
+// instance names its type arguments (checker/match.av
+// instantiate_function), so a type private to the program's module is
+// named all the same. A struct or class is built with a literal the
+// checker marks (Expr.derived, its type in elem_type): the one literal
+// that may build a class, without initialize, as a derived clone does;
+// an enum is read through its from_name, its receiver marked the same
+// way. The pieces they call are std.json's codec_* functions, lowered
+// only when a call reaches them.
+//
+// What can be read and written: Int, Float64, String, Bool, an enum by
+// its member's name, an optional (null or, in an object, an absent
+// member, for nil), Array(T), Hash(String, V) (an object), a struct or a
+// class by its fields (an object of the same names), json.Json (the
+// value as it is in the document) and json.JsonValue; encode writes nil
+// (Nil) and a json.JsonBuilder's text too. Anything else is refused at
+// the call, naming the field that holds it. A decode builds a type from
+// its fields, so a type with a field that is not pub is refused, as a
+// literal outside its module is; an encode writes the pub fields.
+
+import location
+import source
+import token
+import lexer
+import type
+import ast
+import parser
+import typed_ir
+import checker.names
+import checker
+import checker.visibility
+import checker.match
+import checker.register
+
+pub fn (checker_self: Checker) json_codec_callee(name: String): Bool {
+  name == "decode" || name == "encode" || name == "encode_into"
+}
+
+// std.json's own types, read and written as JSON values.
+pub fn json_std_type(ty: Ty, name: String): Bool {
+  ty.mod_name == "std.json" && ty.name == name
+}
+
+// s as an Avant string literal.
+pub fn json_quote(s: String): String {
+  b = buf_new()
+  b.push_str("\"")
+  for c in s.bytes {
+    if c == 92 {
+      b.push_str("\\\\")
+    } else if c == 34 {
+      b.push_str("\\\"")
+    } else if c == 36 {
+      b.push_str("\\$")
+    } else if c == 10 {
+      b.push_str("\\n")
+    } else {
+      b.push_byte(c)
+    }
+  }
+  b.push_str("\"")
+  b.to_s()
+}
+
+// A type's part of a generated function's name: letters, digits and
+// underscores.
+pub fn json_key(ty: Ty): String {
+  raw = "${ty.mod_name}_${mangle_ty(ty)}"
+  b = buf_new()
+  for c in raw.bytes {
+    if c == 95 || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
+      b.push_byte(c)
+    } else {
+      b.push_str("_")
+    }
+  }
+  b.to_s()
+}
+
+// The placeholders of one generated function: T0, T1, ... and the types
+// they stand for.
+pub class JsonGen {
+  pub from: Array(String) = []
+  pub to: Array(Ty) = []
+  keys: Array(String) = []
+  pub next_local: Int = 0
+
+  fn initialize {
+  }
+
+  pub fn ph(ty: Ty): String {
+    key = mangle_ty(ty) + "@" + ty.mod_name
+    i = 0
+    while i < self.keys.size {
+      if self.keys[i] == key {
+        return self.from[i]
+      }
+      i += 1
+    }
+    name = "T${self.from.size}"
+    self.keys.push(key)
+    self.from.push(name)
+    self.to.push(ty)
+    name
+  }
+
+  pub fn local(stem: String): String {
+    self.next_local += 1
+    "${stem}${self.next_local}"
+  }
+}
+
+// ---- what can be read and written
+
+// Why a value of ty cannot be decoded (decode) or encoded, "" when it
+// can; where names it ("Point.when"). seen holds the structs and classes
+// already looked into.
+pub fn (checker_self: Checker) json_problem(ty: Ty, decode: Bool, seen: Array(String), where: String): String {
+  if ty.is_int() || ty.is_float() || ty.is_string() || ty.is_bool() || ty.is_enum() {
+    if ty.c_scalar > 0 {
+      return json_unsupported(ty, where)
+    }
+    return ""
+  }
+  if ty.is_nil() {
+    if decode {
+      return json_unsupported(ty, where)
+    }
+    return ""
+  }
+  if json_std_type(ty, "Json") || json_std_type(ty, "JsonValue") {
+    return ""
+  }
+  if json_std_type(ty, "JsonBuilder") {
+    if decode {
+      return "${where}: a json.JsonBuilder writes JSON; it is not read from it"
+    }
+    return ""
+  }
+  if ty.is_union() {
+    if ty.is_nilable() && ty.members.size == 2 {
+      return checker_self.json_problem(ty_without_nil(ty), decode, seen, where)
+    }
+    return "${where}: ${ty.show()} is a union; std.json reads and writes one type per value, or an optional"
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      return checker_self.json_problem(e, decode, seen, "${where}[]")
+    }
+  }
+  if ty.is_hash() && !ty.is_set() {
+    if k = ty.key, v = ty.val {
+      if !k.is_string() {
+        return "${where}: ${ty.show()} has ${k.show()} keys; a JSON object's names are Strings, so a Hash is read and written with String keys"
+      }
+      return checker_self.json_problem(v, decode, seen, "${where}[]")
+    }
+  }
+  if (ty.is_struct() || ty.is_class()) && !ty.is_clayout() {
+    key = mangle_ty(ty) + "@" + ty.mod_name
+    if seen.has(key) {
+      return ""
+    }
+    seen.push(key)
+    for f in ty.fields {
+      if !f.vis {
+        if decode {
+          return "${where}: field ${f.name} of ${ty.show()} is not pub; a decode builds the value from its fields, so each must be pub"
+        }
+      } else {
+        p = checker_self.json_problem(f.ty, decode, seen, "${ty.show()}.${f.name}")
+        if p.size > 0 {
+          return p
+        }
+      }
+    }
+    return ""
+  }
+  json_unsupported(ty, where)
+}
+
+pub fn json_unsupported(ty: Ty, where: String): String {
+  "${where}: ${ty.show()} is not a JSON value std.json reads or writes (Int, Float64, String, Bool, an enum, an optional, Array(T), Hash(String, V), a struct or a class, json.Json, json.JsonValue)"
+}
+
+// ---- the call
+
+// `json.decode(text, T, ...)`, `json.encode(value)` and
+// `json.encode_into(buf, value)`: the call becomes a call of the
+// function written for its type.
+pub fn (checker_self: Checker) check_json_call(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "json.${expr.callee} takes no block")
+    return checker_self.t_int()
+  }
+  if expr.callee == "decode" {
+    return checker_self.check_json_decode(expr)
+  }
+  want = 1
+  if expr.callee == "encode_into" {
+    want = 2
+  }
+  if expr.args.size != want || expr.field_exprs.size > 0 {
+    for a in expr.args {
+      checker_self.check_expr(a)
+    }
+    if want == 1 {
+      checker_self.fail(expr.loc, "json.encode takes one value: json.encode(value)")
+    } else {
+      checker_self.fail(expr.loc, "json.encode_into takes a Buf and a value: json.encode_into(buf, value)")
+    }
+    return checker_self.t_int()
+  }
+  arg_tys: Array(Ty) = []
+  for a in expr.args {
+    arg_tys.push(checker_self.check_call_arg(a))
+  }
+  if checker_self.has_err() {
+    return checker_self.t_int()
+  }
+  vty = arg_tys[want - 1]
+  if want == 2 && !arg_tys[0].is_buf() {
+    checker_self.fail(expr.args[0].loc, "json.encode_into writes into a Buf, not ${arg_tys[0].show()}")
+    return checker_self.t_void()
+  }
+  if vty.is_var() || vty.is_void() {
+    checker_self.fail(expr.args[want - 1].loc, "json.${expr.callee} needs a value of a known type")
+    return checker_self.t_int()
+  }
+  seen: Array(String) = []
+  problem = checker_self.json_problem(vty, false, seen, vty.show())
+  if problem.size > 0 {
+    checker_self.fail(expr.args[want - 1].loc, "json.${expr.callee} cannot write ${problem}")
+    return checker_self.t_int()
+  }
+  sig: FuncSig? = nil
+  if want == 1 {
+    sig = checker_self.json_encode_root(vty, expr.loc)
+  } else {
+    sig = checker_self.json_enc_sig(vty, expr.loc)
+  }
+  if s = sig {
+    return checker_self.json_call_to(expr, s, arg_tys)
+  }
+  checker_self.t_int()
+}
+
+pub fn (checker_self: Checker) check_json_decode(expr: Expr): Ty {
+  if expr.args.size < 2 {
+    for a in expr.args {
+      checker_self.check_expr(a)
+    }
+    checker_self.fail(expr.loc, "json.decode takes the text and the type to read: json.decode(text, Point)")
+    return checker_self.t_int()
+  }
+  targ = expr.args[1]
+  tn = checker_self.json_type_arg(targ) ?? return checker_self.json_not_a_type(targ)
+  mark = checker_self.err_count()
+  ty = checker_self.resolve_in_module(tn)
+  checker_self.pull_resolve()
+  if checker_self.new_err_since(mark) {
+    return checker_self.t_int()
+  }
+  seen: Array(String) = []
+  problem = checker_self.json_problem(ty, true, seen, ty.show())
+  if problem.size > 0 {
+    checker_self.fail(targ.loc, "json.decode cannot read ${problem}")
+    return checker_self.t_int()
+  }
+  sig = checker_self.json_decode_root(ty, expr.loc) ?? return checker_self.t_int()
+  for k in 0..expr.field_names.size {
+    named = expr.field_names[k]
+    known = false
+    for prm in sig.node.params {
+      if prm.name == named && prm.name != "text" {
+        known = true
+      }
+    }
+    if !known {
+      checker_self.fail(expr.field_exprs[k].loc, "json.decode has no parameter named ${named}")
+      return checker_self.t_int()
+    }
+  }
+  args: Array(Expr) = []
+  for i in 0..expr.args.size {
+    if i != 1 {
+      args.push(expr.args[i])
+    }
+  }
+  expr.args = args
+  arg_tys: Array(Ty) = []
+  for a in expr.args {
+    arg_tys.push(checker_self.check_call_arg(a))
+  }
+  if checker_self.has_err() {
+    return checker_self.t_int()
+  }
+  checker_self.json_call_to(expr, sig, arg_tys)
+}
+
+pub fn (checker_self: Checker) json_not_a_type(arg: Expr): Ty {
+  checker_self.check_expr(arg)
+  if !checker_self.has_err() {
+    checker_self.fail(arg.loc, "json.decode's second argument is the type to read (json.decode(text, Point)), not a value")
+  }
+  checker_self.t_int()
+}
+
+// The type an argument names: `Point`, `geo.Point`, `Box(Int)`,
+// `Array(Point)`, `Hash(String, Point)`; nil for any other expression.
+pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
+  if e.kind == ex_name() {
+    if found = checker_self.lookup(e.ident) {
+      return nil
+    }
+    tn = TypeName.new(e.loc, e.ident)
+    tn.mod_name = e.mod_name
+    tn.args.concat(e.type_args)
+    return tn
+  }
+  if e.kind == ex_field() {
+    checker_self.qualify_last_name(e)
+    segs: Array(String) = []
+    if !checker_self.ident_chain(e, segs) || segs.size < 2 {
+      return nil
+    }
+    if found = checker_self.lookup(segs[0]) {
+      return nil
+    }
+    tn = TypeName.new(e.loc, segs[segs.size - 1])
+    tn.mod_name = checker_self.join_segs(segs, segs.size - 1)
+    return tn
+  }
+  if e.kind == ex_call() && e.field_exprs.size == 0 {
+    if b = e.block {
+      return nil
+    }
+    tn = TypeName.new(e.loc, e.callee)
+    if r = e.receiver {
+      checker_self.qualify_last_name(e)
+      segs: Array(String) = []
+      if !checker_self.ident_chain(r, segs) {
+        return nil
+      }
+      tn.mod_name = checker_self.join_segs(segs, segs.size)
+    } else if f = checker_self.find_fn(e.callee) {
+      return nil
+    }
+    for a in e.args {
+      inner = checker_self.json_type_arg(a) ?? return nil
+      tn.args.push(inner)
+    }
+    return tn
+  }
+  nil
+}
+
+// The call expr made a call of sig, its arguments (arg_tys, checked)
+// fitted to the parameters, defaults and named arguments placed as for
+// any call, in std.json's module.
+pub fn (checker_self: Checker) json_call_to(expr: Expr, sig: FuncSig, arg_tys: Array(Ty)): Ty {
+  saved = checker_self.current_module
+  checker_self.current_module = "std.json"
+  checker_self.fill_defaults(expr, sig.node)
+  i = 0
+  while i < expr.args.size && i < sig.params.size {
+    got = checker_self.t_int()
+    if i < arg_tys.size {
+      got = arg_tys[i]
+    } else {
+      got = checker_self.check_default_arg(expr, i, sig.params, sig.node)
+    }
+    got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
+    if !ty_assignable(got, sig.params[i]) {
+      n = i + 1
+      checker_self.fail(expr.args[i].loc, "argument ${n} of json.${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}")
+    }
+    i += 1
+  }
+  if expr.args.size > sig.params.size {
+    checker_self.fail(expr.loc, "json.${expr.callee} takes at most ${sig.params.size + 1} arguments")
+  }
+  expr.resolved = sig.node.emit_name
+  expr.receiver = nil
+  checker_self.current_module = saved
+  sig.ret
+}
+
+// ---- registering a generated function
+
+pub fn (checker_self: Checker) json_find(name: String): FuncSig? {
+  for i in checker_self.fn_indices_named(name) {
+    sig = checker_self.functions[i]
+    if sig.node.mod_name == "std.json" && sig.node.emit_name == name {
+      return sig
+    }
+  }
+  nil
+}
+
+// The function text writes (its placeholders gen's), in std.json, named
+// name.
+pub fn (checker_self: Checker) json_register(name: String, text: String, gen: JsonGen, loc: Location): FuncSig? {
+  src = Source.new("<std.json codec>", text)
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  ps = Parser.new(src, tokens)
+  p = ps.parse()
+  if p.functions.size != 1 || ps.has_err() {
+    checker_self.fail(loc, "internal error: the code written for std.json does not parse:\n${text}")
+    return nil
+  }
+  fnn = p.functions[0]
+  fnn.mod_name = "std.json"
+  fnn.loc = loc
+  to: Array(TypeName) = []
+  for t in gen.to {
+    to.push(ty_to_type_name(t, loc))
+  }
+  subst_function_types(fnn, gen.from, to)
+  json_mark_stmts(fnn.body, gen.from, to)
+  fnn.emit_name = name
+  checker_self.alloc_ol(fnn)
+  checker_self.resolver.clear_tparams()
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = "std.json"
+  params: Array(Ty) = []
+  for prm in fnn.params {
+    params.push(checker_self.resolver.resolve_value(prm.type))
+    checker_self.pull_resolve()
+  }
+  ret = checker_self.t_void()
+  if t = fnn.return_type {
+    ret = checker_self.resolver.resolve(t)
+    checker_self.pull_resolve()
+  }
+  checker_self.resolver.scope_mod = saved_scope
+  checker_self.program.functions.push(fnn)
+  sig = FuncSig.new(name, fnn, params, ret)
+  checker_self.functions.push(sig)
+  checker_self.note_fn_named()
+  checker_self.pending.push(fnn)
+  sig
+}
+
+// The placeholders written as a literal's type (`T0 { ... }`) or a
+// type-level call's receiver (`T0.from_name(s)`) carry their type
+// (elem_type) and the mark that lets the checker read it there.
+pub fn json_mark_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeName)) {
+  for s in body {
+    if x = s.expr {
+      json_mark_expr(x, from, to)
+    }
+    if x = s.value {
+      json_mark_expr(x, from, to)
+    }
+    if x = s.target {
+      json_mark_expr(x, from, to)
+    }
+    if x = s.cond {
+      json_mark_expr(x, from, to)
+    }
+    json_mark_stmts(s.pre, from, to)
+    json_mark_stmts(s.then_body, from, to)
+    json_mark_stmts(s.else_body, from, to)
+    json_mark_stmts(s.body, from, to)
+  }
+}
+
+pub fn json_mark_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
+  if e.kind == ex_struct() || e.kind == ex_name() {
+    for i in 0..from.size {
+      if (e.kind == ex_struct() && e.type_name == from[i]) || (e.kind == ex_name() && e.ident == from[i]) {
+        e.derived = true
+        e.elem_type = clone_type_name(to[i])
+      }
+    }
+  }
+  if x = e.left {
+    json_mark_expr(x, from, to)
+  }
+  if x = e.right {
+    json_mark_expr(x, from, to)
+  }
+  if x = e.object {
+    json_mark_expr(x, from, to)
+  }
+  if x = e.cond {
+    json_mark_expr(x, from, to)
+  }
+  if x = e.receiver {
+    json_mark_expr(x, from, to)
+  }
+  if x = e.inner {
+    json_mark_expr(x, from, to)
+  }
+  for a in e.args {
+    json_mark_expr(a, from, to)
+  }
+  for a in e.elems {
+    json_mark_expr(a, from, to)
+  }
+  for a in e.field_exprs {
+    json_mark_expr(a, from, to)
+  }
+  for p in e.parts {
+    if inner = p.expr {
+      json_mark_expr(inner, from, to)
+    }
+  }
+  for c in e.cases {
+    json_mark_stmts(c.body, from, to)
+  }
+  json_mark_stmts(e.else_body, from, to)
+  if b = e.block {
+    json_mark_stmts(b.body, from, to)
+  }
+}
+
+// ---- decoding
+
+// The roots: `fn (text, ignore_unknown = false, max_depth = 256,
+// max_bytes: Int? = nil, max_entries: Int? = nil): T | JsonError`, the
+// limits Json.parse's.
+pub fn (checker_self: Checker) json_decode_root(ty: Ty, loc: Location): FuncSig? {
+  name = "__avant_json_decode__${json_key(ty)}"
+  if found = checker_self.json_find(name) {
+    return found
+  }
+  gen = JsonGen.new()
+  t0 = gen.ph(ty)
+  deps: Array(Ty) = []
+  b = buf_new()
+  b.push_str("fn ${name}(text: String, ignore_unknown: Bool = false, max_depth: Int = 256, max_bytes: Int? = nil, max_entries: Int? = nil): ${t0} | JsonError {\n")
+  b.push_str("  doc = Json.parse(text, max_depth: max_depth, max_bytes: max_bytes, max_entries: max_entries)?\n")
+  b.push_str("  v = ${json_dec_call(ty, "doc", deps)} else e {\n")
+  b.push_str("    return codec_done(e)\n")
+  b.push_str("  }\n")
+  b.push_str("  v\n")
+  b.push_str("}\n")
+  sig = checker_self.json_register(name, b.to_s(), gen, loc)
+  for d in deps {
+    checker_self.json_dec_fn(d, loc)
+  }
+  sig
+}
+
+// The expression that reads a value of ty (not an optional) from the
+// Json j: a `T | JsonError`. The reader of a struct, class, Array, Hash
+// or enum is named and noted in deps, to be written after the function
+// that calls it (by name), so a type that holds itself (a class's
+// `next: Node?`) reads itself.
+pub fn json_dec_call(ty: Ty, j: String, deps: Array(Ty)): String {
+  if ty.is_int() {
+    return "codec_dec_int(${j})"
+  }
+  if ty.is_float() {
+    return "codec_dec_f64(${j})"
+  }
+  if ty.is_string() {
+    return "codec_dec_str(${j})"
+  }
+  if ty.is_bool() {
+    return "codec_dec_bool(${j})"
+  }
+  if json_std_type(ty, "Json") {
+    return "codec_dec_json(${j})"
+  }
+  if json_std_type(ty, "JsonValue") {
+    return "codec_dec_value(${j})"
+  }
+  deps.push(ty)
+  "__avant_json_dec__${json_key(ty)}(${j}, ignore_unknown)"
+}
+
+// Whether reading a value of ty may begin an object's read of its own
+// (a struct or a class, or an Array or a Hash holding one), which moves
+// the cursor.
+pub fn json_nests(ty: Ty): Bool {
+  t = ty
+  if ty.is_nilable() && ty.members.size == 2 {
+    t = ty_without_nil(ty)
+  }
+  if t.is_int() || t.is_float() || t.is_string() || t.is_bool() || t.is_enum() || json_std_type(t, "Json") || json_std_type(t, "JsonValue") {
+    return false
+  }
+  if t.is_array() {
+    if e = t.inner {
+      return json_nests(e)
+    }
+  }
+  if t.is_hash() {
+    if v = t.val {
+      return json_nests(v)
+    }
+  }
+  true
+}
+
+// The runtime call that reads a member of a scalar type by its name
+// ("" for any other type), and what a message says it expected.
+pub fn json_scalar_reader(ty: Ty): String {
+  if ty.is_int() {
+    return "avant_json_ord_int"
+  }
+  if ty.is_float() {
+    return "avant_json_ord_f64"
+  }
+  if ty.is_string() {
+    return "avant_json_ord_str"
+  }
+  if ty.is_bool() {
+    return "avant_json_ord_bool"
+  }
+  ""
+}
+
+pub fn json_scalar_want(ty: Ty): String {
+  if ty.is_int() {
+    return "an integer"
+  }
+  if ty.is_float() {
+    return "a number"
+  }
+  if ty.is_string() {
+    return "a string"
+  }
+  "true or false"
+}
+
+// The reader of a struct, class, Array, Hash or enum:
+// `fn (j: Json, ignore_unknown: Bool): T | JsonError`.
+pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
+  name = "__avant_json_dec__${json_key(ty)}"
+  if found = checker_self.json_find(name) {
+    return name
+  }
+  gen = JsonGen.new()
+  t0 = gen.ph(ty)
+  deps: Array(Ty) = []
+  b = buf_new()
+  b.push_str("fn ${name}(j: Json, ignore_unknown: Bool): ${t0} | JsonError {\n")
+  if ty.is_enum() {
+    names = ""
+    if en = ty.members_of {
+      names = en.names.join(", ")
+    }
+    b.push_str("  s = codec_dec_str(j)?\n")
+    b.push_str("  v = ${t0}.from_name(s) ?? return codec_bad_member(s, ${json_quote(names)})\n")
+    b.push_str("  v\n")
+  } else if ty.is_array() {
+    et = ty.inner ?? ty
+    ind = "    "
+    b.push_str("  len = jsonc.avant_json_arr_size(j.node)\n")
+    b.push_str("  if len < 0 {\n")
+    b.push_str("    return codec_wrong(j.node, \"an array\")\n")
+    b.push_str("  }\n")
+    b.push_str("  out: ${t0} = []\n")
+    b.push_str("  out.reserve(len)\n")
+    b.push_str("  cur = jsonc.avant_json_first(j.node)\n")
+    b.push_str("  i = 0\n")
+    b.push_str("  while node = cur {\n")
+    inner = et
+    if et.is_nilable() {
+      inner = ty_without_nil(et)
+      b.push_str("    if jsonc.avant_json_kind(node) == 1 {\n")
+      b.push_str("      out.push(nil)\n")
+      b.push_str("    } else {\n")
+      ind = "      "
+    }
+    b.push_str("${ind}v = ${json_dec_call(inner, "Json { node: node, pool: j.pool }", deps)} else e {\n")
+    b.push_str("${ind}  return codec_at_index(e, i)\n")
+    b.push_str("${ind}}\n")
+    b.push_str("${ind}out.push(v)\n")
+    if et.is_nilable() {
+      b.push_str("    }\n")
+    }
+    b.push_str("    i += 1\n")
+    b.push_str("    cur = nil\n")
+    b.push_str("    if i < len {\n")
+    b.push_str("      cur = jsonc.avant_json_next(node)\n")
+    b.push_str("    }\n")
+    b.push_str("  }\n")
+    b.push_str("  out\n")
+  } else if ty.is_hash() {
+    vt = ty.val ?? ty
+    tv = gen.ph(vt)
+    ind = "      "
+    b.push_str("  len = jsonc.avant_json_obj_size(j.node)\n")
+    b.push_str("  if len < 0 {\n")
+    b.push_str("    return codec_wrong(j.node, \"an object\")\n")
+    b.push_str("  }\n")
+    b.push_str("  out = Hash(String, ${tv}).new()\n")
+    b.push_str("  key = jsonc.avant_json_first_key(j.node)\n")
+    b.push_str("  i = 0\n")
+    b.push_str("  while kn = key {\n")
+    b.push_str("    k = jsonc.avant_json_as_str(kn)\n")
+    b.push_str("    vn = jsonc.avant_json_next(kn) ?? return codec_wrong(j.node, \"an object\")\n")
+    b.push_str("    if !out.has(k) {\n")
+    inner = vt
+    if vt.is_nilable() {
+      inner = ty_without_nil(vt)
+      b.push_str("      if jsonc.avant_json_kind(vn) == 1 {\n")
+      b.push_str("        out[k] = nil\n")
+      b.push_str("      } else {\n")
+      ind = "        "
+    }
+    b.push_str("${ind}v = ${json_dec_call(inner, "Json { node: vn, pool: j.pool }", deps)} else e {\n")
+    b.push_str("${ind}  return codec_at_key(e, k)\n")
+    b.push_str("${ind}}\n")
+    b.push_str("${ind}out[k] = v\n")
+    if vt.is_nilable() {
+      b.push_str("      }\n")
+    }
+    b.push_str("    }\n")
+    b.push_str("    i += 1\n")
+    b.push_str("    key = nil\n")
+    b.push_str("    if i < len {\n")
+    b.push_str("      key = jsonc.avant_json_next(vn)\n")
+    b.push_str("    }\n")
+    b.push_str("  }\n")
+    b.push_str("  out\n")
+  } else {
+    json_dec_object(b, ty, t0, gen, deps)
+  }
+  b.push_str("}\n")
+  checker_self.json_register(name, b.to_s(), gen, loc)
+  for d in deps {
+    checker_self.json_dec_fn(d, loc)
+  }
+  name
+}
+
+// A struct's or class's reader: each field's member read by its name
+// (absent: nil for an optional, the field's default for a field that
+// has one, else an error), the members counted, so a name no field has
+// is looked for only when there is one; then the literal. The fields
+// are read in their declared order, each first from the member after
+// the one the last read took (the runtime's cursor, one name compared),
+// the object searched only when that member has another name: a text
+// written from the type has its members in that order. A field read by
+// a reader of its own (a struct, an Array, a Hash) moves the cursor to
+// the objects inside it, so the cursor is taken before and put back
+// after when a field follows.
+pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)) {
+  b.push_str("  size = jsonc.avant_json_ord_begin(j.node)\n")
+  b.push_str("  if size < 0 {\n")
+  b.push_str("    return codec_wrong(j.node, \"an object\")\n")
+  b.push_str("  }\n")
+  b.push_str("  found = 0\n")
+  names: Array(String) = []
+  for i in 0..ty.fields.size {
+    f = ty.fields[i]
+    key = json_quote(f.name)
+    names.push(key)
+    tf = gen.ph(f.ty)
+    opt = f.ty.is_nilable()
+    if opt {
+      b.push_str("  f${i}: ${tf} = nil\n")
+    } else {
+      b.push_str("  f${i}: ${tf}? = nil\n")
+    }
+    if opt && f.defaulted {
+      b.push_str("  s${i} = false\n")
+    }
+    inner = f.ty
+    if opt {
+      inner = ty_without_nil(f.ty)
+    }
+    reader = json_scalar_reader(inner)
+    if reader.size > 0 {
+      // A scalar is read by name in one runtime call, as `doc.f64(name)`
+      // reads it; only a miss looks again, to tell a member that is
+      // absent from one of another kind.
+      b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
+      if inner.is_float() {
+        b.push_str("  if r${i} == r${i} {\n")
+      } else {
+        b.push_str("  if jsonc.avant_json_take_status() == 0 {\n")
+      }
+      b.push_str("    found += 1\n")
+      if inner.is_bool() {
+        b.push_str("    f${i} = r${i} != 0\n")
+      } else {
+        b.push_str("    f${i} = r${i}\n")
+      }
+      if opt && f.defaulted {
+        b.push_str("    s${i} = true\n")
+      }
+      b.push_str("  } else if c${i} = jsonc.avant_json_get(j.node, ${key}) {\n")
+      b.push_str("    found += 1\n")
+      ind = "    "
+      if opt {
+        if f.defaulted {
+          b.push_str("    s${i} = true\n")
+        }
+        b.push_str("    if jsonc.avant_json_kind(c${i}) != 1 {\n")
+        ind = "      "
+      }
+      b.push_str("${ind}return codec_at_key(codec_wrong(c${i}, ${json_quote(json_scalar_want(inner))}), ${key})\n")
+      if opt {
+        b.push_str("    }\n")
+      }
+      b.push_str("  }\n")
+    } else {
+      b.push_str("  if c${i} = jsonc.avant_json_ord_get(j.node, ${key}) {\n")
+      // A reader of its own (not an enum's) may begin objects of its own.
+      keep = i + 1 < ty.fields.size && json_nests(inner)
+      if keep {
+        b.push_str("    m${i} = jsonc.avant_json_ord_mark(j.node)\n")
+      }
+      b.push_str("    found += 1\n")
+      ind = "    "
+      if opt {
+        if f.defaulted {
+          b.push_str("    s${i} = true\n")
+        }
+        b.push_str("    if jsonc.avant_json_kind(c${i}) != 1 {\n")
+        ind = "      "
+      }
+      b.push_str("${ind}v${i} = ${json_dec_call(inner, "Json { node: c${i}, pool: j.pool }", deps)} else e${i} {\n")
+      b.push_str("${ind}  return codec_at_key(e${i}, ${key})\n")
+      b.push_str("${ind}}\n")
+      if keep {
+        b.push_str("${ind}jsonc.avant_json_ord_resume(j.node, m${i})\n")
+      }
+      b.push_str("${ind}f${i} = v${i}\n")
+      if opt {
+        b.push_str("    }\n")
+      }
+      b.push_str("  }\n")
+    }
+  }
+  b.push_str("  if !ignore_unknown && found != size {\n")
+  b.push_str("    if u = codec_unknown(j, [${names.join(", ")}]) {\n")
+  b.push_str("      return u\n")
+  b.push_str("    }\n")
+  b.push_str("  }\n")
+  lit = buf_new()
+  lit.push_str("${t0} {")
+  first = true
+  for i in 0..ty.fields.size {
+    f = ty.fields[i]
+    if !f.defaulted {
+      if !f.ty.is_nilable() {
+        b.push_str("  g${i} = f${i} ?? return codec_missing(${json_quote(f.name)})\n")
+      }
+      if !first {
+        lit.push_str(",")
+      }
+      first = false
+      if f.ty.is_nilable() {
+        lit.push_str(" ${f.name}: f${i}")
+      } else {
+        lit.push_str(" ${f.name}: g${i}")
+      }
+    }
+  }
+  lit.push_str(" }")
+  b.push_str("  out = ${lit.to_s()}\n")
+  for i in 0..ty.fields.size {
+    f = ty.fields[i]
+    if f.defaulted {
+      if f.ty.is_nilable() {
+        b.push_str("  if s${i} {\n")
+        b.push_str("    out.${f.name} = f${i}\n")
+        b.push_str("  }\n")
+      } else {
+        b.push_str("  if w${i} = f${i} {\n")
+        b.push_str("    out.${f.name} = w${i}\n")
+        b.push_str("  }\n")
+      }
+    }
+  }
+  b.push_str("  out\n")
+}
+
+// ---- encoding
+
+// `fn (v: T): String`, the text of v.
+pub fn (checker_self: Checker) json_encode_root(ty: Ty, loc: Location): FuncSig? {
+  name = "__avant_json_encode__${json_key(ty)}"
+  if found = checker_self.json_find(name) {
+    return found
+  }
+  enc = checker_self.json_enc_sig(ty, loc) ?? return nil
+  gen = JsonGen.new()
+  t0 = gen.ph(ty)
+  b = buf_new()
+  b.push_str("fn ${name}(value: ${t0}): String {\n")
+  b.push_str("  b = Buf.new()\n")
+  b.push_str("  ${enc.node.emit_name}(b, value)\n")
+  b.push_str("  b.to_s()\n")
+  b.push_str("}\n")
+  checker_self.json_register(name, b.to_s(), gen, loc)
+}
+
+pub fn (checker_self: Checker) json_enc_sig(ty: Ty, loc: Location): FuncSig? {
+  name = checker_self.json_enc_fn(ty, loc)
+  checker_self.json_find(name)
+}
+
+// `fn (b: Buf, v: T)`, writing v's text to b.
+pub fn (checker_self: Checker) json_enc_fn(ty: Ty, loc: Location): String {
+  name = "__avant_json_enc__${json_key(ty)}"
+  if found = checker_self.json_find(name) {
+    return name
+  }
+  gen = JsonGen.new()
+  t0 = gen.ph(ty)
+  // Registered before its body's functions are written (each looks for
+  // the others by name), so a class that holds itself writes itself; its
+  // text is complete before any of them is written.
+  body = buf_new()
+  deps: Array(Ty) = []
+  if ty.is_array() {
+    et = ty.inner ?? ty
+    body.push_str("  b.push_str(\"[\")\n")
+    body.push_str("  i = 0\n")
+    body.push_str("  for e in v {\n")
+    body.push_str("    if i > 0 {\n")
+    body.push_str("      b.push_str(\",\")\n")
+    body.push_str("    }\n")
+    json_enc_inline(body, "    ", et, "e", gen, deps)
+    body.push_str("    i += 1\n")
+    body.push_str("  }\n")
+    body.push_str("  b.push_str(\"]\")\n")
+  } else if ty.is_hash() {
+    vt = ty.val ?? ty
+    body.push_str("  b.push_str(\"{\")\n")
+    body.push_str("  first = true\n")
+    body.push_str("  for k, m in v {\n")
+    body.push_str("    if !first {\n")
+    body.push_str("      b.push_str(\",\")\n")
+    body.push_str("    }\n")
+    body.push_str("    first = false\n")
+    body.push_str("    builder_escape(b, k)\n")
+    body.push_str("    b.push_str(\":\")\n")
+    json_enc_inline(body, "    ", vt, "m", gen, deps)
+    body.push_str("  }\n")
+    body.push_str("  b.push_str(\"}\")\n")
+  } else if (ty.is_struct() || ty.is_class()) && !json_std_type(ty, "JsonValue") && !json_std_type(ty, "Json") && !json_std_type(ty, "JsonBuilder") {
+    lead = "{"
+    for f in ty.fields {
+      if f.vis {
+        body.push_str("  b.push_str(${json_quote("${lead}\"${f.name}\":")})\n")
+        lead = ","
+        json_enc_inline(body, "  ", f.ty, "v.${f.name}", gen, deps)
+      }
+    }
+    if lead == "{" {
+      body.push_str("  b.push_str(\"{}\")\n")
+    } else {
+      body.push_str("  b.push_str(\"}\")\n")
+    }
+  } else {
+    json_enc_inline(body, "  ", ty, "v", gen, deps)
+  }
+  text = "fn ${name}(b: Buf, v: ${t0}) {\n${body.to_s()}}\n"
+  checker_self.json_register(name, text, gen, loc)
+  for d in deps {
+    checker_self.json_enc_fn(d, loc)
+  }
+  name
+}
+
+// The statements that write the value x of type ty to the Buf b; the
+// writer of a struct, class, Array or Hash is named and noted in deps,
+// to be written after the function that calls it.
+pub fn json_enc_inline(b: Buf, ind: String, ty: Ty, x: String, gen: JsonGen, deps: Array(Ty)) {
+  if ty.is_nilable() && ty.members.size == 2 {
+    n = gen.local("x")
+    b.push_str("${ind}if ${n} = ${x} {\n")
+    json_enc_inline(b, ind + "  ", ty_without_nil(ty), n, gen, deps)
+    b.push_str("${ind}} else {\n")
+    b.push_str("${ind}  b.push_str(\"null\")\n")
+    b.push_str("${ind}}\n")
+    return
+  }
+  if ty.is_int() {
+    b.push_str("${ind}b.push_fmt_i(${x})\n")
+  } else if ty.is_float() {
+    b.push_str("${ind}codec_enc_f64(b, ${x})\n")
+  } else if ty.is_string() {
+    b.push_str("${ind}builder_escape(b, ${x})\n")
+  } else if ty.is_bool() {
+    b.push_str("${ind}codec_enc_bool(b, ${x})\n")
+  } else if ty.is_nil() {
+    b.push_str("${ind}b.push_str(\"null\")\n")
+  } else if ty.is_enum() {
+    b.push_str("${ind}builder_escape(b, \"\${${x}}\")\n")
+  } else if json_std_type(ty, "Json") {
+    b.push_str("${ind}b.push_str(${x}.text())\n")
+  } else if json_std_type(ty, "JsonBuilder") {
+    b.push_str("${ind}b.push_str(${x}.to_s())\n")
+  } else if json_std_type(ty, "JsonValue") {
+    b.push_str("${ind}codec_enc_value(b, ${x})\n")
+  } else {
+    deps.push(ty)
+    b.push_str("${ind}__avant_json_enc__${json_key(ty)}(b, ${x})\n")
+  }
+}

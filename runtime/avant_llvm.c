@@ -179,6 +179,37 @@ static void record_level(LLVMModuleRef mod) {
   LLVMSetLinkage(g, LLVMExternalLinkage);
 }
 
+/* A measurement knob for the layout tools (tools/layout-check.sh):
+ * AVANT_CODE_SHIFT=N, N from 1 to 63, starts every function placed below
+ * N bytes into its 64-byte line (N bytes of nop before its entry, never
+ * run), so each loop sits at another offset within its line while the
+ * functions' order and the code itself stay the same. The function
+ * permutations of the layout check move code by whole lines only, and a
+ * loop's offset within its line decides some tasks' times on this
+ * machine's CPUs (a branch-dense loop at offset 0 instead of 32 cost a
+ * task 30%). Unset, empty or 0 changes nothing; any other value fails
+ * the compile with a message (finish_module). */
+static const char *g_code_shift = NULL;
+static int g_code_shift_read = 0;
+static int g_code_shift_bad = 0;
+
+static const char *code_shift(void) {
+  if (!g_code_shift_read) {
+    const char *v = getenv("AVANT_CODE_SHIFT");
+    g_code_shift_read = 1;
+    if (v && v[0] && strcmp(v, "0") != 0) {
+      char *end = NULL;
+      long n = strtol(v, &end, 10);
+      if (*end || n < 1 || n > 63 || v[0] == '+' || v[0] == '0') {
+        g_code_shift_bad = 1;
+      } else {
+        g_code_shift = v;
+      }
+    }
+  }
+  return g_code_shift;
+}
+
 /* Code placement: every function the module defines,
  * except the cold ones (they go to .text.unlikely), starts on a 64-byte
  * boundary. The program's code is linked after the PLT, the runtime's
@@ -191,14 +222,21 @@ static void record_level(LLVMModuleRef mod) {
  * program's own code. */
 static void place_functions(LLVMModuleRef mod) {
   unsigned cold = LLVMGetEnumAttributeKindForName("cold", 4);
+  const char *shift = code_shift();
   for (LLVMValueRef f = LLVMGetFirstFunction(mod); f; f = LLVMGetNextFunction(f)) {
-    if (LLVMIsDeclaration(f) || LLVMGetAlignment(f) >= 64) {
+    if (LLVMIsDeclaration(f)) {
       continue;
     }
     if (cold && LLVMGetEnumAttributeAtIndex(f, LLVMAttributeFunctionIndex, cold)) {
       continue;
     }
-    LLVMSetAlignment(f, 64);
+    if (LLVMGetAlignment(f) < 64) {
+      LLVMSetAlignment(f, 64);
+    }
+    if (shift) {
+      LLVMAttributeRef a = LLVMCreateStringAttribute(LLVMGetModuleContext(mod), "patchable-function-prefix", 25, shift, (unsigned)strlen(shift));
+      LLVMAddAttributeAtIndex(f, LLVMAttributeFunctionIndex, a);
+    }
   }
 }
 
@@ -210,6 +248,11 @@ static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t leve
   LLVMTargetMachineRef tm = NULL;
   int32_t status = AVANT_LLVM_OK;
 
+  code_shift();
+  if (g_code_shift_bad) {
+    set_error("", "AVANT_CODE_SHIFT must be a number of bytes from 1 to 63 (or 0, unset: no shift)");
+    return AVANT_LLVM_TARGET;
+  }
   if (LLVMVerifyModule(mod, LLVMReturnStatusAction, &msg)) {
     set_error("", msg);
     LLVMDisposeMessage(msg);

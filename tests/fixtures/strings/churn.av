@@ -22,6 +22,15 @@ fn mk(i: Int): String {
 
 // s is held across k allocations.
 // The checksums are Int32, wrapping at 32 bits.
+// djb2 at 32 bits, the hash the strings' checks add up.
+fn checksum_str(s: String): Int32 {
+  h: UInt32 = 5381
+  for b in s.bytes {
+    h = (h << 5) &+ h &+ b.wrap_u32()
+  }
+  h.wrap_i32()
+}
+
 fn hold(s: String, k: Int): Int32 {
   sum: Int32 = 0
   j = 0
@@ -51,7 +60,7 @@ fn main {
       grown = keep + "/" + a
       keep = grown
       if grown.size > 200 {
-        keep = str_slice(grown, 0, 200)
+        keep = grown[..200]
       }
       total = total &+ hold(c, 50)
     }

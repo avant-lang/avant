@@ -42,7 +42,7 @@ pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
       return nil
     }
     d = v.to_u64()
-    if n > (18446744073709551615u64 - d) / r {
+    if n > (18446744073709551615 - d) / r {
       return nil
     }
     n = n * r + d
@@ -87,7 +87,7 @@ pub class Parser {
   failed: Bool = false
   pub err: CompileError? = nil
   pub errors: DiagBag
-  int_bits: UInt64 = 0u64
+  int_bits: UInt64 = 0
   int_suffix: String = ""
   in_quote: Bool = false
   for_id: Int = 0
@@ -96,7 +96,10 @@ pub class Parser {
   for_last: String = ""
   // The step of the range whose body for_advance walks (`by k`; 1
   // without one).
-  for_by: UInt64 = 1u64
+  for_by: UInt64 = 1
+  // The `defer` statements parsed so far: a `for` whose body holds one
+  // has a latch (parse_for).
+  defers_seen: Int = 0
   // The nesting bound: depth counts the blocks, expressions and type
   // names open on the parser's stack; peak is the deepest level the
   // expression being parsed reaches, which a chain built in a loop
@@ -114,26 +117,20 @@ pub class Parser {
   arg_names: Array(String) = []
   // The bounds the last type parameter list wrote (`class Top(T: Ranked)`).
   tparam_bounds: Array(TypeBound) = []
-  // For `avant format --lambdas` (compiler/migrate.av): each block
-  // written with pipes or after a call, whether it stood directly in a statement's head
-  // (where the `{` begins the body), and, for an expression statement
-  // that is a call with such a block, the offset of the statement's
-  // first token by the block's offset.
-  pub pipe_blocks: Array(Block) = []
-  pub pipe_heads: Array(Bool) = []
-  pub stmt_starts: Hash(String, Int)
-  stmt_start_now: Int = 0
+  // The modules this file imports, as written, so a type's qualifier may
+  // be a module's last name (whole_qualifier).
+  import_names: Array(String) = []
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
+    self.import_names = []
     self.tokens = tokens
-    self.stmt_starts = Hash(String, Int).new()
     self.index = 0
     self.allow_struct_lit = true
     self.failed = false
     self.err = nil
     self.errors = DiagBag.new()
-    self.int_bits = 0u64
+    self.int_bits = 0
     self.int_suffix = ""
     self.in_quote = false
     self.for_id = 0
@@ -538,17 +535,21 @@ pub class Parser {
       }
       i += 1
     }
+    if stmts.size > 0 && stmts[stmts.size - 1].kind == st_defer() {
+      // Nothing follows it in its block: it would run at once.
+      fail(stmts[stmts.size - 1].loc, "a defer as its block's last statement runs at once, when the block ends; write its statements without defer, or move the defer before the statements it should follow")
+    }
   }
 
   pub fn parse_int_tok(tok: Token): Bool {
     raw = tok.value
     suffix = ""
-    if str_ends(raw, "u64") {
+    if raw.ends_with("u64") {
       if raw.size > 3 {
         suffix = "u64"
         raw = str_slice(raw, 0, raw.size - 3)
       }
-    } else if str_ends(raw, "i64") {
+    } else if raw.ends_with("i64") {
       if raw.size > 3 {
         // One integer spelling: the lexer still reads the suffix so the
         // error can say what to write.
@@ -616,9 +617,7 @@ pub class Parser {
       } else if k == tk_lib() {
         ldef = parse_lib(vis)
         program.libs.push(ldef)
-        for en in ldef.enums {
-          program.structs.push(en)
-        }
+        program.structs.concat(ldef.enums)
       } else if k == tk_fn() {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
@@ -711,7 +710,47 @@ pub class Parser {
       buf.push_str(".")
       buf.push_str(next.value)
     }
+    self.import_names.push(buf.to_s())
     ImportDecl.new(loc, buf.to_s())
+  }
+
+  // A type's qualifier as the whole module name: `time` in `time.Time`
+  // when this file imports std.time and no module named time in whole
+  // (the checker's last_name_module reads expressions the same way); two
+  // imports ending in the name make it an error naming both.
+  pub fn whole_qualifier(qual: String, loc: Location): String {
+    if qual.size == 0 {
+      return qual
+    }
+    found = ""
+    other = ""
+    for imp in self.import_names {
+      if imp == qual {
+        return qual
+      }
+      i = imp.size - 1
+      while i >= 0 && imp[i] != 46 {
+        i -= 1
+      }
+      if i >= 0 && str_slice(imp, i + 1, imp.size) == qual {
+        if found.size == 0 {
+          found = imp
+        } else if other.size == 0 && imp != found {
+          other = imp
+        }
+      }
+    }
+    if found == "std.gc" {
+      return qual
+    }
+    if other.size > 0 {
+      fail(loc, "${qual} is the last name of both ${found} and ${other}: write the whole name (${found}.… or ${other}.…)")
+      return qual
+    }
+    if found.size > 0 {
+      return found
+    }
+    qual
   }
 
   pub fn parse_quote_decl(owner: String): QuoteDecl {
@@ -1079,7 +1118,7 @@ pub class Parser {
               fail(vt.loc, "an enum member's value is an integer literal without a suffix")
             }
             bits = self.int_bits
-            if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
+            if (neg && bits > 2147483648) || (!neg && bits > 2147483647) {
               fits = false
             } else if neg {
               value = 0 - bits.to_i()
@@ -1208,9 +1247,7 @@ pub class Parser {
         }
       }
       if sets.size > 0 {
-        for st2 in m.body {
-          sets.push(st2)
-        }
+        sets.concat(m.body)
         m.body = sets
       }
     }
@@ -1350,7 +1387,8 @@ pub class Parser {
       return nil
     }
     self.bump()
-    value = parse_expr()
+    // A block after a call is refused here as in a statement.
+    value = maybe_trailing_block(parse_expr())
     c = ConstDef.new(tok.loc, name, value)
     c.vis = vis
     c
@@ -1927,7 +1965,7 @@ pub class Parser {
       qual = buf.to_s()
     }
     tn = TypeName.new(tok.loc, tok.value)
-    tn.mod_name = qual
+    tn.mod_name = whole_qualifier(qual, tok.loc)
     if self.current().kind == tk_l_paren() {
       self.bump()
       self.skip_newlines()
@@ -2013,6 +2051,9 @@ pub class Parser {
     if k == tk_release() {
       return self.parse_release()
     }
+    if k == tk_defer() {
+      return self.parse_defer()
+    }
     if k == tk_for() {
       return self.parse_for()
     }
@@ -2034,9 +2075,7 @@ pub class Parser {
       }
       return self.parse_ident_stmt()
     }
-    start = self.current().loc.offset()
     expr = self.parse_expr()
-    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
@@ -2107,14 +2146,11 @@ pub class Parser {
       s.op = tk_eq()
       return s
     }
-    start = self.current().loc.offset()
     expr = self.parse_expr()
-    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
   pub fn finish_stmt(expr: Expr): Stmt {
-    start = self.stmt_start_now
     expr2 = maybe_trailing_block(expr)
     self.skip_newlines_if_continuing()
     if token_is_assign_op(self.current().kind) {
@@ -2136,11 +2172,6 @@ pub class Parser {
     // nothing (`Void | E`), the guard of an assignment without a name.
     if self.current().kind == tk_else() {
       return stmt_expr(expr2.loc, self.parse_else_guard(expr2))
-    }
-    if expr2.kind == ex_call() {
-      if b = expr2.block {
-        self.stmt_starts["${b.loc.offset()}"] = start
-      }
     }
     stmt_expr(expr2.loc, expr2)
   }
@@ -2177,6 +2208,10 @@ pub class Parser {
     bin
   }
 
+  // A block after a call, a field or a function's name, on the line the
+  // call ends on (`f(a) { ... }`, `xs.each { |x| ... }`): not Avant. It is
+  // refused, with a hint naming the lambda form, and skipped; a block on
+  // the next line is a statement of its own.
   pub fn maybe_trailing_block(expr: Expr): Expr {
     if expr.kind == ex_unary() {
       if inner = expr.inner {
@@ -2184,9 +2219,6 @@ pub class Parser {
       }
       return expr
     }
-    // A trailing block starts on the line its call ends on: a block on the
-    // next line is a statement of its own (a lambda as a value), never
-    // the block of the call or field read before it.
     i = self.index
     if i >= self.tokens.size {
       return expr
@@ -2194,29 +2226,31 @@ pub class Parser {
     if self.tokens[i].kind != tk_l_brace() {
       return expr
     }
-    // A function's bare name followed by a block is a call with that block,
-    // as a qualified or a method name is (`twice { |x| x + 1 }` as
-    // `m.twice { |x| x + 1 }`); a capitalized name is a type's.
+    // A capitalized name is a type's (a struct literal).
     bare_fn = expr.kind == ex_name() && expr.type_args.size == 0 && expr.ident.size > 0 && !(expr.ident[0] >= 65 && expr.ident[0] <= 90)
     if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() && !bare_fn {
       return expr
     }
-    head = !self.allow_struct_lit
-    tb = self.parse_trailing_block()
-    self.pipe_blocks.push(tb)
-    self.pipe_heads.push(head)
-    got = attach_block(expr, tb)
-    // A postfix `?` right after the block passes the call's failure up
-    // (`m.try_with { |n| n += 1 }?`), as after any call.
-    if self.current().kind == tk_question() {
-      at = self.bump().loc
-      tr = Expr.new(ex_try(), at)
-      tr.inner = got
-      return parse_infix_after(tr)
+    // `x = gc.hold { ... }`: the checker says that gc.hold is a statement.
+    hold = i >= 3 && self.tokens[i - 1].value == "hold" && self.tokens[i - 2].kind == tk_dot() && self.tokens[i - 3].value == "gc"
+    if hold {
+      tb = self.parse_trailing_block()
+      call = Expr.new(ex_call(), tb.loc)
+      call.callee = "hold"
+      if obj = expr.object {
+        call.receiver = obj
+      }
+      call.block = tb
+      return call
     }
-    // A binary operator after the block takes the call as its left
-    // operand (`xs.map { |v| v } ?? fallback`).
-    parse_infix_after(got)
+    if !self.pipes_after_brace(i) {
+      fail(self.tokens[i].loc, block_after_call_message())
+    }
+    _ = self.parse_trailing_block()
+    if self.current().kind == tk_question() {
+      self.bump()
+    }
+    parse_infix_after(expr)
   }
 
   pub fn if_assign_ahead: Bool {
@@ -2320,6 +2354,25 @@ pub class Parser {
     s
   }
 
+  // `defer { body }`: the body runs on every way out of the block that
+  // holds the statement (checker check_defer, mir lower_defer).
+  pub fn parse_defer: Stmt {
+    loc = self.bump().loc
+    self.skip_newlines()
+    if self.current().kind != tk_l_brace() {
+      fail(loc, "defer takes a block, `defer { ... }`, run on every way out of the block around it; `defer` is a keyword and cannot be a name")
+      while self.current().kind != tk_newline() && self.current().kind != tk_eof() && self.current().kind != tk_r_brace() {
+        self.bump()
+      }
+      return stmt_expr(loc, Expr.new(ex_nil(), loc))
+    }
+    body = self.parse_block()
+    self.defers_seen += 1
+    s = Stmt.new(st_defer(), loc)
+    s.body = body
+    s
+  }
+
   // `release(place)`: a statement, the shape of `pin(x)` without a
   // block.
   pub fn parse_release: Stmt {
@@ -2415,123 +2468,61 @@ pub class Parser {
   }
 
   pub fn for_inc(loc: Location, name: String): Stmt {
-    for_inc_by(loc, name, 1u64)
+    for_inc_by(loc, name, 1)
   }
 
   pub fn for_inc_by(loc: Location, name: String, by: UInt64): Stmt {
     for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, by)))
   }
 
-  // The step of a `for` loop to its next value: the counter's increment;
-  // over an inclusive range (`a..=b`), a break after the last value
-  // first, so a range that ends at the type's maximum never computes the
-  // value after it (the increment would overflow and trap).
-  // With a step `by k` (k above 1), the break comes when fewer than k
-  // values are left before the end (`end - i < k`), which never
-  // overflows either: i is at most the end.
+  // The step a range's body takes (Parser.for_last and for_by, read
+  // where the body is walked).
+  pub fn range_step_now: RangeStep {
+    rs = RangeStep.new()
+    rs.last = self.for_last
+    rs.by = self.for_by
+    rs
+  }
+
   pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
-    if self.for_last.size > 0 {
-      stop = Stmt.new(st_if(), loc)
-      if self.for_by == 1u64 {
-        stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
-      } else {
-        left = for_binary(loc, tk_minus(), for_name_expr(loc, self.for_last), for_name_expr(loc, counter))
-        stop.cond = for_binary(loc, tk_less(), left, for_int_expr(loc, self.for_by))
-      }
-      stop.then_body.push(Stmt.new(st_break(), loc))
-      into.push(stop)
-    }
-    inc = for_inc_by(loc, counter, self.for_by)
-    inc.step = true
-    into.push(inc)
+    range_step_into(range_step_now(), loc, counter, into)
   }
 
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
-    out: Array(Stmt) = []
-    for s in body {
-      if s.kind == st_continue() {
-        for_step(loc, counter, out)
-        out.push(s)
-      } else if s.kind == st_while() {
-        // A nested loop's `continue` is its own.
-        out.push(s)
-      } else {
-        if s.kind == st_if() {
-          s.then_body = for_advance(s.then_body, counter, loc)
-          s.else_body = for_advance(s.else_body, counter, loc)
-          for el in s.pre {
-            for_advance_opt(el.cond, counter, loc)
-          }
-        }
-        if s.kind == st_pin() || s.kind == st_hold() {
-          s.body = for_advance(s.body, counter, loc)
-        }
-        for_advance_opt(s.expr, counter, loc)
-        for_advance_opt(s.value, counter, loc)
-        for_advance_opt(s.target, counter, loc)
-        for_advance_opt(s.cond, counter, loc)
-        out.push(s)
-      }
-    }
-    out
+    range_advance(range_step_now(), body, counter, loc)
   }
 
-  // The statements an expression holds (a switch's arms; `?? continue`
-  // and an `if` used as a value), outside lambdas.
-  pub fn for_advance_opt(e: Expr?, counter: String, loc: Location) {
-    if x = e {
-      for_advance_expr(x, counter, loc)
-    }
-  }
-
-  pub fn for_advance_expr(e: Expr, counter: String, loc: Location) {
-    if e.kind == ex_lambda() {
-      return
-    }
-    if e.kind == ex_switch() {
-      for ci in 0..e.cases.size {
-        e.cases[ci].body = for_advance(e.cases[ci].body, counter, loc)
-      }
-      e.else_body = for_advance(e.else_body, counter, loc)
-    }
-    for_advance_opt(e.left, counter, loc)
-    for_advance_opt(e.right, counter, loc)
-    for_advance_opt(e.object, counter, loc)
-    for_advance_opt(e.cond, counter, loc)
-    for_advance_opt(e.receiver, counter, loc)
-    for_advance_opt(e.inner, counter, loc)
-    for a in e.args {
-      for_advance_expr(a, counter, loc)
-    }
-    for x in e.elems {
-      for_advance_expr(x, counter, loc)
-    }
-    for f in e.field_exprs {
-      for_advance_expr(f, counter, loc)
-    }
-    // A `Mutex.with` block runs in place, and its `continue` is the
-    // enclosing loop's; a builtin's block (`each`) is a loop of its own,
-    // like a nested while.
-    if e.callee == "with" || e.callee == "try_with" {
-      if b = e.block {
-        b.body = for_advance(b.body, counter, loc)
-      }
-    }
-  }
-
-  // `by k` after a range: k a positive integer literal, the stride (the
-  // values a, a + k, a + 2k, ... inside the range).
-  pub fn parse_for_by: UInt64 {
-    by_tok = self.bump()
+  // `by k` after a range: k an integer literal or a module constant
+  // (`by 4`, `by -1`, `by chunk`, `by -m.step`), the stride (the values
+  // a, a + k, a + 2k, ... inside the range; a step down gives the same
+  // values in reverse). A literal's sign and size are checked here; a
+  // constant's when the checker knows its value.
+  pub fn parse_for_by: RangeBy {
+    rb = RangeBy.new()
+    self.bump()
     self.skip_newlines()
-    neg = false
     if self.current().kind == tk_minus() {
-      neg = true
+      rb.down = true
       self.bump()
     }
+    if self.current().kind == tk_ident() {
+      name_tok = self.bump()
+      e = Expr.new(ex_name(), name_tok.loc)
+      e.ident = name_tok.value
+      if self.current().kind == tk_dot() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_ident() {
+        self.bump()
+        field_tok = self.bump()
+        q = Expr.new(ex_field(), name_tok.loc)
+        q.object = e
+        q.ident = field_tok.value
+        e = q
+      }
+      rb.named = e
+      return rb
+    }
     if self.current().kind != tk_integer() {
-      fail(self.current().loc, "for ... by takes a positive integer literal (by 2): the step is fixed when the loop is compiled; for a step computed at run time, use a while loop")
-      return 1u64
+      fail(self.current().loc, "for ... by takes an integer literal or a module constant (by 2, by -1, by step): the step is fixed when the loop is compiled; for a step computed at run time, use a while loop")
+      return rb
     }
     tok = self.bump()
     ok = parse_int_tok(tok)
@@ -2539,21 +2530,18 @@ pub class Parser {
     lit.int_bits = self.int_bits
     lit.int_suffix = self.int_suffix
     if !ok {
-      return 1u64
+      return rb
     }
-    if neg {
-      fail(by_tok.loc, "for ... by -k: a step down is not supported; walk down with a while loop (i = n - 1, while i >= 0 { ...; i -= 1 })")
-      return 1u64
+    if lit.int_bits == 0 {
+      fail(lit.loc, "for ... by 0 would never move: the step is a nonzero integer")
+      return rb
     }
-    if lit.int_bits == 0u64 {
-      fail(lit.loc, "for ... by 0 would never move: the step is a positive integer")
-      return 1u64
+    if lit.int_bits > 9223372036854775807 || lit.int_suffix.size > 0 {
+      fail(lit.loc, "for ... by takes an Int literal")
+      return rb
     }
-    if lit.int_bits > 9223372036854775807u64 || lit.int_suffix.size > 0 {
-      fail(lit.loc, "for ... by takes a positive Int literal")
-      return 1u64
-    }
-    lit.int_bits
+    rb.by = lit.int_bits
+    rb
   }
 
   pub fn parse_for: Stmt {
@@ -2594,13 +2582,22 @@ pub class Parser {
       if pos_name.size > 0 {
         fail(loc, "for ${pos_name}, ${var_tok.value} in a range: a range's loop has one variable, its value (for ${var_tok.value} in ...)")
       }
-      by = 1u64
+      rb = RangeBy.new()
       if self.current().kind == tk_ident() && self.current().value == "by" {
-        by = self.parse_for_by()
+        rb = self.parse_for_by()
         self.skip_newlines()
       }
+      by = rb.by
+      seen_range = self.defers_seen
       raw_body = self.parse_block()
       end_name = "__for${id}_end"
+      pending = false
+      if _ = rb.named {
+        pending = true
+      }
+      if rb.down || pending {
+        return range_loop(loc, var_tok.value, first, end_expr, end_name, incl, rb, raw_body, self.defers_seen > seen_range)
+      }
       s = Stmt.new(st_while(), loc)
       s.for_kind = 1
       s.pre.push(for_assign(loc, var_tok.value, first))
@@ -2613,16 +2610,26 @@ pub class Parser {
       }
       s.cond = for_binary(loc, op, for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
       self.for_by = by
-      s.body = for_advance(raw_body, var_tok.value, loc)
-      for_step(loc, var_tok.value, s.body)
+      if self.defers_seen > seen_range {
+        // A body with a defer: its deferred blocks run before the step,
+        // which `continue` reaches as the body's end does.
+        s.body = raw_body
+        n_range = s.body.size
+        for_step(loc, var_tok.value, s.body)
+        s.latch = s.body.size - n_range
+      } else {
+        s.body = for_advance(raw_body, var_tok.value, loc)
+        for_step(loc, var_tok.value, s.body)
+      }
       self.for_last = ""
-      self.for_by = 1u64
+      self.for_by = 1
       return s
     }
     if self.current().kind == tk_ident() && self.current().value == "by" {
       fail(self.current().loc, "for ... by takes a range (for i in a..b by 2); to visit every k-th element, walk the positions: for i in 0..xs.size by k")
       self.bump()
     }
+    seen_walk = self.defers_seen
     raw_body2 = self.parse_block()
     self.for_last = ""
     xs_name = "__for${id}_xs"
@@ -2634,7 +2641,7 @@ pub class Parser {
     s2 = Stmt.new(st_while(), loc)
     s2.for_kind = 2
     s2.pre.push(for_assign(loc, xs_name, first))
-    s2.pre.push(for_assign(loc, idx_name, for_int_expr(loc, 0u64)))
+    s2.pre.push(for_assign(loc, idx_name, for_int_expr(loc, 0)))
     size_expr = Expr.new(ex_field(), loc)
     size_expr.object = for_name_expr(loc, xs_name)
     size_expr.ident = "size"
@@ -2645,18 +2652,23 @@ pub class Parser {
     elem_set = for_assign(loc, var_tok.value, elem_expr)
     elem_set.for_kind = 4
     s2.body.push(elem_set)
-    adv = for_advance(raw_body2, idx_name, loc)
-    bi = 0
-    while bi < adv.size {
-      s2.body.push(adv[bi])
-      bi += 1
+    latched = self.defers_seen > seen_walk
+    if latched {
+      s2.body.concat(raw_body2)
+    } else {
+      adv = for_advance(raw_body2, idx_name, loc)
+      s2.body.concat(adv)
     }
+    n_walk = s2.body.size
     if pos_name.size > 0 {
       // A step, as a range's: a lambda that captures the position keeps
       // that iteration's value.
       for_step(loc, idx_name, s2.body)
     } else {
       s2.body.push(for_inc(loc, idx_name))
+    }
+    if latched {
+      s2.latch = s2.body.size - n_walk
     }
     s2
   }
@@ -2842,6 +2854,13 @@ pub class Parser {
       neg = true
     }
     if self.current().kind != tk_integer() {
+      if !neg && self.enum_lit_ahead() {
+        member = self.tokens[self.index + 1].value
+        fail(self.current().loc, "a case label over an enum is its member's bare name: case ${member}, not case :${member}")
+        self.bump()
+        self.bump()
+        return
+      }
       fail(self.current().loc, "case label must be an integer literal")
       return
     }
@@ -2857,7 +2876,7 @@ pub class Parser {
     label.bits = bits
     label.neg = neg
     if neg {
-      label.int_val = (0u64 &- bits).wrap_i()
+      label.int_val = (0 &- bits).wrap_i()
     } else {
       label.int_val = bits.wrap_i()
     }
@@ -2963,6 +2982,12 @@ pub class Parser {
 
   pub fn parse_break: Stmt {
     loc = expect(tk_break()).loc
+    k = self.current().kind
+    if !(k == tk_newline() || k == tk_r_brace() || k == tk_eof()) {
+      // break 2, break outer: one message at the word, not a dropped value
+      fail(self.current().loc, "break takes nothing after it: it leaves the loop it is in, and labelled or counted breaks (break 2, break outer) are not in the language; to leave several loops, put them in a function and return from it")
+      sync_stmt()
+    }
     Stmt.new(st_break(), loc)
   }
 
@@ -2999,10 +3024,9 @@ pub class Parser {
     left
   }
 
-  // An operand already parsed, a call with its trailing block, continued
-  // by the operators after it as parse_expr_min continues its first
-  // operand (`m.try_with { |n| n += 1 } ?? return`): the block is
-  // attached after the call's expression, which stops at the `{`.
+  // An operand already parsed (a call whose refused block was skipped),
+  // continued by the operators after it as parse_expr_min continues its
+  // first operand.
   pub fn parse_infix_after(left: Expr): Expr {
     if self.current().kind != tk_newline() && infix_prec(self.current().kind) < 0 {
       return left
@@ -3058,6 +3082,15 @@ pub class Parser {
         right.else_body.push(st)
       } else {
         right = parse_expr_min(next_prec)
+        if op.kind == tk_question_question() && ast_is_exit_call(right) {
+          // `x ?? panic("why")`, `?? exit(2)`: a call that never
+          // returns leaves as `?? return` does, held the same way.
+          st = stmt_expr(right.loc, right)
+          right = Expr.new(ex_switch(), st.loc)
+          right.op = tk_return()
+          right.has_else = true
+          right.else_body.push(st)
+        }
       }
       bin = Expr.new(ex_binary(), op.loc)
       bin.op = op.kind
@@ -3093,7 +3126,7 @@ pub class Parser {
       self.skip_newlines()
       if incl {
         one = Expr.new(ex_int(), op_loc)
-        one.int_bits = 1u64
+        one.int_bits = 1
         sum = Expr.new(ex_binary(), op_loc)
         sum.op = tk_plus()
         sum.left = stop
@@ -3128,9 +3161,12 @@ pub class Parser {
             call.splice = sp
             cur = call
           } else {
+            // Written without parentheses: the name the splice gives is
+            // held to the rule for a written name (a method takes them).
             fa = Expr.new(ex_field(), at)
             fa.object = cur
             fa.splice = sp
+            fa.bare_name = sp.loc
             cur = fa
           }
         } else {
@@ -3190,7 +3226,7 @@ pub class Parser {
         if self.current().kind == tk_dot_dot() || self.current().kind == tk_dot_dot_eq() {
           // `xs[..stop]`: a slice from the start.
           zero = Expr.new(ex_int(), at)
-          zero.int_bits = 0u64
+          zero.int_bits = 0
           cur = self.parse_slice_rest(cur, at, zero)
         } else {
           idxe = self.parse_expr()
@@ -3266,6 +3302,14 @@ pub class Parser {
     }
     if k == tk_interp_open() {
       return self.parse_interpolated_string()
+    }
+    if self.enum_lit_ahead() {
+      // `:write`, an enum's member where an enum is expected.
+      self.bump()
+      nt = self.bump()
+      e = Expr.new(ex_enum_lit(), tok.loc)
+      e.ident = nt.value
+      return e
     }
     if k == tk_true() {
       self.bump()
@@ -3379,10 +3423,7 @@ pub class Parser {
     }
     if k == tk_l_brace() && self.lambda_ahead() {
       e = Expr.new(ex_lambda(), tok.loc)
-      head = !self.allow_struct_lit
       lb = self.parse_trailing_block()
-      self.pipe_blocks.push(lb)
-      self.pipe_heads.push(head)
       e.block = lb
       return e
     }
@@ -3396,6 +3437,13 @@ pub class Parser {
     }
     fail(tok.loc, "expected an expression, found ${token_name(k)}")
     dummy_expr(tok.loc)
+  }
+
+  // Whether the `{` at index i is followed by pipes (line breaks
+  // between them skipped).
+  pub fn pipes_after_brace(i: Int): Bool {
+    j = self.skip_nl_at(i + 1)
+    j < self.tokens.size && (self.tokens[j].kind == tk_pipe() || self.tokens[j].kind == tk_pipe_pipe())
   }
 
   pub fn lambda_ahead: Bool {
@@ -3490,7 +3538,7 @@ pub class Parser {
     if ahead.kind == tk_dot() {
       e = Expr.new(ex_name(), tok.loc)
       e.ident = tok.value
-      e.mod_name = qual
+      e.mod_name = whole_qualifier(qual, tok.loc)
       e.type_args = args
       // The same text is also a call followed by a member when the name is
       // not a type (`get(ty).bits`, `f(job.flags).split(" ")`): only the
@@ -3561,6 +3609,22 @@ pub class Parser {
     e
   }
 
+  // `Array(T)`, `Hash(K, V)` or `Set(T)` ending an argument (a `,` or
+  // the `)` after it): a type given as an argument, which only
+  // json.decode reads (`json.decode(text, Array(Point))`); the checker
+  // refuses it anywhere else, as before (`Array(T) only supports .new`).
+  pub fn type_argument_end: Bool {
+    k = self.current().kind
+    k == tk_comma() || k == tk_r_paren()
+  }
+
+  pub fn type_as_argument(tok: Token, args: Array(TypeName)): Expr {
+    e = Expr.new(ex_name(), tok.loc)
+    e.ident = tok.value
+    e.type_args = args
+    e
+  }
+
   pub fn parse_array_new(tok: Token): Expr {
     expect(tk_l_paren())
     self.skip_newlines()
@@ -3568,6 +3632,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [elem])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()
@@ -3589,8 +3656,8 @@ pub class Parser {
     }
     expect(tk_r_paren())
     // `Array(T).new(n, (i) { ... })`: a lambda written there builds each
-    // element (the call named "Array.new" with the block, as the older
-    // `Array(T).new(n) { |i| ... }`); an array of n copies of one function
+    // element (the call named "Array.new" with the block); an array of n
+    // copies of one function
     // value takes it from a name.
     if e.elems.size == 1 && e.elems[0].kind == ex_lambda() {
       if lb = e.elems[0].block, lb.paren {
@@ -3614,6 +3681,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [elem])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()
@@ -3645,6 +3715,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [key, val])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()
@@ -3653,25 +3726,44 @@ pub class Parser {
       fail(meth.loc, "Hash(K, V) only supports .new")
     }
     bare: Location? = meth.loc
+    // `Hash(K, V).new(capacity)`: room for that many entries.
+    cap: Expr? = nil
     if self.current().kind == tk_l_paren() {
       self.bump()
       self.skip_newlines()
+      if self.current().kind != tk_r_paren() {
+        cap = self.parse_expr()
+        self.skip_newlines()
+      }
       expect(tk_r_paren())
       bare = nil
     }
     e = Expr.new(ex_hash_new(), tok.loc)
+    e.size_expr = cap
     e.key_type = key
     e.val_type = val
     e.bare_name = bare
     e
   }
 
+  // A colon and a name written together (`:write`): an enum's member
+  // written short.
+  pub fn enum_lit_ahead: Bool {
+    tok = self.current()
+    if tok.kind != tk_colon() || self.index + 1 >= self.tokens.size {
+      return false
+    }
+    nt = self.tokens[self.index + 1]
+    nt.kind == tk_ident() && nt.loc.line() == tok.loc.line() && nt.loc.offset() == tok.loc.offset() + 1
+  }
+
   pub fn parse_array_literal: Expr {
     loc = expect(tk_l_bracket()).loc
     self.skip_newlines()
     e = Expr.new(ex_array(), loc)
-    // `[:]`: the empty hash literal.
-    if self.current().kind == tk_colon() {
+    // `[:]`: the empty hash literal (`[:read]` is an array of an enum's
+    // member written short).
+    if self.current().kind == tk_colon() && !self.enum_lit_ahead() {
       self.bump()
       self.skip_newlines()
       expect(tk_r_bracket())
@@ -3750,7 +3842,7 @@ pub class Parser {
     self.skip_newlines()
     e = Expr.new(ex_struct(), name.loc)
     e.type_name = name.value
-    e.mod_name = qual
+    e.mod_name = whole_qualifier(qual, name.loc)
     while true {
       if self.current().kind == tk_r_brace() {
         break
@@ -3853,7 +3945,70 @@ pub class Parser {
       self.arg_names = []
       return lam
     }
+    if !self.allow_struct_lit && callee.size > 0 && !(callee[0] >= 65 && callee[0] <= 90) {
+      if shown = self.head_shorthand_at(self.index) {
+        // `if xs.any (x) { x > 2 } {`: in a statement's head the `{`
+        // begins the body, so the shorthand cannot stand there. Said at
+        // the call, and the lambda read as the call's one argument so the
+        // rest of the statement parses as written.
+        fail(self.current().loc, "a lambda in ${self.lit_place} goes inside the call's parentheses: write ${callee}((${shown}) { ... })")
+        self.allow_struct_lit = true
+        lam2: Array(Expr) = [self.parse_paren_lambda()]
+        self.allow_struct_lit = false
+        self.arg_names = []
+        return lam2
+      }
+    }
     self.parse_arg_list()
+  }
+
+  // In a statement's head, whether the `(` at index i0 begins the lambda
+  // shorthand: a lambda's parameter list and body, closed on its line and
+  // followed there by more of the head (the body's `{`, an operator), not
+  // by what may follow a statement's body (the end of the line, `else`, a
+  // closing bracket: a call with arguments, then the body). The parameter list as written, for the message
+  // (`x`, `a, b`, or `...` for a typed one); nil when it is not one.
+  pub fn head_shorthand_at(i0: Int): String? {
+    brace = self.lambda_head_at(i0)
+    if brace < 0 {
+      return nil
+    }
+    n = self.tokens.size
+    level = 0
+    i = brace
+    while i < n {
+      k = self.tokens[i].kind
+      if k == tk_l_brace() {
+        level += 1
+      } else if k == tk_r_brace() {
+        level -= 1
+        if level == 0 {
+          break
+        }
+      }
+      i += 1
+    }
+    if i + 1 >= n {
+      return nil
+    }
+    after = self.tokens[i + 1].kind
+    if after == tk_newline() || after == tk_else() || after == tk_eof() || after == tk_r_brace() || after == tk_r_paren() || after == tk_r_bracket() || after == tk_comma() {
+      return nil
+    }
+    b = Buf.new()
+    j = i0 + 1
+    while j < n && self.tokens[j].kind != tk_r_paren() {
+      t = self.tokens[j]
+      if t.kind == tk_ident() {
+        b.push_str(t.value)
+      } else if t.kind == tk_comma() {
+        b.push_str(", ")
+      } else if t.kind != tk_newline() {
+        return "..."
+      }
+      j += 1
+    }
+    b.to_s()
   }
 
   // Whether the `(` at the current token begins a lambda: a parameter
@@ -3874,7 +4029,7 @@ pub class Parser {
   // The index of the `{` of a lambda whose parameter list opens at the
   // `(` at index i, or -1: `()`, names with or without `: Type`, then an
   // optional `: Result`, then `{` on the line the list ends on, not
-  // followed by pipes (`f(a) { |x| ... }` is a call with a block).
+  // followed by pipes (`f(a) { |x| ... }`, a block in pipes, refused).
   // Syntactic only: () and a list of two or more names are not
   // expressions (there are no tuples), a typed list is not either, and
   // for one bare name the `{` decides.
@@ -4029,6 +4184,9 @@ pub class Parser {
     loc = expect(tk_l_brace()).loc
     self.skip_newlines()
     block = Block.new(loc)
+    if self.current().kind == tk_pipe() || self.current().kind == tk_pipe_pipe() {
+      fail(loc, pipes_message())
+    }
     if self.current().kind == tk_pipe_pipe() {
       self.bump()
       self.skip_newlines()
@@ -4088,53 +4246,6 @@ pub class Parser {
     }
     lead_check(block.body)
     expect(tk_r_brace())
-  }
-
-  pub fn attach_block(left: Expr, block: Block): Expr {
-    if left.kind == ex_call() {
-      if b = left.block {
-        fail(block.loc, "call already has a block")
-        return left
-      }
-      left.block = block
-      left.bare_name = nil
-      return left
-    }
-    if left.kind == ex_field() {
-      call = Expr.new(ex_call(), block.loc)
-      call.callee = left.ident
-      if obj = left.object {
-        call.receiver = obj
-      }
-      call.block = block
-      return call
-    }
-    if left.kind == ex_name() {
-      call = Expr.new(ex_call(), left.loc)
-      call.callee = left.ident
-      call.block = block
-      return call
-    }
-    if left.kind == ex_array_new() {
-      // `Array(T).new(n) { |i| ... }`: the block builds each element. A
-      // call named "Array.new" (no program can write that name) with the
-      // size as its argument, T as its elem_type and the block, so every
-      // walk that knows a call with a block knows this form.
-      if left.elems.size > 0 {
-        fail(block.loc, "Array(T).new(n, value) takes no block; the block form builds each element: Array(T).new(n) { |i| ... }")
-        return left
-      }
-      call = Expr.new(ex_call(), left.loc)
-      call.callee = "Array.new"
-      call.elem_type = left.elem_type
-      if sz = left.size_expr {
-        call.args.push(sz)
-      }
-      call.block = block
-      return call
-    }
-    fail(block.loc, "trailing block must follow a call")
-    left
   }
 
   pub fn parse_arg_list: Array(Expr) {
@@ -4255,4 +4366,291 @@ pub fn error_self_field(loc: Location, name: String): Expr {
   fa.object = me
   fa.ident = name
   fa
+}
+
+// The step of a range `for` (`for i in a..b by k`), as its body is
+// walked: `last` is the inclusive range's end ("" for `..`), `by` the
+// step's size, `down` a step down (`by -k`), whose values are those of
+// `by k` in reverse, ending at `lo`, the range's start.
+pub class RangeStep {
+  pub last: String = ""
+  pub by: UInt64 = 1
+  pub down: Bool = false
+  pub lo: String = ""
+}
+
+pub fn range_name(loc: Location, name: String): Expr {
+  e = Expr.new(ex_name(), loc)
+  e.ident = name
+  e
+}
+
+pub fn range_int(loc: Location, bits: UInt64): Expr {
+  e = Expr.new(ex_int(), loc)
+  e.int_bits = bits
+  e
+}
+
+pub fn range_binary(loc: Location, op: Int, left: Expr, right: Expr): Expr {
+  e = Expr.new(ex_binary(), loc)
+  e.op = op
+  e.left = left
+  e.right = right
+  e
+}
+
+pub fn range_call0(loc: Location, recv: Expr, name: String): Expr {
+  e = Expr.new(ex_call(), loc)
+  e.callee = name
+  e.receiver = recv
+  e
+}
+
+pub fn range_assign(loc: Location, name: String, value: Expr): Stmt {
+  s = Stmt.new(st_assign(), loc)
+  s.target = range_name(loc, name)
+  s.value = value
+  s.op = tk_eq()
+  s.for_kind = 3
+  s
+}
+
+// The step of a `for` loop to its next value: the counter's increment;
+// over an inclusive range (`a..=b`), a break after the last value
+// first, so a range that ends at the type's maximum never computes the
+// value after it (the increment would overflow and trap).
+// With a step `by k` (k above 1), the break comes when fewer than k
+// values are left before the end (`end - i < k`), which never
+// overflows either: i is at most the end.
+// A step down breaks at the range's start (`i == lo`), or when fewer
+// than k values are left above it (`(i &- lo)` read as a UInt64, below
+// k: the distance is exact even beyond Int's range), and then
+// subtracts k, which never goes below the start.
+pub fn range_step_into(rs: RangeStep, loc: Location, counter: String, into: Array(Stmt)) {
+  if rs.down {
+    stop0 = Stmt.new(st_if(), loc)
+    if rs.by == 1 {
+      stop0.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.lo))
+    } else {
+      dist = range_call0(loc, range_binary(loc, tk_amp_minus(), range_name(loc, counter), range_name(loc, rs.lo)), "wrap_u64")
+      stop0.cond = range_binary(loc, tk_less(), dist, range_int(loc, rs.by))
+    }
+    stop0.then_body.push(Stmt.new(st_break(), loc))
+    into.push(stop0)
+    dec = range_assign(loc, counter, range_binary(loc, tk_minus(), range_name(loc, counter), range_int(loc, rs.by)))
+    dec.step = true
+    into.push(dec)
+    return
+  }
+  if rs.last.size > 0 {
+    stop = Stmt.new(st_if(), loc)
+    if rs.by == 1 {
+      stop.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.last))
+    } else {
+      left = range_binary(loc, tk_minus(), range_name(loc, rs.last), range_name(loc, counter))
+      stop.cond = range_binary(loc, tk_less(), left, range_int(loc, rs.by))
+    }
+    stop.then_body.push(Stmt.new(st_break(), loc))
+    into.push(stop)
+  }
+  inc = range_assign(loc, counter, range_binary(loc, tk_plus(), range_name(loc, counter), range_int(loc, rs.by)))
+  inc.step = true
+  into.push(inc)
+}
+
+pub fn range_advance(rs: RangeStep, body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
+  out: Array(Stmt) = []
+  for s in body {
+    if s.kind == st_continue() {
+      range_step_into(rs, loc, counter, out)
+      out.push(s)
+    } else if s.kind == st_while() {
+      // A nested loop's `continue` is its own.
+      out.push(s)
+    } else {
+      if s.kind == st_if() {
+        s.then_body = range_advance(rs, s.then_body, counter, loc)
+        s.else_body = range_advance(rs, s.else_body, counter, loc)
+        for el in s.pre {
+          range_advance_opt(rs, el.cond, counter, loc)
+        }
+      }
+      if s.kind == st_pin() || s.kind == st_hold() {
+        s.body = range_advance(rs, s.body, counter, loc)
+      }
+      range_advance_opt(rs, s.expr, counter, loc)
+      range_advance_opt(rs, s.value, counter, loc)
+      range_advance_opt(rs, s.target, counter, loc)
+      range_advance_opt(rs, s.cond, counter, loc)
+      out.push(s)
+    }
+  }
+  out
+}
+
+// The statements an expression holds (a switch's arms; `?? continue`
+// and an `if` used as a value), outside lambdas.
+pub fn range_advance_opt(rs: RangeStep, e: Expr?, counter: String, loc: Location) {
+  if x = e {
+    range_advance_expr(rs, x, counter, loc)
+  }
+}
+
+pub fn range_advance_expr(rs: RangeStep, e: Expr, counter: String, loc: Location) {
+  if e.kind == ex_lambda() {
+    return
+  }
+  if e.kind == ex_switch() {
+    for ci in 0..e.cases.size {
+      e.cases[ci].body = range_advance(rs, e.cases[ci].body, counter, loc)
+    }
+    e.else_body = range_advance(rs, e.else_body, counter, loc)
+  }
+  range_advance_opt(rs, e.left, counter, loc)
+  range_advance_opt(rs, e.right, counter, loc)
+  range_advance_opt(rs, e.object, counter, loc)
+  range_advance_opt(rs, e.cond, counter, loc)
+  range_advance_opt(rs, e.receiver, counter, loc)
+  range_advance_opt(rs, e.inner, counter, loc)
+  for a in e.args {
+    range_advance_expr(rs, a, counter, loc)
+  }
+  for x in e.elems {
+    range_advance_expr(rs, x, counter, loc)
+  }
+  for f in e.field_exprs {
+    range_advance_expr(rs, f, counter, loc)
+  }
+  // A `Mutex.with` block runs in place, and its `continue` is the
+  // enclosing loop's; a builtin's block (`each`) is a loop of its own,
+  // like a nested while.
+  if e.callee == "with" || e.callee == "try_with" {
+    if b = e.block {
+      b.body = range_advance(rs, b.body, counter, loc)
+    }
+  }
+}
+
+// A range `for`'s `by`, as parsed: a literal's size and sign, or the
+// constant it names (`named`), whose value the checker reads.
+pub class RangeBy {
+  pub by: UInt64 = 1
+  pub down: Bool = false
+  pub named: Expr? = nil
+}
+
+pub fn range_kind_pending: Int { 10 }
+
+// A range `for` with a step down (`by -k`) or a constant step (`by
+// step`). A step named by a constant is a loop of for_kind 10 until the
+// checker knows its value (range_resolve): its set-up stores, the body
+// as written, the step in `expr` (negated for `by -step`) and the
+// range's form in `op`. A literal step down is built at once: the
+// values of `by k` in reverse, from the last one inside the range down
+// to its start, which is always visited (a non-empty range). The first
+// value is computed only for a range that is not empty, so an empty one
+// computes nothing that traps; the loop runs while the range is not
+// empty and leaves by its step's break at the start.
+pub fn range_loop(loc: Location, var: String, first: Expr, end_expr: Expr, end_name: String, incl: Bool, rb: RangeBy, raw_body: Array(Stmt), latched: Bool): Stmt {
+  s = Stmt.new(st_while(), loc)
+  s.pre.push(range_assign(loc, var, first))
+  s.pre.push(range_assign(loc, end_name, end_expr))
+  if named = rb.named {
+    s.for_kind = range_kind_pending()
+    step = named
+    if rb.down {
+      step = Expr.new(ex_unary(), named.loc)
+      step.op = tk_minus()
+      step.inner = named
+    }
+    s.expr = step
+    s.op = if incl { tk_dot_dot_eq() } else { tk_dot_dot() }
+    yes = Expr.new(ex_bool(), loc)
+    yes.bool_val = true
+    s.cond = yes
+    s.body = raw_body
+    // A body with a defer takes its step as a latch (below); 1 marks it
+    // until the step is built.
+    s.latch = if latched { 1 } else { 0 }
+    return s
+  }
+  range_build(s, loc, var, end_name, incl, rb.by, rb.down, raw_body, latched)
+  s
+}
+
+// Fills s (a range loop with its two set-up stores) with the loop of
+// step `by` (down when `down`): the same loop the parser builds for a
+// literal step.
+// A body with a defer (latched) keeps its `continue`s as written: the
+// step is the body's last statements, its latch, where `continue` goes
+// after the body's deferred blocks have run.
+pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: Bool, by: UInt64, down: Bool, raw_body: Array(Stmt), latched: Bool) {
+  s.for_kind = 1
+  s.expr = nil
+  s.op = 0
+  s.latch = 0
+  rs = RangeStep.new()
+  rs.by = by
+  op = if incl { tk_less_eq() } else { tk_less() }
+  if !down {
+    if incl {
+      rs.last = end_name
+    }
+    s.cond = range_binary(loc, op, range_name(loc, var), range_name(loc, end_name))
+    range_body(s, rs, raw_body, var, loc, latched)
+    return
+  }
+  lo_name = "${end_name}_lo"
+  rs.down = true
+  rs.lo = lo_name
+  s.pre.push(range_assign(loc, lo_name, range_name(loc, var)))
+  // The first value, set only when the range is not empty (so `end -
+  // 1` never goes below Int's least value): the top, the end itself
+  // (`..=`) or the value before it (`..`), lowered to the last value of
+  // the walk up from the start; the distance from the start is read as
+  // a UInt64, exact even beyond Int's range, and what is taken off it
+  // is less than the step, so the value is never below the start.
+  top = range_name(loc, end_name)
+  if !incl {
+    top = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1))
+  }
+  start = top
+  if by != 1 {
+    top2 = range_name(loc, end_name)
+    if !incl {
+      top2 = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1))
+    }
+    dist = range_call0(loc, range_binary(loc, tk_amp_minus(), top2, range_name(loc, lo_name)), "wrap_u64")
+    extra = range_call0(loc, range_binary(loc, tk_percent(), dist, range_int(loc, by)), "wrap_i")
+    start = range_binary(loc, tk_minus(), top, extra)
+  }
+  first_set = Stmt.new(st_if(), loc)
+  first_set.cond = range_binary(loc, op, range_name(loc, lo_name), range_name(loc, end_name))
+  first_set.then_body.push(range_assign(loc, var, start))
+  s.pre.push(first_set)
+  s.cond = range_binary(loc, op, range_name(loc, lo_name), range_name(loc, end_name))
+  range_body(s, rs, raw_body, var, loc, latched)
+}
+
+pub fn range_body(s: Stmt, rs: RangeStep, raw_body: Array(Stmt), var: String, loc: Location, latched: Bool) {
+  if latched {
+    s.body = raw_body
+    n = s.body.size
+    range_step_into(rs, loc, var, s.body)
+    s.latch = s.body.size - n
+    return
+  }
+  s.body = range_advance(rs, raw_body, var, loc)
+  range_step_into(rs, loc, var, s.body)
+}
+
+// The refusal of a block in pipes (`{ |x| ... }`, `{ || ... }`).
+pub fn pipes_message: String {
+  "a block in pipes is not Avant: write a lambda in parentheses, `(x) { ... }` (`xs.each((x) { ... })`, or `xs.each (x) { ... }` when it is the call's only argument); a block that leaves its function with `return`, `break` or `?` is a `for` loop (`for x in xs { ... }`)"
+}
+
+// The refusal of a block written after a call (`f(a) { ... }`,
+// `t.group { ... }`).
+pub fn block_after_call_message: String {
+  "a block after a call is not an argument: pass a lambda in parentheses, `f(a, (x) { ... })`, or `f (x) { ... }` when it is the call's only argument; a block that leaves its function with `return`, `break` or `?` is a `for` loop"
 }

@@ -12,7 +12,7 @@ lib c {
   fun usleep(micros: UInt32): Int32
 }
 
-fn consumer(ch: Channel(Int)): Int {
+fn consumer(ch: sync.Channel(Int)): Int {
   got = 0
   for v in ch {
     got += v
@@ -21,12 +21,12 @@ fn consumer(ch: Channel(Int)): Int {
 }
 
 fn main {
-  n = pool_size()
-  args = argv()
+  n = sync.pool_size()
+  args = process.args()
   if args.size > 1 {
     n = args[1].to_i() ?? n
   }
-  ch = Channel(Int).new(1)
+  ch = sync.Channel(Int).new(1)
   tasks: Array(JoinHandle(Int)) = []
   for i in 0..n {
     tasks.push(spawn {
@@ -51,8 +51,8 @@ fn main {
   puts(total == n)
   // Mutex waiters: tasks waiting for the lock while its holder waits on
   // a channel that a queued task fills.
-  m = Mutex(Int).new(0)
-  gate = Channel(Int).new()
+  m = sync.Mutex(Int).new(0)
+  gate = sync.Channel(Int).new()
   holder = spawn {
     m.with (x) {
       x += gate.recv() ?? 0
@@ -80,3 +80,6 @@ fn main {
   final = m.with (x) { x }
   puts(final == 100 + n)
 }
+
+// Imported last, so no line the goldens name moves.
+import std.process

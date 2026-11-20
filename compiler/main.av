@@ -3,6 +3,7 @@ import bindgen
 import checker
 import checker.builtins
 import checker.clone
+import checker.json_codec
 import checker.equality
 import checker.verbs
 import checker.printing
@@ -18,6 +19,7 @@ import checker.receiver
 import checker.spawn
 import checker.visibility
 import checker.consts
+import checker.const_values
 import diagnostic
 import dump_ast
 import dump_check
@@ -30,7 +32,6 @@ import llvm.glue
 import mir.selftest
 import mir.ir
 import mir.print
-import migrate
 import loader
 import location
 import parser
@@ -44,19 +45,17 @@ import type
 
 pub fn argv_user: Array(String) {
   args = argv()
-  rest: Array(String) = []
-  for i in 1..args.size {
-    rest.push(args[i])
+  if args.size == 0 {
+    return []
   }
-  rest
+  args[1..]
 }
 
 pub fn argv_drop_first(args: Array(String)): Array(String) {
-  rest: Array(String) = []
-  for i in 1..args.size {
-    rest.push(args[i])
+  if args.size == 0 {
+    return []
   }
-  rest
+  args[1..]
 }
 
 pub fn show_usage {
@@ -112,7 +111,7 @@ fn spawns_children(command: String): Bool {
   if command == "compile" || command == "c" || command == "fetch" || command == "bind" || command == "b" {
     return true
   }
-  str_ends(command, ".av")
+  command.ends_with(".av")
 }
 
 // The .av files under dir (format's directory argument), walked like
@@ -129,10 +128,10 @@ fn format_walk(dir: String, into: Array(String)) {
       continue
     }
     path = "${dir}/${name}"
-    if str_ends(dir, "/") {
+    if dir.ends_with("/") {
       path = "${dir}${name}"
     }
-    if str_ends(name, ".av") {
+    if name.ends_with(".av") {
       into.push(path)
     } else if file_exists("${path}/.") && !path_is_link(path) {
       format_walk(path, into)
@@ -166,49 +165,6 @@ fn format_usage_error(message: String) {
 // read or formatted is reported and the status is 1; the other files are
 // still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
-  // --calls rewrites the files in place, so --write beside it (before or
-  // after, in any order) asks for what it does anyway; --check is refused,
-  // and so is any other flag, before a file is read
-  calls = false
-  for a in args {
-    if a == "--calls" {
-      calls = true
-    }
-  }
-  lambdas = false
-  for a in args {
-    if a == "--lambdas" {
-      lambdas = true
-    }
-  }
-  if lambdas {
-    lfiles: Array(String) = []
-    for a in args {
-      if a == "--check" || a == "--calls" {
-        format_usage_error("format --lambdas writes the files it changes; it takes no ${a}")
-      } else if a != "--lambdas" && a != "--write" && str_starts(a, "-") {
-        format_usage_error("unknown format argument ${a}")
-      } else if a != "--lambdas" && a != "--write" {
-        lfiles.push(a)
-      }
-    }
-    driver_format_lambdas(lfiles)
-    return
-  }
-  if calls {
-    files: Array(String) = []
-    for a in args {
-      if a == "--check" {
-        format_usage_error("format --calls writes the files it changes; it takes no --check")
-      } else if a != "--calls" && a != "--write" && str_starts(a, "-") {
-        format_usage_error("unknown format argument ${a}")
-      } else if a != "--calls" && a != "--write" {
-        files.push(a)
-      }
-    }
-    driver_format_calls(files)
-    return
-  }
   check = false
   write = false
   inputs: Array(String) = []
@@ -220,7 +176,7 @@ pub fn driver_format(args: Array(String)) {
       check = true
     } else if a == "--write" {
       write = true
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       format_usage_error("unknown format argument ${a}")
     } else {
       inputs.push(a)
@@ -238,18 +194,14 @@ pub fn driver_format(args: Array(String)) {
   while i < inputs.size {
     p = inputs[i]
     i += 1
-    if str_ends(p, ".av") {
+    if p.ends_with(".av") {
       paths.push(p)
     } else if file_exists("${p}/.") {
       dirs = true
       found: Array(String) = []
       format_walk(p, found)
       format_sort(found)
-      j = 0
-      while j < found.size {
-        paths.push(found[j])
-        j += 1
-      }
+      paths.concat(found)
     } else {
       format_usage_error("format needs a .av file or a directory, not ${p}")
     }
@@ -295,99 +247,6 @@ pub fn driver_format(args: Array(String)) {
     puts("canonical")
   }
   if failed || changed > 0 {
-    diag_exit(1)
-  }
-}
-
-// avant format --calls FILE...: each FILE is checked as a program's root,
-// and every method call the checker meets written without parentheses
-// (`x.name`, a bare `name` on the receiver, `T.new`) gets its `()` in the
-// source file that holds it: the root, a module it imports, the standard
-// library. A builtin read-only property (`size`, `bytes`) and a field
-// read keep their spelling. Only code the checker reaches is rewritten:
-// a generic function is checked for the instances the program makes. A
-// program with errors is still rewritten where it was checked, and the
-// status is then 1. Prints each changed file with its count.
-pub fn driver_format_calls(args: Array(String)) {
-  if args.size == 0 {
-    format_usage_error("format --calls needs a .av file")
-  }
-  paths: Array(String) = []
-  places: Array(Array(Location)) = []
-  names: Array(Array(String)) = []
-  index: Hash(String, Int) = Hash(String, Int).new()
-  failed = false
-  for root in args {
-    loader = Loader.new()
-    if merged = loader.load_root(root) {
-      if e = loader.err {
-        diag_bag(loader.errors)
-        failed = true
-        continue
-      }
-      src = Source.new(root, file_read(root) ?? "")
-      expander = Expander.new(src, merged)
-      expander.expand()
-      if e = expander.err {
-        diag_bag(expander.errors)
-        failed = true
-        continue
-      }
-      checker = Checker.new(src, merged)
-      checker.calls_migrate = true
-      checker.check()
-      if e = checker.err {
-        diag_bag(checker.errors)
-        diag_puts("${root}: the program has errors; the calls in the code checked are rewritten")
-        failed = true
-      }
-      i = 0
-      while i < checker.bare_locs.size {
-        at = checker.bare_locs[i]
-        p = at.path
-        k = index.get(p) ?? -1
-        if k < 0 {
-          k = paths.size
-          index[p] = k
-          paths.push(p)
-          none: Array(Location) = []
-          places.push(none)
-          no_names: Array(String) = []
-          names.push(no_names)
-        }
-        places[k].push(at)
-        names[k].push(checker.bare_names[i])
-        i += 1
-      }
-    } else {
-      diag_bag(loader.errors)
-      failed = true
-    }
-  }
-  k = 0
-  while k < paths.size {
-    p = paths[k]
-    if text = file_read(p) {
-      got = insert_call_parens(text, places[k], names[k])
-      if got.count > 0 {
-        if e = write_failure(file_write(p, got.text)) {
-          diag_puts(e.message())
-          failed = true
-        } else {
-          puts("${p}: ${got.count}")
-        }
-      }
-      if got.missed > 0 {
-        diag_puts("${p}: ${got.missed} calls noted where the text is not their name; left")
-        failed = true
-      }
-    } else {
-      diag_puts("${p}: not a file; ${places[k].size} calls there need their parentheses written by hand")
-      failed = true
-    }
-    k += 1
-  }
-  if failed {
     diag_exit(1)
   }
 }
@@ -526,16 +385,8 @@ fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
   lj.inline_fast = llvm_inline_fast()
   lj.cpu = llvm_cpu_parse(job.cpu)
-  i = 0
-  while i < job.objects.size {
-    lj.objects.push(job.objects[i])
-    i += 1
-  }
-  i = 0
-  while i < job.flags.size {
-    lj.flags.push(job.flags[i])
-    i += 1
-  }
+  lj.objects.concat(job.objects)
+  lj.flags.concat(job.flags)
   lj
 }
 
@@ -644,10 +495,10 @@ pub fn driver_bind(args: Array(String)) {
       }
       lib_name = args[i + 1]
       i += 2
-    } else if str_starts(arg, "--lib=") {
+    } else if arg.starts_with("--lib=") {
       lib_name = str_slice(arg, 6, arg.size)
       i += 1
-    } else if str_starts(arg, "-") {
+    } else if arg.starts_with("-") {
       puts("unknown bind argument ${arg}")
       show_usage()
       return
@@ -699,7 +550,7 @@ pub fn driver_fetch(args: Array(String)) {
     if arg == "--update" {
       update = true
       i += 1
-    } else if str_starts(arg, "-") {
+    } else if arg.starts_with("-") {
       diag_puts("unknown fetch argument ${arg}")
       show_usage()
       diag_exit(1)
@@ -732,7 +583,7 @@ fn driver_llvm_obj(args: Array(String)) {
       codegen = "debug"
     } else if a == "--release" {
       codegen = "release"
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       diag_puts("__llvm-obj: unknown flag ${a}")
       diag_exit(1)
     } else {
@@ -782,7 +633,7 @@ fn driver_mir_build(args: Array(String)) {
     } else if a == "--emit-ll" && i + 1 < args.size {
       job.keep_ll = args[i + 1]
       i += 1
-    } else if str_starts(a, "--emit-ll=") {
+    } else if a.starts_with("--emit-ll=") {
       job.keep_ll = str_slice(a, 10, a.size)
     } else if a == "--object" {
       object = true
@@ -790,7 +641,7 @@ fn driver_mir_build(args: Array(String)) {
       job.inline_fast = false
     } else if a == "--time" {
       timed = true
-    } else if str_starts(a, "-") {
+    } else if a.starts_with("-") {
       diag_puts("__mir-build: unknown flag ${a}")
       diag_exit(1)
     } else {
@@ -866,11 +717,11 @@ fn driver_version(args: Array(String)) {
   commit = ""
   dirty = false
   for line in text.split("\n") {
-    if str_starts(line, "version: ") {
+    if line.starts_with("version: ") {
       version = str_slice(line, 9, line.size)
-    } else if str_starts(line, "tag: v") {
+    } else if line.starts_with("tag: v") {
       tag = str_slice(line, 6, line.size)
-    } else if str_starts(line, "avant: ") {
+    } else if line.starts_with("avant: ") {
       commit = str_slice(line, 7, line.size)
     } else if line == "dirty: yes" {
       dirty = true
@@ -894,7 +745,7 @@ fn driver_version(args: Array(String)) {
 }
 
 fn driver_emit_ll(args: Array(String)) {
-  if args.size != 2 || !str_ends(args[0], ".av") {
+  if args.size != 2 || !args[0].ends_with(".av") {
     diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
     diag_exit(1)
   }
@@ -1012,7 +863,7 @@ fn main {
     mir_selftest()
     return
   }
-  if str_ends(command, ".av") {
+  if command.ends_with(".av") {
     driver_run(args)
     return
   }

@@ -1,0 +1,92 @@
+// Module constants computed before main: strings, arrays, hashes, sets,
+// a struct, a class built by its methods, a value made from other
+// constants and a call, read in loops, across calls and by tasks while
+// the collector runs.
+
+struct Point {
+  x: Int
+  y: Int
+
+  fn len2: Int {
+    self.x * self.x + self.y * self.y
+  }
+}
+
+class Node {
+  pub name: String
+  pub kids: Array(Node) = []
+
+  fn initialize(name: String, depth: Int) {
+    self.name = name
+    if depth > 0 {
+      for i in 0..3 {
+        self.kids.push(Node.new("${name}.${i}", depth - 1))
+      }
+    }
+  }
+}
+
+class Schema {
+  pub fields: Array(String) = []
+
+  pub fn str(name: String): Schema {
+    self.fields.push(name)
+    self
+  }
+
+  pub fn has(name: String): Bool {
+    self.fields.has(name)
+  }
+}
+
+const names = ["ada", "bob", "cy"]
+const greeting = "hello, ${names[1]}"
+const ages = ["ada": 36, "bob": 41]
+const vowels = Set(String).new()
+const origin = Point { x: 3, y: 4 }
+const tree = Node.new("r", 5)
+const schema = Schema.new().str("body").str("title")
+const total = count(tree) + names.size
+const port = "8080".to_i()
+
+fn count(n: Node): Int {
+  c = 1
+  for k in n.kids {
+    c += count(k)
+  }
+  c
+}
+
+fn age_sum: Int {
+  s = 0
+  for n in names {
+    s += ages[n] ?? 0
+  }
+  s
+}
+
+fn main {
+  puts(greeting)
+  puts(age_sum())
+  puts(vowels.size)
+  puts(origin.len2())
+  puts(total)
+  puts(schema.has("title"))
+  puts(port + 1)
+  sum = 0
+  for r in 0..300 {
+    junk: Array(String) = []
+    for i in 0..100 {
+      junk.push("${names[i % 3]}${r}")
+    }
+    sum += count(tree) + junk.size + origin.x
+  }
+  puts(sum)
+  parts = [1, 2, 3, 4].parallel (n) { count(tree) * n + names.size }
+  puts(parts[3])
+  puts(tree.kids[2].kids[1].name)
+  copy = names.clone()
+  copy.push("dee")
+  puts(copy.size)
+  puts(names.size)
+}

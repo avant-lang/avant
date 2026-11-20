@@ -443,10 +443,16 @@ static void unpin_locked(void *payload) {
   gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
 }
 
+/* A pin sets PINNED in the object's header, and the inline path's
+ * objects since its last sync are read at the sync as that path wrote
+ * them (the check modes stop at any other header). A lookup syncs only
+ * when the object has no start bit yet, and a shared module's inline
+ * sequence sets its objects' bits itself, so the pins sync first. */
 void avant_pin(void *payload) {
   if (!payload) {
     return;
   }
+  gc_alloc_sync();
   pthread_mutex_lock(&gc_heap.world);
   (void)pin_locked(payload);
   pthread_mutex_unlock(&gc_heap.world);
@@ -570,6 +576,7 @@ static void field_grow(void) {
 
 void avant_pin_field(void *field, void *payload) {
   void **f = (void **)field;
+  gc_alloc_sync();
   pthread_mutex_lock(&gc_heap.world);
   int pinned = payload ? pin_locked(payload) : 0;
   if (field_count >= field_tab_size) {
@@ -673,6 +680,258 @@ void avant_release_range(void *lo, uint64_t n) {
     }
   }
   pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* The constants computed before main (avant_rt.h). A constant's value
+ * never changes and, deeply frozen, can never gain a reference, so once
+ * it is computed nothing it reaches needs tracing, moving or a barrier:
+ * every Array and Hash it reaches is frozen for good (the freeze a
+ * task's capture takes, never thawed), then every heap object it
+ * reaches is copied once into the constants' region, outside the
+ * collector's heap, and the slot's reference words and the copies'
+ * reference words are rewritten to the copies. To the collector a
+ * region address is a static address, as a literal's is (the field
+ * rule: gc_field_object fails it by one compare), so it never traces,
+ * moves or frees a constant, and a collection's work is what it was
+ * without them; the heap originals are garbage at the next collection.
+ * Nothing in the region names a heap object (AVANT_GC_VERIFY=1 checks
+ * it before every collection: gc_verify_consts), so nothing there needs
+ * a root, a pin or a remembered entry. What the compiler tells LLVM
+ * about a slot and its object (compiler/llvm/emit.av ll_const_facts)
+ * holds: nothing writes a slot after the start-up, and nothing writes
+ * or moves a region object (its arrays and hashes trap before a change).
+ * The walks follow each object's reference words by its type map, once
+ * per object; a static object (a literal) is no heap object and is
+ * left where it is. The region is written only here, before main, on
+ * the main thread. */
+void avant_trap_note_const_frozen(void);
+
+/* A map from a heap object to its copy (open addressing by address). */
+typedef struct ConstMap {
+  void **from;
+  void **to;
+  size_t cap;
+  size_t n;
+} ConstMap;
+
+static void const_map_put(ConstMap *m, void *from, void *to);
+
+static void const_map_grow(ConstMap *m) {
+  ConstMap g;
+  size_t i;
+  g.cap = m->cap ? m->cap * 2 : 64;
+  g.n = 0;
+  g.from = (void **)calloc(g.cap, sizeof(void *));
+  g.to = (void **)calloc(g.cap, sizeof(void *));
+  if (!g.from || !g.to) {
+    gc_die("out of memory");
+  }
+  for (i = 0; i < m->cap; i++) {
+    if (m->from[i]) {
+      const_map_put(&g, m->from[i], m->to[i]);
+    }
+  }
+  free(m->from);
+  free(m->to);
+  *m = g;
+}
+
+static size_t const_map_at(const ConstMap *m, const void *p) {
+  return (size_t)(((uintptr_t)p >> 3) * 0x9e3779b97f4a7c15ull) & (m->cap - 1);
+}
+
+static void const_map_put(ConstMap *m, void *from, void *to) {
+  size_t i;
+  if ((m->n + 1) * 2 >= m->cap) {
+    const_map_grow(m);
+  }
+  i = const_map_at(m, from);
+  while (m->from[i]) {
+    i = (i + 1) & (m->cap - 1);
+  }
+  m->from[i] = from;
+  m->to[i] = to;
+  m->n++;
+}
+
+
+/* The region: chunks taken from malloc, never given back, and the list
+ * of every object copied there (the verifier's walk). A payload is
+ * 16-byte aligned, as a heap object's start may be. */
+static uint8_t *g_const_cur;
+static size_t g_const_left;
+static void **g_const_objs;
+static size_t g_const_objs_n;
+static size_t g_const_objs_cap;
+static uint64_t g_const_bytes;
+
+static void *const_region_take(size_t payload) {
+  size_t need = (sizeof(AvantHeader) + payload + 15 + 16) & ~(size_t)15;
+  uint8_t *at;
+  if (need > g_const_left) {
+    size_t chunk = need > (size_t)(1u << 16) ? need : (size_t)(1u << 16);
+    g_const_cur = (uint8_t *)aligned_alloc(16, chunk);
+    if (!g_const_cur) {
+      gc_die("out of memory");
+    }
+    g_const_left = chunk;
+  }
+  /* The header right before a 16-aligned payload. */
+  at = g_const_cur + 16;
+  g_const_cur += need;
+  g_const_left -= need;
+  g_const_bytes += need;
+  if (g_const_objs_n == g_const_objs_cap) {
+    g_const_objs_cap = g_const_objs_cap ? g_const_objs_cap * 2 : 64;
+    g_const_objs = (void **)gc_xrealloc(g_const_objs, g_const_objs_cap * sizeof(void *));
+  }
+  g_const_objs[g_const_objs_n++] = at;
+  return at;
+}
+
+/* The walk's buffers, kept from one constant to the next (start-up is
+ * one thread, before main): the objects met, in order, and the map from
+ * each to its copy (its key present, its copy NULL, while the walk
+ * lists). Emptied after each constant by its own list. */
+static ConstMap g_const_map;
+static void **g_const_list;
+static size_t g_const_list_cap;
+
+static void **const_map_slot(ConstMap *m, const void *p) {
+  size_t i = const_map_at(m, p);
+  while (m->from[i] && m->from[i] != p) {
+    i = (i + 1) & (m->cap - 1);
+  }
+  return &m->from[i];
+}
+
+/* Whether P joins the walk (a heap object not met yet). */
+static int const_meet(void *p) {
+  void **at;
+  if ((g_const_map.n + 1) * 2 >= g_const_map.cap) {
+    const_map_grow(&g_const_map);
+  }
+  at = const_map_slot(&g_const_map, p);
+  if (*at) {
+    return 0;
+  }
+  *at = p;
+  g_const_map.to[at - g_const_map.from] = NULL;
+  g_const_map.n++;
+  return 1;
+}
+
+/* ROOT's copy in the region: every heap object it reaches is frozen
+ * (an Array or a Hash: for good) and copied once, and the copies'
+ * reference words are rewritten to the copies. */
+static void *const_copy(void *root) {
+  size_t n = 0;
+  size_t k;
+  void *out;
+  if (!root || !gc_is_heap_payload(root, NULL, NULL)) {
+    return root;
+  }
+  if (!g_const_list_cap) {
+    g_const_list_cap = 64;
+    g_const_list = (void **)gc_xrealloc(NULL, g_const_list_cap * sizeof(void *));
+  }
+  (void)const_meet(root);
+  g_const_list[n++] = root;
+  for (k = 0; k < n; k++) {
+    void *obj = g_const_list[k];
+    uint32_t id = avant_header(obj)->type_id;
+    if (id == AVANT_TYPE_ARRAY_OBJ) {
+      avant_value_freeze(obj, 1, 0);
+      avant_trap_note_const_frozen();
+    } else if (id == AVANT_TYPE_HASH) {
+      avant_value_freeze(obj, 1, 1);
+      avant_trap_note_const_frozen();
+    }
+    EACH_REF_SLOT(obj, slot, {
+      void *q = *slot;
+      if (q && gc_is_heap_payload(q, NULL, NULL) && const_meet(q)) {
+        if (n == g_const_list_cap) {
+          g_const_list_cap *= 2;
+          g_const_list = (void **)gc_xrealloc(g_const_list, g_const_list_cap * sizeof(void *));
+        }
+        g_const_list[n++] = q;
+      }
+    });
+  }
+  for (k = 0; k < n; k++) {
+    const AvantHeader *h = avant_header(g_const_list[k]);
+    void *to = const_region_take((size_t)h->size);
+    AvantHeader *nh = avant_header(to);
+    nh->size = h->size;
+    nh->type_id = h->type_id;
+    /* No heap flag: a static object, as a literal is. */
+    nh->flags = 0;
+    memcpy(to, g_const_list[k], (size_t)h->size);
+    g_const_map.to[const_map_slot(&g_const_map, g_const_list[k]) - g_const_map.from] = to;
+  }
+  for (k = 0; k < n; k++) {
+    void *to = g_const_map.to[const_map_slot(&g_const_map, g_const_list[k]) - g_const_map.from];
+    EACH_REF_SLOT(to, slot, {
+      void *q = *slot;
+      if (q && gc_is_heap_payload(q, NULL, NULL)) {
+        void **at = const_map_slot(&g_const_map, q);
+        if (!*at) {
+          gc_die("avant gc: a constant's copy missed an object it reaches");
+        }
+        *slot = g_const_map.to[at - g_const_map.from];
+      }
+    });
+  }
+  out = g_const_map.to[const_map_slot(&g_const_map, root) - g_const_map.from];
+  /* Every key goes: the table is empty again. The slots are found
+   * first and emptied after, since emptying one in the middle of a probe
+   * chain would hide the keys after it from the search. */
+  for (k = 0; k < n; k++) {
+    g_const_list[k] = (void *)const_map_slot(&g_const_map, g_const_list[k]);
+  }
+  for (k = 0; k < n; k++) {
+    *(void **)g_const_list[k] = NULL;
+  }
+  g_const_map.n = 0;
+  return out;
+}
+
+void avant_const_ready(void *slot, uint64_t words) {
+  void **base = (void **)slot;
+  uint64_t w;
+  gc_init();
+  /* The inline path's objects since its last sync are counted first:
+   * the walk looks objects up by their start bits. */
+  gc_alloc_sync();
+  pthread_mutex_lock(&gc_heap.world);
+  for (w = words; w; w &= w - 1) {
+    void **ws = base + __builtin_ctzll(w);
+    *ws = const_copy(*ws);
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* AVANT_GC_VERIFY=1, before every collection: no word of a constant's
+ * copy names the collector's heap (a frozen value cannot gain one; a
+ * word that did would name an object the collector may move or free). */
+void gc_verify_consts(void) {
+  size_t i;
+  for (i = 0; i < g_const_objs_n; i++) {
+    void *obj = g_const_objs[i];
+    EACH_REF_SLOT(obj, slot, {
+      void *q = *slot;
+      if (q && (uint64_t)((uintptr_t)q - (uintptr_t)gc_heap.base) < gc_heap.committed) {
+        fprintf(stderr, "avant gc verify: a constant's field names a heap object: holder %p (type %u), field %p, value %p\n", obj,
+                (unsigned)avant_header(obj)->type_id, (void *)slot, q);
+        gc_die("avant gc verify: a constant's field names a heap object");
+      }
+    });
+  }
+}
+
+/* The bytes the constants' region holds (AVANT_GC_STATS). */
+uint64_t gc_const_region_bytes(void) {
+  return g_const_bytes;
 }
 
 /* Task roots (avant_gc.h): traced from

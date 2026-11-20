@@ -377,6 +377,15 @@ pub fn dump_stmt(s: Stmt): String {
     buf.push_str(")")
     return buf.to_s()
   }
+  if k == st_defer() {
+    buf.push_str("(defer")
+    for st in s.body {
+      buf.push_str(" ")
+      buf.push_str(dump_stmt(st))
+    }
+    buf.push_str(")")
+    return buf.to_s()
+  }
   if k == st_hold() {
     buf.push_str("(gc.hold")
     for st in s.body {
@@ -586,7 +595,7 @@ pub fn dump_case_label(label: CaseLabel): String {
       buf.push_str(dump_case_label(z))
     }
     buf.push_str(")")
-  } else if label.neg && label.bits != 0u64 {
+  } else if label.neg && label.bits != 0 {
     buf.push_str("-${label.bits}")
   } else {
     buf.push_str("${label.bits}")

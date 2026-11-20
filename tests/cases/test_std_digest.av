@@ -1,0 +1,87 @@
+import harness
+import std.fs
+import std.process
+import std.digest
+
+// std.digest: CRC-32 and SHA-256 against known vectors and a plain
+// bitwise CRC-32 on every length 0..300 at 16 offsets, SHA-256 on every
+// length 0..200 (one and two padding blocks); then the same checks in a
+// child run with the portable code alone (the suite's internal variable
+// AVANT_DIGEST_PORTABLE=1), so a machine with the fast paths checks both.
+
+fn bitwise_crc32(b: Bytes): UInt32 {
+  crc: UInt32 = 4294967295
+  for x in b {
+    crc = crc ^ x.wrap_u32()
+    for k in 0..8 {
+      if (crc & 1) != 0 {
+        crc = (crc >> 1) ^ 3988292384
+      } else {
+        crc = crc >> 1
+      }
+    }
+  }
+  crc ^ 4294967295
+}
+
+fn test_std_digest(c: Checks) {
+  c.suite("tests/cases/test_std_digest.av")
+  c.expect(digest.crc32("123456789".bytes) == 3421780262, "crc32 of 123456789 is 0xCBF43926")
+  c.expect(digest.crc32("".bytes) == 0, "crc32 of nothing is 0")
+  buf = Buf.new(1100)
+  for i in 0..1100 {
+    buf.push_byte(((i * 131 + (i >> 3) * 17) ^ (i >> 5)) & 255)
+  }
+  data = buf.to_bytes()
+  bad = 0
+  for off in 0..16 {
+    for n in 0..301 {
+      piece = data[off..off + n]
+      if digest.crc32(piece) != bitwise_crc32(piece) {
+        bad += 1
+      }
+    }
+  }
+  c.eq_int(bad, 0, "crc32 equals the bitwise CRC on every length 0..300 at 16 offsets")
+  whole = digest.crc32(data)
+  c.expect(whole == bitwise_crc32(data), "crc32 of 1100 bytes")
+  c.expect(digest.crc32_update(digest.crc32(data[..517]), data[517..]) == whole, "crc32_update continues a CRC")
+  c.eq_str(digest.sha256_hex("".bytes), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256 of nothing")
+  c.eq_str(digest.sha256_hex("abc".bytes), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256 of abc")
+  c.eq_str(digest.sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "sha256 of the 56-byte vector")
+  c.eq_str(digest.sha256_hex(repeat_byte(97, 1000000).bytes), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", "sha256 of a million a")
+  all = Buf.new(201 * 32)
+  sizes = 0
+  for n in 0..201 {
+    d = digest.sha256(data[..n])
+    if d.size != 32 {
+      sizes += 1
+    }
+    all.push_bytes(d)
+  }
+  c.eq_int(sizes, 0, "sha256 gives 32 bytes")
+  c.eq_str(digest.sha256_hex(all.to_bytes()), "3d8a570fa9cd3647c14780635fc2fcf2fb55adbc890bef55e0bce979cf7ac695", "sha256 on every length 0..200")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_digest(c)
+  if v = process.env("AVANT_DIGEST_PORTABLE"), v == "1" {
+    return c.finish()
+  }
+  me = process.args()[0]
+  out = "${scratch_dir()}/digest-portable.log"
+  args = ["-u", "AVANT_TEST_NAMES", "-u", "AVANT_TEST_ONLY", "-u", "AVANT_TEST_LIST", "-u", "AVANT_JUNIT_FRAGMENT", "AVANT_DIGEST_PORTABLE=1", me]
+  st = run_out("/usr/bin/env", args, out) ?? -1
+  c.eq_int(st, 0, "the same checks pass on the portable code alone")
+  if st != 0 {
+    if text = fs.read(out) {
+      puts(text)
+    }
+  }
+  c.finish()
+}

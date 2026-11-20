@@ -48,7 +48,7 @@ pub class CovReport {
         return
       }
       head = lines[0]
-      if str_starts(head, "avant-cov ") {
+      if head.starts_with("avant-cov ") {
       } else {
         return
       }
@@ -145,14 +145,12 @@ pub class CovReport {
     if known(path) && bare {
       return
     }
-    for i in 0..self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.kind == kind && s.path == path && s.line == line && s.name == name {
         s.hits += hits
         if !bare {
           s.bare = false
         }
-        self.slots[i] = s
         return
       }
     }
@@ -190,7 +188,7 @@ pub class CovReport {
           walk_tree(path, excludes)
         }
       } else {
-        if str_ends(name, ".av") {
+        if name.ends_with(".av") {
           rel = cov_rel(self.anchor, path)
           if !cov_excluded(rel, excludes) && !known(rel) {
             add_bare(rel, path)
@@ -516,7 +514,7 @@ pub fn cov_rel(anchor: String, path: String): String {
   if p.size > 1 && p[0] == 46 && p[1] == 47 {
     p = str_slice(p, 2, p.size)
   }
-  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 && str_slice(p, 0, anchor.size) == anchor && p[anchor.size] == 47 {
+  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 && p.starts_with(anchor) && p[anchor.size] == 47 {
     return str_slice(p, anchor.size + 1, p.size)
   }
   p
@@ -531,7 +529,7 @@ pub fn cov_excluded(path: String, dirs: Array(String)): Bool {
     if d.size == 0 || d[d.size - 1] != 47 {
       pre = "${d}/"
     }
-    if str_starts(path, pre) {
+    if path.starts_with(pre) {
       return true
     }
   }

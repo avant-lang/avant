@@ -6,13 +6,16 @@
 #
 # WORK is a new scratch directory. The judge reads spawner results written
 # here (an idle run, a time-shared one, one with many involuntary switches,
+# a threaded one whose own threads outnumber its CPUs,
 # one beside other work). Two fake tasks in a fake run.js: one that computes
 # for about 20 ms (whatever the machine's load, its counters are recorded)
 # and one that sleeps 60 ms before it prints (its CPU time is far under its
 # wall, so the rule calls every run of it disturbed, deterministically).
 # rounds.py measures both over two rounds with one retry; lr-table.sh
 # re-measures them with one retry and tables them against a fake
-# reference. Prints one line per check, `ok: NAME` or `FAIL: NAME: why`,
+# reference; a library.tsv names both as library-backed and gives the busy
+# one a pure twin (a copy of its binary), which the re-measure times beside
+# them and the table and pure table mark. Prints one line per check, `ok: NAME` or `FAIL: NAME: why`,
 # then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/measure-rule.sh WORK" >&2; exit 2; }
@@ -33,6 +36,22 @@ judge judge-idle "1000000000 2048 995000 2000 0 1 5 100 100 32 100" yes
 judge judge-timeshare "1000000000 2048 500000 0 0 1 180 100 100 32 100" no
 judge judge-switches "1000000000 2048 990000 5000 0 900 1000 100 100 32 100" no
 judge judge-outside "1000000000 2048 995000 2000 0 1 5 200 200 32 100" no
+# A program whose own threads outnumber its CPUs (16 on 8, 7.4 CPUs busy,
+# nothing outside): 400 involuntary switches a second pass under the limit
+# scaled by 16/8, 600 do not; without its threads, or with 4 on 8 CPUs,
+# the limit is not scaled.
+judge3() { # NAME LINE THREADS EXPECT
+  echo "$2" > "$w/res/$1"
+  got=$($R judge "$w/res/$1" "$3" < /dev/null); rc=$?
+  case "$4:$rc:$got" in yes:0:*"	yes"|no:3:*"	no: "*) say "$1" 0 ;; *) say "$1" 1 "status $rc: $got" ;; esac
+}
+judge3 judge-threads-own "1000000000 2048 7300000 100000 0 1 400 740 740 8 100" 16 yes
+judge3 judge-threads-beyond "1000000000 2048 7300000 100000 0 1 600 740 740 8 100" 16 no
+judge judge-threads-unknown "1000000000 2048 7300000 100000 0 1 400 740 740 8 100" no
+judge3 judge-threads-fewer "1000000000 2048 3700000 100000 0 1 400 380 380 8 100" 4 no
+mkdir -p "$w/cfg"; printf 'fn cfg_iterations: Int { 10 }\nfn cfg_threads: Int { 16 }\n' > "$w/cfg/matmul_t16.cfg.av"; echo 'fn cfg_n: Int { 9 }' > "$w/cfg/other.cfg.av"
+got=$(cd "$root/tools" && python3 -I -B -c 'import sys; sys.path.insert(0, "."); import rounds; d = sys.argv[1]; print(rounds.threads_of(d, "matmul_t16"), rounds.threads_of(d + "/0", "matmul_t16"), rounds.threads_of(d, "other"), rounds.threads_of(d, "none"))' "$w/cfg" < /dev/null)
+[ "$got" = "16 16 None None" ]; say threads-from-cfg $? "$got"
 
 # 2. The fake tasks and run.js.
 cat > "$w/task.c" <<'EOF'
@@ -81,7 +100,11 @@ grep -q '^## Disturbed runs' "$w/rounds/rounds.md" && grep -q '^| x--fake_sleep 
 say rounds-table-lists $? "$(grep -c fake_sleep "$w/rounds/rounds.md" 2>/dev/null) lines"
 grep -q '^Fake::Sleep	disturbed	' "$w/rounds/x.lr-avant.tsv"; say rounds-lr-disturbed $? "$(grep Sleep "$w/rounds/x.lr-avant.tsv")"
 
-# 4. lr-table.sh: the re-measure's counters, one retry, the table's notes.
+# 4. lr-table.sh: the re-measure's counters, one retry, the table's notes;
+# the twin's row, the library marks and the pure table.
+cp "$w/bin/fake_busy" "$w/bin/fake_busy-pure"
+cp "$w/bin/fake_busy" "$w/bin/fake_busy-clever"
+printf 'task\tlibrary\ttwin\ttwin_slug\tkind\tcompared\nFake::Busy\tlibbusy (C)\tFake::Busy-Pure\tfake_busy-pure\tcommon\tC, Go\nFake::Busy\tlibbusy (C)\tFake::Busy-Clever\tfake_busy-clever\tclever\tRust\nFake::Sleep\tlibsleep (C)\t-\t-\t-\t-\n' > "$w/bin/library.tsv"
 LR_RETRIES=1 sh "$root/tools/lr-table.sh" avant "$w/bin" "$w/run.js" "$w/lr/lr-avant.tsv" < /dev/null > "$w/lr.log" 2>&1 || mkdir -p "$w/lr"
 mkdir -p "$w/lr"
 awk -F'\t' '$1 == "task" { exit !(NF == 13 && $7 == "user_s" && $13 == "undisturbed") }' "$w/lr/lr-avant.tsv" \
@@ -95,6 +118,21 @@ printf '# label: Other\ntask\tstatus\twall_s\trss_kb\tinprog_s\texit\nFake::Busy
 sh "$root/tools/lr-table.sh" table "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/table.md" 2> "$w/table.err"
 grep 'Fake::Sleep' "$w/table.md" | head -n 1 | grep -q 'Avant: disturbed (2 attempts);'
 say lr-table-notes $? "$(grep -m 1 'Fake::Sleep' "$w/table.md")"
+awk -F'\t' '$1 == "Fake::Busy-Pure" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" \
+  && awk -F'\t' '$1 == "Fake::Busy-Clever" { exit !(NF == 13 && $2 == "ok") }' "$w/lr/lr-avant-pure.tsv" && cmp -s "$w/bin/library.tsv" "$w/lr/library.tsv"
+say lr-pure-measured $? "$(grep Pure "$w/lr/lr-avant-pure.tsv" 2>/dev/null)"
+grep -q '^Avant source: .* 2 of the 2 rows rely on a library' "$w/table.md" && grep -q '^Avant as written: wall sum ' "$w/table.md" \
+  && grep 'Fake::Busy' "$w/table.md" | head -n 1 | grep -q '| Fake::Busy | .* library: libbusy (C); |$'
+say lr-table-library $? "$(head -n 3 "$w/table.md" | tr '\n' ' ')"
+sh "$root/tools/lr-table.sh" pure "$w/ref" "$w/lr/lr-avant.tsv" < /dev/null > "$w/pure.md" 2> "$w/pure.err"
+grep -q '^Avant as written: .* Pure Avant: wall sum ' "$w/pure.md" \
+  && grep 'Fake::Busy' "$w/pure.md" | head -n 1 | grep -q '| Fake::Busy | .* common twin Fake::Busy-Pure of libbusy (C), the algorithm of C, Go; clever twin Fake::Busy-Clever, the algorithm of Rust: ok [0-9.]* s; |$' \
+  && grep 'Fake::Sleep' "$w/pure.md" | head -n 1 | grep -q 'still on a library: libsleep (C); |$'
+say lr-table-pure $? "$(cat "$w/pure.err") $(grep -m 1 'Fake::Busy' "$w/pure.md")"
+# the clever line: Fake::Busy by its clever twin, Fake::Sleep as it is
+grep -q '^Avant as written: .* Pure Avant with the clever twins (1 of them, .*): wall sum [0-9.]* s over 2 ok rows' "$w/pure.md" \
+  && grep -q '^Avant source: .* 1 of the 2 rows still rely on a library' "$w/pure.md"
+say lr-table-clever $? "$(sed -n 3,5p "$w/pure.md" | tr '\n' ' ')"
 mkdir -p "$w/refrun"
 sh "$root/tools/lr-table.sh" ref Fake "$w/bin" "$w/refrun/fake.tsv" "$w/run.js" /bin/echo < /dev/null > "$w/refrun.log" 2>&1
 grep -q "^cpu: $(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -n 1)\$" "$w/refrun/machine.txt" \

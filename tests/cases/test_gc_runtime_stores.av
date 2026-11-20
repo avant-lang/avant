@@ -1,10 +1,11 @@
 import harness
 import backends
+import std.process
 
 // The runtime's own C stores follow the
 // collector's contract. Three fixtures, each wrong before its fix:
 //
-// heap/inc_slice_mature.av: avant_hash_inc_slice stored a fresh
+// heap/inc_by_slice_mature.av: a hash insert by a slice stored a fresh
 // young key into a mature key buffer without a barrier, so a tenured
 // hash lost the keys inserted after its keys tenured (default
 // environment: no new key found; AVANT_GC_VERIFY=1 reported lost field
@@ -39,7 +40,7 @@ fn gc_envs: Array(String) {
 }
 
 fn test_gc_runtime_stores(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["inc_slice_mature", "array_reserve_mature", "split_held", "buf_take", "buf_grow_held"]
+  names = ["inc_by_slice_mature", "array_reserve_mature", "split_held", "buf_take", "buf_grow_held"]
   wants = ["0\n0\n0\n", "0\n0\n", "split bad: 0\nfields bad: 0\nchars bad: 0\njunk: 4072350\n", "722328\n1804464\n729328\n732329\n741266\n750269\n732329\n732329\n147440\n", "97 27000 98\n"]
   jobs: Array(HJob) = []
   p = 0
@@ -86,7 +87,7 @@ fn test_gc_runtime_stores(c: Checks, compiler: String, root: String, dir: String
 
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_runtime_stores.av")
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     test_gc_runtime_stores(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")

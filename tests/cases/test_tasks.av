@@ -1,5 +1,7 @@
 import harness
 import std.sync
+import std.fs
+import std.process
 
 struct Pair {
   a: Int
@@ -40,7 +42,7 @@ fn test_tasks(c: Checks) {
   c.eq_int(lens[1], 2, "parallel string 1")
   c.eq_int(lens[2], 3, "parallel string 2")
 
-  buf = Channel(Int).new(2)
+  buf = sync.Channel(Int).new(2)
   kept = 4
   buf.send(kept)
   buf.send(5)
@@ -62,7 +64,7 @@ fn test_tasks(c: Checks) {
     c.expect(true, "closed empty")
   }
 
-  wrap = Channel(Int).new(2)
+  wrap = sync.Channel(Int).new(2)
   wrap.send(1)
   wrap.send(2)
   if w0 = wrap.recv() {
@@ -82,7 +84,7 @@ fn test_tasks(c: Checks) {
     c.expect(false, "wrap last")
   }
 
-  ch = Channel(Int).new()
+  ch = sync.Channel(Int).new()
   hr = spawn {
     ch.send(7)
     1
@@ -94,7 +96,7 @@ fn test_tasks(c: Checks) {
   }
   c.eq_int(hr.join() ?? -1, 1, "rendezvous join")
 
-  many = Channel(Int).new(2)
+  many = sync.Channel(Int).new(2)
   h1 = spawn {
     many.send(1)
     1
@@ -117,7 +119,7 @@ fn test_tasks(c: Checks) {
   c.eq_int(sum, 3, "two senders")
   c.eq_int((h1.join() ?? -1) + (h2.join() ?? -1), 2, "two joins")
 
-  cs = Channel(String).new()
+  cs = sync.Channel(String).new()
   hcs = spawn {
     cs.send("hi")
     1
@@ -129,7 +131,7 @@ fn test_tasks(c: Checks) {
   }
   c.eq_int(hcs.join() ?? -1, 1, "channel string join")
 
-  mu = Mutex(Int).new(1)
+  mu = sync.Mutex(Int).new(1)
   bumped = mu.with (x) {
     x += 1
     x
@@ -138,21 +140,21 @@ fn test_tasks(c: Checks) {
   again = mu.with (x) { x }
   c.eq_int(again, 2, "mutex read")
 
-  box = Mutex(Held).new(Held.new(1))
+  box = sync.Mutex(Held).new(Held.new(1))
   bn = box.with (x) {
     x.n += 1
     x.n
   }
   c.eq_int(bn, 2, "mutex class")
 
-  cell = Mutex(Cell).new(Cell { n: 1 })
+  cell = sync.Mutex(Cell).new(Cell { n: 1 })
   cn = cell.with (x) {
     x.n += 4
     x.n
   }
   c.eq_int(cn, 5, "mutex struct")
 
-  shared = Mutex(Int).new(1)
+  shared = sync.Mutex(Int).new(1)
   hm = spawn {
     shared.with (x) {
       x += 10
@@ -163,7 +165,7 @@ fn test_tasks(c: Checks) {
   after = shared.with (x) { x }
   c.eq_int(after, 11, "mutex after spawn")
 
-  if compiler = env_get("AVANT_COMPILER") {
+  if compiler = process.env("AVANT_COMPILER") {
     task_trap_cases(c, compiler, now_ms())
     lib_trap_cases(c, compiler, now_ms())
     task_exit_cases(c, compiler, now_ms())
@@ -202,9 +204,9 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("${bin} ${kind} 2> ${elog}")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     c.eq_int(status, statuses[i], "mutex recover ${kind}: status ${statuses[i]}")
     c.expect(out.contains(wants[i]), "mutex recover ${kind}: stdout has ${wants[i]}")
     c.expect(err.contains(wants_err[i]), "mutex recover ${kind}: stderr has ${wants_err[i]}")
@@ -243,8 +245,8 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
       args: Array(String) = []
       args.push("-c")
       args.push("timeout -k 5 20 ${bin} --avant-threads=16 ${kind} 2> ${log}.err")
-      status = process_run_out("/bin/sh", args, log) ?? -1
-      out = file_read(log) ?? ""
+      status = run_out("/bin/sh", args, log) ?? -1
+      out = fs.read(log) ?? ""
       if status == 124 || status == 137 {
         hung = true
         c.expect(false, "task exit ${kind}: the run ended within its 20 s bound (status ${status}); the cases stop here")
@@ -268,23 +270,25 @@ fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
   c.eq_int(code, 0, "the lib-trap fixture compiles")
   kinds = ["json", "regex-limit", "regex-closed", "main"]
   statuses = [0, 0, 0, 1]
-  texts = ["JsonBuilder.end: nothing open", "Regex.compile: match_limit must be at least 1 (got 0)", "Regex used after close", "JsonBuilder.key: not inside an object"]
+  texts = ["json.JsonBuilder.end: nothing open", "regex.Regex.compile: match_limit must be at least 1 (got 0)", "regex.Regex used after close", "json.JsonBuilder.key: not inside an object"]
+  // The printed trap names the program's call into the library.
+  sites = ["29:12", "35:26", "45:15", "52:10"]
   for i, kind in kinds {
     log = "${scratch()}/tasks-libtrap-${stamp}-${kind}.log"
     elog = "${scratch()}/tasks-libtrap-${stamp}-${kind}.err"
     args: Array(String) = []
     args.push("-c")
     args.push("${bin} ${kind} 2> ${elog}")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     c.eq_int(status, statuses[i], "lib trap ${kind}: status")
     if statuses[i] == 0 {
       c.eq_str(out, "before\ntrapped: ${texts[i]}\nafter\n", "lib trap ${kind}: the task alone ends")
     } else {
       c.eq_str(out, "before\n", "lib trap ${kind}: the output before the trap")
     }
-    c.eq_str(err, "avant runtime: ${texts[i]}\n", "lib trap ${kind}: the trap is printed")
+    c.eq_str(err, "avant runtime: ${texts[i]} at lib_trap.av:${sites[i]}\n", "lib trap ${kind}: the trap is printed")
   }
 }
 
@@ -312,7 +316,7 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     "good 201 bad 99\nafter\n",
     "value: 1\nafter\n",
     "closed\ntrapped: index 8 out of bounds",
-    "trapped: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\ntrapped: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed\nsite: true\nmessage: true\nafter\n",
+    "trapped: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\ntrapped: sync.Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed\nsite: true\nmessage: true\nafter\n",
     "poisoned: true\ntry_with: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed\nfresh poisoned: false\nfresh: 4\nafter\n",
     "value: 2\n",
     "trapped: index 6 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\npins left: 0\nsum 440960\nafter\n",
@@ -322,18 +326,18 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     ""]
   wants_err = [
     "avant runtime: index 7 out of bounds (size 3) in at (task_trap.av:29:1)\n",
-    "avant runtime: integer overflow in task (task_trap.av:78:9)\n",
-    "avant runtime: division by zero in divide (task_trap.av:33:1)\n",
+    "avant runtime: integer overflow in task (task_trap.av:80:11)\n",
+    "avant runtime: division by zero in divide (task_trap.av:34:5)\n",
     "avant runtime: e has an element at task_trap.av:89:14\n",
     "avant runtime: index 9 out of bounds (size 3) in at (task_trap.av:29:1)\n",
     "avant runtime: index ",
     "",
     "avant runtime: index 8 out of bounds (size 3) in at (task_trap.av:29:1)\n",
-    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:145:10\n",
+    "avant runtime: sync.Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:145:10\n",
     "avant runtime: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\n",
     "",
     "avant runtime: index 6 out of bounds (size 3) in at (task_trap.av:29:1)\n",
-    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:168:12",
+    "avant runtime: sync.Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:168:12",
     "avant runtime: division by zero in cmp_trap",
     "avant runtime: index",
     "avant runtime: heap limit"]
@@ -347,9 +351,9 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     } else {
       args.push("${bin} ${kind} 2> ${elog}")
     }
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
-    err = file_read(elog) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    err = fs.read(elog) ?? ""
     if kind == "heap" {
       // The collector's own stop (an abort), not a trap.
       c.expect(status != 0, "task trap heap: the program ends")
@@ -378,8 +382,8 @@ fn task_flood_cases(c: Checks, bin: String, stamp: Int) {
     args: Array(String) = []
     args.push("-c")
     args.push("timeout -k 5 60 ${bin} flood")
-    status = process_run_out("/bin/sh", args, log) ?? -1
-    out = file_read(log) ?? ""
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
     c.eq_int(status, 0, "task flood ${round}: status 0")
     broken = ""
     for line in out.split("\n") {

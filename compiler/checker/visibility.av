@@ -23,6 +23,16 @@ pub fn (checker_self: Checker) note_modules {
     }
   }
   checker_self.known_mods = km
+  ln = Hash(String, Int).new()
+  for info in checker_self.program.mods {
+    for imp in info.imports {
+      last = module_last_name(imp)
+      if last.size > 0 {
+        ln[last] = 1
+      }
+    }
+  }
+  checker_self.last_names = ln
   tm = Hash(String, String).new()
   tv = Hash(String, Int).new()
   checker_self.type_mod = tm
@@ -132,7 +142,26 @@ pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
   out
 }
 
+// Whether from_mod sees module mod_name's type name written bare: its
+// own, or an import's pub type, but never a std module's, whose types
+// are written with its name as its functions are (`fs.Reader`,
+// `sync.Mutex(Int)`), so a program's own type of that name is its own.
 pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String, from_mod: String): Bool {
+  if mod_name != from_mod && std_needs_qualifier(mod_name) {
+    return false
+  }
+  if mod_name == "prelude" && from_mod != mod_name {
+    // A module's own IoError or ProcessError wins over the prelude's.
+    if own = checker_self.type_vis.get(type_slot(from_mod, name)) {
+      return false
+    }
+  }
+  checker_self.type_slot_visible_q(name, mod_name, from_mod)
+}
+
+// Whether from_mod sees module mod_name's type name written with that
+// module's name (`std.fs.Reader`, `fs.Reader`).
+pub fn (checker_self: Checker) type_slot_visible_q(name: String, mod_name: String, from_mod: String): Bool {
   if mod_name == from_mod {
     return true
   }
@@ -167,7 +196,7 @@ pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Boo
 
 pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, qual: String): String {
   if qual.size > 0 {
-    if o = checker_self.type_mod.get(type_slot(qual, name)), checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible(name, qual, from_mod) {
+    if o = checker_self.type_mod.get(type_slot(qual, name)), checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible_q(name, qual, from_mod) {
       return qual
     }
     return ""
@@ -184,7 +213,40 @@ pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, 
   if n == 1 {
     return found
   }
+  if n > 1 && checker_self.own_alias_same(name, from_mod) {
+    return from_mod
+  }
   ""
+}
+
+// Whether from_mod's own alias of the bare type name names the same type
+// as every import's pub type or alias of that name it also sees: the
+// module's own alias is then the name, and the import's is the same type
+// (`type Data = data.Data` beside data's `pub type Data`). Two different
+// types stay a clash that names both.
+pub fn (checker_self: Checker) own_alias_same(name: String, from_mod: String): Bool {
+  own = checker_self.t_int()
+  if a = checker_self.alias_tys.get(type_slot(from_mod, name)) {
+    own = a
+  } else {
+    return false
+  }
+  for m in checker_self.mods_of_type(name) {
+    if m != from_mod && checker_self.type_slot_visible(name, m, from_mod) {
+      other = checker_self.t_int()
+      if b = checker_self.alias_tys.get(type_slot(m, name)) {
+        other = b
+      } else if c = checker_self.resolver.get_named_in(m, name) {
+        other = c
+      } else {
+        return false
+      }
+      if !own.same_as(other) {
+        return false
+      }
+    }
+  }
+  true
 }
 
 pub fn (checker_self: Checker) type_is_visible(name: String, from_mod: String, qual: String): Bool {
@@ -209,6 +271,19 @@ pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): B
 }
 
 pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): Bool {
+  checker_self.fn_is_visible_q(fnn, from_mod, checker_self.call_mod)
+}
+
+// A std module's functions are written with its name, as Go's are:
+// `import std.fs` gives `fs.read`, never a bare `read`, so a program's own
+// `read` is never ambiguous with it. Another module sees a pub function of
+// a std module only at a call or a function value qualified by that
+// module (qual); a program's own modules keep their bare names.
+pub fn std_needs_qualifier(mod_name: String): Bool {
+  mod_name.starts_with("std.")
+}
+
+pub fn (checker_self: Checker) fn_is_visible_q(fnn: Function, from_mod: String, qual: String): Bool {
   if fnn.mod_name == from_mod {
     return true
   }
@@ -219,9 +294,203 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
     return true
   }
   if fnn.vis {
+    if std_needs_qualifier(fnn.mod_name) && qual != fnn.mod_name {
+      return false
+    }
     return checker_self.imported_by(from_mod, fnn.mod_name)
   }
   false
+}
+
+// The qualified spelling of a std module's function the current module
+// imports and names bare (`fs.read` for `read` after `import std.fs`;
+// the whole name when another import ends in the same last name); ""
+// when no imported std module has a pub function of that name.
+pub fn (checker_self: Checker) std_bare_spelling(name: String): String {
+  from_mod = checker_self.current_module
+  for i in checker_self.fn_indices_named(name) {
+    sig = checker_self.functions[i]
+    m = sig.node.mod_name
+    if sig.name == name && sig.node.vis && m != from_mod && std_needs_qualifier(m) && checker_self.imported_by(from_mod, m) && !checker_self.sig_is_instance(sig) {
+      last = module_last_name(m)
+      if last.size > 0 && checker_self.last_name_unique(last, from_mod) {
+        return "${last}.${name}"
+      }
+      return "${m}.${name}"
+    }
+  }
+  ""
+}
+
+// Whether exactly one import of from_mod ends in the last name q.
+fn (checker_self: Checker) last_name_unique(q: String, from_mod: String): Bool {
+  n = 0
+  for info in checker_self.program.mods {
+    if info.name == from_mod {
+      for imp in info.imports {
+        if imp == q || module_last_name(imp) == q {
+          n += 1
+        }
+      }
+    }
+  }
+  n == 1
+}
+
+// The qualified spelling of a pub type of a std module the current module
+// imports, named bare (`fs.Reader` for `Reader` after `import std.fs`);
+// "" when no imported std module has a pub type of that name.
+pub fn (checker_self: Checker) std_type_bare_spelling(name: String): String {
+  from_mod = checker_self.current_module
+  for m in checker_self.mods_of_type(name) {
+    if m != from_mod && std_needs_qualifier(m) && checker_self.imported_by(from_mod, m) && checker_self.type_slot_visible_q(name, m, from_mod) {
+      last = module_last_name(m)
+      if last.size > 0 && checker_self.last_name_unique(last, from_mod) {
+        return "${last}.${name}"
+      }
+      return "${m}.${name}"
+    }
+  }
+  ""
+}
+
+// "unknown type NAME", or for a std module's type named bare, the
+// qualified spelling to write.
+pub fn (checker_self: Checker) unknown_type_text(name: String): String {
+  spelled = checker_self.std_type_bare_spelling(name)
+  if spelled.size > 0 {
+    return "${name} needs its module's name: write ${spelled}; a std module's types are not named bare"
+  }
+  "unknown type ${name}"
+}
+
+// The type a type alias names where the alias is used as a value
+// (`type Rx = regex.Regex`, then `Rx.compile(...)`, `Rx { ... }` or, for
+// an alias of a class, `Rx.new(...)`): its target when that is a named
+// type, through an alias of an alias; nil when name is a local, not an
+// alias this module sees, or an alias of a union or a function type.
+pub fn (checker_self: Checker) alias_value_target(name: String, loc: Location): TypeName? {
+  if name.size == 0 || !(name[0] >= 65 && name[0] <= 90) {
+    return nil
+  }
+  first = TypeName.new(loc, name)
+  saved0 = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  any = checker_self.resolver.find_alias(first)
+  checker_self.resolver.scope_mod = saved0
+  if a0 = any {
+  } else {
+    return nil
+  }
+  if found = checker_self.lookup(name) {
+    return nil
+  }
+  if f = checker_self.implicit_field(name) {
+    return nil
+  }
+  cur = name
+  qual = ""
+  depth = 0
+  while depth < 16 {
+    tn = TypeName.new(loc, cur)
+    tn.mod_name = qual
+    saved = checker_self.resolver.scope_mod
+    checker_self.resolver.scope_mod = checker_self.current_module
+    got = checker_self.resolver.find_alias(tn)
+    checker_self.resolver.scope_mod = saved
+    if al = got {
+      if al.mod_name != checker_self.current_module && !(al.vis && checker_self.imported_by(checker_self.current_module, al.mod_name)) {
+        return nil
+      }
+      t = al.target
+      if t.fn_type || t.members.size > 0 || t.nilable {
+        return nil
+      }
+      if t.args.size == 0 {
+        cur = t.name
+        qual = t.mod_name
+        if more = checker_self.resolver.find_alias(t) {
+          depth += 1
+          continue
+        }
+      }
+      return clone_type_name(t)
+    }
+    return nil
+  }
+  nil
+}
+
+// Why a type alias used as a value names no one type to build (an alias
+// of a union or a function type), or "" (not such an alias, or a local).
+pub fn (checker_self: Checker) alias_not_value_text(name: String, loc: Location): String {
+  if name.size == 0 || !(name[0] >= 65 && name[0] <= 90) {
+    return ""
+  }
+  tn = TypeName.new(loc, name)
+  saved = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  got = checker_self.resolver.find_alias(tn)
+  checker_self.resolver.scope_mod = saved
+  if al = got {
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    t = al.target
+    if t.members.size > 0 || t.fn_type || t.nilable {
+      return "${name} is an alias of a union or a function type, not one type: build a value with its member's own name"
+    }
+  }
+  ""
+}
+
+// The spelling that replaced a prelude function the language no longer
+// has, "" for any other name. Asked only where a call or a value names
+// no function, so a program's own function of that name is its own.
+pub fn removed_prelude_spelling(name: String): String {
+  if name == "sqrt" {
+    return "x.sqrt()"
+  }
+  if name == "exp" {
+    return "x.exp()"
+  }
+  ""
+}
+
+// The message for a call of a prelude function that left the language
+// for a std module or for the program's own code, "" for any other name.
+// Asked only where a call names no function, so a program's own
+// function of that name is its own.
+pub fn left_prelude_text(name: String): String {
+  if name == "puts_u" {
+    return "puts_u is gone: write puts(n.wrap_u32()) for a 32-bit value's unsigned text, puts(n.wrap_u64()) for a 64-bit one"
+  }
+  if name == "crc32_bytes" {
+    return "crc32_bytes is gone: write digest.crc32(b) (import std.digest)"
+  }
+  ""
+}
+
+// A bare name of an imported std module's function: refused with its
+// qualified spelling; a prelude function the language no longer has:
+// refused with the spelling that replaced it; true when refused.
+pub fn (checker_self: Checker) refuse_std_bare(loc: Location, name: String): Bool {
+  gone = removed_prelude_spelling(name)
+  if gone.size > 0 {
+    checker_self.fail(loc, "${name} is a Float64 method: write ${gone}")
+    return true
+  }
+  left = left_prelude_text(name)
+  if left.size > 0 {
+    checker_self.fail(loc, left)
+    return true
+  }
+  spelled = checker_self.std_bare_spelling(name)
+  if spelled.size == 0 {
+    return false
+  }
+  checker_self.fail(loc, "${name} needs its module's name: write ${spelled}; a std module's functions are not named bare")
+  true
 }
 
 // Functions are scoped per module. A candidate at an unqualified call is a
@@ -232,7 +501,7 @@ pub fn (checker_self: Checker) fn_candidate_q(fnn: Function, qual: String): Bool
   if qual.size > 0 && fnn.mod_name != qual {
     return false
   }
-  checker_self.fn_is_visible(fnn, checker_self.current_module)
+  checker_self.fn_is_visible_q(fnn, checker_self.current_module, qual)
 }
 
 pub fn (checker_self: Checker) fn_candidate(fnn: Function): Bool {
@@ -326,7 +595,7 @@ pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: Strin
     }
   }
   if mods.size > 1 {
-    mods.sort { |a, b| str_lt(a, b) }
+    mods.sort (a, b) { str_lt(a, b) }
     defs = buf_new()
     for k in 0..mods.size {
       if k > 0 {
@@ -522,18 +791,23 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
   owner_count = 0
   has_type = false
   has_fn = false
+  has_lib = false
   for o in origins {
     if o.size >= 5 {
-      if str_slice(o, 0, 5) == "type:" {
+      if o.starts_with("type:") {
         owner_count += 1
         has_type = true
-      } else if str_slice(o, 0, 4) == "lib:" {
+      } else if o.starts_with("lib:") {
         owner_count += 1
         has_type = true
-      } else if str_slice(o, 0, 3) == "fn:" {
+        has_lib = true
+      } else if o.starts_with("fn:") {
         has_fn = true
       }
     }
+  }
+  if owner_count > 1 && !has_fn && !has_lib && checker_self.own_alias_same(name, from_mod) {
+    return false
   }
   if owner_count > 1 {
     return true
@@ -564,7 +838,7 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
   if qual.size > 0 {
     checker_self.fail(loc, "unknown type ${qual}.${name}")
   } else {
-    checker_self.fail_hint(loc, "unknown type ${name}", checker_self.type_hint_here(name))
+    checker_self.fail_hint(loc, checker_self.unknown_type_text(name), checker_self.type_hint_here(name))
   }
   nil
 }
@@ -616,7 +890,7 @@ pub fn (checker_self: Checker) type_part_seen(tn: TypeName): Bool {
         return false
       }
       if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        checker_self.fail(tn.loc, checker_self.unknown_type_text(tn.name))
         return false
       }
       if flag = checker_self.type_multi.get(tn.name) {
@@ -661,7 +935,7 @@ pub fn (checker_self: Checker) resolve_in_module_core(tn: TypeName): Ty {
         return checker_self.t_int()
       }
       if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        checker_self.fail(tn.loc, checker_self.unknown_type_text(tn.name))
         return checker_self.t_int()
       }
       if flag = checker_self.type_multi.get(tn.name) {
@@ -696,6 +970,16 @@ pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
 
 pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {
   if !fnn.vis {
+    return
+  }
+  if ty.rec {
+    // A recursive alias is its members, each checked once.
+    if ty_walk_enter(ty, wk_pub()) {
+      for m in ty.members {
+        checker_self.ensure_pub_sig_ty(m, loc, fnn)
+      }
+      ty_walk_leave(ty, wk_pub())
+    }
     return
   }
   if ty.is_agg() {
@@ -831,7 +1115,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     checker_self.fail(expr.loc, "new is a type constructor")
     return checker_self.t_int()
   }
-  // A block or lambda argument: `m.f { |x| ... }` picks m's f as
+  // A block or lambda argument: `m.f (x) { ... }` picks m's f as
   // `f { ... }` would, its body checked in the calling module.
   checker_self.absorb_fn_block_q(expr, mod)
   none: Ty? = nil
@@ -863,7 +1147,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}")
       }
       i += 1
     }
@@ -924,4 +1208,168 @@ pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
   }
   checker_self.fail(expr.loc, "unknown function gc.${expr.callee}; std.gc has gc.hold { } and gc.collect()")
   checker_self.t_void()
+}
+
+// A module's last name qualifies its names (`import std.time`, then
+// `time.now()`), as the whole name does. q is a last name in from_mod
+// when no import (nor from_mod itself) is named q in whole and one import
+// ends in `.q`: that import's whole name, else "". Two imports ending in
+// `.q` make a use of q an error naming both whole names. std.gc keeps
+// its own reading of `gc` (names_std_gc).
+pub fn (checker_self: Checker) last_name_module(q: String, from_mod: String, loc: Location): String {
+  if q == "gc" {
+    return ""
+  }
+  // A module's own name stands for an import ending in it, when one does:
+  // a program in http.av that imports std.http means std.http by
+  // `http.listen`, since a module has no need to qualify its own names.
+  if q != from_mod {
+    if k = checker_self.known_mods.get(q) {
+      return ""
+    }
+  }
+  found = ""
+  other = ""
+  for info in checker_self.program.mods {
+    if info.name == from_mod {
+      for imp in info.imports {
+        if module_last_name(imp) == q && imp != q {
+          if found.size == 0 {
+            found = imp
+          } else if imp != found && other.size == 0 {
+            other = imp
+          }
+        }
+      }
+    }
+  }
+  if other.size > 0 {
+    checker_self.fail(loc, "${q} is the last name of both ${found} and ${other}: write the whole name (${found}.… or ${other}.…)")
+    return ""
+  }
+  found
+}
+
+// The name after a module name's last dot ("" for a name without one).
+pub fn module_last_name(m: String): String {
+  i = m.size - 1
+  while i >= 0 {
+    if m[i] == 46 {
+      return str_slice(m, i + 1, m.size)
+    }
+    i -= 1
+  }
+  ""
+}
+
+// Rewrites the root name of a name chain (`time` in `time.now()`,
+// `fs.read`, `fs.Reader.x`) to the whole module name its last name
+// stands for, unless the name is a local, a field or a module's whole
+// name; the readers after this see the whole name, as written.
+pub fn (checker_self: Checker) qualify_last_name(expr: Expr) {
+  root = expr
+  if root.kind == ex_call() {
+    if r = root.receiver {
+      root = r
+    } else {
+      return
+    }
+  }
+  while root.kind == ex_field() {
+    if o = root.object {
+      root = o
+    } else {
+      return
+    }
+  }
+  if root.kind != ex_name() || root.type_args.size > 0 || root.ident.size == 0 {
+    return
+  }
+  q = root.ident
+  if k = checker_self.last_names.get(q) {
+  } else {
+    return
+  }
+  if q != checker_self.current_module {
+    if k2 = checker_self.known_mods.get(q) {
+      return
+    }
+  }
+  if found = checker_self.lookup(q) {
+    return
+  }
+  if f = checker_self.implicit_field(q) {
+    return
+  }
+  full = checker_self.last_name_module(q, checker_self.current_module, root.loc)
+  if full.size > 0 {
+    root.ident = full
+  }
+}
+
+// The std.fs or std.process spelling of a function that left the
+// prelude, "" for any other name.
+pub fn moved_io_name(name: String): String {
+  olds = ["file_read", "file_write", "dir_list", "file_exists", "dir_exists", "dir_walk", "process_run", "argv", "env_get"]
+  news = ["fs.read(path)", "fs.write(path, body)", "fs.list(path)", "fs.exists(path)", "fs.is_dir(path)", "fs.walk(path)", "process.run(program, args)", "process.args()", "process.env(name)"]
+  for i in 0..olds.size {
+    if olds[i] == name {
+      return news[i]
+    }
+  }
+  ""
+}
+
+// The spelling that replaced a prelude twin (a free function beside the
+// form that says the same), "" for any other name. The compiler's own
+// sources keep the twin until the next seed builds them.
+pub fn retired_twin_name(name: String): String {
+  if name == "str_slice" {
+    return "s[start..stop]"
+  }
+  if name == "buf_new" {
+    return "Buf.new()"
+  }
+  if name == "sha256" {
+    return "digest.sha256_hex(s.bytes) (import std.digest)"
+  }
+  ""
+}
+
+// Whether the current module may still call the prelude's old file and
+// process names and its twins: the compiler's own sources (built by the
+// seed, which has no std.fs), the two modules that wrap them, and the
+// prelude's own parts.
+pub fn (checker_self: Checker) moved_io_allowed: Bool {
+  m = checker_self.current_module
+  if m == "std.fs" || m == "std.process" || m == "prelude" || m.starts_with("prelude_") {
+    return true
+  }
+  for info in checker_self.program.mods {
+    if info.name == m {
+      p = info.path
+      return p.starts_with("compiler/") || p.contains("/compiler/")
+    }
+  }
+  false
+}
+
+// A call of a function that left the prelude, outside the modules that
+// may still name it: refused with the new spelling; true when refused.
+pub fn (checker_self: Checker) refuse_moved_io(expr: Expr): Bool {
+  twin = retired_twin_name(expr.callee)
+  if twin.size > 0 && !expr.derived && !checker_self.moved_io_allowed() {
+    checker_self.fail(expr.loc, "${expr.callee} is gone: write ${twin}")
+    return true
+  }
+  spelled = moved_io_name(expr.callee)
+  if spelled.size == 0 || checker_self.moved_io_allowed() {
+    return false
+  }
+  mod = "std.fs"
+  if spelled.starts_with("process.") {
+    mod = "std.process"
+  }
+  checker_self.fail(expr.loc, "${expr.callee} is now ${spelled}: import ${mod}")
+  true
 }

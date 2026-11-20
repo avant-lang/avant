@@ -1,6 +1,7 @@
 import std.http
+import std.ws
 
-// The deadlines of Ws.connect and recv: each
+// The deadlines of ws.connect and recv: each
 // waits 1000 ms for what never comes (a handshake from a listener that
 // is never served; a message from a route that never sends) and says
 // whether it ended in time (no earlier than 1000 ms, within 1.5 s
@@ -16,31 +17,33 @@ fn in_time(what: String, took: Int): String {
 }
 
 fn main: Int {
-  if quiet = Http.listen(0, "127.0.0.1", 1048576, 1) {
+  if quiet = http.listen(0, "127.0.0.1", 1048576, 1) {
     t0 = now_ms()
-    r = Ws.connect("ws://127.0.0.1:${quiet.port()}/", 1000)
+    r = ws.connect("ws://127.0.0.1:${quiet.port()}/", 1000)
     took = now_ms() - t0
     switch r {
-      case HttpError { puts(in_time("connect", took)) }
-      case WsConnection { puts("connect: connected") }
+      case http.HttpError { puts(in_time("connect", took)) }
+      case ws.WsConnection { puts("connect: connected") }
     }
     quiet.close()
   }
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+  if opened = http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
     server.websocket("/silent", (conn, msg) {
     })
     server.get("/__stop", (req) {
       server.close()
-      Response.text("bye")
+      http.Response.text("bye")
     })
     port = server.port()
     client = spawn {
-      if conn = Ws.connect("ws://127.0.0.1:${port}/silent", 5000) {
+      if conn = ws.connect("ws://127.0.0.1:${port}/silent", 5000) {
         t0 = now_ms()
         got = "nil"
-        if msg = conn.recv(1000) {
-          got = "a message"
+        switch conn.recv(1000) {
+          case m: http.WsMessage { got = "a message" }
+          case e: ws.WsClosed { got = "closed: ${e}" }
+          else { }
         }
         took = now_ms() - t0
         if got == "nil" {
@@ -52,7 +55,7 @@ fn main: Int {
       } else {
         puts("recv: connect failed")
       }
-      if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 5000) {
+      if resp = http.get("http://127.0.0.1:${port}/__stop", true, 5000) {
       }
       0
     }

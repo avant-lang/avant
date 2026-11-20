@@ -11,7 +11,9 @@
 # with stubs for what they drive: tools/letters.sh (builds a C' that is a
 # shell script, counting its builds), the compiler (`__emit-ll` writes its
 # own source text, the program's path and the program; `compile` writes a
-# script printing a checksum; `test` fails a file holding FAILME) and the
+# script printing a checksum of the program, its `// file:` lines and a new
+# spelling left out, as a task's output depends on neither; `test` fails a
+# file holding FAILME) and the
 # LangArena harness (stitches langarena/tasks/*.av with helper.av and
 # run.js, as the real one does, and asks the compiler to build each).
 #   cache-build: the first call builds the entry of the tree (COMPLETE,
@@ -61,13 +63,33 @@
 #     a line more than half the test files run (compiling the helper every
 #     test imports runs much of the compiler) picks none, said on stderr;
 #   check-map: change-check with TEST_MAP runs the map's test file beside
-#     those by name and names it apart in the line.
+#     those by name and names it apart in the line;
+#   check-goldens-example: a changed example selects the test file its
+#     dump goldens' row names (tests/goldens/list.txt) and test_examples.av
+#     (its tests/expected/STEM.out exists); check-goldens-golden: a changed
+#     golden selects its row's test file;
+#   check-map-auto: a range changing compiler/ with no map builds the
+#     base's (a stub test-map.sh) and runs the test file it picks;
+#     check-map-none: TEST_MAP=none builds none and says so;
+#   check-runner: with CC_RUNNER each piece of work goes through the
+#     runner, one shared run each, named `change-check: base cache`,
+#     `change-check: test map` and `change-check: SHORT build`, `corpus`,
+#     `langarena`, `counts`, `tests`;
+#   check-base-harness: a base that refuses the caller's tasks, with
+#     CC_BASE_LANGARENA naming the base's own harness: the base's side is
+#     read from it, so the first commit's programs are counted against the
+#     base's own (ratios, the same output), a task only the caller's
+#     harness has reads new, and cache.txt says so.
 # Where `perf stat -e instructions:u` cannot count (a container without
 # the counters), the LangArena part and change-check cannot be built: their
 # checks print `skip: NAME: why`. Prints one line per check, `ok: NAME`,
 # `skip: NAME: why` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/change-check.sh WORK" >&2; exit 2; }
+# The caller's change-check settings never reach the fake's runs: a
+# runner would take the real machine lock and log into the caller's run
+# log, a map or a harness would change what the checks select.
+unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 w=$(realpath -m "$1")
 mkdir -p "$w"
@@ -76,6 +98,7 @@ r=$w/repo/avant
 mkdir -p "$r/tools" "$r/compiler" "$r/lib/std" "$r/runtime" "$r/examples" "$r/tests/cases" \
   "$r/bin/seed" "$r/langarena/harness" "$r/langarena/tasks" "$w/repo/LangArena"
 for t in base-cache.sh ll-digests.sh gcstats.sh la-count.sh neutral.sh change-check.sh test-map.sh; do cp "$root/tools/$t" "$r/tools/$t"; done
+cp "$root/tools/test-map.sh" "$r/tools/test-map-real.sh"
 for f in heap closures objects; do mkdir -p "$r/tests/fixtures/$f"; echo "churn $f" > "$r/tests/fixtures/$f/churn.av"; done
 echo 'v1' > "$r/compiler/main.av"
 echo 'r1' > "$r/runtime/rt.txt"
@@ -109,7 +132,7 @@ __emit-ll)
 compile)
   me=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
   if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
-  printf '#!/bin/sh\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(cksum < "$1" | cut -d' ' -f1)" "$R" > "$2"
+  printf '#!/bin/sh\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
   chmod +x "$2" ;;
 test)
   f=0 p=0
@@ -263,7 +286,7 @@ perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
   skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
-    cache-la-base-refuses neutral-base-refuses check-base-refuses
+    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner
   echo done; exit 0
 fi
 
@@ -302,7 +325,7 @@ echo 'other, again' > "$r/tests/cases/test_other.av"; g add -A && g commit -q -m
 echo 'v2' > "$r/compiler/main.av"; g add -A && g commit -q -m 'the compiler changed'
 echo 'r2' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'the runtime changed'
 printf 'import std.m\nFAILME\n' > "$r/tests/cases/test_m.av"; g add -A && g commit -q -m 'a test fails'
-(cd "$r" && sh tools/change-check.sh "$b" HEAD "$w/cc" < /dev/null > "$w/cc.log" 2>&1); rc=$?
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh "$b" HEAD "$w/cc" < /dev/null > "$w/cc.log" 2>&1); rc=$?
 t=$w/cc/table.md
 row() { grep -F "| $1 |" "$t" 2>/dev/null; }
 row 'a tool changed' | grep -q '| 1 | kept | none matched | 0 | - (no rebuild) | - |'
@@ -320,6 +343,7 @@ say check-failed $? "rc=$rc $(row 'a test fails') $(tail -n 3 "$w/cc.log" | tr '
 # 7. A base that refuses the caller's LangArena tasks: the tasks gain a
 # spelling only a tree with lib/spell knows, and the head adds lib/spell.
 nb=$(git -C "$r" rev-parse HEAD)
+mkdir -p "$w/oldla"; (cd "$r/langarena" && tar --exclude=./tmp -cf - .) | tar -xf - -C "$w/oldla"
 for x in a b; do echo NEWSPELL >> "$r/langarena/tasks/$x.av"; done
 : > "$r/lib/spell"; g add -A && g commit -q -m 'a new spelling'
 lap=$(cd "$r" && sh tools/base-cache.sh --la "$nb" 2> "$w/la-refused.err" < /dev/null); rc=$?
@@ -334,9 +358,16 @@ NEUTRAL_CHANGED="$w/changed2.txt" sh "$r/tools/neutral.sh" "$(dirname "$lap")" "
   && grep -qx 'langarena: not comparable: the base refuses 2 of 2 (first message: a.av: error: unknown spelling NEWSPELL in a.av); the sources corpus is judged alone' "$w/neutral3/summary.txt" \
   && [ "$(grep -c '^not-comparable ' "$w/neutral3/la-result.txt")" = 2 ]
 say neutral-base-refuses $? "rc=$rc $(tr '\n' ';' < "$w/neutral3/summary.txt" 2>/dev/null) $(tail -n 2 "$w/neutral3.log" | tr '\n' ';')"
-(cd "$r" && sh tools/change-check.sh "$nb" HEAD "$w/cc2" < /dev/null > "$w/cc2.log" 2>&1); rc=$?
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh "$nb" HEAD "$w/cc2" < /dev/null > "$w/cc2.log" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc2/table.md" | grep -q '| 2: a.av, b.av | a new (the base refused it), b new (the base refused it) |'
 say check-base-refuses $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc2/table.md" 2>/dev/null) $(tail -n 3 "$w/cc2.log" | tr '\n' ';')"
+echo 'task c' > "$r/langarena/tasks/c.av"
+(cd "$r" && TEST_MAP=none CC_BASE_LANGARENA="$w/oldla" sh tools/change-check.sh "$nb" HEAD "$w/cc4" < /dev/null > "$w/cc4.log" 2>&1); rc=$?
+rm -f "$r/langarena/tasks/c.av"
+[ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc4/table.md" | grep -q "| 3: a.av, b.av, c.av | a [0-9][0-9.]*, b [0-9][0-9.]*, c new (not a program of the base's harness) |" \
+  && ! grep -F '| a new spelling |' "$w/cc4/table.md" | grep -q 'refused\|OUTPUT' \
+  && grep -q "^langarena: the base refuses 2 of this checkout's programs; the base's side read from its own harness $w/oldla " "$w/cc4/cache.txt"
+say check-base-harness $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc4/table.md" 2>/dev/null) $(cat "$w/cc4/cache.txt" 2>/dev/null | tr '\n' ';') $(tail -n 3 "$w/cc4.log" | tr '\n' ';')"
 
 # 8. change-check with a test map: the map's test file joins the ones by
 # name, and the cell says which came from the map.
@@ -348,4 +379,66 @@ echo 'v3' > "$r/compiler/main.av"; g add -A && g commit -q -m 'the compiler agai
 [ $rc -eq 0 ] && grep -F '| the compiler again |' "$w/cc3/table.md" | grep -q '| 0 failed, 1 passed: -; by the map, 1 (1 more): test_other |' \
   && grep -q "^test map: $w/map2 " "$w/cc3/cache.txt"
 say check-map $? "rc=$rc $(grep -F '| the compiler again |' "$w/cc3/table.md" 2>/dev/null) $(tail -n 3 "$w/cc3.log" | tr '\n' ';')"
+
+# 9. The dump goldens' list and the examples: a changed example selects
+# its row's test file and test_examples.av, a changed golden its row's.
+mkdir -p "$r/tests/goldens/examples" "$r/tests/expected"
+printf '# TEST STEM SOURCE LAYERS\ntest_goldens  examples/e  examples/e.av  tok\n' > "$r/tests/goldens/list.txt"
+echo 'tok' > "$r/tests/goldens/examples/e.tok"; echo 'out' > "$r/tests/expected/e.out"
+echo 'goldens' > "$r/tests/cases/test_goldens.av"; echo 'examples' > "$r/tests/cases/test_examples.av"
+g add -A && g commit -q -m 'goldens and examples'
+echo 'example, changed' > "$r/examples/e.av"; g add -A && g commit -q -m 'an example changed'
+echo 'tok2' > "$r/tests/goldens/examples/e.tok"; g add -A && g commit -q -m 'a golden changed'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc5" < /dev/null > "$w/cc5.log" 2>&1); rc=$?
+t=$w/cc5/table.md
+row 'an example changed' | grep -q '| 0 failed, 2 passed: test_examples test_goldens |'
+say check-goldens-example $? "rc=$rc $(row 'an example changed') $(tail -n 3 "$w/cc5.log" | tr '\n' ';')"
+row 'a golden changed' | grep -q '| 0 failed, 1 passed: test_goldens |'
+say check-goldens-golden $? "rc=$rc $(row 'a golden changed')"
+grep -qx 'test map: none (TEST_MAP=none)' "$w/cc5/cache.txt"
+say check-map-none $? "$(tr '\n' ';' < "$w/cc5/cache.txt" 2>/dev/null)"
+
+# 10. A range changing compiler/ with no map: the base's map is built (a
+# stub test-map.sh writes one by hand into the entry; --pick is the real
+# one) and its test file runs.
+cat > "$r/tools/test-map.sh" <<'STUB'
+#!/bin/sh
+# The stub map: REV's entry gets testmap/ where test_other's run hits
+# compiler/main.av's first line; --pick is the real script's.
+here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+[ "$1" = --pick ] && exec sh "$here/test-map-real.sh" "$@"
+e=$(sh "$here/base-cache.sh" "$1" < /dev/null) || exit 1
+echo built >> "$STUB_MAPS"
+m=$e/testmap; mkdir -p "$m/hits"
+printf 'tree: %s\n' "$(basename "$e")" > "$m/MANIFEST"
+printf 'compiler/main.av\t1\n' > "$m/hits/test_other.tsv"; printf 'lib/std/m.av\t1\n' > "$m/hits/test_m.tsv"
+printf 'compiler/main.av\nlib/std/m.av\n' > "$m/files.txt"
+: > "$m/COMPLETE"; echo "$m"
+STUB
+g add -A && g commit -q -m 'the stub map'
+echo 'v4' > "$r/compiler/main.av"; g add -A && g commit -q -m 'the compiler once more'
+# The runner: logs its step and side, then runs the command after --.
+cat > "$w/runner" <<'STUB'
+#!/bin/sh
+step="" side=shared
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+  case $1 in --step) step=$2; shift ;; --timed) side=timed ;; esac
+  shift
+done
+shift
+echo "$side	$step" >> "$RUNNER_LOG"
+exec "$@"
+STUB
+chmod +x "$w/runner"
+: > "$w/maps"
+(cd "$r" && STUB_MAPS="$w/maps" RUNNER_LOG="$w/runner.log" CC_RUNNER="$w/runner" sh tools/change-check.sh HEAD^ HEAD "$w/cc6" < /dev/null > "$w/cc6.log" 2>&1); rc=$?
+t=$w/cc6/table.md
+[ $rc -eq 0 ] && [ "$(wc -l < "$w/maps")" = 1 ] && row 'the compiler once more' | grep -q '| 0 failed, 1 passed: -; by the map, 1 (1 more): test_other |' \
+  && grep -q '^test map: built for the base, the range changing compiler/ or lib/ ' "$w/cc6/cache.txt"
+say check-map-auto $? "rc=$rc maps=$(wc -l < "$w/maps") $(row 'the compiler once more') $(tr '\n' ';' < "$w/cc6/cache.txt" 2>/dev/null) $(tail -n 3 "$w/cc6.log" | tr '\n' ';')"
+s6=$(git -C "$r" rev-parse --short=8 HEAD)
+printf 'shared\tchange-check: base cache\nshared\tchange-check: base cache\nshared\tchange-check: test map\nshared\tchange-check: %s build\nshared\tchange-check: %s corpus\nshared\tchange-check: %s langarena\nshared\tchange-check: %s counts\nshared\tchange-check: %s tests\n' \
+  "$s6" "$s6" "$s6" "$s6" "$s6" > "$w/runner.want"
+cmp -s "$w/runner.want" "$w/runner.log"
+say check-runner $? "$(tr '\n' ';' < "$w/runner.log" 2>/dev/null)"
 echo done

@@ -1,7 +1,8 @@
 // Module constants. `const name = value` at module level, `pub const`
-// exported. The value is a scalar (an integer, a Float64 or a Bool; a
-// character literal is an integer) computed when compiling from literals,
-// other constants and operators; an overflow, a division by zero or a
+// exported. A value that is a scalar (an integer, a Float64 or a Bool; a
+// character literal is an integer) made of literals, other such
+// constants and operators is computed when compiling (any other value is
+// computed before main: checker/const_values.av); an overflow, a division by zero or a
 // shift outside the width is an error there. Each use of the name is that
 // value written as a literal (inline_const): it takes its type from where
 // it stands, as `64` does, so `x: Int32 = max_depth` and `n + max_depth`
@@ -109,8 +110,13 @@ pub fn (checker_self: Checker) note_consts {
     checker_self.const_vals[slot] = checker_self.const_list.size
     checker_self.const_list.push(cv)
   }
+  // A value that is not a scalar made of literals, constants and
+  // operators is computed before main (checker/const_values.av).
+  for cv3 in checker_self.const_list {
+    _ = checker_self.const_shape(cv3)
+  }
   for cv2 in checker_self.const_list {
-    if d = cv2.def {
+    if d = cv2.def, !d.startup {
       _ = checker_self.const_value(cv2, d.loc)
     }
   }
@@ -126,6 +132,11 @@ pub fn (checker_self: Checker) const_value(cv: ConstVal, at: Location): Bool {
     return false
   }
   if d = cv.def {
+    if d.startup {
+      checker_self.fail(at, "the constant ${d.name} is computed before main, not when compiling: here a literal or a constant made of literals and operators is needed")
+      cv.state = 3
+      return false
+    }
     if cv.state == 1 {
       checker_self.fail(at, "the value of constant ${d.name} refers to ${d.name} itself")
       cv.state = 3
@@ -240,10 +251,13 @@ pub fn (checker_self: Checker) const_named(e: Expr): ConstVal? {
 // and its value is known.
 pub fn (checker_self: Checker) inline_const(e: Expr): Bool {
   if cv = checker_self.const_named(e) {
+    if d0 = cv.def, d0.startup {
+      return false
+    }
     name = e.ident
     if !checker_self.const_value(cv, e.loc) {
       e.kind = ex_int()
-      e.int_bits = 0u64
+      e.int_bits = 0
       e.ident = ""
       e.object = nil
       return true
@@ -317,7 +331,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
     if e.int_suffix == "u64" {
       return cv_of_u64(e.int_bits)
     }
-    if e.int_bits > 9223372036854775807u64 {
+    if e.int_bits > 9223372036854775807 {
       checker_self.fail(e.loc, "integer literal does not fit in Int; use ${e.int_bits}u64")
       return nil
     }
@@ -349,7 +363,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
   }
   if k == ex_unary() {
     if inner = e.inner {
-      if e.op == tk_minus() && inner.kind == ex_int() && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808u64 {
+      if e.op == tk_minus() && inner.kind == ex_int() && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808 {
         return cv_of_int(0 &- 9223372036854775807 &- 1)
       }
       if v = checker_self.fold_const(inner, m) {
@@ -367,14 +381,6 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
       }
       return nil
     }
-  }
-  if k == ex_string() || k == ex_interp() {
-    checker_self.fail(e.loc, "a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { \"hello\" })")
-    return nil
-  }
-  if k == ex_call() {
-    checker_self.fail(e.loc, "a constant's value is computed when compiling, from literals, other constants and operators: a call is not")
-    return nil
   }
   checker_self.fail(e.loc, "a constant holds a scalar (an integer, a Float64, a Bool or a character literal), computed from literals, other constants and operators")
   nil
@@ -605,13 +611,13 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
       r = a - b
     }
   } else if op == tk_star() {
-    if a != 0u64 && b > max / a {
+    if a != 0 && b > max / a {
       over = true
     } else {
       r = a * b
     }
   } else if op == tk_slash() || op == tk_percent() {
-    if b == 0u64 {
+    if b == 0 {
       checker_self.fail(e.loc, "the constant's value divides by zero")
       return nil
     }
@@ -621,7 +627,7 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
       r = a % b
     }
   } else if op == tk_less_less() || op == tk_greater_greater() {
-    if b > 63u64 {
+    if b > 63 {
       checker_self.fail(e.loc, "shift amount ${b} out of range for UInt64 (0..63)")
       return nil
     }
@@ -736,7 +742,7 @@ pub fn (checker_self: Checker) check_enum_consts {
               ok = false
             } else if c.kind == cv_int() && c.iv >= -2147483648 && c.iv <= 2147483647 {
               value = c.iv
-            } else if c.kind == cv_u64() && c.uv <= 2147483647u64 {
+            } else if c.kind == cv_u64() && c.uv <= 2147483647 {
               value = c.uv.to_i()
             } else if c.kind == cv_int() || c.kind == cv_u64() {
               checker_self.fail(loc, "the value of ${decl.names[i]}, the constant ${cname} = ${cv_text(c)}, does not fit in Int32")

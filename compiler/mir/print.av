@@ -15,8 +15,8 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
   }
   out: Array(String) = []
   x = v
-  while x != 0u64 || out.size < width || out.size == 0 {
-    d = (x & 15u64).to_i()
+  while x != 0 || out.size < width || out.size == 0 {
+    d = (x & 15).to_i()
     out.push(str_slice(digits, d, d + 1))
     x = x >> 4u64
   }
@@ -75,6 +75,9 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
   }
   if o.kind == mok_fn() {
     return "const fn ${o.text}"
+  }
+  if o.kind == mok_global() {
+    return "const global ${o.text}"
   }
   if o.kind == mok_bool() {
     if o.ival != 0 {
@@ -317,10 +320,10 @@ pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
     }
   }
   for c in 0..n {
-    out.push(0u64)
+    out.push(0)
   }
   for w in l.ref_words {
-    out[w / 64] = out[w / 64] | (1u64 << (w % 64).to_u64())
+    out[w / 64] = out[w / 64] | (1 << (w % 64).to_u64())
   }
   out
 }
@@ -459,6 +462,12 @@ pub fn mir_print(m: MModule, with_locs: Bool): String {
     buf.push_str("\n")
     for ix in 0..m.strs.size {
       buf.push_str("const str.${ix} = \"${mir_escape(m.strs[ix])}\"\n")
+    }
+  }
+  if m.globals.size > 0 {
+    buf.push_str("\n")
+    for g in m.globals {
+      buf.push_str("global ${g.symbol}: ${ts.text(g.ty)} // the constant ${g.name}\n")
     }
   }
   buf.push_str("\n")

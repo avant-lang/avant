@@ -34,6 +34,10 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   if pattern.is_var() {
     return checker_self.subst_put(keys, vals, pattern.name, actual)
   }
+  if pattern.rec {
+    // A recursive alias holds no type parameter.
+    return ty_assignable(actual, pattern)
+  }
   if pattern.is_union() {
     return checker_self.unify_union(pattern, actual, keys, vals) == 1
   }
@@ -122,9 +126,7 @@ pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(
   }
   rest: Array(Ty) = []
   if actual.is_union() {
-    for am in actual.members {
-      rest.push(am)
-    }
+    rest.concat(actual.members)
   } else {
     rest.push(actual)
   }
@@ -182,7 +184,7 @@ pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(
     // longer ambiguous.
     left: Array(String) = []
     for fname in free {
-      if checker_self.infer_err_params.contains(fname) {
+      if checker_self.infer_err_params.has(fname) {
         errs: Array(Ty) = []
         keep: Array(Ty) = []
         for rm in rest {
@@ -411,7 +413,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
       if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
         // The call takes a frame only when a default does name an
         // earlier parameter: a number tried here is given back unused.
-        fresh = expr.int_bits == 0u64
+        fresh = expr.int_bits == 0
         if fresh {
           checker_self.arg_frames = checker_self.arg_frames + 1
           expr.int_bits = checker_self.arg_frames.to_u64()
@@ -433,7 +435,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
           }
         }
         if fresh && !used {
-          expr.int_bits = 0u64
+          expr.int_bits = 0
           checker_self.arg_frames = checker_self.arg_frames - 1
         }
       }
@@ -473,7 +475,7 @@ pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Arr
   fresh: Array(Scope) = []
   checker_self.scopes = fresh
   checker_self.push_scope()
-  if expr.int_bits != 0u64 {
+  if expr.int_bits != 0 {
     for j in 0..i {
       if j < params.size {
         checker_self.bind(arg_frame_name(expr.int_bits, j), params[j])
@@ -629,9 +631,7 @@ pub fn (checker_self: Checker) place_named_args(expr: Expr, fnn: Function): Arra
   for i in 0..npos {
     order.push(i)
   }
-  for w in written {
-    order.push(w)
-  }
+  order.concat(written)
   for i in npos..fnn.params.size {
     if given[i].size == 0 {
       order.push(i)
@@ -688,6 +688,35 @@ pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
   checker_self.program.functions.push(fnn)
 }
 
+// Where an instance was made, for its errors (checker/register.av
+// check_pending): the call, the function it is in, and the instance as a
+// message names it, `check_eq with T = P` (a verb's template by its
+// verb, `sort_by with T = Int, K = String`).
+pub fn (checker_self: Checker) note_instance_call(inst: Function, generic: Function, subst: Array(Ty), loc: Location) {
+  inst.inst_call = loc
+  inst.inst_from = checker_self.current_fn
+  name = generic.name
+  if generic.owner.size > 0 {
+    name = "${generic.owner}.${name}"
+  }
+  if name.starts_with("__avant_") {
+    name = str_slice(name, 8, name.size)
+  }
+  buf = buf_new()
+  buf.push_str(name)
+  for i in 0..generic.type_params.size {
+    if i < subst.size {
+      if i == 0 {
+        buf.push_str(" with ")
+      } else {
+        buf.push_str(", ")
+      }
+      buf.push_str("${generic.type_params[i]} = ${subst[i].show()}")
+    }
+  }
+  inst.inst_shown = buf.to_s()
+}
+
 pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
   for t in subst {
     if t.is_hasher() {
@@ -716,12 +745,9 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   inst.type_params = tp
   inst.emit_name = emit
   ia: Array(Ty) = []
-  i = 0
-  while i < subst.size {
-    ia.push(subst[i])
-    i += 1
-  }
+  ia.concat(subst)
   inst.inst_args = ia
+  checker_self.note_instance_call(inst, sig.node, subst, loc)
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
   // The instance's types name what its generic's module sees (a generic
@@ -784,13 +810,10 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   inst.type_params = tp
   inst.emit_name = emit
   ia: Array(Ty) = []
-  i = 0
-  while i < subst.size {
-    ia.push(subst[i])
-    i += 1
-  }
+  ia.concat(subst)
   inst.inst_args = ia
   inst.owner = sig.owner
+  checker_self.note_instance_call(inst, sig.node, subst, loc)
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
   // The instance's types name what its generic's module sees (a generic
@@ -925,7 +948,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       checker_self.fail_no_fit(loc, shown, all, arg_tys)
     } else if checker_self.call_mod.size > 0 {
       checker_self.fail_hint(loc, "unknown function ${shown}", checker_self.module_name_hint(checker_self.call_mod, name))
-    } else {
+    } else if !checker_self.refuse_std_bare(loc, name) {
       checker_self.fail_hint(loc, "unknown function ${shown}", checker_self.fn_hint(name))
     }
     return nil
@@ -1166,6 +1189,15 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
 
 pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty? {
   none: Ty? = nil
+  if recv.derived && recv.kind == ex_name() {
+    if tn = recv.elem_type {
+      // A receiver the typed decode wrote (checker/json_codec.av): its
+      // type is carried, pinned.
+      tt = checker_self.resolve_in_module(tn)
+      checker_self.pull_resolve()
+      return tt
+    }
+  }
   segs: Array(String) = []
   if !checker_self.ident_chain(recv, segs) {
     return none
@@ -1207,7 +1239,14 @@ pub fn (checker_self: Checker) named_type_seen(name: String): Ty? {
     }
     return nil
   }
-  checker_self.resolver.get_named(name)
+  if t = checker_self.resolver.get_named(name) {
+    if t.mod_name != checker_self.current_module && t.mod_name.starts_with("std.") {
+      // A std module's type is named with its module (`json.Json`).
+      return nil
+    }
+    return t
+  }
+  nil
 }
 
 // The type a receiver names when it is a type and not a value (`T`,
@@ -1360,6 +1399,17 @@ pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
     if t = checker_self.named_type_seen(segs[0]), t.is_enum() {
       return t
     }
+    // An alias of an enum (`type Kind = json.JsonKind`) reaches its
+    // members as the enum's own name does (`Kind.obj`).
+    if a = checker_self.alias_value_target(segs[0], recv.loc), a.args.size == 0 {
+      if a.mod_name.size > 0 {
+        if t = checker_self.resolver.get_named_in(a.mod_name, a.name), t.is_enum() {
+          return t
+        }
+      } else if t = checker_self.named_type_seen(a.name), t.is_enum() {
+        return t
+      }
+    }
   } else if segs.size > 1 {
     mod = checker_self.join_segs(segs, segs.size - 1)
     if checker_self.qualifier_ok(mod, checker_self.current_module) {
@@ -1489,7 +1539,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
       got = checker_self.fit_call_arg(expr.args[ai], arg_tys[ai], sig.params[ai])
       if !ty_assignable(got, sig.params[ai]) {
         an = ai + 1
-        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show()}.${expr.callee} is ${got.show()}, expected ${sig.params[ai].show()}")
+        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show()}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[ai])}")
       }
     }
   }
@@ -1501,7 +1551,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
       dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
       if !ty_assignable(dgot, sig.params[di]) {
         dn = di + 1
-        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show()}.${expr.callee} is ${dgot.show()}, expected ${sig.params[di].show()}")
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show()}.${expr.callee} ${checker_self.arg_is_text(dgot, sig.params[di])}")
       }
     }
   }
@@ -1530,7 +1580,9 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
     }
   }
   if !visible {
-    checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
+    if !checker_self.refuse_std_bare(expr.loc, expr.callee) {
+      checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
+    }
     return checker_self.t_int()
   }
   if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc, checker_self.int_literal_flags(expr.args)) {
@@ -1546,7 +1598,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }
@@ -1720,7 +1772,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       got = checker_self.check_fn_arg(expr.args[i], pty)
       if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${pty.show()}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, pty)}")
         return checker_self.t_int()
       }
     }
@@ -1766,7 +1818,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       }
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
     }
     i += 1
@@ -1877,7 +1929,7 @@ pub fn (checker_self: Checker) dispatch_method_of(expr: Expr, object: Ty, expect
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} ${checker_self.arg_is_text(got, sig.params[i])}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }
@@ -1973,6 +2025,9 @@ pub fn (checker_self: Checker) arg_types_text(arg_tys: Array(Ty)): String {
 // until its parameter decides) reads as written.
 pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
   if checker_self.is_empty_array_ty(t) {
+    if t.is_enum() {
+      return t.name
+    }
     if t.is_hash() {
       return "[:]"
     }
@@ -1981,7 +2036,7 @@ pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
   args = checker_self.args_now
   if k < args.size {
     e = args[k]
-    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807u64 && t.show() == "UInt64" {
+    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807 && t.show() == "UInt64" {
       return "${e.int_bits}"
     }
   }
