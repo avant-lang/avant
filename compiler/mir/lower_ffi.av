@@ -224,15 +224,19 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         if cs.params[i].is_enum() {
           o = lw.enum_to_c(o, cs.params[i])
         }
+        // A runtime entry reads a string's length from its header, so it
+        // gets the flat form whoever declares it (a program's own lib
+        // block may bind one): a view's bytes in place have no header.
+        rt_entry = cs.runtime || e.callee.starts_with("avant_")
         if lw.c_ret_string(cs.params[i]) && !(cs.runtime && b.module.rt.class_of(e.callee) == mcc_never()) {
-          o = lw.c_string_arg(o, ps[i], cs.runtime)
+          o = lw.c_string_arg(o, ps[i], rt_entry)
         } else if cs.params[i].is_struct() && lw.has_c_strings(cs.params[i], 0) {
           // A struct by value: its strings as C reads them, in a copy.
           lw.at(a.loc)
           sv = lw.hold(o, ps[i])
           cp = b.temp(ps[i])
           b.assign(b.pl(cp), b.rv_use(b.copy_local(sv)))
-          lw.c_strings_out_in(b.pl(cp), cs.params[i], cs.runtime, a.loc, 0)
+          lw.c_strings_out_in(b.pl(cp), cs.params[i], rt_entry, a.loc, 0)
           o = b.copy_local(cp)
         }
         // A reference the C function holds, or an aggregate the emitter
