@@ -28,7 +28,7 @@
 * `pop` runs in line; optimized code keeps references in registers between calls.
 * Traps name more: a fault in C code, an integer overflow's own line, a library precondition's calling line, a change to an array or hash a running task or walk reads.
 * A program built from one commit in two checkouts is the same bytes.
-* The README's benchmark tables are this release's, on one server: every LangArena task now does its references' work (each change a correction; on the tasks whose source did not change, v0.47.0's time at 0.93× its memory), and `std.http` answers the most pipelined requests a second of the eight servers, at the least memory.
+* The README's benchmark tables are this release's, on one server: every LangArena task now does its references' work (each change a correction; on the tasks whose source did not change, v0.47.0's time at 0.94× its memory), and `std.http` answers the most pipelined requests a second of the eight servers, at the least memory.
 * The compiler is built from v0.47.0.
 
 ### Fixed
