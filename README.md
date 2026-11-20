@@ -3784,7 +3784,7 @@ Each setting is an environment variable read once at start: a switch is `1` (on)
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `AVANT_HEAP_MAX_MB` | `0` (no limit) | the heap limit in MiB; a program that passes it stops with a "heap limit" message |
-| `AVANT_YOUNG_MB` | `0` (adaptive, 4 to 64 MiB) | a fixed budget for the young generation, in MiB |
+| `AVANT_YOUNG_MB` | `0` (adaptive, 4 to 32 MiB) | a fixed budget for the young generation, in MiB |
 | `AVANT_NURSERY` | `1` | `0` turns the young generation off: full, non-moving collections only |
 | `AVANT_GC_DEFRAG` | `1` | `0` turns off defragmentation of the mature space |
 | `AVANT_GC_PROOF` | `1` | `0` makes every complete collection (`gc.collect()`) a full one, even when the collector can prove that only young objects can have died |
