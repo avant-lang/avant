@@ -1,6 +1,6 @@
 #!/bin/sh
 # tools/layout-flag.py, tools/layout-retime.sh, tools/layout-cc.sh,
-# tools/layout-runtime.sh,
+# tools/layout-runtime.sh, tools/la-mem.py,
 # tools/layout-spread.py and tools/rounds.py --layouts. Run by
 # tests/cases/test_tools.av; by hand:
 #
@@ -58,7 +58,10 @@
 #   check-build-runtime-fixed: LAYOUT_CHECK_RUNTIME=fixed keeps the
 #     runtime at offset 0 at a sub-line layout;
 #   runtime-shift0-same: tools/layout-runtime.sh --check at shift 0
-#     rebuilds the checkout's runtime objects byte for byte.
+#     rebuilds the checkout's runtime objects byte for byte;
+#   mem-compare: tools/la-mem.py reads a lower average over the tasks (the
+#     twins left out), a program whose ranges part as moved, and one whose
+#     runs take two values as one to run again.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -304,4 +307,12 @@ sh "$lm/root/tools/layout-runtime.sh" --check "$lm/root/runtime" 0 "$lm/rt0" < /
 [ $rc -eq 0 ]
 say runtime-shift0-same $? "rc=$rc"
 
+# 10. tools/la-mem.py on two sides' peak memory (la-count.sh's mem files).
+lmm=$w/lmm; mkdir -p "$lmm"
+printf 'a_one\t1000\t1000\t1000\t1000,1000,1000\nb_two\t4236\t4236\t4492\t4236,4492,4236\nc_three\t9000\t9000\t9000\t9000,9000,9000\nc_three-pure\t50\t50\t50\t50,50,50\n' > "$lmm/base.tsv"
+printf 'a_one\t900\t900\t900\t900,900,900\nb_two\t4492\t4236\t4492\t4492,4236,4492\nc_three\t8000\t8000\t8000\t8000,8000,8000\nc_three-pure\t90\t90\t90\t90,90,90\n' > "$lmm/head.tsv"
+o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head.tsv" 2>&1)
+echo "$o" | grep -q '^average peak over 3 tasks: .*: lower$' && echo "$o" | grep -q '^a_one.*moved$' \
+  && echo "$o" | grep -q '^b_two.*repeat' && echo "$o" | grep -q '^to run again: b_two$'
+say mem-compare $? "$(echo "$o" | tr '\n' ';')"
 echo done
