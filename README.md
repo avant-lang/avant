@@ -3383,7 +3383,7 @@ Publishing is pushing to any git host; a new version is a new tag or commit, whi
 
 Each clash is reported, never silently resolved.
 
-- **Two places provide the same module file.** Importing it is a compile error listing the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`), with no priority: a `shared.av` beside your root file clashes with a fetched one. Rename one module or stop fetching one package; to change a dependency's code, patch a clone ([Updating and removing](#updating-and-removing)).
+- **Two places provide the same module file.** Importing it from your project is a compile error listing the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`), with no priority: a `shared.av` beside your root file clashes with a fetched one. Inside a dependency its own module comes first, as in Go and Rust: its `import shared` opens its own `shared.av` whatever the other packages hold, and another package's only when it has none. Two same-named modules cannot both be part of one program yet (`module shared is both ./deps/a/shared.av and ./deps/b/shared.av`). Rename one module or stop fetching one package; to change a dependency's code, patch a clone ([Updating and removing](#updating-and-removing)).
 - **One dependency name reaches two commits** (your pin and a dependency's): fetch stops with `avant fetch: dependency greeter resolves to two different commits (...)`; align your pin and fetch again.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 
