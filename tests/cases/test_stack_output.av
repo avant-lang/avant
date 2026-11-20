@@ -17,6 +17,42 @@ fn program: String {
   "fn deep(n: Int, x: Float64): Int {\n  puts(x)\n  deep(n + 1, x + 0.5) + 1\n}\n\nfn main {\n  puts(\"start\")\n  puts(deep(0, 0.25))\n}\n"
 }
 
+// A stack overflow inside a write: each level prints one line of N bytes
+// (an argument), longer than half of stdout's 4096-byte buffer, so every
+// write is longer than the buffer's free space, and with 5000 longer than
+// the buffer itself. The C library writes such a line in parts, flushing
+// the full buffer in between, so the overflow lands in that flush at
+// almost every run (a quarter-MiB stack keeps the output small). Before,
+// the handler then wrote the buffer up to its write pointer, which held
+// the first part of the line under way: stdout ended mid-line at nearly
+// every run, where the program above does about once in twenty.
+fn program_long: String {
+  "import std.process\n\nfn deep(n: Int, s: String): Int {\n  puts(s)\n  deep(n + 1, s) + 1\n}\n\nfn main {\n  puts(\"start\")\n  k = 0\n  for a in process.args() {\n    k = a.to_i() ?? 0\n  }\n  s = \"\"\n  for i in 0..k / 10 {\n    s = \"\${s}0123456789\"\n  }\n  puts(deep(0, s))\n}\n"
+}
+
+// Every line of out after start is N digits, and out ends with a newline:
+// "" when so, else what is wrong.
+fn long_whole(out: String, n: Int): String {
+  if out.size == 0 || out[out.size - 1] != 10 {
+    return "stdout does not end with a newline"
+  }
+  ls = out.split("\n")
+  if ls[0] != "start" {
+    return "the first line is not start"
+  }
+  i = 1
+  while i < ls.size - 1 {
+    if ls[i].size != n {
+      return "line ${i + 1} has ${ls[i].size} bytes, not ${n}"
+    }
+    i += 1
+  }
+  if ls.size < 10 {
+    return "only ${ls.size} lines"
+  }
+  ""
+}
+
 // Every line of out is the next value the program prints, and out ends
 // with a newline: "" when so, else what is wrong.
 fn lines_whole(out: String): String {
@@ -67,8 +103,45 @@ fn test_main(c: Checks) {
       c.expect(log_text("${dir}/so-print${m3}.err").contains("avant runtime: stack overflow in deep on the main thread"), "${m3}: names the overflow")
       c.eq_str(lines_whole(log_text("${dir}/so-print${m3}.out")), "", "${m3}: stdout keeps every line, whole")
     }
+    long_lines(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+// program_long in both modes, its lines 3000 and 5000 bytes long, on a
+// 256 KiB stack: each run ends with the overflow, and stdout holds only
+// whole lines.
+fn long_lines(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/so-long.av"
+  _ = fs.write(src, program_long())
+  modes = ["--debug", "--release"]
+  sizes = [3000, 5000]
+  jobs: Array(HJob) = []
+  for m in modes {
+    a: Array(String) = ["compile", src, "${dir}/so-long${m}.bin", m]
+    jobs.push(env_job("", compiler, a, "${dir}/so-long${m}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for m2 in modes {
+    for n in sizes {
+      a2: Array(String) = ["-c", "cd ${dir} && ulimit -s 256 && exec env -u AVANT_GC_STRESS -u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY ./so-long${m2}.bin ${n} > so-long${m2}-${n}.out 2> so-long${m2}-${n}.err < /dev/null"]
+      runs.push(HJob.new("/bin/sh", a2, "${dir}/so-long${m2}-${n}.sh.log"))
+    }
+  }
+  run_waves(runs)
+  for i in 0..modes.size {
+    m3 = modes[i]
+    c.eq_int(jobs[i].code, 0, "${m3}: the long lines' program compiles")
+    for j in 0..sizes.size {
+      n2 = sizes[j]
+      r = runs[i * sizes.size + j]
+      k = "${dir}/so-long${m3}-${n2}"
+      c.eq_int(r.code, 1, "${m3}: ${n2}-byte lines: the overflow ends it with status 1")
+      c.expect(log_text("${k}.err").contains("avant runtime: stack overflow in deep on the main thread"), "${m3}: ${n2}-byte lines: names the overflow")
+      c.eq_str(long_whole(log_text("${k}.out"), n2), "", "${m3}: ${n2}-byte lines: stdout keeps every line, whole")
+    }
   }
 }
 

@@ -327,6 +327,71 @@ avant_int avant_main_fail(const char *text) {
   return 1;
 }
 
+/* One write of the program's to stdout, whole: N bytes from P, then a
+ * newline when NL, under one hold of stdout's lock (another thread's
+ * flush between the text and its newline would write the line without
+ * its end). The C library copies a write longer than the buffer's free
+ * space in two parts: the part that fits, then a flush of the full
+ * buffer, then the rest. A stack overflow (or SIGTERM, SIGINT) inside
+ * that flush ends the process while the buffer holds the first part, and
+ * the handler, which writes the buffer up to its write pointer
+ * (avant_out_pending), wrote the line cut short. So the buffer is
+ * flushed first, while it holds only whole earlier writes, and the write
+ * then goes into the buffer at once; a write longer than the buffer
+ * itself goes out with write(2) instead, in one piece after the buffer's
+ * bytes. The buffer between the write base and the write pointer then
+ * always holds whole writes: an interrupted write is either all there or
+ * not there at all. glibc's FILE fields; on another C library, the
+ * plain stdio writes. Not before the stream has a buffer: its first write
+ * allocates one (the smallest glibc picks is a terminal's 1024 bytes),
+ * so a first write longer than that goes out directly as well. */
+void avant_out_whole(const char *p, size_t n, int nl) {
+  FILE *f = stdout;
+  size_t all = n + (nl ? 1u : 0u);
+  flockfile(f);
+#if defined(__GLIBC__)
+  /* The free space up to the buffer's end (a line-buffered stream keeps
+   * its write end at the buffer's start). */
+  if (f->_IO_write_ptr > f->_IO_write_base && (size_t)(f->_IO_buf_end - f->_IO_write_ptr) < all) {
+    (void)fflush_unlocked(f);
+  }
+  if (all > (f->_IO_buf_base ? (size_t)(f->_IO_buf_end - f->_IO_buf_base) : 1024u) && f->_IO_write_ptr == f->_IO_write_base) {
+    const char *q = p;
+    size_t left = n;
+    int part = 0;
+    while (part < 2) {
+      while (left) {
+        ssize_t w = write(f->_fileno, q, left);
+        if (w < 0 && errno == EINTR) {
+          continue;
+        }
+        if (w <= 0) {
+          f->_flags |= _IO_ERR_SEEN;
+          funlockfile(f);
+          return;
+        }
+        q += w;
+        left -= (size_t)w;
+      }
+      part++;
+      q = "\n";
+      left = (part == 1 && nl) ? 1u : 0u;
+    }
+    /* The stream's own count of its position no longer holds. */
+    f->_offset = -1;
+    funlockfile(f);
+    return;
+  }
+#endif
+  if (n) {
+    fwrite_unlocked(p, 1, n, f);
+  }
+  if (nl) {
+    putc_unlocked('\n', f);
+  }
+  funlockfile(f);
+}
+
 /* print, eputs and eprint (puts keeps its own writers in avant_str.c):
  * one value's text, a newline when HOW has bit 1, to stderr when it has
  * bit 2. A write to stderr first flushes what stdout holds, so the two
@@ -336,15 +401,16 @@ avant_int avant_main_fail(const char *text) {
 static void out_check(int at_exit);
 
 static void out_bytes(const char *p, size_t n, int32_t how) {
-  FILE *f = (how & 2) ? stderr : stdout;
   if (how & 2) {
     fflush(stdout);
-  }
-  if (n) {
-    fwrite(p, 1, n, f);
-  }
-  if (how & 1) {
-    putc('\n', f);
+    if (n) {
+      fwrite(p, 1, n, stderr);
+    }
+    if (how & 1) {
+      putc('\n', stderr);
+    }
+  } else {
+    avant_out_whole(p, n, how & 1);
   }
   if (ferror_unlocked(stdout) || ferror_unlocked(stderr)) {
     out_check(0);

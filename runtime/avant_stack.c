@@ -555,11 +555,13 @@ static void chain(int sig, siginfo_t *si, void *ucv) {
 }
 
 /* stdout's buffered bytes, written with write(2), when the fault is
- * inside the C library. A write to the stream copies its bytes into the
- * buffer before it moves the write pointer, so [write base, write
- * pointer) holds whole earlier writes, never part of the one under way
- * and never bytes already written out (a flush moves the pointer back as
- * soon as its write returns); the process ends next, so the buffer is not
+ * inside the C library. The program's writes go through avant_out_whole,
+ * which flushes the buffer before a write that would not fit its free
+ * space, so the C library never flushes the buffer in the middle of one
+ * of them: [write base, write pointer) holds whole earlier writes, never
+ * part of the one under way (copied before the pointer moves) and never
+ * bytes already written out (a flush moves the pointer back as soon as
+ * its write returns); the process ends next, so the buffer is not
  * flushed again. glibc's FILE fields; on another C library, nothing. */
 static void out_pending(void) {
   avant_out_pending();

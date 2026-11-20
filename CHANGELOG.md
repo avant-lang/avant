@@ -34,6 +34,7 @@
 ### Fixed
 
 * A large array of references grown in place could keep stale words and crash the collector.
+* A stack overflow during a long write no longer cuts the last line of output.
 * `std.http`: a redirect to another host sent the caller's credentials and cookies; a half-sent WebSocket frame, an `accept` loop that spun a core, a silent WebSocket with no deadline, a duplicate `Content-Type`, query decoding of invalid UTF-8.
 * A program ended by SIGTERM or SIGINT lost its buffered output; a stack overflow in a C thread's callback, two modules' C layouts or opaque types of one name, zlib out of memory, a module's enum as a type argument, and a rare collector race with a just-shared buffer.
 

@@ -507,7 +507,7 @@ void avant_puts_f64(double v) {
   char buf[48];
   int k = avant_fmt_float_text(buf, v);
   buf[k] = '\n';
-  fwrite(buf, 1, (size_t)k + 1, stdout);
+  avant_out_whole(buf, (size_t)k + 1, 0);
   avant_out_check();
 }
 
@@ -516,15 +516,10 @@ void avant_puts_f64(double v) {
 void avant_puts_str(const char *s) {
   size_t n;
   s = avant_str_bytes(s, &n);
-  /* The text and its newline under one hold of stdout's lock: another
-   * thread's flush between them (a task's trap flushes stdout) would
-   * write the line without its end, and the trap's line after it. */
-  flockfile(stdout);
-  if (n) {
-    fwrite_unlocked(s, 1, n, stdout);
-  }
-  putc_unlocked('\n', stdout);
-  funlockfile(stdout);
+  /* The text and its newline in one whole write (avant_out_whole): a
+   * task's trap flushes stdout, and a flush between them would write the
+   * line without its end, and the trap's line after it. */
+  avant_out_whole(s, n, 1);
   avant_out_check();
 }
 
@@ -538,7 +533,7 @@ void avant_puts_u64(uint64_t v) {
   char buf[24];
   buf[sizeof(buf) - 1] = '\n';
   char *o = avant_fmt_u64(buf + sizeof(buf) - 1, v);
-  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  avant_out_whole(o, (size_t)(buf + sizeof(buf) - o), 0);
   avant_out_check();
 }
 
@@ -546,12 +541,12 @@ void avant_puts_i64(int64_t v) {
   char buf[24];
   buf[sizeof(buf) - 1] = '\n';
   char *o = int_text(buf + sizeof(buf) - 1, v);
-  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  avant_out_whole(o, (size_t)(buf + sizeof(buf) - o), 0);
   avant_out_check();
 }
 
 void avant_puts_bool(int32_t v) {
-  fputs(v ? "true\n" : "false\n", stdout);
+  avant_out_whole(v ? "true\n" : "false\n", v ? 5u : 6u, 0);
   avant_out_check();
 }
 
