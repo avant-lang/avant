@@ -8,9 +8,9 @@ import std.process
 // code (a null pointer on the same three threads, a bus error) each print
 // one line after the program's output, end with their status (1 for the
 // overflow; the fault's signal for a fault: 139, 135), and remove the
-// program's private directory after stopping the child it waits on. The
-// program makes its directory, starts a child (`sleep`) from a task, and
-// crashes once the child has written its pid.
+// program's private directory after stopping the children it waits on. The
+// program makes its directory, starts two children (`sleep`), each from a
+// task of its own, and crashes once both have written their pids.
 
 fn program: String {
   b = Buf.new()
@@ -22,7 +22,8 @@ fn program: String {
   b.push_str("fn null_on_thread(n: Int): Int {\n  xs = [n]\n  crash_c.crash_write_null(xs[0] - n)\n}\n\n")
   b.push_str("fn main {\n  out = process.env(\"CRASH_OUT\") ?? \"\"\n  _ = fs.write(\"\${out}.dir\", crash_c.avant_tmp_dir())\n")
   b.push_str("  child = spawn {\n    args = [\"-c\", \"echo $$ > \${out}.pid.part && mv \${out}.pid.part \${out}.pid && exec sleep 30\"]\n    process.run(\"/bin/sh\", args) ?? -1\n  }\n")
-  b.push_str("  while !fs.exists(\"\${out}.pid\") {\n    time.sleep_ms(10)\n  }\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
+  b.push_str("  child2 = spawn {\n    args2 = [\"-c\", \"echo $$ > \${out}.pid2.part && mv \${out}.pid2.part \${out}.pid2 && exec sleep 30\"]\n    process.run(\"/bin/sh\", args2) ?? -1\n  }\n")
+  b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") {\n    time.sleep_ms(10)\n  }\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
   b.push_str("  if m == \"overflow\" {\n    puts(depth(100000000))\n  }\n")
   b.push_str("  if m == \"overflow-task\" {\n    h = spawn { depth(100000000) }\n    puts(h.join() ?? -1)\n  }\n")
   b.push_str("  if m == \"overflow-callback\" {\n    puts(crash_c.so_call_on_thread(start))\n  }\n")
@@ -34,7 +35,7 @@ fn program: String {
   b.push_str("  if m == \"ill\" {\n    puts(crash_c.crash_ill())\n  }\n")
   b.push_str("  if m == \"abort\" {\n    puts(crash_c.crash_abort())\n  }\n")
   b.push_str("  if m == \"term\" {\n    puts(sig_c.kill(sig_c.getpid(), 15))\n  }\n")
-  b.push_str("  puts(child.join() ?? -1)\n}\n")
+  b.push_str("  puts(child.join() ?? -1)\n  puts(child2.join() ?? -1)\n}\n")
   b.to_s()
 }
 
@@ -85,7 +86,7 @@ fn read_all(path: String): String {
 // whether the child it waited on is gone and what TMPDIR still holds.
 fn case_lines(work: String, bin: String, name: String, mode: String): String {
   d = "${work}/${name}"
-  "(mkdir -p '${d}.base' && cd '${d}.base' && ulimit -c 0 && env AVANT_KEEP_TMP= TMPDIR='${d}.base' CRASH_MODE=${mode} CRASH_OUT='${d}' '${bin}' > '${d}.out' 2> '${d}.err'; echo $? > '${d}.rc'; p=$(cat '${d}.pid' 2>/dev/null); s=x; [ -n \"$p\" ] && s=$(ps -o stat= -p \"$p\" 2>/dev/null); case \"$s\" in ''|Z*) echo gone ;; *) echo \"alive $p\"; kill \"$p\" ;; esac > '${d}.child'; ls -A '${d}.base' > '${d}.left') &\n"
+  "(mkdir -p '${d}.base' && cd '${d}.base' && ulimit -c 0 && env AVANT_KEEP_TMP= TMPDIR='${d}.base' CRASH_MODE=${mode} CRASH_OUT='${d}' '${bin}' > '${d}.out' 2> '${d}.err'; echo $? > '${d}.rc'; for f in pid pid2; do p=$(cat \"${d}.$f\" 2>/dev/null); s=x; [ -n \"$p\" ] && s=$(ps -o stat= -p \"$p\" 2>/dev/null); case \"$s\" in ''|Z*) echo gone ;; *) echo \"alive $p\"; kill \"$p\" ;; esac; done > '${d}.child'; ls -A '${d}.base' > '${d}.left') &\n"
 }
 
 // A program that made no private directory, ended by SIGTERM or SIGINT
@@ -138,7 +139,7 @@ fn test_crash_cleanup(c: Checks) {
         dir = read_all("${d}.dir")
         c.expect(dir.size > 0 && !fs.exists(dir), "${what}: the private directory is removed")
         c.eq_str(read_all("${d}.left"), "", "${what}: nothing is left in TMPDIR")
-        c.eq_str(read_all("${d}.child").strip(), "gone", "${what}: the child it waited on is stopped")
+        c.eq_str(read_all("${d}.child").strip(), "gone\ngone", "${what}: both children its tasks waited on are stopped")
       }
     }
     plain_signal_cases(c, compiler, work)
