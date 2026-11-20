@@ -442,6 +442,7 @@ void gc_sweep_large(void) {
   LargeIter it;
   AvantHeader *h;
   uint64_t live = 0;
+  uint64_t plain = 0;
   gc_heap.young_large = 0;
   gc_heap.young_large_n = 0;
   gc_large_iter_init(&it);
@@ -456,11 +457,15 @@ void gc_sweep_large(void) {
       continue;
     }
     live += (uint64_t)bytes;
+    if (h->type_id == AVANT_TYPE_BYTES) {
+      plain += (uint64_t)bytes;
+    }
     if (h->flags & AVANT_FLAG_YOUNG) {
       gc_heap.young_large += (uint64_t)bytes;
       gc_heap.young_large_n++;
     }
   }
+  gc_heap.plain_large_live = plain;
   note_live_sample(live);
 }
 
