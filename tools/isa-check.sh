@@ -111,6 +111,7 @@ import std.regex
 import std.zlib
 import std.base64
 import std.http
+import std.digest
 
 fn main {
   if doc = json.Json.parse("{\"n\": 1}") {
@@ -127,7 +128,7 @@ fn main {
     puts(back.size)
   }
   puts("a".bytes.to_base64())
-  puts(sha256("abc"))
+  puts(digest.sha256_hex("abc".bytes))
   if server = http.listen(0) {
     server.close()
   }
