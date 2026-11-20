@@ -128,7 +128,7 @@ static char *dup_bytes_at(const char *s, size_t off, size_t n) {
  * worth an object and cannot hold a much larger parent alive (avant_rt.h,
  * AvantStrView), else a copy. S is the whole string N and OFF lie in;
  * a view of a view names the first one's base. */
-static char *str_part(const char *s, size_t off, size_t n) {
+static inline __attribute__((always_inline)) char *str_part(const char *s, size_t off, size_t n) {
   size_t sn;
   char *base;
   uint32_t boff;
@@ -137,11 +137,19 @@ static char *str_part(const char *s, size_t off, size_t n) {
   if (n == 0) {
     return empty_str();
   }
-  avant_str_bytes(s, &sn);
+  const char *bytes = avant_str_bytes(s, &sn);
   if (off == 0 && n == sn) {
     return (char *)s;
   }
   if (n < AVANT_VIEW_MIN) {
+    /* A short copy inline when the inline allocation serves it (nothing
+     * collects, so the bytes stay where they are): a tokenizer's names. */
+    char *p = avant_str_alloc_try((uint64_t)n);
+    if (p) {
+      copy_short(p, bytes + off, n);
+      p[n] = 0;
+      return p;
+    }
     return dup_bytes_at(s, off, n);
   }
   if (avant_str_is_view(s)) {
