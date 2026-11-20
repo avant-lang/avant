@@ -227,9 +227,13 @@ fn ws_client_round(port: Int, out: sync.Channel(String)): Int {
   0
 }
 
-fn ws_round(port: Int, out: sync.Channel(String), script: String, stamp: Int): Int {
+fn ws_round(port: Int, out: sync.Channel(String), script: String, stamp: Int, clients: sync.Channel(Int)): Int {
   out.send(raw_round(port, script, stamp, "wsecho"))
   out.send(raw_round(port, script, stamp, "wsproto"))
+  // The server stops only after the client task's rounds: stopping it
+  // first closes their connections with 1001 (going away), which a slow
+  // machine reached and read as a wrong recv.
+  _ = clients.recv()
   if resp = http.get("http://127.0.0.1:${port}/__stop") {
   }
   0
@@ -582,12 +586,14 @@ fn test_std_http(c: Checks) {
     out = sync.Channel(String).new(4)
     cout = sync.Channel(String).new(4)
     port = server.port()
+    clients = sync.Channel(Int).new(1)
     handle = spawn {
-      ws_round(port, out, wscript, stamp)
+      ws_round(port, out, wscript, stamp, clients)
     }
     chandle = spawn {
       ws_client_round(port, cout)
       cout.send(ws_recv_round(port))
+      clients.send(1)
       0
     }
     server.serve()
