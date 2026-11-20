@@ -287,16 +287,26 @@ static void arr_frozen_trap(void *arr, int32_t op) {
 }
 
 /* min_cap is checked against the ceiling here, before anything is
- * allocated: every growth comes through this one. */
+ * allocated: every growth comes through this one. The ceiling is the
+ * element count's or, for wide elements, one object's storage
+ * (avant_array_max); the last doubling stops at it, so an Array(Int)
+ * grown by push reaches 536870911 elements, not only the 268435456 of
+ * the last doubling that fits. */
 static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
-  avant_size_check((uint64_t)min_cap, AVANT_SIZE_ARRAY);
+  uint64_t max = avant_array_max(elem_size);
+  if (min_cap < 0 || (uint64_t)min_cap > max) {
+    avant_trap_array_size(elem_size);
+  }
   int32_t ncap = a->cap ? a->cap : 4;
   while (ncap < min_cap) {
-    if (ncap > 1073741823) {
-      ncap = (int32_t)min_cap;
+    if ((uint64_t)ncap * 2 > max) {
+      ncap = (int32_t)max;
       break;
     }
     ncap *= 2;
+  }
+  if ((uint64_t)ncap > max) {
+    ncap = (int32_t)max;
   }
   uint64_t bytes = (uint64_t)ncap * elem_size;
   /* RC1: the allocation may collect; a is a handle, a->buf is read after

@@ -387,6 +387,27 @@ void avant_trap_size(int32_t kind) {
   trap_tail();
 }
 
+/* An Array of elem_size-byte elements past its ceiling: the 32-bit size
+ * (AVANT_SIZE_MAX elements) or, for elements of 4 bytes or more, the
+ * storage of one object (at most UINT32_MAX bytes), whichever comes first
+ * (avant_array_max). */
+void avant_trap_array_size(uint64_t elem_size) {
+  uint64_t max = avant_array_max(elem_size);
+  trap_head();
+  if (max < (uint64_t)AVANT_SIZE_MAX) {
+    trap_out("Array would exceed %llu elements of %llu bytes (one object's storage is at most 4294967295 bytes)", (unsigned long long)max, (unsigned long long)elem_size);
+  } else {
+    trap_out("Array would exceed %d elements", AVANT_SIZE_MAX);
+  }
+  trap_tail();
+}
+
+/* Array(T).new(n) past its element type's ceiling, with its site. */
+void avant_trap_array_size_at(uint64_t elem_size, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_array_size(elem_size);
+}
+
 /* Array(T).new(n) past the ceiling, with its site. */
 void avant_trap_size_at(int32_t kind, int32_t site) {
   g_trap_loc = site_text(site);
