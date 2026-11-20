@@ -63,7 +63,13 @@
 #      stats.txt compares every file with the pause_*_ns fields removed
 #   5b. the smoke test: tools/package.sh packs C' (bin/avant-c-llvm, with
 #      bin/re2c) into OUT/smoke, tools/smoke.sh runs the tarball's cases:
-#      smoke.log; red on a failed case
+#      smoke.log; red on a failed case. Then the archive checks only CI ran
+#      before (WAVE_ARCHIVE=0 skips them): tools/isa-check.sh --run on the
+#      unpacked tarball (qemu as an older x86-64; WAVE_QEMU_LD_PREFIX is
+#      its QEMU_LD_PREFIX when this machine's C library needs a newer
+#      x86-64), and install.sh from the tarball into a private HOME with
+#      the smoke cases on the installed compiler: archive.txt,
+#      isa-check.log, install-check.log; red when either fails
 #   5c. only with WAVE_BASE (a revision, such as the branch the wave starts
 #      from): the neutrality, tools/neutral.sh with the base cache's entry
 #      of the base (tools/base-cache.sh, built when missing) as the base,
@@ -393,9 +399,28 @@ curname=smoke
 lk shared smoke sh -c 'sh tools/package.sh "$1/smoke" bin/avant-c-llvm bin/re2c < /dev/null > "$1/package.log" 2>&1 || exit 3
   t=$(sed -n "s/^package: \(.*\.tar\.gz\)\$/\1/p" "$1/package.log" | tail -n 1)
   [ -n "$t" ] || exit 4
-  timeout -k 10 1200 sh tools/smoke.sh "$t" < /dev/null > "$1/smoke.log" 2>&1' smoke "$out"
+  timeout -k 10 1200 sh tools/smoke.sh "$t" < /dev/null > "$1/smoke.log" 2>&1; r=$?
+  # 5b2. The archive checks CI runs on the same tarball: the release
+  # layout on an older x86-64 (tools/isa-check.sh --run, qemu) and the
+  # install (install.sh from the tarball into a private HOME, then the
+  # smoke cases on the installed compiler). WAVE_ARCHIVE=0 skips them.
+  if [ "${WAVE_ARCHIVE:-1}" != 0 ]; then
+    x=$1/smoke/unpacked; h=$1/smoke/home; mkdir -p "$x" "$h" && : > "$h/.bashrc"
+    tar -xzf "$t" -C "$x" && env ${WAVE_QEMU_LD_PREFIX:+QEMU_LD_PREFIX=$WAVE_QEMU_LD_PREFIX} timeout -k 10 1800 sh tools/isa-check.sh --run "$x/avant-linux-x86_64" < /dev/null > "$1/isa-check.log" 2>&1
+    echo "isa-check $?" > "$1/archive.txt"
+    env HOME="$h" SHELL=/bin/bash AVANT_INTERNAL_DOWNLOAD_BASE="file://$(dirname "$t")" timeout -k 10 600 bash install.sh < /dev/null > "$1/install-check.log" 2>&1 \
+      && grep -q "^# avant\$" "$h/.bashrc" && env HOME="$h" timeout -k 10 1200 sh tools/smoke.sh "$h/.avant" < /dev/null >> "$1/install-check.log" 2>&1
+    echo "install-check $?" >> "$1/archive.txt"
+  fi
+  exit $r' smoke "$out"
 src=$?
 rm -rf "$out/smoke"
+if [ "${WAVE_ARCHIVE:-1}" != 0 ]; then
+  curname=archive
+  ia=$(awk '$1 == "isa-check" { print $2 }' "$out/archive.txt" 2>/dev/null); ic=$(awk '$1 == "install-check" { print $2 }' "$out/archive.txt" 2>/dev/null)
+  if [ "$ia" = 0 ] && [ "$ic" = 0 ]; then step "archive: isa-check --run and install-check passed (isa-check.log, install-check.log)"
+  else step "archive: red (isa-check rc=${ia:-none}, install-check rc=${ic:-none}: isa-check.log, install-check.log)"; fi
+fi
 sp=$(grep -c '^ok ' "$out/smoke.log" 2>/dev/null); sf=$(grep -c '^FAIL' "$out/smoke.log" 2>/dev/null)
 case $src in
   0) step "smoke: ${sp:-0} passed, ${sf:-0} failed (smoke.log)" ;;
