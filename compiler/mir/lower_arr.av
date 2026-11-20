@@ -16,6 +16,7 @@ import token
 import type
 import ast
 import typed_ir
+import array_verbs
 import mir.types
 import mir.ir
 import mir.build
@@ -613,16 +614,7 @@ pub fn (lw: MirLower) mutator_frozen_check(h: Int, op: Int, loc: Location) {
 // change is tested against the array's freeze here, at the call, under
 // the verb's own name (frozen_check, above).
 pub fn mir_verb_frozen_op(callee: String): Int {
-  if callee == "__avant_fill" {
-    return mir_frozen_fill()
-  }
-  if callee == "__avant_shuffle" {
-    return mir_frozen_shuffle()
-  }
-  if callee == "__avant_try_delete_at" {
-    return mir_frozen_delete_at()
-  }
-  -1
+  array_verb_frozen_op(array_verb_of_template(callee))
 }
 
 pub fn (lw: MirLower) verb_frozen_check(e: Expr, args: Array(MOperand)) {

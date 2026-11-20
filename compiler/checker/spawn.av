@@ -9,6 +9,7 @@ import resolve
 import parser
 import loader
 import typed_ir
+import array_verbs
 import checker.names
 import checker
 import receiver_writes
@@ -778,36 +779,16 @@ pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
   ""
 }
 
+// Whether the Array method name changes its array (array_verbs.av).
 pub fn (checker_self: Checker) array_mutator(name: String): Bool {
-  if name == "push" {
-    return true
-  }
-  if name == "pop" {
-    return true
-  }
-  if name == "clear" {
-    return true
-  }
-  if name == "fill" {
-    return true
-  }
-  if name == "sort" {
-    return true
-  }
-  if name == "reverse" {
-    return true
-  }
-  if name == "delete_if" || name == "insert" || name == "delete_at" || name == "try_delete_at" || name == "concat" || name == "shuffle" {
-    return true
-  }
-  name == "reserve"
+  array_verb_changes(name)
 }
 
-// The array verbs the checker writes as a call of a generic function
-// whose first argument is the array (checker/verbs.av): by the time a
-// block is walked, `xs.shuffle(rng)` is `__avant_shuffle(xs, rng)`.
+// Whether callee is the generic function an Array method that changes its
+// array is written as (checker/verbs.av): by the time a block is walked,
+// `xs.shuffle(rng)` is `__avant_shuffle(xs, rng)`.
 pub fn verb_template_mutator(callee: String): Bool {
-  callee == "__avant_fill" || callee == "__avant_shuffle" || callee == "__avant_try_delete_at"
+  array_verb_of_template(callee).size > 0
 }
 
 // The methods that change a Hash or a Set: `delete`, `delete_if`,

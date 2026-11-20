@@ -39,6 +39,7 @@ import type
 import ast
 import resolve
 import typed_ir
+import array_verbs
 import checker.names
 import checker
 import checker.receiver
@@ -421,7 +422,9 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
   if expr.kind == ex_field() {
     c = expr.ident
   }
-  if !(c == "push" || c == "pop" || c == "clear" || c == "reserve" || c == "sort" || c == "reverse" || c == "delete_if" || c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "concat" || c == "shuffle") {
+  // A change of the size, of the storage or of the order (array_verbs.av);
+  // an overwrite in place (fill) moves no element.
+  if !array_verb_has(c, av_shrinks() + av_grows() + av_moves() + av_reorders()) {
     return false
   }
   text = checker_self.walked_text(recv)
@@ -432,7 +435,7 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
   // gets there: a growth or a shrink moves no element the walk has yet
   // to read (it reads the size again), but a sort or a reverse would
   // make it read some elements twice and miss others.
-  if c == "sort" || c == "reverse" || c == "delete_if" || c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "shuffle" {
+  if array_verb_has(c, av_reorders()) {
     for w in checker_self.walk_texts {
       if w == text {
         checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: the walk reads the elements by their positions, so it would read some twice and miss others; ${c} it before or after the loop")
