@@ -10,9 +10,11 @@ import std.process
 // overflow; the fault's signal for a fault: 139, 135), and remove the
 // program's private directory after stopping the children it waits on. The
 // program makes its directory, starts two children (`sleep`), each from a
-// task of its own, and crashes once both have written their pids.
+// task of its own, and crashes once both have written their pids. A trap
+// stops them too, and so does every crash, trap or signal of a program
+// that never made its directory (plain_cases).
 
-fn program: String {
+fn program(dir: Bool): String {
   b = Buf.new()
   b.push_str("import std.fs\nimport std.process\nimport std.time\n\n")
   b.push_str("lib crash_c {\n  fun avant_tmp_dir: String\n  fun so_call_on_thread(f: fn(Int): Int): Int\n  fun crash_write_null(k: Int): Int\n  fun crash_bus: Int\n  fun crash_div(k: Int): Int\n  fun crash_ill: Int\n  fun crash_abort: Int\n}\n\n")
@@ -20,7 +22,10 @@ fn program: String {
   b.push_str("fn depth(n: Int): Int {\n  if n == 0 {\n    return 0\n  }\n  d = depth(n - 1)\n  d + 1 + ((d + n) & 1)\n}\n\n")
   b.push_str("fn start(n: Int): Int {\n  xs = [n]\n  depth(xs[0])\n}\n\n")
   b.push_str("fn null_on_thread(n: Int): Int {\n  xs = [n]\n  crash_c.crash_write_null(xs[0] - n)\n}\n\n")
-  b.push_str("fn main {\n  out = process.env(\"CRASH_OUT\") ?? \"\"\n  _ = fs.write(\"\${out}.dir\", crash_c.avant_tmp_dir())\n")
+  b.push_str("fn main {\n  out = process.env(\"CRASH_OUT\") ?? \"\"\n")
+  if dir {
+    b.push_str("  _ = fs.write(\"\${out}.dir\", crash_c.avant_tmp_dir())\n")
+  }
   b.push_str("  child = spawn {\n    args = [\"-c\", \"echo $$ > \${out}.pid.part && mv \${out}.pid.part \${out}.pid && exec sleep 30\"]\n    process.run(\"/bin/sh\", args) ?? -1\n  }\n")
   b.push_str("  child2 = spawn {\n    args2 = [\"-c\", \"echo $$ > \${out}.pid2.part && mv \${out}.pid2.part \${out}.pid2 && exec sleep 30\"]\n    process.run(\"/bin/sh\", args2) ?? -1\n  }\n")
   b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") {\n    time.sleep_ms(10)\n  }\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
@@ -34,6 +39,7 @@ fn program: String {
   b.push_str("  if m == \"div\" {\n    puts(crash_c.crash_div(0))\n  }\n")
   b.push_str("  if m == \"ill\" {\n    puts(crash_c.crash_ill())\n  }\n")
   b.push_str("  if m == \"abort\" {\n    puts(crash_c.crash_abort())\n  }\n")
+  b.push_str("  if m == \"trap\" {\n    xs = [m.size]\n    puts(xs[m.size])\n  }\n")
   b.push_str("  if m == \"term\" {\n    puts(sig_c.kill(sig_c.getpid(), 15))\n  }\n")
   b.push_str("  puts(child.join() ?? -1)\n  puts(child2.join() ?? -1)\n}\n")
   b.to_s()
@@ -66,10 +72,23 @@ fn cases: Array(Case) {
     Case.new("div", 136, "avant runtime: arithmetic fault"),
     Case.new("ill", 132, "avant runtime: illegal instruction"),
     Case.new("abort", 134, ""),
+    // A trap ends the program with status 1 after its line.
+    Case.new("trap", 1, "avant runtime: index 4 out of bounds (size 1)"),
     // Ended by SIGTERM: what it printed is kept, as for a crash, and the
     // signal ends it (128 + 15), saying nothing. (SIGINT is ignored in a
     // shell's background job, as these runs are: plain_signal_cases
     // sends it in the foreground.)
+    Case.new("term", 143, ""),
+  ]
+}
+
+// The modes a program without its private directory is ended by: a
+// crash, a trap and a signal stop its children all the same.
+fn plain_cases: Array(Case) {
+  [
+    Case.new("null", 139, "avant runtime: segmentation fault in main on the main thread"),
+    Case.new("overflow", 1, "avant runtime: stack overflow in depth on the main thread"),
+    Case.new("trap", 1, "avant runtime: index 4 out of bounds (size 1)"),
     Case.new("term", 143, ""),
   ]
 }
@@ -111,7 +130,9 @@ fn test_crash_cleanup(c: Checks) {
     root = avant_test_root()
     work = scratch_dir()
     src = "${work}/crash.av"
-    _ = fs.write(src, program())
+    _ = fs.write(src, program(true))
+    psrc = "${work}/plain.av"
+    _ = fs.write(psrc, program(false))
     modes = ["--debug", "--release"]
     script = Buf.new()
     script.push_str("#!/bin/sh\n")
@@ -121,6 +142,11 @@ fn test_crash_cleanup(c: Checks) {
       c.eq_int(compile_av_flags(compiler, src, bin, "${work}/crash${m}.clog", flags), 0, "${m}: compiles")
       for k in cases() {
         script.push_str(case_lines(work, bin, "${k.mode}${m}", k.mode))
+      }
+      pbin = "${work}/plain${m}.bin"
+      c.eq_int(compile_av_flags(compiler, psrc, pbin, "${work}/plain${m}.clog", flags), 0, "${m}: the program without its directory compiles")
+      for pk in plain_cases() {
+        script.push_str(case_lines(work, pbin, "plain-${pk.mode}${m}", pk.mode))
       }
     }
     script.push_str("wait\n")
@@ -140,6 +166,17 @@ fn test_crash_cleanup(c: Checks) {
         c.expect(dir.size > 0 && !fs.exists(dir), "${what}: the private directory is removed")
         c.eq_str(read_all("${d}.left"), "", "${what}: nothing is left in TMPDIR")
         c.eq_str(read_all("${d}.child").strip(), "gone\ngone", "${what}: both children its tasks waited on are stopped")
+      }
+      for pk2 in plain_cases() {
+        d2 = "${work}/plain-${pk2.mode}${m2}"
+        what2 = "${m2} without its directory, ${pk2.mode}"
+        c.eq_str(read_all("${d2}.rc").strip(), "${pk2.code}", "${what2}: status ${pk2.code}")
+        c.eq_str(read_all("${d2}.out"), "start\n", "${what2}: the output before the end is kept")
+        err2 = read_all("${d2}.err")
+        c.eq_str(err2[0..err2.size.min(pk2.says.size)], pk2.says, "${what2}: says what ended it")
+        c.expect(!fs.exists("${d2}.dir"), "${what2}: made no private directory")
+        c.eq_str(read_all("${d2}.left"), "", "${what2}: nothing is left in TMPDIR")
+        c.eq_str(read_all("${d2}.child").strip(), "gone\ngone", "${what2}: both children its tasks waited on are stopped")
       }
     }
     plain_signal_cases(c, compiler, work)

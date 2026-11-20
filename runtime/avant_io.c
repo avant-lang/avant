@@ -1341,7 +1341,8 @@ static void tmp_finish(void) {
   tmp_remove();
 }
 
-/* Stops what this process started before the directory goes:
+/* Stops what this process started before it ends by a crash, a trap
+ * or a signal, and before its directory goes (avant_stop_children):
  * SIGTERM to every job's group and to every child a blocking run waits
  * on (one per waiting task), then reap them for up to about two seconds,
  * then SIGKILL whatever is left and reap briefly. Async-signal-safe
@@ -1484,6 +1485,11 @@ static void out_check_at_exit(void) {
  * check is registered first, so it runs after tmp_finish. */
 static void tmp_catch(int sig);
 
+/* The process the program started as: the children it waits on are
+ * stopped only by it, never by a forked child that has not exec'd yet
+ * (avant_stop_children). */
+static pid_t g_io_pid;
+
 __attribute__((constructor)) static void avant_io_start(void) {
   struct sigaction sa;
   sigset_t set;
@@ -1495,20 +1501,34 @@ __attribute__((constructor)) static void avant_io_start(void) {
   sigaddset(&set, SIGPIPE);
   sigprocmask(SIG_UNBLOCK, &set, NULL);
   atexit(out_check_at_exit);
+  g_io_pid = getpid();
   /* A program ended by SIGTERM or SIGINT (kill, Ctrl-C) keeps what it
    * printed: the handler writes stdout's buffer before the default
-   * action (tmp_on_signal). Only a default action is replaced. */
+   * action (tmp_on_signal). Every signal that ends it (these, SIGHUP, a
+   * closed pipe) stops the children it waits on first, whether or not
+   * it made its private directory. Only a default action is replaced. */
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
+  tmp_catch(SIGHUP);
+  tmp_catch(SIGPIPE);
+}
+
+/* Every way a program ends other than its main returning (a crash, a
+ * trap, a signal) stops the children it waits on, with or without its
+ * private directory: a child left running keeps the program's pipes
+ * open (`prog | cat` would wait on it). Only the process the program
+ * started as stops them. */
+void avant_stop_children(void) {
+  if (g_io_pid != 0 && getpid() == g_io_pid) {
+    tmp_stop_children();
+  }
 }
 
 /* The private directory's cleanup on a crash, from a fault handler that
  * ends the process itself (avant_stack.c): the same work as tmp_on_signal
  * before its re-raise. */
 void avant_tmp_on_crash(void) {
-  if (g_tmp_ready && getpid() == g_tmp_owner) {
-    tmp_stop_children();
-  }
+  avant_stop_children();
   tmp_finish();
 }
 
@@ -1523,9 +1543,7 @@ static void tmp_on_signal(int sig) {
   if (sig != SIGPIPE) {
     avant_out_pending();
   }
-  if (g_tmp_ready && getpid() == g_tmp_owner) {
-    tmp_stop_children();
-  }
+  avant_stop_children();
   tmp_finish();
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = SIG_DFL;

@@ -117,6 +117,9 @@ __attribute__((noreturn)) static void trap_tail(void) {
     fprintf(stderr, ", computing %.*s before main", (int)n, d);
   }
   fputc('\n', stderr);
+  /* The children the program waits on stop with it, as at a crash or a
+   * signal (avant_io.c); the private directory goes at exit. */
+  avant_stop_children();
   exit(1);
 }
 
