@@ -1,0 +1,138 @@
+// Frame slots read through their register copies across collecting
+// calls. An optimized build keeps a copy of each reference local that
+// LLVM may hold in a register, writes the slot and the copy at every
+// store, and reads the copy again from the slot after a call that may
+// collect, where a moving collection rewrote the slot, wherever some
+// path from the call reads the local before its next store. Each
+// function here reads a local after such a call on some paths only (one
+// arm of a branch, a loop whose call is on its rare path, a read only
+// after the loop, a read in a loop's other arm), and writes through the
+// local after the call: a stale copy would write the object's old place,
+// and the array that also holds the object (whose element the collection
+// rewrote) would not see the write, so the checksums would differ (in
+// --release, and under AVANT_GC_STRESS=1, AVANT_YOUNG_MB=1,
+// AVANT_GC_VERIFY=1 and AVANT_NURSERY=0).
+
+class Box {
+  v: Int
+  next: Box? = nil
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+// Allocates (so it may collect, and under the stress mode does).
+fn churn(n: Int): Int {
+  s = 0
+  for i in 0..n {
+    b = Box.new(i)
+    s = s &+ b.v
+  }
+  s
+}
+
+// The same object through the local and through the array: equal unless
+// the local's copy is stale.
+fn same(xs: Array(Box), i: Int, b: Box): Int {
+  if xs[i].v == b.v {
+    return 0
+  }
+  1
+}
+
+// A local read after the call on one arm of a branch only.
+fn one_arm(k: Int): Int {
+  a = Box.new(k)
+  b = Box.new(k + 1)
+  xs: Array(Box) = [a, b]
+  t = churn(30)
+  bad = 0
+  if t % 2 == k % 2 {
+    a.v += 5
+    bad += same(xs, 0, a)
+  } else {
+    t += 1
+  }
+  if k % 3 == 0 {
+    t = t &+ churn(10)
+    b.v += 7
+    bad += same(xs, 1, b)
+  }
+  t &+ xs[0].v &+ xs[1].v &+ bad * 1000000
+}
+
+// A loop whose call is on its rare path; the locals read in every
+// iteration, one written through after the call, one read only after the
+// loop.
+fn rare_call(n: Int): Int {
+  head = Box.new(1)
+  tail = Box.new(2)
+  late = Box.new(3)
+  xs: Array(Box) = [head, tail, late]
+  s = 0
+  bad = 0
+  for i in 0..n {
+    if i % 97 == 0 {
+      s = s &+ churn(20)
+      head.v += 1
+    }
+    s = s &+ head.v &+ tail.v
+    bad += same(xs, 0, head)
+  }
+  late.v += 11
+  bad += same(xs, 2, late)
+  s &+ late.v &+ bad * 1000000
+}
+
+// A loop with the call in one arm and the read in the other.
+fn other_arm(n: Int): Int {
+  a = Box.new(10)
+  b = Box.new(20)
+  xs: Array(Box) = [a, b]
+  s = 0
+  bad = 0
+  for i in 0..n {
+    if i % 7 == 0 {
+      s = s &+ churn(5)
+    } else if i % 7 == 3 {
+      b.v += 1
+      bad += same(xs, 1, b)
+    } else {
+      s = s &+ a.v
+    }
+  }
+  s &+ xs[1].v &+ bad * 1000000
+}
+
+// A chain built across calls, its head read after the loop.
+fn chain(n: Int): Int {
+  first = Box.new(0)
+  cur = first
+  for i in 1..n {
+    nb = Box.new(i)
+    if i % 13 == 0 {
+      churn(15)
+    }
+    cur.next = nb
+    cur = nb
+  }
+  s = 0
+  p: Box? = first
+  while q = p {
+    s = s &+ q.v
+    p = q.next
+  }
+  s
+}
+
+fn main {
+  acc = 0
+  for k in 0..40 {
+    acc = acc &+ one_arm(k)
+  }
+  puts("one arm: ${acc}")
+  puts("rare call: ${rare_call(3000)}")
+  puts("other arm: ${other_arm(2000)}")
+  puts("chain: ${chain(1000)}")
+}

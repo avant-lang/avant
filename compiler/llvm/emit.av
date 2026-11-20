@@ -580,6 +580,9 @@ fn ll_function(e: LlEmit, f: MFunc) {
     blk = f.blocks[b]
     e.bk = b
     e.block("bb${b}")
+    if e.sh_nw > 0 {
+      ll_sh_after(e, f, b)
+    }
     j = 0
     while j < blk.stmts.size {
       e.si = j
@@ -615,7 +618,16 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
     }
   } else if k == msk_call() {
     e.resync_pending = true
+    e.sh_inner = true
     ll_call(e, st)
+    e.sh_inner = false
+    if !e.resync_pending && e.sh_nw > 0 && ll_sh_kills(e, st) {
+      // Expanded in line where the plan took the call for one that reads
+      // every live copy again after it (ll_sh_inline's answer was
+      // wrong): its fast path kept copies the plan let go stale, so the
+      // live ones are read again here.
+      e.resync_pending = true
+    }
     e.resync()
   } else if k == msk_barrier() {
     ll_barrier(e, st.args[0])

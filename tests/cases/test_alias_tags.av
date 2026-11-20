@@ -185,7 +185,8 @@ fn test_alias_tags_wrap(c: Checks, compiler: String, stamp: Int) {
   c.eq_str(fs.read(rlog) ?? "", "add: wrap\nmul: wrap\nsub: wrap\n", "a wrapping add, multiply and subtract wrap in --release")
 }
 
-// name: alias_moves (elements) or alias_fields (object fields).
+// name: alias_moves (elements), alias_fields (object fields) or
+// slot_copies (frame slots read through their copies).
 fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int, name: String) {
   root = avant_test_root()
   src = "${root}/tests/fixtures/heap/${name}.av"
@@ -236,6 +237,9 @@ fn test_alias_tags(c: Checks) {
     test_alias_tags_wrap(c, compiler, stamp)
     test_alias_tags_moves(c, compiler, stamp, "alias_moves")
     test_alias_tags_moves(c, compiler, stamp, "alias_fields")
+    // The slots' register copies read again after collecting calls on
+    // some paths only (heap/slot_copies.av), in --release under each mode.
+    test_alias_tags_moves(c, compiler, stamp, "slot_copies")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
