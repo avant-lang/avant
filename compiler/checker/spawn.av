@@ -229,7 +229,7 @@ pub fn holds_hash(ty: Ty): Bool {
 // "Array", "Hash" or "Set": what the captured name root holds, for a
 // message.
 pub fn (checker_self: Checker) frozen_kind(root: String): String {
-  if ty = checker_self.lookup(root) {
+  if ty = checker_self.frozen_lookup(root) {
     if ty.is_set() {
       return "Set"
     }
@@ -487,6 +487,30 @@ pub fn task_unit(node: Expr): String {
   "task"
 }
 
+// Why a change of root inside node's block is refused.
+pub fn (checker_self: Checker) frozen_mutate_msg(node: Expr, root: String): String {
+  if checker_self.is_par_param(root) {
+    return ".parallel cannot change ${root}: it is this body's element of the input ${checker_self.frozen_kind(root)}, which is ${frozen_until(node)}; return the new element from the body (ys = xs.parallel (e) { ... })"
+  }
+  "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}"
+}
+
+// Whether name is, here, the element parameter of the `.parallel` body
+// being walked (not a lambda's parameter of the same name inside it).
+pub fn (checker_self: Checker) is_par_param(name: String): Bool {
+  checker_self.par_param.size > 0 && name == checker_self.par_param && !checker_self.spawn_skip_has(name)
+}
+
+// The type of a name a task's block reads, as the walk of its captures
+// sees it: the scope's, or the `.parallel` element's for its parameter
+// (whose scope has ended by then).
+pub fn (checker_self: Checker) frozen_lookup(name: String): Ty? {
+  if checker_self.is_par_param(name) {
+    return checker_self.par_param_ty
+  }
+  checker_self.lookup(name)
+}
+
 // Until when a captured Array is read-only, in node's words.
 pub fn frozen_until(node: Expr): String {
   if node.kind == ex_call() && node.callee == "parallel" {
@@ -553,7 +577,7 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
         }
       } else if checker_self.spawn_array_frozen(target) {
         root = checker_self.expr_root_name(target)
-        checker_self.fail(target.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(target.loc, checker_self.frozen_mutate_msg(node, root))
         checker_self.walk_spawn_expr(target, node, seen)
       } else {
         checker_self.walk_spawn_expr(target, node, seen)
@@ -599,7 +623,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if recv = expr.receiver {
       if checker_self.changes_frozen(expr.callee, recv) && checker_self.spawn_array_frozen(recv) {
         root = checker_self.expr_root_name(recv)
-        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(expr.loc, checker_self.frozen_mutate_msg(node, root))
       }
       if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
         // A method on an element (`xs[0].bump`): refused once the
@@ -610,7 +634,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     if expr.args.size > 0 && verb_template_mutator(expr.callee) && checker_self.spawn_array_frozen(expr.args[0]) {
       root = checker_self.expr_root_name(expr.args[0])
-      checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
+      checker_self.fail(expr.loc, checker_self.frozen_mutate_msg(node, root))
     }
     for i in 0..expr.args.size {
       checker_self.walk_spawn_expr(expr.args[i], node, seen)
@@ -639,7 +663,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if obj = expr.object {
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
-        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(expr.loc, checker_self.frozen_mutate_msg(node, root))
       }
       if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
         checker_self.note_element_call(expr, obj, task_side(node))
@@ -802,7 +826,7 @@ pub fn (checker_self: Checker) place_ty(expr: Expr): Ty? {
     if checker_self.spawn_skip_has(expr.ident) {
       return nil
     }
-    return checker_self.lookup(expr.ident)
+    return checker_self.frozen_lookup(expr.ident)
   }
   if expr.kind == ex_index() {
     if l = expr.left, lt = checker_self.place_ty(l) {
@@ -852,7 +876,7 @@ pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
     if checker_self.spawn_skip_has(expr.ident) {
       return nil
     }
-    if ty = checker_self.lookup(expr.ident) {
+    if ty = checker_self.frozen_lookup(expr.ident) {
       if ty.is_array() {
         return ty
       }
@@ -900,7 +924,7 @@ pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
   if checker_self.spawn_skip_has(root) {
     return false
   }
-  if ty = checker_self.lookup(root) {
+  if ty = checker_self.frozen_lookup(root) {
     return ty.is_array() || ty.is_hash()
   }
   false
