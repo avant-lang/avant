@@ -74,6 +74,9 @@ static int st_main_taken;
 static pthread_key_t st_key;
 static struct sigaction st_old;
 static struct sigaction st_old_bus;
+static struct sigaction st_old_fpe;
+static struct sigaction st_old_ill;
+static struct sigaction st_old_abrt;
 static int st_installed;
 
 static void on_fault(int sig, siginfo_t *si, void *ucv);
@@ -111,6 +114,13 @@ static void st_install(void) {
     st_installed = 1;
   }
   (void)sigaction(SIGBUS, &sa, &st_old_bus);
+  /* A division by zero or an illegal instruction in C code end the same
+   * way: stdout's bytes first, then one line naming the signal and the
+   * function (on_crash); a C library's abort() (a failed assertion, a
+   * corrupted heap), which prints its own line, keeps stdout's bytes. */
+  (void)sigaction(SIGFPE, &sa, &st_old_fpe);
+  (void)sigaction(SIGILL, &sa, &st_old_ill);
+  (void)sigaction(SIGABRT, &sa, &st_old_abrt);
 }
 
 /* The registering thread's stack [lo, hi) and whether it is a C thread
@@ -509,7 +519,19 @@ static int fault_name(const Exe *e, uintptr_t pc, uintptr_t sp, char *out, size_
 
 /* The handler that was there before this one, for sig. */
 static struct sigaction *old_of(int sig) {
-  return sig == SIGBUS ? &st_old_bus : &st_old;
+  if (sig == SIGBUS) {
+    return &st_old_bus;
+  }
+  if (sig == SIGFPE) {
+    return &st_old_fpe;
+  }
+  if (sig == SIGILL) {
+    return &st_old_ill;
+  }
+  if (sig == SIGABRT) {
+    return &st_old_abrt;
+  }
+  return &st_old;
 }
 
 /* Whether that handler is someone else's (a C library's, which may
@@ -658,6 +680,31 @@ static void on_crash(int sig, siginfo_t *si, void *ucv) {
     out_pending();
   }
   m.n = 0;
+  if (sig == SIGABRT) {
+    /* abort() comes after its caller's own line (a failed assertion's, the
+     * C library's "malloc(): corrupted ...", the runtime's fatal errors):
+     * the program's output is kept, and no second line is added. */
+    die_by(sig);
+    return;
+  }
+  if (sig == SIGFPE || sig == SIGILL) {
+    put(&m, sig == SIGFPE ? "avant runtime: arithmetic fault" : "avant runtime: illegal instruction");
+    if (named) {
+      put(&m, " in ");
+      put_n(&m, name, sizeof name);
+    }
+    put_thread(&m);
+    if (sig == SIGFPE) {
+      put(&m, ": an integer division by zero or overflow, most likely in C code\n");
+    } else {
+      put(&m, ": address ");
+      put_x(&m, a);
+      put(&m, " holds an instruction this processor cannot run, most likely in C code\n");
+    }
+    (void)!write(2, m.b, m.n);
+    die_by(sig);
+    return;
+  }
   put(&m, sig == SIGBUS ? "avant runtime: bus error" : "avant runtime: segmentation fault");
   if (named) {
     put(&m, " in ");
@@ -685,8 +732,9 @@ static void on_fault(int sig, siginfo_t *si, void *ucv) {
   char name[200];
   int named;
   int in_exe, in_av;
-  /* A signal sent (kill, raise: si_code <= 0) is not a fault. */
-  if (!si || si->si_code <= 0) {
+  /* A signal sent (kill, raise: si_code <= 0) is not a fault, but for
+   * SIGABRT, which abort() sends itself. */
+  if (!si || (si->si_code <= 0 && sig != SIGABRT)) {
     chain(sig, si, ucv);
     return;
   }
