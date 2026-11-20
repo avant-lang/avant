@@ -207,7 +207,23 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #endif
 /* The full-collection trigger: mature
  * growth since the last full collection reaching
- * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
+ * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * scanned live after it
+ * + plain large live after it / PLAIN_LARGE_DIV), uncapped. A plain large
+ * object (a large Bytes buffer: numbers or text, no reference in it) costs
+ * a full collection one header to mark and one run to sweep, whatever its
+ * size, so its bytes earn the growth allowance at 1/PLAIN_LARGE_DIV of the
+ * rate of the bytes the mark reads. Counted whole, a program whose live
+ * set is such buffers let as much dead buffer memory as it held live
+ * pile up between full collections: per-run matrices and grids promoted
+ * by their age and dying old (Matmul's 900 rows of 7.2 KB a matrix,
+ * 65 -> 43 MB; Maze::AStar 206 -> 129 MB; at the same instruction counts
+ * on every LangArena program). 8 by measurement on those rows (4, 8, 16
+ * and no allowance at all): 4 kept 7-15% more of their peak than 8; 16
+ * gave Maze::AStar 6% less memory for twice its full collections (45
+ * against 23), and no allowance the same as 16. */
+#ifndef PLAIN_LARGE_DIV
+#define PLAIN_LARGE_DIV 8
+#endif
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
 #define HEAP_FACTOR 2
 #define MAX_TYPES 65535
@@ -1619,10 +1635,14 @@ typedef struct GcHeap {
   uint32_t tenure_gap;
   /* Mature growth that triggers the next full collection:
    * FULL_TRIGGER_MIN before the first one, then
-   * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
+   * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the scanned live bytes it
+   * left + its plain large live bytes / PLAIN_LARGE_DIV).
    * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
    * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
+  /* The plain large bytes (AVANT_TYPE_BYTES) the last full collection's
+   * sweep found live, a part of its live bytes (the trigger above). */
+  uint64_t plain_large_live;
   /* (The bytes allocated inside a thread's outermost no-GC region and
    * its entry's address are the thread's own:
    * GcThread.region_bytes, region_site.) */

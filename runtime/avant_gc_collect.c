@@ -687,8 +687,10 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
 
   if (full) {
-    /* The full trigger: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
-    uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * gc_heap.live;
+    /* The full trigger: max(4 MiB, (F - 1) * scanned live + plain large
+     * live / PLAIN_LARGE_DIV), F = 2, uncapped (avant_gc_internal.h). */
+    uint64_t plain = gc_heap.plain_large_live < gc_heap.live ? gc_heap.plain_large_live : gc_heap.live;
+    uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * (gc_heap.live - plain) + plain / PLAIN_LARGE_DIV;
     gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
   }
   if (gc_heap.ctr.yng.min == 0 || avant_young_bytes < gc_heap.ctr.yng.min) {
