@@ -41,8 +41,8 @@
 # lock's shared side. With TESTMAP_RUNNER (the runner's command words, such
 # as `python3 -I PATH/ledger run --shared --wave W`) the script is started
 # outside the lock and takes it per piece of work, each its own shared run
-# named TESTMAP_STEP (default `test map`) plus ` build`, ` group K/N` or
-# ` exclusive` (TESTMAP_KIND is their --kind, default new): the test files
+# named TESTMAP_STEP (default `test map`) plus ` base cache` (when the entry
+# is missing), ` build`, ` group K/N` or ` exclusive` (TESTMAP_KIND is their --kind, default new): the test files
 # are dealt into groups of about TESTMAP_GROUP_SECONDS of wall each (default
 # 240), so no run holds the lock past the shared limit however many files
 # there are. Within a group the files start longest first (their times from
@@ -157,7 +157,7 @@ fi
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs tmpfs /tmp' < /dev/null > /dev/null 2>&1 \
   || { echo "test-map.sh: this machine refuses a mount namespace: the hits cannot be taken one test file at a time" >&2; exit 2; }
-e=$(sh "$here/base-cache.sh" "$1" < /dev/null) || exit 1
+e=$(tm_run "${TESTMAP_STEP:-test map} base cache" sh "$here/base-cache.sh" "$1" < /dev/null) || exit 1
 exec 7>> "$e.lock" && flock -s 7
 m=$e/testmap
 if [ -f "$m/COMPLETE" ]; then echo "$m"; exit 0; fi
