@@ -1388,7 +1388,7 @@ A check is a compare and a never-taken branch, dropped where the compiler proves
 
 ### Floats
 
-Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`. `Float64` has the math of C's library as methods, each the library's call (or its instruction) with nothing around it:
+Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`. Every operation is done as written, in the order written, with no reassociation and no fused multiply-add the source does not ask for, so a result's bits are the same whatever the optimization, the `--cpu` level or `--debug`, with one exception: a NaN result stays NaN, but its sign and payload are not specified (where two NaNs meet, which one's comes out follows the machine's instructions, and `x.to_bits()` of it may differ between builds). `Float64` has the math of C's library as methods, each the library's call (or its instruction) with nothing around it:
 
 | Method | Result |
 | --- | --- |

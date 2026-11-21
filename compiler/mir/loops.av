@@ -34,9 +34,18 @@
 // keeps every size (mir_lv_keeps_sizes) or to an Avant function that
 // does so transitively (an indirect call, an unknown C function, or a
 // helper that pushes, pops, clears, or reserves disqualifies Array and
-// Buf holders in that loop; strings stay eligible). In a shared module
-// Array and Buf holders are not versioned at all (another thread is
-// outside the analysis); strings are.
+// Buf holders in that loop; strings stay eligible). A program that
+// spawns is no exception: no other task changes an Array's or a Buf's
+// size while this thread's loop reads it. Another task reaches an Array
+// only frozen (captured by a spawn or a .parallel block while that task
+// runs, or held by a constant: then nobody changes its size or its
+// elements), inside a Mutex (reached only under the lock, in a `with`
+// block no reference to it leaves, so the loop that reads it holds the
+// lock), or moved into the task that alone uses it; a channel copies an
+// Array it sends; a C callback captures nothing; a Buf never crosses. So
+// an array the loop reads is this thread's alone, or frozen, for the
+// whole loop, and the single-thread analysis holds. The freeze tests of
+// element stores are copied with every other statement.
 //
 // A loop is versioned when at least one such check sits in the loop at
 // its own depth (not only inside an inner loop); loops are visited
@@ -49,6 +58,7 @@ import mir.types
 import mir.ir
 import mir.runtime
 import mir.flow
+import mir.tile
 
 // ---- small helpers
 
@@ -1459,7 +1469,7 @@ fn lv_count_stmts(f: MFunc): Int {
 
 // Tries to version the loop with header lps.headers[li]; returns the
 // copy's header, or -1.
-fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
+fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool), recs: Array(TlRec)): Int {
   body = lps.bodies[li]
   hdr = lps.headers[li]
   if hdr == 0 {
@@ -1488,7 +1498,7 @@ fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
   if size > 4000 {
     return -1
   }
-  lp.sizes_ok = !m.shared && lv_loop_keeps(m, lp, keep)
+  lp.sizes_ok = lv_loop_keeps(m, lp, keep)
   if !lv_header(m, lp, lps) {
     return -1
   }
@@ -1498,10 +1508,14 @@ fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
   if !lp.any_own {
     return -1
   }
-  lv_version(lp, terms)
+  g0 = f.blocks.size
+  copy = lv_version(lp, terms)
+  recs.push(TlRec.new(g0, copy, hdr))
+  copy
 }
 
-fn lv_func(m: MModule, f: MFunc, keep: Array(Bool)) {
+// recs receives each versioning (tile.av reads them).
+fn lv_func(m: MModule, f: MFunc, keep: Array(Bool), recs: Array(TlRec)) {
   done: Array(Bool) = []
   budget = lv_count_stmts(f) * 4 + 4000
   rounds = 0
@@ -1518,7 +1532,7 @@ fn lv_func(m: MModule, f: MFunc, keep: Array(Bool)) {
       if !done[h] {
         done[h] = true
         if lv_count_stmts(f) < budget {
-          copy = lv_try(m, f, lps, li, keep)
+          copy = lv_try(m, f, lps, li, keep, recs)
           if copy >= 0 {
             while done.size < f.blocks.size {
               done.push(false)
@@ -1680,7 +1694,12 @@ pub fn mir_loop_pass(m: MModule) {
   keep = mir_lv_summary(m)
   for f in m.funcs {
     if f.kind == mfk_unset() && f.blocks.size > 1 {
-      lv_func(m, f, keep)
+      recs: Array(TlRec) = []
+      lv_func(m, f, keep, recs)
+      if recs.size >= 2 {
+        lps = mir_lv_loops(f)
+        mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu)
+      }
       lv_hoist_sizes(f, m.shared)
     }
   }

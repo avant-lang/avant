@@ -1,0 +1,36 @@
+// A row shorter than the inner loop's bound in a nest the compiler tiles:
+// the tile's guard sees it, so the plain loop runs those rows and traps at
+// the same output with the same message; the rows before it are written.
+
+fn mm(ni: Int, nj: Int, nk: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ai = a[i]
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = s
+    }
+  }
+}
+
+fn main {
+  n = 11
+  a = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n, (k) { (i * n + k).to_f() }) })
+  t = Array(Array(Float64)).new(n, (j) { Array(Float64).new(n, (k) { (j - k).to_f() }) })
+  c = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n) })
+  mm(n, n, n, a, t, c)
+  puts(c[5][7])
+  t[6] = Array(Float64).new(n - 2, (k) { 1.0 })
+  done = c
+  h = 0.0
+  for r in done {
+    h += r[0]
+  }
+  puts(h)
+  mm(n, n, n, a, t, c)
+  puts("not reached")
+}

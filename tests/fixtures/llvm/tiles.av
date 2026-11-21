@@ -1,0 +1,264 @@
+// Loop nests the compiler computes several outputs at a time (a register
+// tile), against the same nests written so that it cannot (a call in the
+// store: `keep`): every output's bits must be the same, since each output
+// still sums its own products in its own order. The inputs hold NaN, the
+// infinities, both zeros, subnormals and values that cancel; the sizes
+// are empty, smaller than a tile, and not multiples of any tile's sides.
+// Rows that are the same array as a row the nest reads (an output row
+// that is an input row) must give what the plain order gives: the tile
+// sees them and runs the plain loop. Outputs are compared by their 64
+// bits with every NaN as one; the last line counts the cases whose NaN
+// outputs differ in sign or payload (where two NaNs meet, the machine
+// passes on one operand's, and which one follows the instruction it
+// picked, not the source order).
+
+fn keep(x: Float64): Float64 {
+  x
+}
+
+// c[i][j] = sum over k of a[i][k] * t[j][k] (t is the second operand,
+// transposed): a nest of depth 3.
+fn mm(ni: Int, nj: Int, nk: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ai = a[i]
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = s
+    }
+  }
+}
+
+fn mm_ref(ni: Int, nj: Int, nk: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ai = a[i]
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = keep(s)
+    }
+  }
+}
+
+// out[i] = sum over j of a[i][j] * u[j] - a[i][j]: a nest of depth 2.
+fn mv(ni: Int, nj: Int, a: Array(Array(Float64)), u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    ai = a[i]
+    v = 0.0
+    for j in 0..nj {
+      v += ai[j] * u[j] - ai[j]
+    }
+    out[i] = v
+  }
+}
+
+fn mv_ref(ni: Int, nj: Int, a: Array(Array(Float64)), u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    ai = a[i]
+    v = 0.0
+    for j in 0..nj {
+      v += ai[j] * u[j] - ai[j]
+    }
+    out[i] = keep(v)
+  }
+}
+
+class Gen {
+  pub state: UInt64 = 88172645463325252
+
+  fn next: UInt64 {
+    x = self.state
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    self.state = x
+    x
+  }
+
+  // Mostly ordinary numbers of mixed signs and scales, with the special
+  // values now and then.
+  fn value: Float64 {
+    r = self.next()
+    pick = r % 256
+    if pick == 0 {
+      // A NaN of either sign with a payload of its own: where two meet,
+      // the one the machine passes on shows in the result's bits.
+      return Float64.from_bits((r & 9223372036854775808) | 9221120237041090560 | ((r >> 20) & 1048575))
+    }
+    if pick == 1 {
+      return 1.0 / 0.0
+    }
+    if pick == 2 {
+      return -1.0 / 0.0
+    }
+    if pick == 3 {
+      return -0.0
+    }
+    if pick == 4 {
+      return 0.0
+    }
+    if pick == 5 {
+      return Float64.from_bits((r >> 12) & 4503599627370495)
+    }
+    if pick == 6 {
+      return 1.0e300
+    }
+    if pick == 7 {
+      return -1.0e300
+    }
+    m = ((r >> 11) % 2000001).to_i().to_f() - 1000000.0
+    e = (r >> 40) % 3
+    if e == 0 {
+      return m * 1.0e-6
+    }
+    if e == 1 {
+      return m * 1.0e-3
+    }
+    m
+  }
+}
+
+fn rows(g: Gen, n: Int, m: Int): Array(Array(Float64)) {
+  Array(Array(Float64)).new(n, (i) { Array(Float64).new(m, (j) { g.value() }) })
+}
+
+// A value's bits: raw, its 64 bits (a NaN's sign and payload
+// included), else every NaN as one.
+fn bits(v: Float64, raw: Bool): UInt64 {
+  if !raw && v != v {
+    return 9221120237041090560
+  }
+  v.to_bits()
+}
+
+fn fold(xs: Array(Array(Float64)), raw: Bool): UInt64 {
+  h: UInt64 = 1469598103934665603
+  for r in xs {
+    h = (h &* 1099511628211) ^ r.size.to_u64()
+    for v in r {
+      h = (h &* 1099511628211) ^ bits(v, raw)
+    }
+  }
+  h
+}
+
+fn fold1(r: Array(Float64), raw: Bool): UInt64 {
+  h: UInt64 = 1469598103934665603
+  for v in r {
+    h = (h &* 1099511628211) ^ bits(v, raw)
+  }
+  h
+}
+
+fn nans(xs: Array(Array(Float64))): Int {
+  n = 0
+  for r in xs {
+    for v in r {
+      if v != v {
+        n += 1
+      }
+    }
+  }
+  n
+}
+
+// Builds the operands from the seed (so both sides start equal), with
+// aliasing: 0 none; 1 every second output row is an input row of a; 2
+// output row 1 is t's row nj - 1 (read by later columns).
+fn mm_case(seed: UInt64, ni: Int, nj: Int, nk: Int, alias: Int, plain: Bool): Array(UInt64) {
+  g = Gen.new()
+  g.state = seed
+  a = rows(g, ni, nk)
+  t = rows(g, nj, nk)
+  c = rows(g, ni, nj)
+  if alias == 1 && nk == nj {
+    i = 0
+    while i < ni {
+      c[i] = a[i]
+      i += 2
+    }
+  }
+  if alias == 2 && ni > 1 && nj > 0 && nk == nj {
+    c[1] = t[nj - 1]
+  }
+  if plain {
+    mm_ref(ni, nj, nk, a, t, c)
+  } else {
+    mm(ni, nj, nk, a, t, c)
+  }
+  [(fold(c, false) &* 31) ^ (fold(a, false) &* 7) ^ fold(t, false), (fold(c, true) &* 31) ^ (fold(a, true) &* 7) ^ fold(t, true)]
+}
+
+// How many of a tiled square's outputs are NaN (so the inputs reach them).
+fn mm_nans(seed: UInt64, n: Int): Int {
+  g = Gen.new()
+  g.state = seed
+  a = rows(g, n, n)
+  t = rows(g, n, n)
+  c = rows(g, n, n)
+  mm(n, n, n, a, t, c)
+  nans(c)
+}
+
+fn mv_case(seed: UInt64, ni: Int, nj: Int, alias: Bool, plain: Bool): Array(UInt64) {
+  g = Gen.new()
+  g.state = seed
+  a = rows(g, ni, nj)
+  u = Array(Float64).new(nj, (j) { g.value() })
+  out = Array(Float64).new(ni, (i) { g.value() })
+  if alias && ni == nj {
+    out = u
+  }
+  if plain {
+    mv_ref(ni, nj, a, u, out)
+  } else {
+    mv(ni, nj, a, u, out)
+  }
+  [(fold1(out, false) &* 31) ^ (fold(a, false) &* 7) ^ fold1(u, false), (fold1(out, true) &* 31) ^ (fold(a, true) &* 7) ^ fold1(u, true)]
+}
+
+fn main {
+  sizes = [0, 1, 2, 3, 4, 5, 7, 8, 9, 13, 17]
+  bad = 0
+  nan_bits = 0
+  runs = 0
+  seed: UInt64 = 12345
+  tally = (tag: String, x: Array(UInt64), y: Array(UInt64)) {
+    runs += 1
+    if x[0] != y[0] {
+      bad += 1
+      puts("${tag}: ${x[0]} != ${y[0]}")
+    } else if x[1] != y[1] {
+      nan_bits += 1
+    }
+  }
+  for ni in sizes {
+    for nj in sizes {
+      for nk in [0, 1, 3, 8, 17] {
+        for alias in [0, 1, 2] {
+          seed = seed &+ 7919
+          tally("mm ${ni} x ${nj} x ${nk} alias ${alias}", mm_case(seed, ni, nj, nk, alias, false), mm_case(seed, ni, nj, nk, alias, true))
+        }
+      }
+      for alias in [false, true] {
+        seed = seed &+ 104729
+        tally("mv ${ni} x ${nj} alias ${alias}", mv_case(seed, ni, nj, alias, false), mv_case(seed, ni, nj, alias, true))
+      }
+    }
+  }
+  // A larger square, where the tiles run most of the work.
+  tally("mm 64", mm_case(99, 64, 64, 64, 0, false), mm_case(99, 64, 64, 64, 0, true))
+  puts("${runs} cases, ${bad} differ")
+  puts("NaN outputs of the 64 square: ${mm_nans(99, 64)}")
+  // Informational (not compared): the cases equal in every non-NaN bit
+  // whose NaN outputs differ in sign or payload.
+  puts("NaN bits differ: ${nan_bits}")
+}
