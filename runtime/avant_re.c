@@ -196,12 +196,6 @@ __attribute__((weak)) void *avant_re2c_handle(avant_int id) {
   return NULL;
 }
 
-__attribute__((weak)) int32_t avant_re2c_count(int32_t id, const char *s) {
-  (void)id;
-  (void)s;
-  return 0;
-}
-
 __attribute__((weak)) int32_t avant_re2c_groups(int32_t id) {
   (void)id;
   return 0;
@@ -824,20 +818,6 @@ static inline __attribute__((always_inline)) avant_int re_count(void *handle, co
   }
   if (!s) {
     s = AVANT_STR_EMPTY;
-  }
-  if (avant_re2c_owns(handle)) {
-    ReText txt;
-    int32_t got;
-    if (!re_text(&txt, s)) {
-      if (!trap) {
-        g_re_match_err = PCRE2_ERROR_NOMEMORY;
-        return -1;
-      }
-      re_trap("regex.Regex.count", PCRE2_ERROR_NOMEMORY);
-    }
-    got = avant_re2c_count((int32_t)(uintptr_t)handle, re_text_obj(&txt, s));
-    re_text_free(&txt);
-    return got;
   }
   e = (ReEntry *)handle;
   /* PCRE2 reads the bytes by their count: a view's in place. */

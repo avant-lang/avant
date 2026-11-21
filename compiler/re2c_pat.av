@@ -905,35 +905,6 @@ pub class Re2cCollect {
       buf.push_str("    */\n")
       buf.push_str("  }\n")
       buf.push_str("}\n\n")
-      buf.push_str("static int32_t avant_re2c_scan_${id}(const char *s) {\n")
-      buf.push_str("  size_t n = avant_str_n(s ? s : \"\");\n")
-      buf.push_str("  if (!s) s = \"\";\n")
-      buf.push_str("  const char *YYCURSOR = s, *YYMARKER = YYCURSOR, *YYLIMIT = s + n;\n")
-      if any_cap {
-        buf.push_str("  const char *yypmatch[YYMAXNMATCH * 2];\n")
-        buf.push_str("  size_t yynmatch = 0;\n")
-        buf.push_str("  /*!stags:re2c format = 'const char *@@;\\n'; */\n")
-      }
-      buf.push_str("  int32_t nmatch = 0;\n")
-      buf.push_str("  for (;;) {\n")
-      buf.push_str("    const char *start = YYCURSOR;\n")
-      buf.push_str("    /*!re2c\n")
-      buf.push_str("      re2c:yyfill:enable = 0;\n")
-      buf.push_str("      re2c:define:YYCTYPE = \"unsigned char\";\n")
-      if any_cap {
-        buf.push_str("      re2c:posix-captures = 1;\n")
-      }
-      buf.push_str("\n")
-      buf.push_str("      ${body} {\n")
-      buf.push_str("        nmatch++;\n")
-      buf.push_str("        if (YYCURSOR == start) YYCURSOR++;\n")
-      buf.push_str("        continue;\n")
-      buf.push_str("      }\n")
-      buf.push_str("      * { continue; }\n")
-      buf.push_str("      [\\x00] { return nmatch; }\n")
-      buf.push_str("    */\n")
-      buf.push_str("  }\n")
-      buf.push_str("}\n\n")
     }
     n = self.bodies.size
     buf.push_str("int32_t avant_re2c_owns(void *re) {\n")
@@ -973,15 +944,6 @@ pub class Re2cCollect {
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
     buf.push_str("}\n\n")
-    buf.push_str("int32_t avant_re2c_count(int32_t id, const char *s) {\n")
-    buf.push_str("  switch (id) {\n")
-    for i in 0..self.bodies.size {
-      id = i + 1
-      buf.push_str("    case ${id}: return avant_re2c_scan_${id}(s);\n")
-    }
-    buf.push_str("    default: return 0;\n")
-    buf.push_str("  }\n")
-    buf.push_str("}\n")
     buf.to_s()
   }
 }
