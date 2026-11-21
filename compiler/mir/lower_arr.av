@@ -575,10 +575,11 @@ pub fn mir_frozen_store: Int {
 // A program with a call that freezes the Array holding its receiver
 // (Expr.elem_hold, lower_agg.av held_method_call) tests `clear` and a
 // sort with a block too, whether it spawns or not; there the cold block
-// asks the runtime (`avant_array_frozen`), which names the method call
-// when this thread's call froze the Array, and lets an element store
-// through when only such calls did (they freeze the size and the order,
-// not the elements).
+// asks the runtime (`avant_array_frozen`, called with the change's site:
+// llvm/emit.av), which names the method call when this thread's call
+// froze the Array, traps at the change's file and line when a task's
+// freeze holds it, and lets an element store through when only such
+// calls did (they freeze the size and the order, not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
   holds = lw.lw_m.elem_holds
   if !lw.lw_m.shared && !lw.lw_m.const_arrays && (!holds || op == mir_frozen_store()) {

@@ -502,7 +502,7 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
  * a fill and only this thread's method calls froze it. */
 void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site);
 void avant_array_unhold(void **slot);
-void avant_array_frozen(void *arr, int32_t op);
+void avant_array_frozen_at(void *arr, int32_t op, int32_t site);
 /* A store through a struct method's receiver p (site: the store's), in a
  * program with such calls that spawns: traps when p is an element of an
  * array this thread's call holds and a task reads too. */

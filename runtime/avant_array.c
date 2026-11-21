@@ -33,6 +33,7 @@ static inline int32_t arr_cap_word(AvantArray *a) {
 /* A change to a frozen array traps, naming the method call of this
  * thread that froze it, else as a task's freeze (arr_frozen_trap). */
 static __attribute__((noreturn, cold, noinline)) void arr_frozen_trap(void *arr, int32_t op);
+static __attribute__((noreturn, cold, noinline)) void arr_frozen_trap_at(void *arr, int32_t op, int32_t site);
 
 #define ARR_FROZEN_TRAP(a, op)                                   \
   do {                                                           \
@@ -149,7 +150,7 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
  * size or another element. The freeze is the task's (one more count in
  * the cap word), so every change of the size or order traps as for a
  * task; an element store or a fill does not (they change values, not
- * places), which avant_array_frozen tells by this thread's holds.
+ * places), which avant_array_frozen_at tells by this thread's holds.
  *
  * The holds are a stack per thread, innermost last: each names the
  * caller's frame slot that holds the array (a collection that moves the
@@ -212,11 +213,11 @@ __attribute__((visibility("hidden"))) void avant_array_hold_drop(int n) {
 }
 
 /* A change (op, AVANT_FROZEN_*) to the frozen array arr, from generated
- * code. An element store or a fill passes when this thread's method
- * calls hold every count of the freeze; anything else traps, naming the
- * innermost method call of this thread that froze arr, else as a task's
- * freeze. */
-void avant_array_frozen(void *arr, int32_t op) {
+ * code at site (the change's file and line). An element store or a fill
+ * passes when this thread's method calls hold every count of the freeze;
+ * anything else traps, naming the innermost method call of this thread
+ * that froze arr, else as a task's freeze at site. */
+void avant_array_frozen_at(void *arr, int32_t op, int32_t site) {
   AvantArray *a = (AvantArray *)arr;
   int32_t c = arr_cap_word(a);
   int32_t mine = 0;
@@ -232,7 +233,7 @@ void avant_array_frozen(void *arr, int32_t op) {
   if ((op == AVANT_FROZEN_STORE || op == AVANT_FROZEN_FILL) && mine == (c & 0x7fffffff)) {
     return;
   }
-  arr_frozen_trap(arr, op);
+  arr_frozen_trap_at(arr, op, site);
 }
 
 /* A store through a struct method's receiver p, in a program with held
@@ -274,6 +275,17 @@ void avant_array_recv_store(void *p, const char *site) {
     }
     avant_trap_frozen_call(AVANT_FROZEN_RECV, g_arr_holds[i].name, site);
   }
+}
+
+/* arr_frozen_trap with the change's site: a task's freeze traps there. */
+static void arr_frozen_trap_at(void *arr, int32_t op, int32_t site) {
+  int i;
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    if (*g_arr_holds[i].slot == arr) {
+      avant_trap_frozen_call(op, g_arr_holds[i].name, g_arr_holds[i].site);
+    }
+  }
+  avant_trap_frozen_at(op, site);
 }
 
 static void arr_frozen_trap(void *arr, int32_t op) {
