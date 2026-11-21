@@ -856,7 +856,7 @@ pub class Re2cCollect {
       id = i + 1
       body = self.bodies[i]
       cap = body_has_capture(body)
-      buf.push_str("static int32_t avant_re2c_find_${id}(const char *s, int32_t from, int32_t *m0, int32_t *m1, int32_t *c0, int32_t *c1) {\n")
+      buf.push_str("static int32_t avant_re2c_find_${id}(const char *s, avant_int from, avant_int *m0, avant_int *m1, avant_int *c0, avant_int *c1) {\n")
       buf.push_str("  size_t n = avant_str_n(s ? s : \"\");\n")
       buf.push_str("  if (!s) s = \"\";\n")
       buf.push_str("  if (from < 0) from = 0;\n")
@@ -868,10 +868,17 @@ pub class Re2cCollect {
         buf.push_str("  size_t yynmatch = 0;\n")
         buf.push_str("  /*!stags:re2c format = 'const char *@@;\\n'; */\n")
       }
+      // The text is its bytes and their count: a NUL byte inside it is an
+      // ordinary byte that any rule may match. The end is YYLIMIT (s + n),
+      // where the string's terminator stands as re2c's sentinel: each time
+      // the scanner reads that byte value it compares the cursor with the
+      // limit (re2c's end-of-input rule, `$`), so it never reads past the
+      // text and stops only at its end. Positions are Ints.
       buf.push_str("  for (;;) {\n")
       buf.push_str("    const char *start = YYCURSOR;\n")
       buf.push_str("    /*!re2c\n")
       buf.push_str("      re2c:yyfill:enable = 0;\n")
+      buf.push_str("      re2c:eof = 0;\n")
       buf.push_str("      re2c:define:YYCTYPE = \"unsigned char\";\n")
       if any_cap {
         buf.push_str("      re2c:posix-captures = 1;\n")
@@ -879,29 +886,29 @@ pub class Re2cCollect {
       buf.push_str("\n      ${body} {\n")
       if cap {
         buf.push_str("        if (yynmatch > 0 && yypmatch[0] && yypmatch[1]) {\n")
-        buf.push_str("          *m0 = (int32_t)(yypmatch[0] - base);\n")
-        buf.push_str("          *m1 = (int32_t)(yypmatch[1] - base);\n")
+        buf.push_str("          *m0 = (avant_int)(yypmatch[0] - base);\n")
+        buf.push_str("          *m1 = (avant_int)(yypmatch[1] - base);\n")
         buf.push_str("        } else {\n")
-        buf.push_str("          *m0 = (int32_t)(start - base);\n")
-        buf.push_str("          *m1 = (int32_t)(YYCURSOR - base);\n")
+        buf.push_str("          *m0 = (avant_int)(start - base);\n")
+        buf.push_str("          *m1 = (avant_int)(YYCURSOR - base);\n")
         buf.push_str("        }\n")
         buf.push_str("        if (yynmatch > 1 && yypmatch[2] && yypmatch[3]) {\n")
-        buf.push_str("          *c0 = (int32_t)(yypmatch[2] - base);\n")
-        buf.push_str("          *c1 = (int32_t)(yypmatch[3] - base);\n")
+        buf.push_str("          *c0 = (avant_int)(yypmatch[2] - base);\n")
+        buf.push_str("          *c1 = (avant_int)(yypmatch[3] - base);\n")
         buf.push_str("        } else {\n")
         buf.push_str("          *c0 = *m0;\n")
         buf.push_str("          *c1 = *m1;\n")
         buf.push_str("        }\n")
       } else {
-        buf.push_str("        *m0 = (int32_t)(start - base);\n")
-        buf.push_str("        *m1 = (int32_t)(YYCURSOR - base);\n")
+        buf.push_str("        *m0 = (avant_int)(start - base);\n")
+        buf.push_str("        *m1 = (avant_int)(YYCURSOR - base);\n")
         buf.push_str("        *c0 = *m0;\n")
         buf.push_str("        *c1 = *m1;\n")
       }
       buf.push_str("        return 1;\n")
       buf.push_str("      }\n")
       buf.push_str("      * { continue; }\n")
-      buf.push_str("      [\\x00] { return 0; }\n")
+      buf.push_str("      $ { return 0; }\n")
       buf.push_str("    */\n")
       buf.push_str("  }\n")
       buf.push_str("}\n\n")
@@ -914,9 +921,10 @@ pub class Re2cCollect {
     buf.push_str("void *avant_re2c_handle(avant_int id) {\n")
     buf.push_str("  return (void *)(uintptr_t)id;\n")
     buf.push_str("}\n\n")
-    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, int32_t from, int32_t *spans, int32_t max_pairs) {\n")
+    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, avant_int from, avant_int *spans, int32_t max_pairs) {\n")
     buf.push_str("  int32_t id = (int32_t)(uintptr_t)re;\n")
-    buf.push_str("  int32_t m0 = 0, m1 = 0, c0 = 0, c1 = 0, rc = 0;\n")
+    buf.push_str("  avant_int m0 = 0, m1 = 0, c0 = 0, c1 = 0;\n")
+    buf.push_str("  int32_t rc = 0;\n")
     buf.push_str("  if (!s) s = \"\";\n")
     buf.push_str("  switch (id) {\n")
     for i in 0..self.bodies.size {

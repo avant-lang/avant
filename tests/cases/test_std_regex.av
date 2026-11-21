@@ -653,6 +653,16 @@ fn test_std_regex(c: Checks) {
     // scanner (no note that it stays on PCRE2), and runs as without them.
     lit_limits = "import std.regex\nfn main {\n  if re = regex.Regex.compile(\"a+\", match_limit: 1000) {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    puts(re.count(\"aa b aaa\"))\n    re.close()\n  }\n  if re = regex.Regex.compile(\"b+\", true, 100, 100, 4096) {\n    puts(re.count(\"aBb b\"))\n    re.close()\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-literal-limits", lit_limits, "", "stays on PCRE2", "2\n4\n2\n2\n")
+
+    // A text holding NUL bytes, before, inside and after a match, and a
+    // view of one: every literal pattern's scanner (no note that it stays
+    // on PCRE2) gives the answers of the same pattern built at run time
+    // (PCRE2) for find, find from a position, every match, count, replace
+    // and split, and never reads past the text's end (a class that matches
+    // a NUL byte, such as [^a], ran past the terminator before).
+    nul_src = fs.read("tests/fixtures/strings/regex_nul.av") ?? ""
+    c.expect(nul_src.size > 0, "regex_nul.av read")
+    regex_child(c, compiler, stamp, "regex-nul", nul_src, "", "stays on PCRE2", "[0-9]+ on ab\\0cd42: 5..7\n156 cases, 0 differ\n")
   }
 }
 
