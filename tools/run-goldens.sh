@@ -173,6 +173,7 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
     tests/fixtures/ffi/ceiling.av) echo "size-ceiling probes, run per mode by tests/cases/test_ceiling.av (every mode traps)" ;;
     tests/fixtures/ffi/full_poison.av) echo "a stale read whose output names the mode, run per mode by tests/cases/test_gc_checks.av" ;;
+    tests/fixtures/llvm/tiles.av) echo "prints how many NaN outputs differ in sign or payload, which depends on the build mode and CPU level; run per level and mode by tests/cases/test_loop_tiles.av" ;;
   esac
 }
 # A program that opens or connects to a network port (a listener, a
