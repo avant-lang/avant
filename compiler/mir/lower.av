@@ -842,6 +842,11 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
 // cov_map: the coverage slot map's path when the build counts
 // (AVANT_COVERAGE), else empty.
 pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String, cov_map: String): MirLowered {
+  mir_lower_program(program, symbols, root_path, avant_root, cov_map, 0)
+}
+
+// cpu: the x86-64 level compiled for (0 when none was named).
+pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String, cov_map: String, cpu: Int): MirLowered {
   dir = ""
   i = root_path.size - 1
   while i >= 0 {
@@ -874,6 +879,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   }
   mir_take_pass(lw.lw_m)
   mir_upsert_pass(lw.lw_m)
+  lw.lw_m.cpu = cpu
   mir_loop_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
   mir_caller_sites(lw.lw_m)

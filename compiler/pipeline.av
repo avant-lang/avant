@@ -366,6 +366,12 @@ pub fn compile_program(src: Source, program: Program): IrBox {
 // cov_map is the coverage slot map's default path; empty means the
 // scratch directory, for a program that runs inside this process.
 pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
+  compile_program(src, program, cov_map, 0)
+}
+
+// cpu: the x86-64 level compiled for (llvm_cpu_parse's number, 0 when
+// none was named), which the loop tiles' shape follows.
+pub fn compile_program(src: Source, program: Program, cov_map: String, cpu: Int): IrBox {
   expander = Expander.new(src, program)
   expander.expand()
   if e = expander.err {
@@ -414,7 +420,7 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   } else {
     map = ""
   }
-  compile_program_llvm(src, program, checker.symbol_table(), map)
+  compile_program_llvm(src, program, checker.symbol_table(), map, cpu)
 }
 
 // Creates the directory of the coverage slot map at path when it is
@@ -474,8 +480,8 @@ pub fn coverage_map_path(fallback: String): String {
 // and dump; a construct the lowering does not support yet stops here
 // with its diagnostic. cov_map: the coverage slot map's path when
 // AVANT_COVERAGE is on, else empty.
-pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String): IrBox {
-  low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map)
+pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String, cpu: Int): IrBox {
+  low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map, cpu)
   if low.err.size > 0 {
     diag_puts(low.err)
     return IrBox.new(false)
@@ -832,6 +838,10 @@ pub fn compile_av_path(path: String): IrBox {
 }
 
 pub fn compile_av_path(path: String, cov_map: String): IrBox {
+  compile_av_path(path, cov_map, 0)
+}
+
+pub fn compile_av_path(path: String, cov_map: String, cpu: Int): IrBox {
   loader = Loader.new()
   if program = loader.load_root(path) {
     if e = loader.err {
@@ -842,7 +852,7 @@ pub fn compile_av_path(path: String, cov_map: String): IrBox {
     if text = file_read(path) {
       src = Source.new(path, text)
     }
-    box = compile_program(src, program, cov_map)
+    box = compile_program(src, program, cov_map, cpu)
     if box.ok && !plan_pkg_c(loader, box) {
       return IrBox.new(false)
     }
@@ -859,6 +869,10 @@ pub fn compile_av_paths(paths: Array(String)): IrBox {
 }
 
 pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
+  compile_av_paths(paths, cov_map, 0)
+}
+
+pub fn compile_av_paths(paths: Array(String), cov_map: String, cpu: Int): IrBox {
   if paths.size == 0 {
     diag_puts("compile needs a .av file")
     return IrBox.new(false)
@@ -867,7 +881,7 @@ pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
     diag_puts("compile takes one root .av (use import)")
     return IrBox.new(false)
   }
-  compile_av_path(paths[0], cov_map)
+  compile_av_path(paths[0], cov_map, cpu)
 }
 
 // The physical working directory, or "." when it cannot be read.

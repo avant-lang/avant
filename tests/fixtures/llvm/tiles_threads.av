@@ -1,0 +1,172 @@
+// Loop nests in a program that spawns. The bounds checks of a loop over
+// arrays only this task holds, or frozen ones, are proven once before
+// the loop as in a program that does not spawn, and a nest over
+// independent outputs is tiled: each worker computes a band of a
+// product into arrays it made itself (tiled) and the same band with a
+// call in the store (not tiled), from operands it shares frozen, and the
+// bits must agree. Then the sender multiplies into rows a running task
+// reads: the tile sees the rows frozen and the plain loop runs, so the
+// first element store traps, naming its site. The argument "trap" runs
+// that case; without one the program prints the workers' results.
+
+import std.sync
+
+fn keep(x: Float64): Float64 {
+  x
+}
+
+fn mm(ni: Int, nj: Int, nk: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ai = a[i]
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = s
+    }
+  }
+}
+
+fn mm_ref(ni: Int, nj: Int, nk: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ai = a[i]
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = keep(s)
+    }
+  }
+}
+
+// A worker's band, rows lo..hi, as Matmul's threaded task computes it.
+fn band(n: Int, lo: Int, hi: Int, a: Array(Array(Float64)), t: Array(Array(Float64)), plain: Bool): Array(Array(Float64)) {
+  out = Array(Array(Float64)).new(hi - lo, (r) { Array(Float64).new(n) })
+  for i in lo..hi {
+    ai = a[i]
+    ci = out[i - lo]
+    for j in 0..n {
+      tj = t[j]
+      s = 0.0
+      if plain {
+        for k in 0..n {
+          s += ai[k] * tj[k]
+        }
+        ci[j] = keep(s)
+      } else {
+        for k in 0..n {
+          s += ai[k] * tj[k]
+        }
+        ci[j] = s
+      }
+    }
+  }
+  out
+}
+
+fn band_tiled(n: Int, lo: Int, hi: Int, a: Array(Array(Float64)), t: Array(Array(Float64))): Array(Array(Float64)) {
+  out = Array(Array(Float64)).new(hi - lo, (r) { Array(Float64).new(n) })
+  for i in lo..hi {
+    ai = a[i]
+    ci = out[i - lo]
+    for j in 0..n {
+      tj = t[j]
+      s = 0.0
+      for k in 0..n {
+        s += ai[k] * tj[k]
+      }
+      ci[j] = s
+    }
+  }
+  out
+}
+
+fn fold(xs: Array(Array(Float64))): UInt64 {
+  h: UInt64 = 1469598103934665603
+  for r in xs {
+    for v in r {
+      h = (h &* 1099511628211) ^ v.to_bits()
+    }
+  }
+  h
+}
+
+fn sum_of(xs: Array(Float64)): Float64 {
+  s = 0.0
+  for i in 0..xs.size {
+    s += xs[i]
+  }
+  s
+}
+
+fn main {
+  a0 = process.args()
+  n = 37
+  a = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n, (k) { (i * 7 - k * 3).to_f() * 0.001 + 1.0 / (k + 1).to_f() }) })
+  t = Array(Array(Float64)).new(n, (j) { Array(Float64).new(n, (k) { (j + k * 5).to_f() * 0.01 - 0.3 }) })
+  if a0.size > 1 && a0[a0.size - 1] == "trap" {
+    c = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n) })
+    gate = sync.Channel(Int).new()
+    h = spawn {
+      _ = gate.recv()
+      c.size
+    }
+    puts("before")
+    mm(n, n, n, a, t, c)
+    gate.send(1)
+    puts(h.join() ?? -1)
+    return
+  }
+  hs: Array(JoinHandle(UInt64)) = []
+  lo = 0
+  while lo < n {
+    hi = min_int(lo + 10, n)
+    l = lo
+    hs.push(spawn { fold(band_tiled(n, l, hi, a, t)) })
+    hs.push(spawn { fold(band(n, l, hi, a, t, true)) })
+    lo = hi
+  }
+  same = 0
+  k = 0
+  while k < hs.size {
+    x = hs[k].join() ?? 0
+    y = hs[k + 1].join() ?? 1
+    if x == y {
+      same += 1
+    }
+    k += 2
+  }
+  puts("bands alike: ${same} of ${hs.size / 2}")
+  // A loop in a task over arrays it shares frozen.
+  sh = spawn { sum_of(a[3]) }
+  puts(sh.join() ?? 0.0)
+  // The sender's own nest, tiled, beside a running task that reads a and t.
+  gate2 = sync.Channel(Int).new()
+  rd = spawn {
+    _ = gate2.recv()
+    a.size + t.size
+  }
+  c2 = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n) })
+  c3 = Array(Array(Float64)).new(n, (i) { Array(Float64).new(n) })
+  mm(n, n, n, a, t, c2)
+  mm_ref(n, n, n, a, t, c3)
+  gate2.send(1)
+  puts(rd.join() ?? -1)
+  puts(fold(c2) == fold(c3))
+}
+
+fn min_int(x: Int, y: Int): Int {
+  if x < y {
+    return x
+  }
+  y
+}
+
+// Imported last, so no line the trap names moves.
+import std.process
