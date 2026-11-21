@@ -51,7 +51,9 @@
 # SUMMARY.txt where the steps would have been. Same checks, same verdicts; the
 # C' they ran is the copy's, and a `beside:` line says whether its B, C' and
 # runtime are the gate's byte for byte (a tree built in another directory
-# gives the same bytes), red when not. The shared part's wall drops by about
+# gives the same bytes), red when not. The stress pass's run limit is 1500 s there
+# (WAVE_BESIDE_STRESS_LIMIT): its longest fixture takes about 320 s alone, which
+# the gate's load beside it can double. The shared part's wall drops by about
 # the goldens' stress pass and the rest of the steps; the gate runs beside
 # more load, so its own wall is not comparable with a gate that ran alone.
 #
@@ -220,7 +222,7 @@ wall() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.1f", b-a}'; }
 
 # The running step: run CMD... starts it in the background, records
 # its PID in $cur and waits for it; its status is the command's.
-cur=""; curname=""; beside_pid=""; beside_tree=""
+cur=""; curname=""; beside_pid=""; beside_tree=""; beside_used=""
 # A command a non-interactive shell starts in the background ignores SIGINT
 # and SIGQUIT; env --default-signal gives the step the dispositions it had
 # in the foreground (a test that sends SIGINT to a child expects it to act).
@@ -337,15 +339,16 @@ esac
 [ "${WAVE_PART:-}" = shared ] || echo "wave-final: $lock_line"
 # want STEP: whether WAVE_ONLY (a comma-separated list of cases, gate,
 # goldens, stats, smoke, neutral, la; unset: all) names the step.
-# beside_steps: the steps the beside run (WAVE_BESIDE=1, below) takes while it is
-# active (beside_pid set): this instance neither runs nor reports them.
+# beside_steps: the steps the beside run (WAVE_BESIDE=1, below) takes once it is
+# started (beside_used set; beside_pid is its process until it is waited for):
+# this instance neither runs nor reports them itself.
 beside_steps=goldens,stats,smoke,neutral
 want() {
-  [ -n "$beside_pid" ] && case ",$beside_steps," in *",$1,"*) return 1 ;; esac
+  [ -n "$beside_used" ] && case ",$beside_steps," in *",$1,"*) return 1 ;; esac
   [ -z "${WAVE_ONLY:-}" ] && return 0; case ",$WAVE_ONLY," in *",$1,"*) return 0 ;; esac; return 1
 }
 # skipped STEP LINE: the step's line, unless the beside run reports it.
-skipped() { [ -n "$beside_pid" ] && case ",$beside_steps," in *",$1,"*) return 0 ;; esac; step "$2: skipped (WAVE_ONLY=$WAVE_ONLY)"; }
+skipped() { [ -n "$beside_used" ] && case ",$beside_steps," in *",$1,"*) return 0 ;; esac; step "$2: skipped (WAVE_ONLY=$WAVE_ONLY)"; }
 partial=""
 if [ -n "${WAVE_ONLY:-}" ]; then
   partial=1
@@ -385,8 +388,8 @@ if [ "${WAVE_BESIDE:-0}" = 1 ] && want gate && { want goldens || want stats || w
      && { [ ! -d langarena ] || cp -a langarena "$beside_tree/avant/langarena"; } \
      && ln -s "$(realpath "$root/../LangArena" 2>/dev/null || echo /nonexistent)" "$beside_tree/LangArena"; then
     rm -rf "$beside_tree/avant/langarena/tmp"
-    (cd "$beside_tree/avant" && exec env WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
-    beside_pid=$!
+    (cd "$beside_tree/avant" && exec env WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
+    beside_pid=$!; beside_used=1
     echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1), pid $beside_pid"
   else
     step "beside: red (the copy of the checkout could not be made: beside-setup.log)"

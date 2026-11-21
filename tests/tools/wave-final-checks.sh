@@ -488,7 +488,8 @@ final "$f" "$w/beside.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
 s=$w/beside.out/SUMMARY.txt
 has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && has "^build: C' built by the letters" "$s" \
   && has "^beside: the copy's B, C' and runtime are the gate's, byte for byte" "$s" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s" \
-  && [ ! -e "$w/beside.out/beside-tree" ] && [ "$(git -C "$f" worktree list | wc -l)" = 1 ]
+  && [ ! -e "$w/beside.out/beside-tree" ] && [ "$(git -C "$f" worktree list | wc -l)" = 1 ] \
+  && [ "$(grep -c '^goldens:' "$s")" = 1 ] && [ "$(grep -c '^gcstats:' "$s")" = 1 ] && [ "$(grep -c '^build:' "$s")" = 1 ]
 say beside-merged $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-700); worktrees: $(git -C "$f" worktree list 2>/dev/null | wc -l)"
 f=$(beside_fake besidediff 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x built in $(pwd)" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
 final "$f" "$w/besidediff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
