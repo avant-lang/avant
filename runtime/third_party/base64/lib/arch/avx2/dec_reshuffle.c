@@ -31,7 +31,7 @@ dec_reshuffle (const __m256i in)
 
 	// Pack lanes:
 #if defined(__clang__)
-	// The top two dwords are written over by the next block's store, so
+	// Avant patch: the top two dwords are written over by the next block's store, so
 	// any value does there. Read as a constant, clang works out that the
 	// indices pick zero dwords and adds a vpblendd with zero to every
 	// block (one instruction per 24 output bytes, 1.2% of a decode's
