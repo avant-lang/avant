@@ -484,8 +484,11 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   test = e.part("test")
   call = e.part("call")
   cont = e.part("cont")
-  z = e.tmp()
-  e.line("${z} = icmp eq ptr ${h}, null")
+  z = "false"
+  if !ll_barrier_derefs(e, o) {
+    z = e.tmp()
+    e.line("${z} = icmp eq ptr ${h}, null")
+  }
   if ll_barrier_stores_nil(e, o) {
     // The store it precedes writes nil: no reference to remember, so the
     // barrier matters only to the collector's store log (a reference is
@@ -496,9 +499,13 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
     e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
     off = e.tmp()
     e.line("${off} = icmp eq i8 ${lg}, 0")
-    z2 = e.tmp()
-    e.line("${z2} = or i1 ${z}, ${off}")
-    z = z2
+    if z == "false" {
+      z = off
+    } else {
+      z2 = e.tmp()
+      e.line("${z2} = or i1 ${z}, ${off}")
+      z = z2
+    }
   }
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
@@ -516,6 +523,24 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   ll_barrier_call(e, h, k)
   e.line("br label %${cont}")
   e.block(cont)
+}
+
+// Whether the statement after the barrier on O (a bare local) stores
+// through it (`(*_h)... = ...`): a null holder would fault at that store
+// anyway, so the barrier need not test for null. The optimizer drops the
+// test itself only when it sees the store's address as the same value
+// along the null edge (a merged reload), not when the holder is one value
+// read once, as through a slot's register copy.
+fn ll_barrier_derefs(e: LlEmit, o: MOperand): Bool {
+  stmts = e.f.blocks[e.bk].stmts
+  k = e.si + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() {
+    return true
+  }
+  false
 }
 
 // Whether the statement after the barrier on O (a bare local) stores nil
