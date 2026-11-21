@@ -38,10 +38,31 @@
 # fails still gives its hits (named in MANIFEST). Built once per tree,
 # under ENTRY/testmap.lock; run it again after removing ENTRY/testmap to
 # refresh it. Read by tools/change-check.sh. Run it under the machine
-# lock's shared side (a build and the suite once: about 10 minutes here).
+# lock's shared side. With TESTMAP_RUNNER (the runner's command words, such
+# as `python3 -I PATH/ledger run --shared --wave W`) the script is started
+# outside the lock and takes it per piece of work, each its own shared run
+# named TESTMAP_STEP (default `test map`) plus ` build`, ` group K/N` or
+# ` exclusive` (TESTMAP_KIND is their --kind, default new): the test files
+# are dealt into groups of about TESTMAP_GROUP_SECONDS of wall each (default
+# 240), so no run holds the lock past the shared limit however many files
+# there are. Within a group the files start longest first (their times from
+# another tree's map in the base cache, TESTMAP_TIMES naming a runs.tsv
+# instead), so the last file does not run alone; TESTMAP_JOBS files at once
+# (default 16). The hits do not depend on any of this: the same files, the
+# same lines.
 # Status 0 with the directory on stdout, 1 when the build failed, 2 on a
 # usage error or where the machine refuses the namespace.
 set -u
+runner=${TESTMAP_RUNNER:-}
+now() { date +%s.%N; }
+# tm_run STEP CMD...: CMD through TESTMAP_RUNNER as its own shared run, else as it is.
+tm_run() {
+  r_step=$1; shift
+  if [ -n "$runner" ]; then
+    # shellcheck disable=SC2086
+    $runner --step "$r_step" --kind "${TESTMAP_KIND:-new}" -- "$@"
+  else "$@"; fi
+}
 
 if [ "${1:-}" = --pick ]; then
   # --pick MAP BEFORE AFTER FILE...: the test files of MAP whose hits meet
@@ -154,7 +175,7 @@ cp -a "$e/avant" "$TM_WORK/avant" || exit 1
 w=$TM_WORK/avant
 sed -i "s#^lib: .*#lib: $w/lib#" "$w/bin/avant-c-llvm.versions.txt"
 rm -f "$w/bin/avant-b" "$w/bin/avant-b.versions.txt"
-(cd "$w" && env AVANT_COVERAGE=1 AVANT_COVERAGE_MAP="$TM_WORK/cov.map" timeout -k 10 1800 ./bin/avant-c-llvm compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o < /dev/null > "$log" 2>&1) \
+tm_run "${TESTMAP_STEP:-test map} build" sh -c 'cd "$1/avant" && exec env AVANT_COVERAGE=1 AVANT_COVERAGE_MAP="$1/cov.map" timeout -k 10 1800 ./bin/avant-c-llvm compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o < /dev/null > "$2" 2>&1' tm-build "$TM_WORK" "$log" \
   || { echo "test-map.sh: the instrumented compiler did not build ($log)" >&2; tail -n 15 "$log" >&2; rm -rf "$TM_WORK"; exit 1; }
 : > "$TM_WORK/cov.map.hits"
 t1=$(date +%s.%N)
@@ -163,8 +184,37 @@ echo "instrumented compiler: $(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.1f",
 excl=$(sed -n '/^\[test\]/,/^\[/{ s/^exclusive *= *\[\(.*\)\]/\1/p; }' "$w/avant.toml" | tr ',' '\n' | tr -d ' "')
 (cd "$w" && ls tests/cases/test_*.av) | LC_ALL=C sort > "$m/list.txt"
 printf '%s\n' "$excl" | sed '/^$/d' | LC_ALL=C sort > "$m/exclusive.txt"
-LC_ALL=C comm -23 "$m/list.txt" "$m/exclusive.txt" | xargs -P "${TESTMAP_JOBS:-8}" -I{} sh "$here/test-map.sh" --one {} > "$m/runs.tsv"
-LC_ALL=C comm -12 "$m/list.txt" "$m/exclusive.txt" | xargs -P 1 -I{} sh "$here/test-map.sh" --one {} >> "$m/runs.tsv"
+LC_ALL=C comm -23 "$m/list.txt" "$m/exclusive.txt" > "$m/parallel.txt"
+# The files' times from another tree's map (the newest one in the cache, or
+# TESTMAP_TIMES): the longest start first, and the groups are dealt by them.
+times=${TESTMAP_TIMES:-}
+if [ -z "$times" ]; then
+  for r in $(ls -t "$(dirname "$e")"/*/testmap/runs.tsv 2>/dev/null); do
+    case "$r" in "$m"/*) continue ;; esac
+    times=$r; break
+  done
+fi
+if [ -n "$times" ] && [ -f "$times" ]; then cut -f1,3 "$times" > "$m/times.tsv"; else : > "$m/times.tsv"; fi
+awk -F'\t' 'FILENAME == ARGV[1] { t[$1] = $2; next } { printf "%s\t%s\n", ($1 in t) ? t[$1] : 45, $1 }' "$m/times.tsv" "$m/parallel.txt" \
+  | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2 > "$m/order.tsv"
+total=$(awk -F'\t' '{ s += $1 } END { printf "%d", s }' "$m/order.tsv")
+jobs=${TESTMAP_JOBS:-16}
+ng=$(awk -v s="$total" -v j="$jobs" -v g="${TESTMAP_GROUP_SECONDS:-240}" 'BEGIN { n = int(s / j / g + 0.999); print (n < 1) ? 1 : n }')
+[ -n "$runner" ] || ng=1
+mkdir -p "$m/groups"
+# Dealt in turn, the longest first, so every group holds long and short files.
+awk -F'\t' -v n="$ng" -v d="$m/groups" '{ print $2 > (d "/" (((NR - 1) % n) + 1) ".txt") }' "$m/order.tsv"
+step=${TESTMAP_STEP:-test map}
+gk=0
+for gf in $(ls "$m"/groups/*.txt | LC_ALL=C sort -V); do
+  gk=$((gk + 1))
+  tg=$(now)
+  tm_run "$step group $gk/$ng" sh -c 'xargs -P "$1" -I{} sh "$2" --one {} < "$3" >> "$4"' tm-group "$jobs" "$here/test-map.sh" "$gf" "$m/runs.tsv"
+  echo "group $gk/$ng: $(wc -l < "$gf") files, $(awk -v a="$tg" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }') s" >> "$m/MANIFEST"
+done
+tg=$(now)
+[ -s "$m/exclusive.txt" ] && tm_run "$step exclusive" sh -c 'xargs -P 1 -I{} sh "$1" --one {} < "$2" >> "$3"' tm-excl "$here/test-map.sh" "$m/exclusive.txt" "$m/runs.tsv"
+echo "exclusive: $(wc -l < "$m/exclusive.txt") files, $(awk -v a="$tg" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }') s" >> "$m/MANIFEST"
 LC_ALL=C sort -o "$m/runs.tsv" "$m/runs.tsv"
 cut -f1 "$m"/hits/*.tsv | LC_ALL=C sort -u > "$m/files.txt"
 t2=$(date +%s.%N)

@@ -73,8 +73,16 @@
 #     check-map-none: TEST_MAP=none builds none and says so;
 #   check-runner: with CC_RUNNER each piece of work goes through the
 #     runner, one shared run each, named `change-check: base cache`,
-#     `change-check: test map` and `change-check: SHORT build`, `corpus`,
+#     `change-check: test map build` (test-map.sh's own runs, as the stub
+#     one says) and `change-check: SHORT build`, `corpus`,
 #     `langarena`, `counts`, `tests`;
+#   check-stem-prefix: a compiler pass named for what it handles
+#     (compiler/mir/lower_ffi.av) selects the test files named for that
+#     (test_ffi, test_ffi_llvm), a library file of the same name none;
+#   la-count-groups: tools/la-count.sh with LA_RUNNER and LA_GROUP=1 runs
+#     the two programs as two runner calls (`STEP group 1/2`, `2/2`) and
+#     writes the table a plain run writes (the instruction counts of a
+#     run apart: the stub programs' counts differ a little from run to run);
 #   check-base-harness: a base that refuses the caller's tasks, with
 #     CC_BASE_LANGARENA naming the base's own harness: the base's side is
 #     read from it, so the first commit's programs are counted against the
@@ -286,7 +294,7 @@ perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
   skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
-    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner
+    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups
   echo done; exit 0
 fi
 
@@ -409,6 +417,8 @@ here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 [ "$1" = --pick ] && exec sh "$here/test-map-real.sh" "$@"
 e=$(sh "$here/base-cache.sh" "$1" < /dev/null) || exit 1
 echo built >> "$STUB_MAPS"
+# (the real script takes the lock itself, per piece of work, as TESTMAP_RUNNER says)
+[ -n "${TESTMAP_RUNNER:-}" ] && $TESTMAP_RUNNER --step "$TESTMAP_STEP build" --kind "$TESTMAP_KIND" -- true
 m=$e/testmap; mkdir -p "$m/hits"
 printf 'tree: %s\n' "$(basename "$e")" > "$m/MANIFEST"
 printf 'compiler/main.av\t1\n' > "$m/hits/test_other.tsv"; printf 'lib/std/m.av\t1\n' > "$m/hits/test_m.tsv"
@@ -437,8 +447,45 @@ t=$w/cc6/table.md
   && grep -q '^test map: built for the base, the range changing compiler/ or lib/ ' "$w/cc6/cache.txt"
 say check-map-auto $? "rc=$rc maps=$(wc -l < "$w/maps") $(row 'the compiler once more') $(tr '\n' ';' < "$w/cc6/cache.txt" 2>/dev/null) $(tail -n 3 "$w/cc6.log" | tr '\n' ';')"
 s6=$(git -C "$r" rev-parse --short=8 HEAD)
-printf 'shared\tchange-check: base cache\nshared\tchange-check: base cache\nshared\tchange-check: test map\nshared\tchange-check: %s build\nshared\tchange-check: %s corpus\nshared\tchange-check: %s langarena\nshared\tchange-check: %s counts\nshared\tchange-check: %s tests\n' \
+printf 'shared\tchange-check: base cache\nshared\tchange-check: base cache\nshared\tchange-check: test map build\nshared\tchange-check: %s build\nshared\tchange-check: %s corpus\nshared\tchange-check: %s langarena\nshared\tchange-check: %s counts\nshared\tchange-check: %s tests\n' \
   "$s6" "$s6" "$s6" "$s6" "$s6" > "$w/runner.want"
 cmp -s "$w/runner.want" "$w/runner.log"
 say check-runner $? "$(tr '\n' ';' < "$w/runner.log" 2>/dev/null)"
+
+# 15. A compiler pass named for what it handles: mir/lower_ffi.av selects
+# test_ffi.av and test_ffi_llvm.av (the name without lower_ or emit_), a file
+# outside compiler/ named lower_ffi selects neither.
+mkdir -p "$r/compiler/mir" "$r/lib/std"
+echo 'lower' > "$r/compiler/mir/lower_ffi.av"; echo 'lower' > "$r/lib/std/lower_ffi.av"
+echo 'ffi test' > "$r/tests/cases/test_ffi.av"; echo 'ffi llvm test' > "$r/tests/cases/test_ffi_llvm.av"
+g add -A && g commit -q -m 'the ffi tests'
+echo 'lower2' > "$r/compiler/mir/lower_ffi.av"; g add -A && g commit -q -m 'the ffi lowering'
+echo 'lower2' > "$r/lib/std/lower_ffi.av"; g add -A && g commit -q -m 'a library file of that name'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc7" < /dev/null > "$w/cc7.log" 2>&1)
+t=$w/cc7/table.md
+row 'the ffi lowering' | grep -q '| 0 failed, 2 passed: test_ffi test_ffi_llvm |' && ! row 'a library file of that name' | grep -q 'test_ffi'
+say check-stem-prefix $? "$(row 'the ffi lowering'); $(row 'a library file of that name')"
+
+# 16. la-count.sh with LA_RUNNER: the programs go in groups of LA_GROUP,
+# each its own runner call named `STEP group K/N`, and the table is the
+# one a single run writes.
+cat > "$w/lrunner" <<'STUB'
+#!/bin/sh
+step="" side=shared
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+  case $1 in --step) step=$2; shift ;; --timed) side=timed ;; esac
+  shift
+done
+shift
+echo "$side	$step" >> "$RUNNER_LOG"
+exec "$@"
+STUB
+chmod +x "$w/lrunner"
+: > "$w/lrunner.log"
+(cd "$r" && sh tools/letters.sh > /dev/null 2>&1 < /dev/null)
+lap=$(cd "$r" && sh tools/base-cache.sh --la HEAD 2> "$w/la16.err" < /dev/null)
+(cd "$r" && sh tools/la-count.sh . "$lap" "$w/lc-plain.tsv" < /dev/null > /dev/null 2>&1)
+(cd "$r" && RUNNER_LOG="$w/lrunner.log" LA_RUNNER="$w/lrunner" LA_STEP="count" LA_GROUP=1 sh tools/la-count.sh . "$lap" "$w/lc-grouped.tsv" < /dev/null > /dev/null 2>&1)
+[ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
+say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w/lc-grouped.tsv" 2>/dev/null | tr '\n' ';')"
 echo done

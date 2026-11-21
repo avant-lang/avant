@@ -41,7 +41,9 @@
 #
 # tools/la-mem.py compares two such files (the 50 tasks' average peak, its
 # spread, and the programs to run again).
-# Status 0, 1 when a program did not compile or failed, 2 on usage.
+# LA_RUNNER and LA_GROUP split the programs into shared runs of their own
+# (below, where it is read). Status 0, 1 when a program did not compile or
+# failed, 2 on usage.
 set -u
 
 if [ "${1:-}" = --one ]; then
@@ -78,8 +80,37 @@ command -v perf > /dev/null 2>&1 || { echo "la-count.sh: perf not found" >&2; ex
 LAC_TMP=$(mktemp -d "$(dirname "$out")/.la-count.XXXXXX") || exit 2
 export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP
 self=$(realpath "$0")
-if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u \
-  | xargs -P "${LA_JOBS:-8}" -I{} sh "$self" --one {} | LC_ALL=C sort > "$out.part"
+if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u > "$LAC_TMP/slugs.txt"
+# With LA_RUNNER (the runner's command words, such as `python3 -I PATH/ledger
+# run --shared --wave W`) the script is started outside the lock and each group
+# of programs is its own shared run, `LA_STEP group K/N` (default step
+# `la-count`; LA_KIND its --kind, default new): a pass with memory runs over
+# every program no longer holds the lock past the shared limit. LA_GROUP
+# programs a group (default 24 with memory runs, 64 without); without
+# LA_RUNNER one group, as the caller's single run.
+runner=${LA_RUNNER:-}
+ng=1
+if [ -n "$runner" ]; then
+  per=${LA_GROUP:-$([ "${LA_MEM_RUNS:-0}" -gt 0 ] && echo 24 || echo 64)}
+  ng=$(awk -v per="$per" 'END { n = int((NR + per - 1) / per); print (n < 1) ? 1 : n }' "$LAC_TMP/slugs.txt")
+fi
+# Dealt in turn, so each group has a share of the long programs.
+awk -v n="$ng" -v d="$LAC_TMP" '{ print > (d "/group." (((NR - 1) % n) + 1) ".txt") }' "$LAC_TMP/slugs.txt"
+: > "$out.part.unsorted"
+gk=0
+while [ "$gk" -lt "$ng" ]; do
+  gk=$((gk + 1))
+  g=$LAC_TMP/group.$gk.txt
+  [ -f "$g" ] || continue
+  if [ -n "$runner" ]; then
+    # shellcheck disable=SC2086
+    $runner --step "${LA_STEP:-la-count} group $gk/$ng" --kind "${LA_KIND:-new}" -- \
+      sh -c 'xargs -P "$1" -I{} sh "$2" --one {} < "$3" >> "$4"' la-group "${LA_JOBS:-8}" "$self" "$g" "$out.part.unsorted"
+  else
+    xargs -P "${LA_JOBS:-8}" -I{} sh "$self" --one {} < "$g" >> "$out.part.unsorted"
+  fi
+done
+LC_ALL=C sort "$out.part.unsorted" > "$out.part"; rm -f "$out.part.unsorted"
 if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
   for f in "$LAC_TMP"/*.mem; do
     [ -f "$f" ] || continue
