@@ -30,5 +30,16 @@ dec_reshuffle (const __m256i in)
 	// DDDDDDdd CCcccccc BBBBbbbb AAAAAAaa
 
 	// Pack lanes:
+#if defined(__clang__)
+	// The top two dwords are written over by the next block's store, so
+	// any value does there. Read as a constant, clang works out that the
+	// indices pick zero dwords and adds a vpblendd with zero to every
+	// block (one instruction per 24 output bytes, 1.2% of a decode's
+	// instructions); an index it cannot read is permuted as written.
+	__m256i idx = _mm256_setr_epi32(0, 1, 2, 4, 5, 6, -1, -1);
+	__asm__("" : "+x" (idx));
+	return _mm256_permutevar8x32_epi32(out, idx);
+#else
 	return _mm256_permutevar8x32_epi32(out, _mm256_setr_epi32(0, 1, 2, 4, 5, 6, -1, -1));
+#endif
 }
