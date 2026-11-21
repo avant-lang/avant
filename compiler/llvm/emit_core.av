@@ -94,6 +94,14 @@ pub class LlEmit {
   pub used_tbaa: Bool = false
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
+  // The metadata numbers after ll_tbaa_last are shared by the cold
+  // loops' nodes and the field tags (field_tag): field_md maps a byte
+  // offset to its access tag's number (its type node is the number
+  // before it), field_at a tag's or type node's number to its offset;
+  // cold_loops whether a cold loop node exists.
+  pub field_md: Hash(Int, Int)
+  pub field_at: Hash(Int, Int)
+  pub cold_loops: Bool = false
   pub ov_ty: Int = 0
   // What LLVM is told about the constants computed before main
   // (ll_const_facts): the functions the start-up reaches, which read
@@ -123,6 +131,8 @@ pub class LlEmit {
     self.intr_seen = Hash(String, Int).new()
     self.loop_md = Hash(String, Int).new()
     self.loop_md_n = ll_tbaa_last()
+    self.field_md = Hash(Int, Int).new()
+    self.field_at = Hash(Int, Int).new()
     self.frame_at = []
     self.frame_maps = []
     self.shadow = []
@@ -453,6 +463,9 @@ pub class LlEmit {
     region = 0
     pend = 0
     arr = false
+    // In region 5, the byte offset from the object's start of the part
+    // reached (-1 once an index makes it unknown).
+    foff = -1
     self.pa_cslot = -1
     self.pa_cfield = false
     if self.cslots.size > 0 {
@@ -461,7 +474,7 @@ pub class LlEmit {
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
-        ptr = load_tagged(mt_ptr(), ptr, volatile, ll_tbaa_tag(region))
+        ptr = load_tagged(mt_ptr(), ptr, volatile, region_tag(region, foff, mt_ptr()))
         volatile = false
         region = -1
         pend = -1
@@ -483,12 +496,18 @@ pub class LlEmit {
         t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
+        off = self.ts.layouts[mt.layout].offsets[pr.field]
         ty = self.ts.layouts[mt.layout].fields[pr.field]
         if pend == 2 {
           region = 2 + pr.field
         } else if pend == 3 {
           region = 5
-        } else if region > 1 && region != 5 {
+          foff = off
+        } else if region == 5 {
+          if foff >= 0 {
+            foff += off
+          }
+        } else if region > 1 {
           region = -1
         }
         pend = 0
@@ -505,6 +524,7 @@ pub class LlEmit {
         line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
+        foff = -1
         if pend == 1 {
           region = 1
         } else if region > 1 && region != 5 {
@@ -517,11 +537,44 @@ pub class LlEmit {
     self.pa_vol = volatile
     self.pa_atomic = region == 4 && arr
     self.pa_size = region == 3
-    self.pa_tbaa = ll_tbaa_tag(region)
+    self.pa_tbaa = region_tag(region, foff, ty)
     if self.pa_tbaa.size > 0 {
       self.used_tbaa = true
     }
     ptr
+  }
+
+  // The tag of an access of type ty to region at byte offset foff of an
+  // object (region 5). A scalar part of an object at a known offset
+  // takes that offset's own tag (field_tag); a whole aggregate, or a
+  // part an index reaches, the tag every object field shares, which
+  // aliases every offset's.
+  fn region_tag(region: Int, foff: Int, ty: Int): String {
+    if region == 5 && foff >= 0 && self.ts.get(ty).kind != mk_agg() {
+      return field_tag(foff)
+    }
+    ll_tbaa_tag(region)
+  }
+
+  // The tag of the scalar part of an object at byte offset off. Every
+  // generated access to an object's memory reads or writes one whole
+  // scalar part at the offset its layout gives it, and an object keeps
+  // the layout it was allocated with (a reference's type names that
+  // layout; no conversion gives one object a second layout), so two
+  // scalar parts at different offsets never overlap, whether they are in
+  // one object or two: their tags are siblings under the object field
+  // tag (no alias), and an access through that shared tag (a whole
+  // aggregate, a part reached by an index) still aliases them all.
+  fn field_tag(off: Int): String {
+    if got = self.field_md.get(off) {
+      return ", !tbaa !${got}"
+    }
+    self.loop_md_n += 2
+    n = self.loop_md_n
+    self.field_md[off] = n
+    self.field_at[n - 1] = off
+    self.field_at[n] = off
+    ", !tbaa !${n}"
   }
 
   // A read of a constant computed before main (ll_const_facts): `*_a`

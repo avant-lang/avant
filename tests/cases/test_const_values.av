@@ -184,10 +184,12 @@ fn check_facts(c: Checks, compiler: String, dir: String) {
   llc = log_text("${d}/kfc.ll")
   c.expect(ll.contains("!invariant.load !13, !nonnull !13, !align !{i64 8}, !dereferenceable !{i64 16}"), "facts: the slot's load never changes and names a 16-byte header")
   c.expect(ll.contains("!tbaa !5, !invariant.load !13"), "facts: the Array's buffer reference never changes")
-  c.expect(ll.contains("!tbaa !11, !invariant.load !13"), "facts: the class object's field never changes")
+  // conf.scale is Conf's part at byte offset 0, the first offset tag
+  // the module makes (its type !15, its tag !16).
+  c.expect(ll.contains("!15 = !{!\"object field 0\", !10, i64 0}") && ll.contains("!tbaa !16, !invariant.load !13"), "facts: the class object's field never changes")
   c.expect(ll.contains("/__consts\"() noinline #0"), "facts: the start-up is never inlined")
   c.expect(llc.contains("!invariant.load !13, !nonnull !13"), "facts with C: the slot's load never changes")
-  c.expect(!llc.contains("!tbaa !5, !invariant.load !13") && !llc.contains("!tbaa !11, !invariant.load !13"), "facts with C: the fields' loads are plain")
+  c.expect(!llc.contains("!tbaa !5, !invariant.load !13") && !llc.contains("!tbaa !16, !invariant.load !13"), "facts with C: the fields' loads are plain")
   src = "const table = make()\n\nfn make: Array(Int) {\n  xs: Array(Int) = []\n  for i in 0..1024 {\n    xs.push(i * 3)\n  }\n  xs\n}\n\nfn fill(n: Int, out: Array(Int)): Int {\n  t = table\n  s = 0\n  for i in 0..n {\n    out.push(t[i & 1023])\n    s += t[(i * 7) & 1023]\n  }\n  s\n}\n\nfn main {\n  total = 0\n  for r in 0..20 {\n    out: Array(Int) = []\n    total += fill(100000, out) + out.size\n  }\n  puts(total)\n}\n"
   _ = fs.write("${d}/kheld.av", src)
   jobs: Array(HJob) = []

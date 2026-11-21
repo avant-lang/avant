@@ -1053,18 +1053,21 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   }
   e.loop_md_n += 1
   e.loop_md[key] = e.loop_md_n
+  e.cold_loops = true
   ", !llvm.loop !${e.loop_md_n}"
 }
 
 // The metadata: !0 the loops' unroll hint, !1 to !14 the alias tags and
-// the load facts (ll_tbaa_nodes), then one node per cold loop.
+// the load facts (ll_tbaa_nodes), then one node per cold loop and two
+// per field offset's tag (a type node under the object field tag, then
+// its access tag), numbered in emission order.
 fn ll_loop_md(e: LlEmit, out: Buf) {
   first = ll_tbaa_last() + 1
   if e.loop_md_n < first && !e.used_tbaa {
     return
   }
   out.push_str("\n")
-  if e.loop_md_n >= first {
+  if e.cold_loops {
     out.push_str("!0 = !{!\"llvm.loop.unroll.disable\"}\n")
   }
   if e.used_tbaa {
@@ -1072,7 +1075,13 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
   }
   i = first
   while i <= e.loop_md_n {
-    out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    if off = e.field_at.get(i) {
+      out.push_str("!${i} = !{!\"object field ${off}\", !10, i64 0}\n")
+      i += 1
+      out.push_str("!${i} = !{!${i - 1}, !${i - 1}, i64 0}\n")
+    } else {
+      out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    }
     i += 1
   }
 }

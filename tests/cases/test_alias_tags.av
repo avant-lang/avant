@@ -7,7 +7,9 @@ import std.process
 // ll_overflow). The type-based alias tags: an element access carries the
 // element tag, an Array or Buf header's buffer reference and size their
 // own tags, a local (an alloca, a collector's slot among them) its own,
-// a class's or record's field its own, and nothing else is tagged (Hash
+// a class's or record's scalar field the tag of its byte offset (one
+// type per offset under the object field type; a whole struct and a part
+// an index reaches take the object field tag itself), and nothing else is tagged (Hash
 // fields, an array's capacity, which is read atomically, raw pointers).
 // A size's loads carry its range, a checked add's result is an add
 // without signed wrap, and a wrapping operation keeps no such flag. Then
@@ -138,20 +140,24 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
   if text2 = fs.read(ll2) {
     lines2 = tags_lines(text2)
+    // Box's one field is at byte offset 0: its tag is that offset's,
+    // a type under the object field type (nodes !15 and !16).
     fields = 0
     tagged = 0
     for i in 0..lines2.size - 1 {
       if lines2[i].contains(".Box\", ptr %t") {
         fields += 1
-        if lines2[i + 1].contains(", !tbaa !11") {
+        if lines2[i + 1].ends_with(", !tbaa !16") {
           tagged += 1
         }
       }
     }
     c.expect(fields >= 2, "the probe reaches an object's field")
-    c.eq_int(tagged, fields, "an object's field carries the object field tag")
+    c.eq_int(tagged, fields, "each access to an object's field carries its offset's tag")
     c.expect(text2.contains("!11 = !{!10, !10, i64 0}"), "the object field tag")
-    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !11", ""), 0, "only locals and object fields are tagged without an array")
+    c.expect(text2.contains("!15 = !{!\"object field 0\", !10, i64 0}"), "offset 0's type, under the object field type")
+    c.expect(text2.contains("!16 = !{!15, !15, i64 0}"), "offset 0's tag")
+    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !16", ""), 0, "only locals and object fields are tagged without an array")
   } else {
     c.expect(false, "read the object and hash probe's .ll")
   }
