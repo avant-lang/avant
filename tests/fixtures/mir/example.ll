@@ -51,7 +51,7 @@ bb0.s0.cont:
   %t5 = load ptr, ptr %_2.name, align 8, !tbaa !9
   %t6 = load ptr, ptr %_1.self, align 8, !tbaa !9
   %t7 = getelementptr inbounds %"main.Box", ptr %t6, i32 0, i32 0
-  store ptr %t5, ptr %t7, align 8, !tbaa !11
+  store ptr %t5, ptr %t7, align 8, !tbaa !16
   ret void
 }
 
@@ -161,14 +161,14 @@ bb1.s1.cont:
   %t21 = getelementptr inbounds i8, ptr %gcf, i64 24
   %t22 = load ptr, ptr %t21, align 8, !tbaa !9
   %t23 = getelementptr inbounds %"main.Box", ptr %t22, i32 0, i32 0
-  store ptr %t20, ptr %t23, align 8, !tbaa !11
+  store ptr %t20, ptr %t23, align 8, !tbaa !16
   br label %bb2
 
 bb2:
   %t24 = getelementptr inbounds i8, ptr %gcf, i64 24
   %t25 = load ptr, ptr %t24, align 8, !tbaa !9
   %t26 = getelementptr inbounds %"main.Box", ptr %t25, i32 0, i32 0
-  %t27 = load ptr, ptr %t26, align 8, !tbaa !11
+  %t27 = load ptr, ptr %t26, align 8, !tbaa !16
   %t28 = getelementptr inbounds i8, ptr %gcf, i64 16
   store ptr %t27, ptr %t28, align 8, !tbaa !9
   %t29 = load ptr, ptr %gcf, align 8
@@ -329,3 +329,5 @@ attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
 !12 = !{i32 0, i32 -2147483648}
 !13 = !{}
 !14 = !{i32 1, i32 -2147483647}
+!15 = !{!"object field 0", !10, i64 0}
+!16 = !{!15, !15, i64 0}

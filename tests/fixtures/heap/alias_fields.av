@@ -18,6 +18,8 @@
 // under AVANT_GC_STRESS=1, AVANT_YOUNG_MB=1, AVANT_GC_VERIFY=1 and
 // AVANT_NURSERY=0).
 
+import std.process
+
 class Box {
   v: Int
 
@@ -113,6 +115,37 @@ fn two_names(n: Int): Int {
   acc &+ sum_ints(a.xs)
 }
 
+// One object under two names that LLVM cannot tell equal (the second is
+// chosen at run time), its struct field written whole through one name
+// and by part through the other. A scalar part of an object has the tag
+// of its byte offset, so parts at different offsets are known apart; a
+// whole struct has the tag every field shares, so a part read after a
+// whole store, or a whole read after a part store, must see the store.
+fn whole_and_parts(a: Counter, b: Counter, n: Int): Int {
+  acc = 0
+  for i in 0..n {
+    a.pos = Pos { x: i, y: i % 7 }
+    acc = acc &* 31 &+ b.pos.y &+ b.pos.x
+    b.pos.y = i &* 3
+    p = a.pos
+    acc = acc &+ p.y &- p.x
+    a.count = b.pos.x
+    b.xs[i % b.xs.size] = a.pos.y
+    acc = acc &+ b.count &+ a.xs[(i + 1) % a.xs.size]
+  }
+  acc
+}
+
+fn parts_of_one(n: Int): Int {
+  a = Counter.new()
+  a.xs = Array(Int).new(8)
+  b = a
+  if process.args().size > 100 {
+    b = Counter.new()
+  }
+  whole_and_parts(a, b, n)
+}
+
 // A closure's captured counter lives in a box (a record) that the block
 // changes beside element stores into an array it also captures.
 fn captured(n: Int): Int {
@@ -190,6 +223,7 @@ fn main {
   puts(c.walk(3000))
   puts(c.count)
   puts(two_names(4000))
+  puts(parts_of_one(3000))
   puts(captured(3000))
   puts(tenured_object(500))
   shared: Array(Int) = []

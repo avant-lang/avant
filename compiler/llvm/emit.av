@@ -754,9 +754,9 @@ fn ll_call(e: LlEmit, st: MStmt) {
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)
-      if x.noreturn && x.name.starts_with("avant_trap_") {
-        // A trap the lowering raises: its sited form, with the site's
-        // text last.
+      if (x.noreturn && x.name.starts_with("avant_trap_")) || x.name == "avant_array_frozen" {
+        // A trap the lowering raises, or the frozen array test that may
+        // trap: its sited form, with the site's text last.
         e.need("${x.name}_at")
         callee = ll_sym("${x.name}_at")
         if args.size > 0 {
@@ -1053,18 +1053,21 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   }
   e.loop_md_n += 1
   e.loop_md[key] = e.loop_md_n
+  e.cold_loops = true
   ", !llvm.loop !${e.loop_md_n}"
 }
 
 // The metadata: !0 the loops' unroll hint, !1 to !14 the alias tags and
-// the load facts (ll_tbaa_nodes), then one node per cold loop.
+// the load facts (ll_tbaa_nodes), then one node per cold loop and two
+// per field offset's tag (a type node under the object field tag, then
+// its access tag), numbered in emission order.
 fn ll_loop_md(e: LlEmit, out: Buf) {
   first = ll_tbaa_last() + 1
   if e.loop_md_n < first && !e.used_tbaa {
     return
   }
   out.push_str("\n")
-  if e.loop_md_n >= first {
+  if e.cold_loops {
     out.push_str("!0 = !{!\"llvm.loop.unroll.disable\"}\n")
   }
   if e.used_tbaa {
@@ -1072,7 +1075,13 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
   }
   i = first
   while i <= e.loop_md_n {
-    out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    if off = e.field_at.get(i) {
+      out.push_str("!${i} = !{!\"object field ${off}\", !10, i64 0}\n")
+      i += 1
+      out.push_str("!${i} = !{!${i - 1}, !${i - 1}, i64 0}\n")
+    } else {
+      out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    }
     i += 1
   }
 }
@@ -1272,13 +1281,24 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   t
 }
 
+// An operand that is an integer constant in the emitted text.
+fn ll_is_const(x: String): Bool {
+  x.size > 0 && ((x[0] >= 48 && x[0] <= 57) || (x[0] == 45 && x.size > 1))
+}
+
 // add.chk sub.chk mul.chk: the with.overflow intrinsic and a
-// branch to the function's overflow trap. Past the branch the operation
-// is known not to wrap, so the result used is the plain operation with
-// that flag (nsw signed, nuw unsigned): LLVM reads the flag where it
-// cannot see through the intrinsic and the trap's call (an induction
-// variable's range, a sign extension of an index, a loop's trip count),
-// and folds the two into the one add or multiply and its jump.
+// branch to the function's overflow trap. Past the branch an add or a
+// subtract of two values is known not to wrap, so the result used is the
+// plain operation with that flag (nsw signed, nuw unsigned): LLVM reads
+// the flag where it cannot see through the intrinsic and the trap's call
+// (an induction variable's range, a sign extension of an index, a loop's
+// trip count), and folds the two into the one add and its jump. With a
+// constant operand, and for every multiply, the result used is the
+// intrinsic's own value: given the flagged operation beside it, LLVM
+// rewrites the overflow bit of `x + c` into a compare with the type's
+// limit minus c (a 64-bit constant held in a register, the add kept
+// apart) and computes a multiply twice, where the intrinsic's value
+// alone keeps one add or multiply and its jump on the overflow flag.
 fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
@@ -1288,6 +1308,11 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   o = e.tmp()
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
+  if name.ends_with("mul") || ll_is_const(x) || ll_is_const(y) {
+    v = e.tmp()
+    e.line("${v} = extractvalue ${pair} ${r}, 0")
+    return v
+  }
   flag = "nsw"
   if name.starts_with("u") {
     flag = "nuw"

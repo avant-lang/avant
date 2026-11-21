@@ -7,10 +7,12 @@ import std.process
 // ll_overflow). The type-based alias tags: an element access carries the
 // element tag, an Array or Buf header's buffer reference and size their
 // own tags, a local (an alloca, a collector's slot among them) its own,
-// a class's or record's field its own, and nothing else is tagged (Hash
+// a class's or record's scalar field the tag of its byte offset (one
+// type per offset under the object field type; a whole struct and a part
+// an index reaches take the object field tag itself), and nothing else is tagged (Hash
 // fields, an array's capacity, which is read atomically, raw pointers).
-// A size's loads carry its range, a checked add's result is an add
-// without signed wrap, and a wrapping operation keeps no such flag. Then
+// A size's loads carry its range, a checked add of two values gives an
+// add without signed wrap (one of a constant the intrinsic's value), and a wrapping operation keeps no such flag. Then
 // the programs that store elements and fields
 // while calls move their buffers and objects
 // (tests/fixtures/heap/alias_moves.av, alias_fields.av) are built with
@@ -44,7 +46,7 @@ fn tags_count(lines: Array(String), a: String, b: String): Int {
 }
 
 fn tags_array_src: String {
-  "fn main {\n  flags = Array(Bool).new(100)\n  flags.fill(true)\n  k = 4\n  while k < flags.size {\n    flags[k] = false\n    k += 2\n  }\n  n = 0\n  for i in 0..flags.size {\n    if flags[i] {\n      n += 1\n    }\n  }\n  xs: Array(Int) = []\n  xs.push(n)\n  puts(xs[0])\n}\n"
+  "fn main {\n  flags = Array(Bool).new(100)\n  flags.fill(true)\n  step = flags.size / 50\n  k = 4\n  while k < flags.size {\n    flags[k] = false\n    k += step\n  }\n  n = 0\n  for i in 0..flags.size {\n    if flags[i] {\n      n += 1\n    }\n  }\n  xs: Array(Int) = []\n  xs.push(n)\n  puts(xs[0])\n}\n"
 }
 
 fn tags_other_src: String {
@@ -112,10 +114,13 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     c.expect(text.contains("!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
     c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
     c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
-    // A checked add's result is the plain add with no signed wrap, after
-    // the overflow branch.
-    c.expect(tags_count(lines, " = add nsw i64 %t", "") >= 1, "a checked add's result is an add nsw")
-    c.eq_int(tags_count(lines, "extractvalue { i64, i1 } %t", ", 0"), 0, "no checked add's result is the intrinsic's value")
+    // A checked add of two values gives the plain add with no signed
+    // wrap, after the overflow branch (k += step); one of a value and a
+    // constant gives the intrinsic's own value (n += 1, the loops' steps).
+    c.expect(tags_count(lines, " = add nsw i64 %t", ", %t") >= 1, "a checked add of two values is an add nsw")
+    c.eq_int(tags_count(lines, " = add nsw i64 %t", "") - tags_count(lines, " = add nsw i64 %t", ", %t"), 0, "no checked add of a constant is an add nsw")
+    c.expect(tags_count(lines, "@llvm.sadd.with.overflow.i64(i64 %t", ", i64 1)") >= 1, "the probe adds a constant")
+    c.expect(tags_count(lines, "extractvalue { i64, i1 } %t", ", 0") >= 1, "a checked add of a constant gives the intrinsic's value")
     cap_reads = 0
     cap_tagged = 0
     for i in 0..lines.size - 1 {
@@ -138,20 +143,24 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
   if text2 = fs.read(ll2) {
     lines2 = tags_lines(text2)
+    // Box's one field is at byte offset 0: its tag is that offset's,
+    // a type under the object field type (nodes !15 and !16).
     fields = 0
     tagged = 0
     for i in 0..lines2.size - 1 {
       if lines2[i].contains(".Box\", ptr %t") {
         fields += 1
-        if lines2[i + 1].contains(", !tbaa !11") {
+        if lines2[i + 1].ends_with(", !tbaa !16") {
           tagged += 1
         }
       }
     }
     c.expect(fields >= 2, "the probe reaches an object's field")
-    c.eq_int(tagged, fields, "an object's field carries the object field tag")
+    c.eq_int(tagged, fields, "each access to an object's field carries its offset's tag")
     c.expect(text2.contains("!11 = !{!10, !10, i64 0}"), "the object field tag")
-    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !11", ""), 0, "only locals and object fields are tagged without an array")
+    c.expect(text2.contains("!15 = !{!\"object field 0\", !10, i64 0}"), "offset 0's type, under the object field type")
+    c.expect(text2.contains("!16 = !{!15, !15, i64 0}"), "offset 0's tag")
+    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !16", ""), 0, "only locals and object fields are tagged without an array")
   } else {
     c.expect(false, "read the object and hash probe's .ll")
   }
