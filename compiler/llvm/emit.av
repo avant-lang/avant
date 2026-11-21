@@ -1281,13 +1281,24 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   t
 }
 
+// An operand that is an integer constant in the emitted text.
+fn ll_is_const(x: String): Bool {
+  x.size > 0 && ((x[0] >= 48 && x[0] <= 57) || (x[0] == 45 && x.size > 1))
+}
+
 // add.chk sub.chk mul.chk: the with.overflow intrinsic and a
-// branch to the function's overflow trap. Past the branch the operation
-// is known not to wrap, so the result used is the plain operation with
-// that flag (nsw signed, nuw unsigned): LLVM reads the flag where it
-// cannot see through the intrinsic and the trap's call (an induction
-// variable's range, a sign extension of an index, a loop's trip count),
-// and folds the two into the one add or multiply and its jump.
+// branch to the function's overflow trap. Past the branch an add or a
+// subtract of two values is known not to wrap, so the result used is the
+// plain operation with that flag (nsw signed, nuw unsigned): LLVM reads
+// the flag where it cannot see through the intrinsic and the trap's call
+// (an induction variable's range, a sign extension of an index, a loop's
+// trip count), and folds the two into the one add and its jump. With a
+// constant operand, and for every multiply, the result used is the
+// intrinsic's own value: given the flagged operation beside it, LLVM
+// rewrites the overflow bit of `x + c` into a compare with the type's
+// limit minus c (a 64-bit constant held in a register, the add kept
+// apart) and computes a multiply twice, where the intrinsic's value
+// alone keeps one add or multiply and its jump on the overflow flag.
 fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
@@ -1297,6 +1308,11 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   o = e.tmp()
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
+  if name.ends_with("mul") || ll_is_const(x) || ll_is_const(y) {
+    v = e.tmp()
+    e.line("${v} = extractvalue ${pair} ${r}, 0")
+    return v
+  }
   flag = "nsw"
   if name.starts_with("u") {
     flag = "nuw"
