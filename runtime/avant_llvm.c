@@ -130,13 +130,21 @@ int64_t avant_llvm_init(void) {
      * loop cost 13% when it did. LLVM (20 to 23) offers no per-target-machine
      * setting for it in the C API (llc's -align-loops lives in its own
      * flags library), so it is this X86 option, set once per process;
-     * the compiler compiles nothing else with this LLVM. */
+     * the compiler compiles nothing else with this LLVM.
+     *
+     * Switches: a jump table only from 9 cases (LLVM's default is 4).
+     * A dispatch of 4 to 8 cases on data the branch predictor cannot
+     * learn (an interpreter's next operation, a parser's token kind) ran
+     * far slower through the table's indirect jump than as LLVM's tree
+     * of compares: 29% to 40% on two interpreter loops, 3% on a third,
+     * at every code layout, for a few more instructions. Larger switches
+     * keep their tables: no measurement covers them yet. */
     {
-      static const char *const argv[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=5"};
-      static const char *const argv16[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=4"};
-      static const char *const argv64[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=6"};
+      static const char *const argv[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=5", "-min-jump-table-entries=9"};
+      static const char *const argv16[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=4", "-min-jump-table-entries=9"};
+      static const char *const argv64[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=6", "-min-jump-table-entries=9"};
       int a = loop_align();
-      LLVMParseCommandLineOptions(2, a == 16 ? argv16 : a == 64 ? argv64 : argv, "avant");
+      LLVMParseCommandLineOptions(3, a == 16 ? argv16 : a == 64 ? argv64 : argv, "avant");
     }
     g_initialized = 1;
   }
