@@ -83,6 +83,8 @@
 #     the two programs as two runner calls (`STEP group 1/2`, `2/2`) and
 #     writes the table a plain run writes (the instruction counts of a
 #     run apart: the stub programs' counts differ a little from run to run);
+#   la-count-mem-parallel: with LA_MEM_RUNS=3 each program's peak line holds
+#     three runs, started together or, with LA_MEM_PARALLEL=0, one after another;
 #   check-base-harness: a base that refuses the caller's tasks, with
 #     CC_BASE_LANGARENA naming the base's own harness: the base's side is
 #     read from it, so the first commit's programs are counted against the
@@ -294,7 +296,7 @@ perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
   skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
-    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups
+    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups la-count-mem-parallel
   echo done; exit 0
 fi
 
@@ -488,4 +490,9 @@ lap=$(cd "$r" && sh tools/base-cache.sh --la HEAD 2> "$w/la16.err" < /dev/null)
 (cd "$r" && RUNNER_LOG="$w/lrunner.log" LA_RUNNER="$w/lrunner" LA_STEP="count" LA_GROUP=1 sh tools/la-count.sh . "$lap" "$w/lc-grouped.tsv" < /dev/null > /dev/null 2>&1)
 [ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
 say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w/lc-grouped.tsv" 2>/dev/null | tr '\n' ';')"
+(cd "$r" && LA_MEM_RUNS=3 sh tools/la-count.sh . "$lap" "$w/lc-mem.tsv" < /dev/null > /dev/null 2>&1)
+(cd "$r" && LA_MEM_RUNS=3 LA_MEM_PARALLEL=0 sh tools/la-count.sh . "$lap" "$w/lc-mem0.tsv" < /dev/null > /dev/null 2>&1)
+awk -F'\t' '{ n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 2) }' "$w/lc-mem.mem.tsv" \
+  && awk -F'\t' '{ n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 2) }' "$w/lc-mem0.mem.tsv"
+say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';'); $(cat "$w/lc-mem0.mem.tsv" 2>/dev/null | tr '\n' ';')"
 echo done

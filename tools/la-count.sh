@@ -35,6 +35,8 @@
 # address randomization off (`setarch -R`: with it on, a task's peak moves
 # between two values 64 KB or more apart at equal page faults, from where
 # its mappings land, so a few runs read a change that is not there).
+# The N runs of a program start together (LA_MEM_PARALLEL=0: one after
+# another; a peak is not a time, and a run's file is its own).
 # OUT.mem.tsv beside OUT.tsv gets one line per program:
 #
 #   SLUG <TAB> MEDIAN KB <TAB> MIN KB <TAB> MAX KB <TAB> RUNS KB (comma-separated)
@@ -58,14 +60,25 @@ if [ "${1:-}" = --one ]; then
   rc=$?
   n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
   printf '%s\t%s\t%s\t%s\t%s\n' "$s" "${n:--}" "$(md5sum < "$t.out" | cut -c1-12)" "$rc" "$(head -n 1 "$t.out" | cut -c1-60)"
+  # The memory runs of one program start together (LA_MEM_PARALLEL=0: one
+  # after another): a peak is not a time, and each run writes a file of its own.
   i=0; runs=""
   while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
     i=$((i + 1))
-    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss" "$t" < /dev/null > /dev/null 2>&1)
-    runs="$runs${runs:+,}$(tail -n 1 "$t.rss" 2>/dev/null)"
+    if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
+    else
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
+    fi
+  done
+  wait
+  i=0
+  while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
+    i=$((i + 1))
+    runs="$runs${runs:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
   done
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
-  rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t.rss" "$t.compile.log"
+  rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
 fi
 
