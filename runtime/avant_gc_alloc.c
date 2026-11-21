@@ -47,12 +47,23 @@
  * them local-exec for the runtime's own accesses, as a definition in
  * the unit gave before. tests/cases/test_tls_place.av checks the offsets
  * in a built program. */
-__asm__(".tls_common avant_gc_bump, 8, 8\n\t"
-        ".tls_common avant_gc_limit, 8, 8\n\t"
-        ".tls_common avant_gc_limit_mt, 8, 8\n\t"
-        ".tls_common avant_gc_top, 8, 8\n\t"
-        ".tls_common avant_gc_base, 8, 8\n\t"
-        ".tls_common avant_gc_starts, 8, 8");
+/* GNU as spells a thread-local common symbol `.tls_common`; clang's
+ * integrated assembler has no such directive and makes the same symbol
+ * from `.comm` followed by `.type NAME, @tls_object` (the order matters
+ * to both: GNU as refuses to retype a common symbol, and clang's `.comm`
+ * resets an earlier type). */
+#if defined(__clang__)
+#define AVANT_TLS_COMMON(name) ".comm " #name ", 8, 8\n\t.type " #name ", @tls_object\n\t"
+#else
+#define AVANT_TLS_COMMON(name) ".tls_common " #name ", 8, 8\n\t"
+#endif
+__asm__(AVANT_TLS_COMMON(avant_gc_bump)
+        AVANT_TLS_COMMON(avant_gc_limit)
+        AVANT_TLS_COMMON(avant_gc_limit_mt)
+        AVANT_TLS_COMMON(avant_gc_top)
+        AVANT_TLS_COMMON(avant_gc_base)
+        AVANT_TLS_COMMON(avant_gc_starts));
+#undef AVANT_TLS_COMMON
 
 uint64_t avant_since_gc;
 

@@ -1079,7 +1079,7 @@ static int cmp_names(const void *a, const void *b) {
 }
 
 /* The names in directory path, except . and .., sorted, in C memory:
- * 0 and *out/*np, or the errno that stopped the listing (a name that
+ * 0 with *out and *np set, or the errno that stopped the listing (a name that
  * cannot be stored is ENOMEM, never a shorter list). */
 /* gc-lint: no reference word (names is malloc'ed C memory). */
 static int list_names(const char *path, char ***out, int32_t *np) {

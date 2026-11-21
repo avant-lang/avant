@@ -37,7 +37,18 @@ work=$out.src
 rm -rf "$work" "$out"
 mkdir -p "$work/runtime" || exit 2
 (cd "$src" && tar --exclude=./build -cf - .) | (cd "$work/runtime" && tar -xf -) || exit 1
-env CC="$root/tools/layout-cc.sh" LAYOUT_REAL_CC="${LAYOUT_REAL_CC:-${CC:-/usr/bin/cc}}" LAYOUT_C_SHIFT="$k" LAYOUT_C_LOOPS="$loops" LAYOUT_C_ASM=1 \
+# The real compiler: LAYOUT_REAL_CC, else CC, else the one the runtime's
+# own build.sh would choose (`build.sh --cc`; a build.sh without that
+# option built with cc).
+real=${LAYOUT_REAL_CC:-${CC:-}}
+if [ -z "$real" ]; then
+  if grep -q '"${1:-}" = --cc' "$src/build.sh"; then
+    real=$(sh "$src/build.sh" --cc < /dev/null) || { echo "layout-runtime.sh: $src/build.sh --cc names no C compiler" >&2; exit 1; }
+  else
+    real=/usr/bin/cc
+  fi
+fi
+env CC="$root/tools/layout-cc.sh" LAYOUT_REAL_CC="$real" LAYOUT_C_SHIFT="$k" LAYOUT_C_LOOPS="$loops" LAYOUT_C_ASM=1 \
   LLVM_CONFIG=/nonexistent/llvm-config BIND_LLVM_CONFIG=/nonexistent/llvm-config AVANT_RUNTIME_BUILD_LOCK=1 \
   sh "$work/runtime/build.sh" < /dev/null > "$work/build.log" 2>&1 \
   || { echo "layout-runtime.sh: the runtime did not build at shift $k ($work/build.log)" >&2; exit 1; }

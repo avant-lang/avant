@@ -3,7 +3,8 @@
 # linux-x86_64, pinned by version and sha256 and checked against its release
 # manager's signature (the key's fingerprint pinned too), reduced to what
 # tools/build-llvm.sh reads (llvm-config, the LLVM headers, the static
-# libraries). The release workflows and a local machine install the same
+# libraries) and the clang runtime/build.sh compiles the runtime with
+# (clang, its compiler headers). The release workflows and a local machine install the same
 # bytes, so the compiler CI ships is the one measured locally.
 #
 #   sh tools/install-llvm.sh [DEST]    (default /opt/llvm-22.1.8; absent or empty)
@@ -11,7 +12,7 @@
 # tools/build-llvm.sh uses /opt/llvm-22.1.8/bin/llvm-config when it is there;
 # with another DEST, set LLVM_CONFIG=DEST/bin/llvm-config. The download (about 1.9 GB)
 # goes to a new temporary directory and is removed; the unpacked subset is
-# about 350 MB. Needs curl, xz, sha256sum and gpg.
+# about 630 MB (clang 260 MB of it). Needs curl, xz, sha256sum and gpg.
 set -eu
 version=22.1.8
 sha256=df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
@@ -46,9 +47,11 @@ GNUPGHOME="$work/gnupg" gpg --batch --status-fd 1 --verify "$work/$name.tar.xz.s
 GNUPGHOME="$work/gnupg" gpgconf --kill gpg-agent 2> /dev/null || true
 mkdir -p "$work/x"
 tar -C "$work/x" -xJf "$work/$name.tar.xz" --wildcards \
-  "$name/bin/llvm-config" "$name/include/llvm/*" "$name/include/llvm-c/*" "$name/lib/libLLVM*.a"
+  "$name/bin/llvm-config" "$name/include/llvm/*" "$name/include/llvm-c/*" "$name/lib/libLLVM*.a" \
+  "$name/bin/clang" "$name/bin/clang-${version%%.*}" "$name/lib/clang/${version%%.*}/include/*"
 mkdir -p "$dest"
 cp -a "$work/x/$name/." "$dest/"
 got=$("$dest/bin/llvm-config" --version)
 [ "$got" = "$version" ] || { echo "tools/install-llvm.sh: $dest/bin/llvm-config says $got, not $version" >&2; exit 1; }
+"$dest/bin/clang" --version | grep -q "clang version $version " || { echo "tools/install-llvm.sh: $dest/bin/clang is not clang $version" >&2; exit 1; }
 echo "tools/install-llvm.sh: LLVM $version in $dest"
