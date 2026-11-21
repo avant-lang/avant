@@ -86,7 +86,19 @@ for a in "$@"; do
         l ~ /:$/ { n = substr(l, 1, length(l) - 1); if (n in fn) { printf "\t.skip %d, 0x90\n", k; delete fn[n] } }
         { print }' "$asm" > "$asm.k" && mv -f "$asm.k" "$asm" || { rm -f "$asm" "$asm.k"; exit 2; }
     fi
-    "$real" -c -o "$obj" "$asm" || { rm -f "$asm"; exit 1; }
+    case "$("$real" --version 2> /dev/null)" in
+      *clang*)
+        # clang assembles its own assembly without the tuning a compile
+        # has, so its padding nops would be at most 10 bytes long where
+        # the compile's object has 15: its assembler is run as the driver
+        # would run it, with that one tuning feature added, and the
+        # object is again the plain compile's byte for byte.
+        line=$("$real" -### -c -o "$obj" "$asm" 2>&1 | tail -n 1)
+        case "$line" in *'"-cc1as"'*'"-target-cpu"'*) ;; *) echo "layout-cc.sh: $real -### names no assembler run" >&2; rm -f "$asm"; exit 2 ;; esac
+        line=$(printf '%s\n' "$line" | sed 's/"-target-cpu" "\([^"]*\)"/"-target-cpu" "\1" "-target-feature" "+fast-15bytenop"/')
+        eval "$line" || { rm -f "$asm"; exit 1; } ;;
+      *) "$real" -c -o "$obj" "$asm" || { rm -f "$asm"; exit 1; } ;;
+    esac
     rm -f "$asm"
     exit 0
   fi
