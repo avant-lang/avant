@@ -25,7 +25,8 @@
 #   LAYOUT_C_SHIFT=K (1 to 63)  a compile (`-c`) is run as asked but to
 #       assembly (`-S`), K bytes of nop are put before every function's
 #       label (after its alignment; never run), and the result is
-#       assembled: each function starts K bytes after its alignment and its
+#       assembled (a label's trailing comment, as clang writes one, is
+#       read past): each function starts K bytes after its alignment and its
 #       loops sit at other offsets of their lines, with the compiler's code
 #       itself unchanged. (gcc's -fpatchable-function-entry=K,K, which
 #       places the same nops, also changes the code: its register
@@ -81,11 +82,23 @@ for a in "$@"; do
     if [ -n "$cshift" ]; then
       awk -v k="$cshift" '
         /^[ \t]*\.type[ \t]/ && /@function/ { n = $2; sub(/,.*/, "", n); fn[n] = 1 }
-        { l = $0; sub(/[ \t]*$/, "", l) }
+        { l = $0; sub(/[ \t]*#.*$/, "", l); sub(/[ \t]*$/, "", l) }
         l ~ /:$/ { n = substr(l, 1, length(l) - 1); if (n in fn) { printf "\t.skip %d, 0x90\n", k; delete fn[n] } }
         { print }' "$asm" > "$asm.k" && mv -f "$asm.k" "$asm" || { rm -f "$asm" "$asm.k"; exit 2; }
     fi
-    "$real" -c -o "$obj" "$asm" || { rm -f "$asm"; exit 1; }
+    case "$("$real" --version 2> /dev/null)" in
+      *clang*)
+        # clang assembles its own assembly without the tuning a compile
+        # has, so its padding nops would be at most 10 bytes long where
+        # the compile's object has 15: its assembler is run as the driver
+        # would run it, with that one tuning feature added, and the
+        # object is again the plain compile's byte for byte.
+        line=$("$real" -### -c -o "$obj" "$asm" 2>&1 | tail -n 1)
+        case "$line" in *'"-cc1as"'*'"-target-cpu"'*) ;; *) echo "layout-cc.sh: $real -### names no assembler run" >&2; rm -f "$asm"; exit 2 ;; esac
+        line=$(printf '%s\n' "$line" | sed 's/"-target-cpu" "\([^"]*\)"/"-target-cpu" "\1" "-target-feature" "+fast-15bytenop"/')
+        eval "$line" || { rm -f "$asm"; exit 1; } ;;
+      *) "$real" -c -o "$obj" "$asm" || { rm -f "$asm"; exit 1; } ;;
+    esac
     rm -f "$asm"
     exit 0
   fi

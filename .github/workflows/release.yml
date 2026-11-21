@@ -98,7 +98,7 @@ jobs:
 
       # LLVM 22.1.8, the compiler's in-process LLVM, is LLVM's official
       # release (Ubuntu's archive has 22.1.2): tools/install-llvm.sh checks
-      # its sha256 and signature, and the job caches the 350 MB it keeps.
+      # its sha256 and signature, and the job caches the 630 MB it keeps.
       # tools/build-llvm.sh merges it with libstdc++, zlib, and zstd into
       # runtime/build/avant_llvm.o, which only the compiler links.
       - name: Prepare the LLVM directory
@@ -119,7 +119,8 @@ jobs:
         run: |
           echo "llvm: $("$LLVM_CONFIG" --version) ($LLVM_CONFIG)"
           echo "libclang (bind): $(llvm-config-20 --version)"
-          echo "cc: $(cc --version | head -n 1)"
+          echo "cc (link, compiler glue): $(cc --version | head -n 1)"
+          echo "runtime cc: $(sh runtime/build.sh --cc) ($("$(sh runtime/build.sh --cc)" --version | head -n 1))"
 
       - name: Build runtime objects
         run: sh runtime/build.sh
@@ -164,6 +165,7 @@ jobs:
             echo "avant: $(git rev-parse HEAD)"
             echo "llvm: $("$LLVM_CONFIG" --version) (LLVM's official release, tools/install-llvm.sh)"
             echo "runner: ubuntu-26.04 linux-x86_64, $(cc --version | head -n 1)"
+            echo "runtime: built by $("$(sh runtime/build.sh --cc)" --version | head -n 1) (runtime/build.sh)"
             echo "built-by: B (the ${AVANT_SEED_VERSION} seed's build of this tree), on the in-process LLVM back end, --release"
             echo "backend: in-process LLVM $("$LLVM_CONFIG" --version), linked into avant (runtime/avant_llvm.c, tools/build-llvm.sh); no myc-llvm"
             echo "seed: yes"
