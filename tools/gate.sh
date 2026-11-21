@@ -144,6 +144,9 @@ cd "$root" || exit 2
 # The seed: GATE_SEED, else tools/letters.sh's default (computed only there).
 seed=$(LETTERS_SEED=${GATE_SEED:-} sh tools/letters.sh --print-seed) || exit 2
 [ -x "$seed/avant" ] || { echo "gate: no avant in $seed" >&2; exit 2; }
+# The package checks of the suite need the bundled re2c beside the compiler;
+# a worktree that never had one fails nine of them with unrelated messages.
+[ -x bin/re2c ] || { echo "gate: no bin/re2c in $root (the suite's package checks need it): copy one from another checkout, or run: sh tools/build-re2c.sh bin/re2c" >&2; exit 2; }
 out=$(realpath -m "${GATE_OUT:-results/gate-$(date +%Y%m%d-%H%M%S)}")
 mkdir -p "$out" || exit 2
 
