@@ -32,6 +32,31 @@
 # grows by as much. SUMMARY.txt gains a `shared steps:` line with that
 # call's wall and wait; the steps' own walls then have no wait beside them.
 #
+# WAVE_ONLY=stats,la (any of cases, gate, goldens, stats, smoke, neutral,
+# la; unset: every step): run only those steps, after the head's provenance,
+# the letters' hashes and the nm check. A run without the gate builds C' first
+# (tools/letters.sh runtime b c-llvm, one shared run `final: build`;
+# WAVE_BUILD=0 when bin/ is current). Its last line reads `WAVE PARTIAL GREEN`
+# or `WAVE PARTIAL RED`, never `WAVE FINAL GREEN`: it is not a final. The use:
+# a statistics base of the base's own tree (the layout step compares times and
+# counts of one tree) for the cost of the statistics and the LangArena
+# timing, about seven minutes, not a whole final: check out WAVE_BASE's commit,
+# `WAVE_ONLY=stats,la WAVE_LA=1 ...`, and name its OUT as BASE_STATS.
+#
+# WAVE_BESIDE=1: the goldens, the statistics, the smoke test and the
+# neutrality run beside the gate instead of after it: a detached worktree of
+# HEAD (OUT/beside-tree/avant, LangArena beside it, removed at the end) gets a
+# second wave-final.sh of its own (WAVE_ONLY those steps, OUT/beside/, its own
+# build of C', stepping through WAVE_RUNNER as ever), and its lines join
+# SUMMARY.txt where the steps would have been. Same checks, same verdicts; the
+# C' they ran is the copy's, and a `beside:` line says whether its B, C' and
+# runtime are the gate's byte for byte (a tree built in another directory
+# gives the same bytes), red when not. The stress pass's run limit is 1500 s there
+# (WAVE_BESIDE_STRESS_LIMIT): its longest fixture takes about 320 s alone, which
+# the gate's load beside it can double. The shared part's wall drops by about
+# the goldens' stress pass and the rest of the steps; the gate runs beside
+# more load, so its own wall is not comparable with a gate that ran alone.
+#
 # OUT is a new directory under results/ or outside the repository. Steps, in
 # order, each logged under OUT; a red step is reported and the later steps
 # still run, so one run gives the whole picture:
@@ -197,7 +222,7 @@ wall() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.1f", b-a}'; }
 
 # The running step: run CMD... starts it in the background, records
 # its PID in $cur and waits for it; its status is the command's.
-cur=""; curname=""
+cur=""; curname=""; beside_pid=""; beside_tree=""; beside_used=""
 # A command a non-interactive shell starts in the background ignores SIGINT
 # and SIGQUIT; env --default-signal gives the step the dispositions it had
 # in the foreground (a test that sends SIGINT to a child expects it to act).
@@ -280,6 +305,11 @@ stop_step() {
 }
 on_signal() { # NAME NUMBER
   trap '' TERM INT HUP
+  if [ -n "$beside_pid" ]; then
+    # The beside run stops its own tree on the same signal; wait for it.
+    kill -TERM "$beside_pid" 2>/dev/null; wait "$beside_pid" 2>/dev/null; beside_pid=""
+  fi
+  [ -n "$beside_tree" ] && { git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; }
   stop_step
   echo "stopped: SIG$1 during ${curname:-no step}; every process of the step stopped" >> "$out/SUMMARY.txt"
   exit $((128 + $2))
@@ -307,11 +337,31 @@ case "$held_mode" in
   shared|slot) [ -n "$runner" ] && lock_line="$lock_line; but the whole run is inside a $held_mode \`ledger run\` (LEDGER_LOCK_HELD): its LangArena timing cannot take the whole machine there (start wave-final.sh outside ledger run)" ;;
 esac
 [ "${WAVE_PART:-}" = shared ] || echo "wave-final: $lock_line"
+# want STEP: whether WAVE_ONLY (a comma-separated list of cases, gate,
+# goldens, stats, smoke, neutral, la; unset: all) names the step.
+# beside_steps: the steps the beside run (WAVE_BESIDE=1, below) takes once it is
+# started (beside_used set; beside_pid is its process until it is waited for):
+# this instance neither runs nor reports them itself.
+beside_steps=goldens,stats,smoke,neutral
+want() {
+  [ -n "$beside_used" ] && case ",$beside_steps," in *",$1,"*) return 1 ;; esac
+  [ -z "${WAVE_ONLY:-}" ] && return 0; case ",$WAVE_ONLY," in *",$1,"*) return 0 ;; esac; return 1
+}
+# skipped STEP LINE: the step's line, unless the beside run reports it.
+skipped() { [ -n "$beside_used" ] && case ",$beside_steps," in *",$1,"*) return 0 ;; esac; step "$2: skipped (WAVE_ONLY=$WAVE_ONLY)"; }
+partial=""
+if [ -n "${WAVE_ONLY:-}" ]; then
+  partial=1
+  for w_x in $(echo "$WAVE_ONLY" | tr ',' ' '); do
+    case "$w_x" in cases|gate|goldens|stats|smoke|neutral|la) ;; *) echo "wave-final: WAVE_ONLY names '$w_x': one of cases, gate, goldens, stats, smoke, neutral, la" >&2; exit 2 ;; esac
+  done
+fi
 # The steps on the shared side, 1b to 5c: run step by step, each through
 # the runner, or (WAVE_GROUP=1, with WAVE_RUNNER) by the script itself
 # called again (WAVE_PART=shared) under one runner call.
 shared_steps() {
 # 1b. the test files compile: a minute's check before the gate's suites.
+if want cases; then
 curname=cases
 lk shared cases timeout -k 10 900 sh tools/cases-check.sh "$out/cases" < /dev/null > "$out/cases.log" 2>&1
 crc=$?
@@ -322,21 +372,78 @@ echo "wave-final: $cases_line"
 case "$cases_line" in
   *": red"*) if [ "${WAVE_CASES_STOP:-0}" = 1 ]; then : > "$out/.cases-stop"; return 0; fi ;;
 esac
+else skipped cases cases; fi
+
+# 1c. WAVE_BESIDE=1: the goldens, the statistics, the smoke test and the
+# neutrality (the steps that read only C') run in a copy of the checkout, a
+# second wave-final.sh of its own (WAVE_ONLY those steps, its own build of C'),
+# while the gate runs here. They are the same checks; what they prove is the
+# copy's C', which step 3's sha256 check against the gate's own C' makes the
+# one the gate proved. The wall drops by the goldens' stress pass and the rest.
+if [ "${WAVE_BESIDE:-0}" = 1 ] && want gate && { want goldens || want stats || want smoke || want neutral; }; then
+  bo=""; for b_x in goldens stats smoke neutral; do if want "$b_x"; then bo="$bo${bo:+,}$b_x"; fi; done
+  beside_tree=$out/beside-tree
+  if mkdir -p "$beside_tree" && git worktree add -q --detach "$beside_tree/avant" HEAD < /dev/null > "$out/beside-setup.log" 2>&1 \
+     && mkdir -p "$beside_tree/avant/bin" && cp -a bin/re2c "$beside_tree/avant/bin/re2c" && { for b_s in bin/v*; do [ -e "$b_s" ] && cp -a "$b_s" "$beside_tree/avant/bin/"; done; true; } \
+     && { [ ! -d langarena ] || cp -a langarena "$beside_tree/avant/langarena"; } \
+     && ln -s "$(realpath "$root/../LangArena" 2>/dev/null || echo /nonexistent)" "$beside_tree/LangArena"; then
+    rm -rf "$beside_tree/avant/langarena/tmp"
+    (cd "$beside_tree/avant" && exec env WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
+    beside_pid=$!; beside_used=1
+    echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1), pid $beside_pid"
+  else
+    step "beside: red (the copy of the checkout could not be made: beside-setup.log)"
+    git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; beside_tree=""
+  fi
+fi
 
 # 2. the gate
+if want gate; then
 t0=$(now); curname=gate
 lk shared gate env GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOUNG_MB=1;AVANT_GC_VERIFY=1;AVANT_NURSERY=0' \
   timeout -k 10 3600 sh tools/gate.sh < /dev/null > "$out/gate.out" 2>&1
 rc=$?; t1=$(now); echo "wall $(own "$t0" "$t1")" > "$out/gate-wall.txt"
 if [ $rc -eq 0 ] && grep -q '^GATE PASS' "$out/gate.out"; then step "gate: pass, $(cat "$out/gate-wall.txt")"; else step "gate: red (rc=$rc; $(tail -1 "$out/gate.out"))"; fi
+else
+  skipped gate gate
+  # The steps that remain run C' (and the statistics' fixtures, the smoke
+  # test's archive), which the gate builds: build it here, once
+  # (WAVE_BUILD=0: the checkout's bin/ is current).
+  if [ "${WAVE_BUILD:-1}" != 0 ] && { want gate || want goldens || want stats || want smoke || want neutral || want la; }; then
+    t0=$(now); curname=build
+    lk shared build timeout -k 10 1800 sh tools/letters.sh runtime b c-llvm < /dev/null > "$out/build.log" 2>&1
+    rc=$?; t1=$(now)
+    if [ $rc -eq 0 ] && [ -x bin/avant-c-llvm ]; then step "build: C' built by the letters (runtime, b, c-llvm), $(own "$t0" "$t1")"; else step "build: red (rc=$rc: build.log)"; fi
+  fi
+fi
 
 # 3. letters and exports
-sha256sum bin/avant-b bin/avant-c-llvm bin/avant-d-llvm runtime/build/avant_rt.o > "$out/letters.txt" 2>&1
+sha256sum $(for f in bin/avant-b bin/avant-c-llvm bin/avant-d-llvm runtime/build/avant_rt.o; do if [ -f "$f" ] || want gate; then echo "$f"; fi; done) > "$out/letters.txt" 2>&1
 nm -g --defined-only runtime/build/avant_rt.o 2>/dev/null | awk '{print $3}' | LC_ALL=C sort > "$out/nm.txt"
 grep -v '^#' runtime/avant_rt.exports | sed '/^$/d' | LC_ALL=C sort > "$out/exports.txt"
 if cmp -s "$out/nm.txt" "$out/exports.txt"; then step "nm: equals runtime/avant_rt.exports ($(wc -l < "$out/nm.txt") symbols)"; else step "nm: red (differs from runtime/avant_rt.exports; diff in nm.diff)"; diff "$out/exports.txt" "$out/nm.txt" > "$out/nm.diff"; fi
 
+# 3b. the beside run (1c): its steps' lines here, in their place, and the
+# proof that its C' is the gate's.
+if [ -n "$beside_pid" ]; then
+  curname=beside
+  wait "$beside_pid"; brc=$?; beside_pid=""
+  # Its steps' lines (not its provenance, the skipped steps, nor its final line).
+  grep '^\(build\|goldens\|gcstats\|archive\|smoke\|neutral\):' "$out/beside/SUMMARY.txt" 2>/dev/null | grep -v ': skipped (WAVE_ONLY' > "$out/beside-lines.txt"
+  while IFS= read -r b_l; do step "$b_l"; done < "$out/beside-lines.txt"
+  # The copy's C' is the gate's: the same bytes (a tree built in another directory gives them).
+  b_bad=""
+  for b_f in bin/avant-b bin/avant-c-llvm runtime/build/avant_rt.o; do
+    b_a=$(awk -v f="$b_f" '$2 == f { print $1 }' "$out/letters.txt" 2>/dev/null); b_b=$(awk -v f="$b_f" '$2 == f { print $1 }' "$out/beside/letters.txt" 2>/dev/null)
+    [ -n "$b_a" ] && [ "$b_a" = "$b_b" ] || b_bad="$b_bad $b_f"
+  done
+  if [ -z "$b_bad" ] && [ -s "$out/beside/SUMMARY.txt" ]; then step "beside: the copy's B, C' and runtime are the gate's, byte for byte (sha256 in letters.txt and beside/letters.txt); its run's status $brc"
+  else step "beside: red (the copy's$b_bad differ from the gate's, or its run left no summary, status $brc: beside.log)"; fi
+  git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; beside_tree=""
+fi
+
 # 4. the run goldens
+if want goldens; then
 golden() { # NAME MODE ENV
   t0=$(now); curname="goldens $1"
   lk shared "goldens $1" env GOLDEN_COMPILER=bin/avant-c-llvm GOLDEN_ENV="$3" GOLDEN_MODE="$2" GOLDEN_OUT="$out/goldens-$1" \
@@ -360,13 +467,14 @@ golden bare "" ""
 golden release --release ""
 golden stress --debug "AVANT_GC_STRESS=1"
 if [ $red_goldens -eq 0 ]; then step "goldens: green ($(tr '\n' ';' < "$out/goldens.txt"))"; else step "goldens: red ($(tr '\n' ';' < "$out/goldens.txt"))"; fi
+else skipped goldens goldens; fi
 
 # 5. the GC-statistics set
 g="$out/gcstats"; curname=gcstats
 # The base cache's entry of WAVE_BASE's tree (built when missing), for the
 # statistics' base and the neutrality.
 entry=""; entry_why=""
-if [ -n "${WAVE_BASE:-}" ]; then
+if [ -n "${WAVE_BASE:-}" ] && { want stats || want neutral || want la; }; then
   wbase=$(git merge-base "$WAVE_BASE" HEAD 2>/dev/null) || wbase=$WAVE_BASE
   curname="base cache"
   if lk shared "base cache" sh -c 'sh tools/base-cache.sh "$1" > "$2/base-cache.txt" 2> "$2/base-cache.log" < /dev/null' base-cache "$wbase" "$out"; then
@@ -378,6 +486,7 @@ if [ -n "${WAVE_BASE:-}" ]; then
   curname=gcstats
 fi
 [ -z "$base" ] && [ -n "$entry" ] && base=$entry/gcstats
+if want stats; then
 lk shared gcstats timeout -k 10 1800 sh tools/gcstats.sh . "$g" < /dev/null > "$out/gcstats.log" 2>&1
 cfail=$?
 files=$(ls "$g"/*.out "$g"/*.err 2>/dev/null | wc -l)
@@ -392,8 +501,10 @@ elif [ -n "$base" ]; then
   echo "same=$same differ=$differ" >> "$out/stats.txt"
   step "gcstats: $files files; against $base: same=$same differ=$differ (stats.txt; a difference is explained in the record, not red)"
 else step "gcstats: $files files (no base given)"; fi
+else skipped stats gcstats; fi
 
 # 5b. the smoke test: the head's C' packed, the tarball's cases run.
+if want smoke; then
 curname=smoke
 # shellcheck disable=SC2016
 lk shared smoke sh -c 'sh tools/package.sh "$1/smoke" bin/avant-c-llvm bin/re2c < /dev/null > "$1/package.log" 2>&1 || exit 3
@@ -427,9 +538,11 @@ case $src in
   3|4) step "smoke: red (tools/package.sh failed: package.log)" ;;
   *) step "smoke: red (rc=$src; ${sp:-0} passed, ${sf:-0} failed: smoke.log)" ;;
 esac
+else skipped smoke smoke; fi
 
 # 5c. the neutrality against the base cache (WAVE_BASE).
-if [ -n "${WAVE_BASE:-}" ]; then
+if ! want neutral; then skipped neutral neutral
+elif [ -n "${WAVE_BASE:-}" ]; then
   if [ -z "$entry" ]; then step "neutral: red ($entry_why)"
   else
     curname=neutral
@@ -438,7 +551,12 @@ if [ -n "${WAVE_BASE:-}" ]; then
     nrc=$?
     if [ ! -f "$out/neutral/summary.txt" ]; then step "neutral: red (rc=$nrc, no summary: neutral.log)"
     else
+      # The programs outside the change that moved, counted by kind (the
+      # sources corpus and LangArena's stitched programs), the first five named.
+      nsrc=$(grep -h -c '^\(LL-DIFF\|STATUS\|refused-msg\)' "$out/neutral/result.txt" 2>/dev/null); nla=$(grep -h -c '^\(LL-DIFF\|STATUS\|refused-msg\)' "$out/neutral/la-result.txt" 2>/dev/null)
+      nmoved=$(( ${nsrc:-0} + ${nla:-0} ))
       moved=$(grep -h '^\(LL-DIFF\|STATUS\|refused-msg\)' "$out/neutral/result.txt" "$out/neutral/la-result.txt" 2>/dev/null | awk '{ print $NF }' | head -n 5 | tr '\n' ' ')
+      [ "$nmoved" -gt 0 ] && moved="$nmoved moved ($nsrc sources, $nla LangArena), the first $([ "$nmoved" -gt 5 ] && echo five || echo "$nmoved"): $moved"
       step "neutral: against $WAVE_BASE's $(git rev-parse --short=8 "$wbase") ($entry): $(tr '\n' ';' < "$out/neutral/summary.txt")${moved:+ outside the change: $moved}(neutral/; a difference is explained in the record, not red)"
     fi
   fi
@@ -486,7 +604,7 @@ if [ -n "$runner" ] && [ "${WAVE_GROUP:-0}" = 1 ]; then
 else shared_steps; fi
 if [ -f "$out/.cases-stop" ]; then
   rm -f "$out/.cases-stop"
-  step "WAVE FINAL RED:$red (stopped after the cases: WAVE_CASES_STOP=1)"; cat "$out/SUMMARY.txt"; exit 1
+  step "WAVE ${partial:+PARTIAL }FINAL RED:$red (stopped after the cases: WAVE_CASES_STOP=1)"; cat "$out/SUMMARY.txt"; exit 1
 fi
 
 # 6. LangArena (optional)
@@ -518,7 +636,8 @@ la_disturbed() {
   awk -F'\t' '!/^#/ && $1 != "task" && $13 ~ /^no/ { n++; t = t (t == "" ? "" : ", ") $1 }
     END { if (n) printf "; %d disturbed after retries, not evidence: %s", n, t }' "$la/lr-avant.tsv" 2>/dev/null
 }
-if [ "${WAVE_LA:-0}" = 1 ]; then
+if [ "${WAVE_LA:-0}" = 1 ] && ! want la; then step "langarena: skipped (WAVE_ONLY=$WAVE_ONLY)"
+elif [ "${WAVE_LA:-0}" = 1 ]; then
   side=${WAVE_LA_SIDE:-}; ref_from=""; ref_why=""
   if [ -z "$side" ] || [ ! -d "$side/avant" ] || [ ! -d "$side/LangArena" ]; then
     step "langarena: red (set WAVE_LA_SIDE with avant/ and LangArena/)"
@@ -600,7 +719,7 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
     if [ $lrc -ne 0 ]; then :
     elif [ -z "$entry" ]; then step "layout: skipped (WAVE_BASE unset: no base instruction counts)"
     elif [ -z "$blr" ] || [ ! -f "$blr" ]; then step "layout: skipped (no base LR re-measure: lr-avant.tsv beside the floor's base table)"
-    elif [ "$btree" != "$(basename "$entry")" ]; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"): times and counts of two bases)"
+    elif [ "$btree" != "$(basename "$entry")" ]; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"): times and counts of two bases; a statistics base of that tree: check out $WAVE_BASE (tree $(basename "$entry")), run WAVE_ONLY=stats,la WAVE_LA=1 sh tools/wave-final.sh there, and name its OUT as BASE_STATS)"
     else
       # shellcheck disable=SC2016
       lk shared "langarena counts" sh -c 'lap=$(BASE_CACHE=$(dirname "$1") sh tools/base-cache.sh --la "$(basename "$1")" 2> "$2/ins-head.log" < /dev/null) || exit 3
@@ -656,5 +775,10 @@ gone=$(wc -l < "$out/tmp-gone.txt")
 if [ -s "$out/tmp-new.txt" ]; then step "tmp: red ($(wc -l < "$out/tmp-new.txt") new in $tmpd, tmp-new.txt: $(head -3 "$out/tmp-new.txt" | tr '\n' ' '); $pt_mode)"
 elif [ "$gone" -gt 0 ]; then step "tmp: nothing new ($gone gone during the run, removed by their owners: tmp-gone.txt; $pt_mode)"
 else step "tmp: unchanged ($pt_mode)"; fi
+if [ -n "$partial" ]; then
+  # Not a final: only the named steps ran (WAVE_ONLY), so no line reads as one.
+  if [ -z "$red" ]; then step "WAVE PARTIAL GREEN (only: $WAVE_ONLY; not a final)"; cat "$out/SUMMARY.txt"; exit 0; fi
+  step "WAVE PARTIAL RED:$red (only: $WAVE_ONLY; not a final)"; cat "$out/SUMMARY.txt"; exit 1
+fi
 if [ -z "$red" ]; then step "WAVE FINAL GREEN"; cat "$out/SUMMARY.txt"; exit 0; fi
 step "WAVE FINAL RED:$red"; cat "$out/SUMMARY.txt"; exit 1

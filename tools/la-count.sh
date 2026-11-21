@@ -35,13 +35,17 @@
 # address randomization off (`setarch -R`: with it on, a task's peak moves
 # between two values 64 KB or more apart at equal page faults, from where
 # its mappings land, so a few runs read a change that is not there).
+# The N runs of a program start together (LA_MEM_PARALLEL=0: one after
+# another; a peak is not a time, and a run's file is its own).
 # OUT.mem.tsv beside OUT.tsv gets one line per program:
 #
 #   SLUG <TAB> MEDIAN KB <TAB> MIN KB <TAB> MAX KB <TAB> RUNS KB (comma-separated)
 #
 # tools/la-mem.py compares two such files (the 50 tasks' average peak, its
 # spread, and the programs to run again).
-# Status 0, 1 when a program did not compile or failed, 2 on usage.
+# LA_RUNNER and LA_GROUP split the programs into shared runs of their own
+# (below, where it is read). Status 0, 1 when a program did not compile or
+# failed, 2 on usage.
 set -u
 
 if [ "${1:-}" = --one ]; then
@@ -56,14 +60,25 @@ if [ "${1:-}" = --one ]; then
   rc=$?
   n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
   printf '%s\t%s\t%s\t%s\t%s\n' "$s" "${n:--}" "$(md5sum < "$t.out" | cut -c1-12)" "$rc" "$(head -n 1 "$t.out" | cut -c1-60)"
+  # The memory runs of one program start together (LA_MEM_PARALLEL=0: one
+  # after another): a peak is not a time, and each run writes a file of its own.
   i=0; runs=""
   while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
     i=$((i + 1))
-    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss" "$t" < /dev/null > /dev/null 2>&1)
-    runs="$runs${runs:+,}$(tail -n 1 "$t.rss" 2>/dev/null)"
+    if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
+    else
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
+    fi
+  done
+  wait
+  i=0
+  while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
+    i=$((i + 1))
+    runs="$runs${runs:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
   done
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
-  rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t.rss" "$t.compile.log"
+  rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
 fi
 
@@ -78,8 +93,37 @@ command -v perf > /dev/null 2>&1 || { echo "la-count.sh: perf not found" >&2; ex
 LAC_TMP=$(mktemp -d "$(dirname "$out")/.la-count.XXXXXX") || exit 2
 export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP
 self=$(realpath "$0")
-if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u \
-  | xargs -P "${LA_JOBS:-8}" -I{} sh "$self" --one {} | LC_ALL=C sort > "$out.part"
+if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u > "$LAC_TMP/slugs.txt"
+# With LA_RUNNER (the runner's command words, such as `python3 -I PATH/ledger
+# run --shared --wave W`) the script is started outside the lock and each group
+# of programs is its own shared run, `LA_STEP group K/N` (default step
+# `la-count`; LA_KIND its --kind, default new): a pass with memory runs over
+# every program no longer holds the lock past the shared limit. LA_GROUP
+# programs a group (default 24 with memory runs, 64 without); without
+# LA_RUNNER one group, as the caller's single run.
+runner=${LA_RUNNER:-}
+ng=1
+if [ -n "$runner" ]; then
+  per=${LA_GROUP:-$([ "${LA_MEM_RUNS:-0}" -gt 0 ] && echo 24 || echo 64)}
+  ng=$(awk -v per="$per" 'END { n = int((NR + per - 1) / per); print (n < 1) ? 1 : n }' "$LAC_TMP/slugs.txt")
+fi
+# Dealt in turn, so each group has a share of the long programs.
+awk -v n="$ng" -v d="$LAC_TMP" '{ print > (d "/group." (((NR - 1) % n) + 1) ".txt") }' "$LAC_TMP/slugs.txt"
+: > "$out.part.unsorted"
+gk=0
+while [ "$gk" -lt "$ng" ]; do
+  gk=$((gk + 1))
+  g=$LAC_TMP/group.$gk.txt
+  [ -f "$g" ] || continue
+  if [ -n "$runner" ]; then
+    # shellcheck disable=SC2086
+    $runner --step "${LA_STEP:-la-count} group $gk/$ng" --kind "${LA_KIND:-new}" -- \
+      sh -c 'xargs -P "$1" -I{} sh "$2" --one {} < "$3" >> "$4"' la-group "${LA_JOBS:-8}" "$self" "$g" "$out.part.unsorted"
+  else
+    xargs -P "${LA_JOBS:-8}" -I{} sh "$self" --one {} < "$g" >> "$out.part.unsorted"
+  fi
+done
+LC_ALL=C sort "$out.part.unsorted" > "$out.part"; rm -f "$out.part.unsorted"
 if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
   for f in "$LAC_TMP"/*.mem; do
     [ -f "$f" ] || continue

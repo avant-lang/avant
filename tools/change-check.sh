@@ -32,8 +32,8 @@
 #             testmap/, built for the base when the range changes a file
 #             under compiler/ or lib/ (the compiler's sources: a checker
 #             change selects the tests whose runs execute it) and none is
-#             there yet, once per base tree (about 8 minutes here, its own
-#             step); TEST_MAP=none reads no map. A changed file none of
+#             there yet, once per base tree (about 8 to 15 minutes here, in
+#             shared runs of a few minutes each); TEST_MAP=none reads no map. A changed file none of
 #             these reaches is left to the corpus and the gate.
 #   corpus    every program of examples/, tests/fixtures/, tests/cases/,
 #             tests/probe_matrix.av and compiler/main.av through
@@ -80,7 +80,8 @@
 # of work takes it through the runner, one shared run each (`change-check:
 # base cache`, `change-check: test map`, then per commit `change-check:
 # SHORT build`, `SHORT corpus`, `SHORT langarena`, `SHORT counts`, `SHORT
-# tests`; CC_RUN_KIND their --kind, default new): no run holds the lock
+# tests`; the test map's build and each group of its test files, `test map
+# build`, `test map group K/N`, `test map exclusive`, tools/test-map.sh; CC_RUN_KIND their --kind, default new): no run holds the lock
 # for the whole range, so a whole-machine run waiting meanwhile goes
 # between two of them. Without CC_RUNNER the caller holds the lock (one
 # `ledger run` around the script, as before). Stdin from /dev/null.
@@ -152,7 +153,9 @@ else
   tmwhy="none (sh tools/test-map.sh $first^ builds the base's; TEST_MAP names another)"
   if [ -z "$tmap" ] && [ ! -f "$e/testmap/COMPLETE" ] && [ -n "$(git diff --name-only "$first^" "$head" -- compiler lib)" ]; then
     t1=$(now)
-    if m=$(rn "test map" sh "$here/test-map.sh" "$first^" 2>> "$log" < /dev/null) && [ -f "$m/COMPLETE" ]; then
+    # test-map.sh takes the lock itself, one shared run for the build and one
+    # for each group of test files (TESTMAP_RUNNER), so none passes the limit.
+    if m=$(TESTMAP_RUNNER="$runner" TESTMAP_STEP="change-check: test map" TESTMAP_KIND="${CC_RUN_KIND:-new}" sh "$here/test-map.sh" "$first^" 2>> "$log" < /dev/null) && [ -f "$m/COMPLETE" ]; then
       echo "test map: built for the base, the range changing compiler/ or lib/ ($(secs "$t1" "$(now)") s)" >> "$out/cache.txt"
     else tmwhy="none: its build failed (run.log), so the tests by name, path and import only"; bad=1; fi
   fi
@@ -200,6 +203,15 @@ touched() { # the changed paths on stdin -> test files of the work tree
     if [ ${#stem} -ge 3 ]; then
       for t in "$work"/tests/cases/test_*"$stem"*.av; do [ -f "$t" ] && echo "tests/cases/$(basename "$t")"; done
     fi
+    # A compiler pass's file is named for the pass and what it handles
+    # (mir/lower_ffi.av lowers the FFI forms): the test files named for
+    # what it handles are picked too (test_ffi.av, test_ffi_llvm.av).
+    case "$p" in compiler/*)
+      s2=${stem#lower_}; [ "$s2" = "$stem" ] && s2=${stem#emit_}
+      if [ "$s2" != "$stem" ] && [ ${#s2} -ge 3 ]; then
+        for t in "$work"/tests/cases/test_*"$s2"*.av; do [ -f "$t" ] && echo "tests/cases/$(basename "$t")"; done
+      fi ;;
+    esac
     case "$p" in
       lib/*.av) m=$(echo "${p#lib/}" | sed 's/\.av$//; s#/#.#g'); grep -l -E "^import $m( |\$)" "$work"/tests/cases/*.av 2>/dev/null ;;
       tests/cases/*.av) m=$(basename "$p" .av); case "$m" in test_*) ;; *) grep -l -E "^import $m( |\$)" "$work"/tests/cases/*.av 2>/dev/null ;; esac ;;

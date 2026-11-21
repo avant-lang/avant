@@ -66,7 +66,9 @@
 # 3.3 s in --debug, 2.0 s bare and --release, and 54 s under the full
 # stress mode (the two held-object defragmentation fixtures), which passed
 # 120 s with four stress suites sharing the machine: 600 s keeps eleven
-# times the stress mode's longest run. The summary states the limit. A program that
+# times the stress mode's longest run (GOLDEN_RUN_LIMIT_STRESS sets the stress
+# mode's limit alone: a run beside other heavy work, as wave-final.sh's
+# WAVE_BESIDE, takes more). The summary states the limit. A program that
 # fails to compile is a difference. Every child runs with TMPDIR inside the
 # work directory, so nothing is written to /tmp; the LangArena harness, as in
 # its prod runs, writes its stitched sources and binaries to langarena/tmp/
@@ -115,7 +117,7 @@ has_set() { case ",$sets," in *",$1,"*) return 0 ;; esac; return 1; }
 
 COMPILER=$(realpath -m "${GOLDEN_COMPILER:-bin/avant-c-llvm}")
 ENVW=${GOLDEN_ENV:-}
-case " $ENVW " in *" AVANT_GC_STRESS="*) limit=${GOLDEN_RUN_LIMIT:-600} ;; *) limit=${GOLDEN_RUN_LIMIT:-120} ;; esac
+case " $ENVW " in *" AVANT_GC_STRESS="*) limit=${GOLDEN_RUN_LIMIT_STRESS:-${GOLDEN_RUN_LIMIT:-600}} ;; *) limit=${GOLDEN_RUN_LIMIT:-120} ;; esac
 MODE=${GOLDEN_MODE---debug}
 case "$MODE" in
   --debug) codegen=debug ;;
