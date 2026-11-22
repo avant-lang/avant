@@ -41,6 +41,9 @@
 # runtime/build/avant_llvm.o as a link argument (COMPILER_LINK below);
 # a user program never does.
 #
+# Every compiler build runs in the verify mode (AVANT_VERIFY=1: the MIR
+# verifier at stage final and LLVM's verifier, compiler/llvm/driver.av).
+#
 # Environment:
 #   LETTERS_SEED      seed directory with avant (default bin/v0.48.0, the
 #                     release; a seed must emit the runtime call table, so
@@ -126,7 +129,7 @@ build() {
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
   record "$3" "$1"
 }
 

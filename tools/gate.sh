@@ -136,6 +136,10 @@
 # fixed-point.txt; identity.txt (C' against D'); reuse.txt when
 # GATE_REUSE_C is set; summary.txt (everything printed at the end).
 set -u
+# Every compile the gate makes runs in the verify mode (the MIR
+# verifier at stage final and LLVM's verifier: compiler/llvm/driver.av).
+AVANT_VERIFY=1
+export AVANT_VERIFY
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
