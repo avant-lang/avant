@@ -52,9 +52,9 @@
 # SUMMARY.txt where the steps would have been. Same checks, same verdicts; the
 # C' they ran is the copy's, and a `beside:` line says whether its B, C' and
 # runtime are the gate's byte for byte (a tree built in another directory
-# gives the same bytes), red when not. The stress pass's run limit is 1500 s there
-# (WAVE_BESIDE_STRESS_LIMIT): its longest fixture takes about 320 s alone, which
-# the gate's load beside it can double. The shared part's wall drops by about
+# gives the same bytes), red when not. The stress pass keeps run-goldens.sh's limits there
+# (WAVE_BESIDE_STRESS_LIMIT sets another): its one slow fixture has its own
+# limit in tests/goldens/runs/limits.txt. The shared part's wall drops by about
 # the goldens' stress pass and the rest of the steps; the gate runs beside
 # more load, so its own wall is not comparable with a gate that ran alone.
 # On a machine running nothing else it gave identical verdicts with the shared
@@ -466,7 +466,7 @@ if [ "${WAVE_BESIDE:-1}" = 1 ] && want gate && { want goldens || want stats || w
      && { [ ! -d langarena ] || cp -a langarena "$beside_tree/avant/langarena"; } \
      && ln -s "$(realpath "$root/../LangArena" 2>/dev/null || echo /nonexistent)" "$beside_tree/LangArena"; then
     rm -rf "$beside_tree/avant/langarena/tmp"
-    (cd "$beside_tree/avant" && exec env WAVE_FINAL_RUN="$run_mark" WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
+    (cd "$beside_tree/avant" && exec env WAVE_FINAL_RUN="$run_mark" WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 ${WAVE_BESIDE_STRESS_LIMIT:+GOLDEN_RUN_LIMIT_STRESS=$WAVE_BESIDE_STRESS_LIMIT} sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
     beside_pid=$!; beside_used=1
     echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1, the default; WAVE_BESIDE=0 runs them after it), pid $beside_pid"
   else
