@@ -1554,9 +1554,9 @@ fn lv_func(m: MModule, f: MFunc, keep: Array(Bool), recs: Array(TlRec)) {
 // the view test, `avant_str_view_test(_s)`: a string object never changes
 // kind. The address of the bytes, `avant_str_data(_s, _t)`, changes when
 // the object moves, which happens only in a collection: in a program with
-// one thread it is formed once before the loop, and formed again right
-// after each call in the loop that may collect (so it is never held
-// across one). None of these is left to LLVM: the emitter inlines them as
+// one thread it is formed once before the loop, and, in a loop with more
+// byte reads than calls that may collect, formed again right after each
+// such call (so it is never held across one). None of these is left to LLVM: the emitter inlines them as
 // loads LLVM may only hoist where they surely run. None has another
 // effect, traps (null has size 0 and is no view) or collects, so
 // computing one where the loop might not run is harmless.
@@ -1574,6 +1574,8 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
   // a call that returns an element's slot cannot have: the store through
   // the slot must follow it at once (V13).
   reformable = !shared
+  ncalls = 0
+  nreads = 0
   b = 0
   while b < f.blocks.size {
     if body[b] {
@@ -1584,8 +1586,12 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
         if d >= 0 {
           def_in[d] = true
         }
+        if blk.stmts[j].kind == msk_call() && blk.stmts[j].callee == "avant_str_data" {
+          nreads += 1
+        }
         if mir_lv_call_collects(m, blk.stmts[j], coll) {
           quiet = false
+          ncalls += 1
           if d >= 0 && m.types.is_addr(f.locals[d].ty) {
             reformable = false
           }
@@ -1594,6 +1600,11 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
       }
     }
     b += 1
+  }
+  // Forming the address after each call pays only where the loop reads
+  // bytes more often than it calls (counted in its code).
+  if nreads <= ncalls {
+    reformable = false
   }
   strs: Array(Int) = []
   kinds: Array(String) = []
