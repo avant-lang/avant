@@ -191,8 +191,8 @@ static void gc_tune_read(void) {
   gc_tune.full_pct = env_u64("AVANT_GC_TUNE_FULL_PCT", (HEAP_FACTOR - 1) * 100, 1, 10000);
   gc_tune.mixed_age = env_u64("AVANT_GC_TUNE_MIXED_AGE", 0, 0, LINES_PER_BLOCK);
   gc_tune.trace = env_u64("AVANT_GC_TUNE_TRACE", 0, 0, 1);
-  gc_tune.retain_young = env_u64("AVANT_GC_TUNE_RETAIN_YOUNG", 0, 0, 1);
-  gc_tune.mixed_evac = env_u64("AVANT_GC_TUNE_MIXED_EVAC", 0, 0, LINES_PER_BLOCK);
+  gc_tune.retain_young = env_u64("AVANT_GC_TUNE_RETAIN_YOUNG", 1, 0, 1);
+  gc_tune.mixed_evac = env_u64("AVANT_GC_TUNE_MIXED_EVAC", MIXED_EVAC_LINES, 0, LINES_PER_BLOCK);
 }
 
 static void young_start_end(void) {

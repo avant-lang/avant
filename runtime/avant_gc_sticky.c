@@ -1240,7 +1240,7 @@ static void splus_evacuate(void) {
        * up like a pure one, so a first survivor ages (a copy in a
        * survivor block, still young) wherever it was allocated; a dense
        * one keeps them in place, promoted. */
-      if (b->idle > 0 && (b->idle + LINE_SIZE - 1) / LINE_SIZE <= TUNE(evac_lines, SPLUS_SPARSE_LINES) &&
+      if (b->idle > 0 && (b->idle + LINE_SIZE - 1) / LINE_SIZE <= gc_heap.evac_lines &&
           sel + b->idle <= avant_young_bytes) {
         sel += b->idle;
         b->kept = SPLUS_EVAC;
@@ -1690,16 +1690,15 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
   gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
   gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
   gc_heap.evac_mixed = (uint8_t)(gc_heap.set.stress || (evac_mixed && gc_heap.splus_age));
-#ifdef AVANT_GC_TUNE
-  /* Mixed evacuation: a young collection evacuates a block with mature
-   * lines whose young survivors fill at most mixed_evac lines, as a
-   * complete collection evacuates the sparse ones. */
-  gc_tune.evac_lines = SPLUS_SPARSE_LINES;
-  if (!gc_heap.evac_mixed && gc_tune.mixed_evac && gc_heap.splus_age) {
+  /* A young collection that ages (YOUNG_AGE 2) evacuates a block with
+   * mature lines whose young survivors fill at most MIXED_EVAC_LINES
+   * lines, as a complete collection evacuates the sparse ones
+   * (MIXED_EVAC_LINES's comment). */
+  gc_heap.evac_lines = SPLUS_SPARSE_LINES;
+  if (!gc_heap.evac_mixed && TUNE(mixed_evac, MIXED_EVAC_LINES) && gc_heap.splus_age) {
     gc_heap.evac_mixed = 1;
-    gc_tune.evac_lines = gc_tune.mixed_evac;
+    gc_heap.evac_lines = (uint8_t)TUNE(mixed_evac, MIXED_EVAC_LINES);
   }
-#endif
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
@@ -1913,14 +1912,14 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
     }
     mature_drop_empty(empty);
     gc_heap.ctr.sticky.returned += empty;
-#ifdef AVANT_GC_TUNE
-    if (gc_tune.retain_young) {
-      uint64_t u = gc_tune.ypeak > gc_heap.heap_bytes ? gc_tune.ypeak - gc_heap.heap_bytes : 0;
-      uint64_t d = gc_tune.young_keep - gc_tune.young_keep / 8;
-      gc_tune.young_keep = u > d ? u : d;
-      gc_tune.ypeak = gc_heap.heap_bytes;
+    /* The young cycle's use beyond the heap joins what the return keeps
+     * (YOUNG_RETAIN). */
+    if (TUNE(retain_young, 1)) {
+      uint64_t u = gc_heap.young_peak > gc_heap.heap_bytes ? gc_heap.young_peak - gc_heap.heap_bytes : 0;
+      uint64_t d = gc_heap.young_keep - gc_heap.young_keep / YOUNG_RETAIN_DECAY;
+      gc_heap.young_keep = u > d ? u : d;
+      gc_heap.young_peak = gc_heap.heap_bytes;
     }
-#endif
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();

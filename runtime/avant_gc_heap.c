@@ -653,11 +653,11 @@ void gc_heap_return(uint64_t live) {
       keep = gc_heap.retain_hist[k];
     }
   }
-#ifdef AVANT_GC_TUNE
-  if (gc_tune.retain_young && gc_tune.young_keep > keep) {
-    keep = gc_tune.young_keep;
+  /* What the young cycles used beyond the heap (YOUNG_RETAIN): a
+   * program that runs no full collection never writes retain_hist. */
+  if (TUNE(retain_young, 1) && gc_heap.young_keep > keep) {
+    keep = gc_heap.young_keep;
   }
-#endif
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
   uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;

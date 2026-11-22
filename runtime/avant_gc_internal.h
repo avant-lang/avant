@@ -254,12 +254,10 @@ typedef struct GcTune {
   uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young */
   uint64_t plain_div; /* AVANT_GC_TUNE_PLAIN_DIV: PLAIN_LARGE_DIV */
   uint64_t full_pct;  /* AVANT_GC_TUNE_FULL_PCT: (HEAP_FACTOR - 1) * 100 */
-  uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place */
+  uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place (with MIXED_EVAC=0) */
   uint64_t trace;     /* AVANT_GC_TUNE_TRACE: 1 a line a collection on stderr */
-  uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 1 a young collection's return keeps what its cycles used beyond the heap */
-  uint64_t ypeak, young_keep; /* state: the heap's high since the last young return, the kept use (decaying by 1/8) */
-  uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines */
-  uint64_t evac_lines; /* state: this collection's sparse test for such blocks */
+  uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 0 a young collection's return keeps no young cycle's use (YOUNG_RETAIN) */
+  uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines (MIXED_EVAC_LINES; 0 none) */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
   uint64_t highs;     /* high-survival budget collections in a row */
@@ -1729,8 +1727,19 @@ typedef struct GcHeap {
   uint32_t *lines_f_block;
   uint32_t lines_f_gen;
   /* This young collection evacuates blocks with mature lines too: the
-   * stress mode, and a complete collection (gc_sticky_collect). */
+   * stress mode, a complete collection, and an aging young collection
+   * for the blocks whose survivors fill at most MIXED_EVAC_LINES lines
+   * (gc_sticky_collect); evac_lines is the collection's sparse test for
+   * them (SPLUS_SPARSE_LINES or MIXED_EVAC_LINES). */
   uint8_t evac_mixed;
+  uint8_t evac_lines;
+  /* The young cycles' retention (YOUNG_RETAIN): the heap's bytes at
+   * their highest since the last young collection's return
+   * (gc_note_cycle_peak), and what the young cycles used beyond the
+   * heap, kept resident by gc_heap_return, decaying by an eighth at
+   * each such return. */
+  uint64_t young_peak;
+  uint64_t young_keep;
   uint8_t *stress_lines;
   uint8_t *stress_mixed;
   uint32_t stress_lines_cap;
@@ -1777,11 +1786,9 @@ static inline void gc_note_cycle_peak(void) {
   if (gc_heap.heap_bytes > gc_heap.cycle_peak) {
     gc_heap.cycle_peak = gc_heap.heap_bytes;
   }
-#ifdef AVANT_GC_TUNE
-  if (gc_heap.heap_bytes > gc_tune.ypeak) {
-    gc_tune.ypeak = gc_heap.heap_bytes;
+  if (gc_heap.heap_bytes > gc_heap.young_peak) {
+    gc_heap.young_peak = gc_heap.heap_bytes;
   }
-#endif
 }
 
 /* A mutator thread's collector state: gc_thread, thread-local, defined
@@ -2072,6 +2079,47 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * that holds mature lines is never evacuated: it cannot be freed. */
 #ifndef SPLUS_SPARSE_LINES
 #define SPLUS_SPARSE_LINES 128
+#endif
+/* A young collection's blocks with mature lines (recycled blocks whose
+ * holes young allocation took): their young survivors were promoted where
+ * they lay at their first survival, so a short-lived holder allocated
+ * there (a per-run work object built across a collection) became old at
+ * once, and, dead, kept the young storage stored into it after that
+ * through the remembered set until a full collection (Compress::LZWDecode:
+ * 479 full collections, 2.1 GB of large storage promoted, 14.5 MB). When
+ * the survivors fill at most MIXED_EVAC_LINES lines, an aging young
+ * collection evacuates them as a complete collection evacuates sparse
+ * ones: a first survivor ages in a survivor block and dies young
+ * (LZWDecode: no full collection, 8.3 MB, 0.76 -> 0.58 s; BWTEncode
+ * 17.2 -> 9.3 MB; Distance::NGram 12.6 -> 7.8 MB). The holes stay young
+ * allocation's. 1 by measurement against 2, 4 and every line (the
+ * complete collection's test) and against aging the survivors in place:
+ * one line copies too little to cost anything measurable (Graph::AStar,
+ * ParseMapping-Clever, LZWEncode, GameOfLife equal); 2 and 4 cost
+ * ParseMapping-Clever 0.2-0.9% instructions, every line 4% (it copied
+ * 22 MB more); aging in place held each such block out of allocation
+ * for a cycle (LZWEncode +6-8% peak) and, at every line, made the
+ * remembered set twice as busy (Graph::AStar +12%). Taking no recycled
+ * hole for a young object had the same gains but left the holes
+ * resident and unused (ParseDom-Pure +8.6%, LZWEncode +2%) and promoted
+ * Matmul's rows in whole matrices (+10%). Compress::BWTDecode-Pure reads
+ * 7.6 MB more at the peak under every one of these forms, outside the
+ * heap's count, its cause not found. */
+#ifndef MIXED_EVAC_LINES
+#define MIXED_EVAC_LINES 1
+#endif
+/* The young cycles' retention: gc_heap_return keeps resident what the
+ * last full collections' cycles used beyond the live bytes (retain_hist),
+ * which only a full collection writes; a program that runs none (above:
+ * LZWDecode once its holders die young) had a 4 MiB target at every
+ * young collection's return, gave back its per-run buffers' runs and
+ * faulted them in again (3,212 -> 127,658 page faults). Each young
+ * collection that returns memory now records its cycle's use beyond the
+ * heap (GcHeap.young_keep, the larger of it and the last value less
+ * 1/YOUNG_RETAIN_DECAY), and the return keeps that too (LZWDecode 1,677
+ * faults). */
+#ifndef YOUNG_RETAIN_DECAY
+#define YOUNG_RETAIN_DECAY 8
 #endif
 /* Block.kept under S+ during a young collection: the block holds a young
  * object named imprecisely (it stays in place), it is evacuated, or it
