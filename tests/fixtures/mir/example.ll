@@ -34,25 +34,24 @@ alloca:
 
 bb0:
   %t0 = load ptr, ptr %_1.self, align 8, !tbaa !9
-  %t1 = icmp eq ptr %t0, null
-  br i1 %t1, label %bb0.s0.cont, label %bb0.s0.test
+  br i1 false, label %bb0.s0.cont, label %bb0.s0.test
 
 bb0.s0.test:
-  %t2 = getelementptr inbounds i8, ptr %t0, i64 -2
-  %t3 = load i16, ptr %t2, align 2
-  %t4 = and i16 %t3, -32720
-  %t5 = icmp ugt i16 %t4, -32768
-  br i1 %t5, label %bb0.s0.cont, label %bb0.s0.call
+  %t1 = getelementptr inbounds i8, ptr %t0, i64 -2
+  %t2 = load i16, ptr %t1, align 2
+  %t3 = and i16 %t2, -32720
+  %t4 = icmp ugt i16 %t3, -32768
+  br i1 %t4, label %bb0.s0.cont, label %bb0.s0.call
 
 bb0.s0.call:
   call void @avant_barrier(ptr %t0)
   br label %bb0.s0.cont
 
 bb0.s0.cont:
-  %t6 = load ptr, ptr %_2.name, align 8, !tbaa !9
-  %t7 = load ptr, ptr %_1.self, align 8, !tbaa !9
-  %t8 = getelementptr inbounds %"main.Box", ptr %t7, i32 0, i32 0
-  store ptr %t6, ptr %t8, align 8, !tbaa !11
+  %t5 = load ptr, ptr %_2.name, align 8, !tbaa !9
+  %t6 = load ptr, ptr %_1.self, align 8, !tbaa !9
+  %t7 = getelementptr inbounds %"main.Box", ptr %t6, i32 0, i32 0
+  store ptr %t5, ptr %t7, align 8, !tbaa !16
   ret void
 }
 
@@ -143,41 +142,40 @@ bb1:
   store ptr %t11, ptr %t12, align 8
   %t13 = getelementptr inbounds i8, ptr %gcf, i64 24
   %t14 = load ptr, ptr %t13, align 8, !tbaa !9
-  %t15 = icmp eq ptr %t14, null
-  br i1 %t15, label %bb1.s1.cont, label %bb1.s1.test
+  br i1 false, label %bb1.s1.cont, label %bb1.s1.test
 
 bb1.s1.test:
-  %t16 = getelementptr inbounds i8, ptr %t14, i64 -2
-  %t17 = load i16, ptr %t16, align 2
-  %t18 = and i16 %t17, -32720
-  %t19 = icmp ugt i16 %t18, -32768
-  br i1 %t19, label %bb1.s1.cont, label %bb1.s1.call
+  %t15 = getelementptr inbounds i8, ptr %t14, i64 -2
+  %t16 = load i16, ptr %t15, align 2
+  %t17 = and i16 %t16, -32720
+  %t18 = icmp ugt i16 %t17, -32768
+  br i1 %t18, label %bb1.s1.cont, label %bb1.s1.call
 
 bb1.s1.call:
   call void @avant_barrier(ptr %t14)
   br label %bb1.s1.cont
 
 bb1.s1.cont:
-  %t20 = getelementptr inbounds i8, ptr %gcf, i64 32
-  %t21 = load ptr, ptr %t20, align 8, !tbaa !9
-  %t22 = getelementptr inbounds i8, ptr %gcf, i64 24
-  %t23 = load ptr, ptr %t22, align 8, !tbaa !9
-  %t24 = getelementptr inbounds %"main.Box", ptr %t23, i32 0, i32 0
-  store ptr %t21, ptr %t24, align 8, !tbaa !11
+  %t19 = getelementptr inbounds i8, ptr %gcf, i64 32
+  %t20 = load ptr, ptr %t19, align 8, !tbaa !9
+  %t21 = getelementptr inbounds i8, ptr %gcf, i64 24
+  %t22 = load ptr, ptr %t21, align 8, !tbaa !9
+  %t23 = getelementptr inbounds %"main.Box", ptr %t22, i32 0, i32 0
+  store ptr %t20, ptr %t23, align 8, !tbaa !16
   br label %bb2
 
 bb2:
-  %t25 = getelementptr inbounds i8, ptr %gcf, i64 24
-  %t26 = load ptr, ptr %t25, align 8, !tbaa !9
-  %t27 = getelementptr inbounds %"main.Box", ptr %t26, i32 0, i32 0
-  %t28 = load ptr, ptr %t27, align 8, !tbaa !11
-  %t29 = getelementptr inbounds i8, ptr %gcf, i64 16
-  store ptr %t28, ptr %t29, align 8, !tbaa !9
-  %t30 = load ptr, ptr %gcf, align 8
-  store volatile ptr %t30, ptr @avant_gc_top, align 8
-  %t31 = getelementptr inbounds i8, ptr %gcf, i64 16
-  %t32 = load ptr, ptr %t31, align 8
-  ret ptr %t32
+  %t24 = getelementptr inbounds i8, ptr %gcf, i64 24
+  %t25 = load ptr, ptr %t24, align 8, !tbaa !9
+  %t26 = getelementptr inbounds %"main.Box", ptr %t25, i32 0, i32 0
+  %t27 = load ptr, ptr %t26, align 8, !tbaa !16
+  %t28 = getelementptr inbounds i8, ptr %gcf, i64 16
+  store ptr %t27, ptr %t28, align 8, !tbaa !9
+  %t29 = load ptr, ptr %gcf, align 8
+  store volatile ptr %t29, ptr @avant_gc_top, align 8
+  %t30 = getelementptr inbounds i8, ptr %gcf, i64 16
+  %t31 = load ptr, ptr %t30, align 8
+  ret ptr %t31
 }
 
 define i32 @main(i32 %a1, ptr %a2) #0 {
@@ -331,3 +329,5 @@ attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
 !12 = !{i32 0, i32 -2147483648}
 !13 = !{}
 !14 = !{i32 1, i32 -2147483647}
+!15 = !{!"object field 0", !10, i64 0}
+!16 = !{!15, !15, i64 0}

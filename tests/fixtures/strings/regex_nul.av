@@ -1,0 +1,203 @@
+import std.regex
+
+// A literal pattern is compiled into the program as a scanner; the same
+// pattern built at run time is PCRE2's. Both must give the same answers on
+// every text, a text holding NUL bytes included (before, inside and after a
+// match, and a view of such a text): find, every match, count, replace and
+// split, with the first group's span.
+
+fn show(s: String): String {
+  b = Buf.new()
+  for i in 0..s.size {
+    c = s[i]
+    if c == 0 {
+      b.push_str("\\0")
+    } else {
+      b.push_byte(c)
+    }
+  }
+  b.to_s()
+}
+
+fn text(parts: Array(String)): String {
+  // Parts joined by a NUL byte each.
+  b = Buf.new()
+  for i in 0..parts.size {
+    if i > 0 {
+      b.push_byte(0)
+    }
+    b.push_str(parts[i])
+  }
+  b.to_s()
+}
+
+fn texts: Array(String) {
+  t: Array(String) = []
+  t.push(text(["ab", "cd42"]))
+  t.push(text(["b", "b"]))
+  t.push(text(["a", "c"]))
+  t.push(text(["42", ""]))
+  t.push(text(["bc", ""]))
+  t.push(text(["", ""]))
+  t.push("")
+  t.push(text(["", "", "x", "yz", ""]))
+  t.push(text(["zz", "yz", "x"]))
+  t.push(text(["bbc", "cd", "q7"]))
+  t.push(text(["", "abc9 bbc cd z"]))
+  t.push("abc42 b c bbc yz cd")
+  long = text(["xx", "x", "x"])
+  t.push(long[1..long.size])
+  t
+}
+
+fn answers(r: regex.Regex, s: String): String {
+  b = Buf.new()
+  if m = r.find(s) {
+    b.push_str("find ${m.start}..${m.end}")
+    if sp = m.span(1) {
+      b.push_str(" g1 ${sp.lo}..${sp.hi}")
+    }
+  } else {
+    b.push_str("find nil")
+  }
+  if m = r.find(s, 2) {
+    b.push_str(" from2 ${m.start}..${m.end}")
+  } else {
+    b.push_str(" from2 nil")
+  }
+  b.push_str(" all")
+  it = r.matches(s)
+  while m = it.next() {
+    b.push_str(" ${m.start}..${m.end}")
+  }
+  b.push_str(" count ${r.count(s)}")
+  b.push_str(" replace ${show(r.replace(s, "#"))}")
+  b.push_str(" split")
+  for p in r.split(s) {
+    b.push_str(" [${show(p)}]")
+  }
+  b.to_s()
+}
+
+fn compare(name: String, lit: regex.Regex, dyn: regex.Regex, n: Int, d: Int): Int {
+  differ = d
+  for s in texts() {
+    a = answers(lit, s)
+    w = answers(dyn, s)
+    if a != w {
+      puts("${name} on ${show(s)}:")
+      puts("  literal ${a}")
+      puts("  runtime ${w}")
+      differ += 1
+    }
+  }
+  differ
+}
+
+fn main {
+  cases = 0
+  differ = 0
+  q0 = "[0-9]+"
+  q0 = q0 + ""
+  if lit = regex.Regex.compile("[0-9]+") {
+    if dyn = regex.Regex.compile(q0) {
+      differ = compare("[0-9]+", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q1 = "[^a]+"
+  q1 = q1 + ""
+  if lit = regex.Regex.compile("[^a]+") {
+    if dyn = regex.Regex.compile(q1) {
+      differ = compare("[^a]+", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q2 = "a.c"
+  q2 = q2 + ""
+  if lit = regex.Regex.compile("a.c") {
+    if dyn = regex.Regex.compile(q2) {
+      differ = compare("a.c", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q3 = "\\D+"
+  q3 = q3 + ""
+  if lit = regex.Regex.compile("\\D+") {
+    if dyn = regex.Regex.compile(q3) {
+      differ = compare("\\D+", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q4 = "\\S+"
+  q4 = q4 + ""
+  if lit = regex.Regex.compile("\\S+") {
+    if dyn = regex.Regex.compile(q4) {
+      differ = compare("\\S+", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q5 = "x|yz"
+  q5 = q5 + ""
+  if lit = regex.Regex.compile("x|yz") {
+    if dyn = regex.Regex.compile(q5) {
+      differ = compare("x|yz", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q6 = "(b+)c"
+  q6 = q6 + ""
+  if lit = regex.Regex.compile("(b+)c") {
+    if dyn = regex.Regex.compile(q6) {
+      differ = compare("(b+)c", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q7 = "c(d)"
+  q7 = q7 + ""
+  if lit = regex.Regex.compile("c(d)") {
+    if dyn = regex.Regex.compile(q7) {
+      differ = compare("c(d)", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q8 = "[a-z]+[0-9]"
+  q8 = q8 + ""
+  if lit = regex.Regex.compile("[a-z]+[0-9]") {
+    if dyn = regex.Regex.compile(q8) {
+      differ = compare("[a-z]+[0-9]", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q9 = ".+"
+  q9 = q9 + ""
+  if lit = regex.Regex.compile(".+") {
+    if dyn = regex.Regex.compile(q9) {
+      differ = compare(".+", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q10 = "b"
+  q10 = q10 + ""
+  if lit = regex.Regex.compile("b") {
+    if dyn = regex.Regex.compile(q10) {
+      differ = compare("b", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  q11 = "[^x]*z"
+  q11 = q11 + ""
+  if lit = regex.Regex.compile("[^x]*z") {
+    if dyn = regex.Regex.compile(q11) {
+      differ = compare("[^x]*z", lit, dyn, cases, differ)
+      cases += texts().size
+    }
+  }
+  s = text(["ab", "cd42"])
+  if r = regex.Regex.compile("[0-9]+") {
+    if m = r.find(s) {
+      puts("[0-9]+ on ab\\0cd42: ${m.start}..${m.end}")
+    }
+  }
+  puts("${cases} cases, ${differ} differ")
+}

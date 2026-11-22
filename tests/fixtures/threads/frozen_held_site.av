@@ -1,0 +1,34 @@
+// A program that spawns and also has a method call that freezes the
+// Array holding its receiver (Pos.tally changes its receiver and is
+// handed the Array): there a change the generated code tests on a frozen
+// Array asks the runtime whose freeze it is. Here a task's freeze holds
+// the Array, so the change through another name traps as a task's
+// freeze, at the change's own file and line, after the program's output.
+import std.sync
+
+struct Pos {
+  x: Int
+
+  fn tally(xs: Array(Pos)) {
+    self.x = xs.size
+  }
+}
+
+fn change(ps: Array(Pos)) {
+  ps.clear()
+}
+
+fn main {
+  ps: Array(Pos) = [Pos { x: 1 }, Pos { x: 2 }]
+  ps[0].tally(ps)
+  puts(ps[0].x)
+  c = sync.Channel(Int).new()
+  h = spawn {
+    _ = c.recv()
+    ps.size
+  }
+  puts("before")
+  change(ps)
+  c.send(1)
+  puts(h.join() ?? -1)
+}

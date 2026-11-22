@@ -57,6 +57,16 @@
 #     whose time moved 10% at an equal count reads "layout?" in its
 #     `layout:` line and in floor.md's "Layout?" section; with a base table
 #     of another tree the step says it is skipped and why.
+#   only-stats, only-gate-no-build, only-unknown: WAVE_ONLY runs only the
+#     named steps (the others read `skipped`), builds C' first only when the
+#     gate is not among them, ends `WAVE PARTIAL GREEN` and never `WAVE FINAL`,
+#     and refuses a name that is no step;
+#   beside-merged, beside-differs: with WAVE_BESIDE=1 the goldens and the
+#     statistics run in a copy beside the gate and their lines (and a
+#     build of C') join the summary, the copy removed; when the copy's
+#     binaries are not the gate's, a `beside:` line is red;
+#   neutral-count: the neutral line counts the programs that moved outside
+#     the change (by kind) and names the first five.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -414,4 +424,76 @@ s=$w/tw2.out/SUMMARY.txt
 has '^langarena: prod rc=0 wall=[0-9.]* s; LR table' "$s" && [ ! -e "$w/tw2.out/la/twins.tsv" ] \
   && [ "$(tr '\n' ';' < "$w/tw2.log")" = "prod twins= list=;lr tasks= twins= list=;" ]
 say twins-in-the-passes $? "$(line langarena: "$s"); $(tr '\n' ';' < "$w/tw2.log" 2>/dev/null)"
+# 14. WAVE_ONLY: only the named steps run, after a build of C' when the gate
+# is not one of them; the last line says the run is partial, never a final.
+f=$(cases_fake only)
+cat > "$f/tools/letters.sh" <<'STUB'
+#!/bin/sh
+echo "letters $*" >> "$(dirname "$0")/../letters.log"; mkdir -p "$(dirname "$0")/../runtime/build"; : > "$(dirname "$0")/../runtime/build/avant_rt.o"
+STUB
+cat > "$f/tools/gcstats.sh" <<'STUB'
+#!/bin/sh
+mkdir -p "$2"; echo "stub" > "$2/a.out"; echo "stub" > "$2/a.err"
+STUB
+printf '/bin/\n/runtime/build/\n/letters.log\n' > "$f/.gitignore"
+(cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t) > /dev/null 2>&1
+final "$f" "$w/only.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=stats
+s=$w/only.out/SUMMARY.txt
+has '^cases: skipped (WAVE_ONLY=stats)$' "$s" && has '^gate: skipped (WAVE_ONLY=stats)$' "$s" && has '^goldens: skipped (WAVE_ONLY=stats)$' "$s" \
+  && has '^smoke: skipped (WAVE_ONLY=stats)$' "$s" && has '^neutral: skipped (WAVE_ONLY=stats)$' "$s" && has '^gcstats: 2 files (no base given)$' "$s" \
+  && has "^build: C' built by the letters" "$s" && [ "$(cat "$f/letters.log")" = "letters runtime b c-llvm" ] && ! has 'GATE\|^gate: pass' "$s" \
+  && has '^WAVE PARTIAL GREEN (only: stats; not a final)$' "$s" && ! has 'WAVE FINAL' "$s"
+say only-stats $? "$(tr '\n' ';' < "$s" 2>/dev/null)"
+rm -f "$f/letters.log"
+final "$f" "$w/only2.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=cases,gate
+s=$w/only2.out/SUMMARY.txt
+has '^cases: 2 files compile' "$s" && has '^gate: pass' "$s" && has '^gcstats: skipped' "$s" && [ ! -e "$f/letters.log" ] && has '^WAVE PARTIAL GREEN (only: cases,gate; not a final)$' "$s"
+say only-gate-no-build $? "$(tr '\n' ';' < "$s" 2>/dev/null)"
+final "$f" "$w/only3.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=stats,nonsense
+has 'WAVE_ONLY names .nonsense.' "$w/only3.out.log" && [ ! -e "$w/only3.out/SUMMARY.txt" ]
+say only-unknown $? "$(head -n 2 "$w/only3.out.log" 2>/dev/null | tr '\n' ';')"
+
+# 15. The neutral line counts what moved outside the change, by kind, and
+# names the first five.
+f=$(fake neutralcount)
+cat > "$f/tools/base-cache.sh" <<'STUB'
+#!/bin/sh
+mkdir -p "$(dirname "$0")/../cache/feedface"; echo "$(cd "$(dirname "$0")/.." && pwd)/cache/feedface"
+STUB
+cat > "$f/tools/neutral.sh" <<'STUB'
+#!/bin/sh
+mkdir -p "$3"; echo "sources: files 9 ll-same 6 LL-DIFF 4" > "$3/summary.txt"
+printf 'LL-DIFF a/one.av\nLL-DIFF a/two.av\nSTATUS 0->1 a/three.av\nll-same a/four.av\nLL-DIFF a/five.av\n' > "$3/result.txt"
+printf 'LL-DIFF six\nrefused-msg seven\nll-same eight\n' > "$3/la-result.txt"
+STUB
+(cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t && git branch -q base) > /dev/null 2>&1
+final "$f" "$w/ncount.out" WAVE_TMP="$w/tmp1" WAVE_BASE=base WAVE_ONLY=neutral
+has 'outside the change: 6 moved (4 sources, 2 LangArena), the first five: a/one.av a/two.av a/three.av a/five.av six ' "$w/ncount.out/SUMMARY.txt"
+say neutral-count $? "$(line neutral: "$w/ncount.out/SUMMARY.txt")"
+# 16. WAVE_BESIDE=1: the goldens and the statistics run in a copy (a detached
+# worktree of HEAD with its own build of C') while the gate runs; their lines
+# join the summary, and the copy's C' must be the gate's byte for byte.
+beside_fake() { # NAME LETTERS_BODY
+  f=$(fake "$1")
+  mkdir -p "$f/bin"; : > "$f/bin/re2c"
+  printf '#!/bin/sh\nsh tools/letters.sh runtime b c-llvm d-llvm\necho "GATE PASS (stub)"\n' > "$f/tools/gate.sh"
+  printf '#!/bin/sh\nmkdir -p bin runtime/build\n%s\n' "$2" > "$f/tools/letters.sh"
+  printf '#!/bin/sh\nmkdir -p "$2"; echo stub > "$2/a.out"; echo stub > "$2/a.err"\n' > "$f/tools/gcstats.sh"
+  printf '/bin/\n/runtime/build/\n' > "$f/.gitignore"
+  (cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m t) > /dev/null 2>&1
+  echo "$f"
+}
+f=$(beside_fake beside 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
+final "$f" "$w/beside.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
+s=$w/beside.out/SUMMARY.txt
+has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && has "^build: C' built by the letters" "$s" \
+  && has "^beside: the copy's B, C' and runtime are the gate's, byte for byte" "$s" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s" \
+  && [ ! -e "$w/beside.out/beside-tree" ] && [ "$(git -C "$f" worktree list | wc -l)" = 1 ] \
+  && [ "$(grep -c '^goldens:' "$s")" = 1 ] && [ "$(grep -c '^gcstats:' "$s")" = 1 ] && [ "$(grep -c '^build:' "$s")" = 1 ]
+say beside-merged $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-700); worktrees: $(git -C "$f" worktree list 2>/dev/null | wc -l)"
+f=$(beside_fake besidediff 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x built in $(pwd)" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
+final "$f" "$w/besidediff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
+s=$w/besidediff.out/SUMMARY.txt
+has "^beside: red (the copy's bin/avant-b bin/avant-c-llvm differ from the gate's" "$s" && has '^WAVE PARTIAL RED: beside' "$s"
+say beside-differs $? "$(line beside: "$s"); $(line WAVE "$s")"
 echo done

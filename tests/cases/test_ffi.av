@@ -58,6 +58,16 @@ fn test_ffi(c: Checks) {
   c.eq_int(ffi_rt.avant_pin_count(), base, "pin scope does not leak over 20000 rounds")
   if compiler = process.env("AVANT_COMPILER") {
     root = avant_test_root()
+    // A runtime entry a program's own lib block binds reads a string's
+    // length from its header, so a String argument reaches it flat
+    // (avant_str_flat), never as a view's bytes in place (avant_str_c_arg),
+    // which have no header.
+    vsrc = "${scratch()}/ffi-rt-view-${now_ms()}.av"
+    _ = fs.write(vsrc, "lib k {\n  fun avant_str_cmp(a: String, b: String): Int32\n}\n\nfn main {\n  a = \"hello wonderful world\"\n  v = a[16..]\n  puts(k.avant_str_cmp(v, \"world\"))\n}\n")
+    vlog = "${vsrc}.mir"
+    c.eq_int(dump_av(compiler, vsrc, vlog), 0, "a lib binding of a runtime entry dumps")
+    vmir = fs.read(vlog) ?? ""
+    c.expect(vmir.contains("call avant_str_flat(") && !vmir.contains("call avant_str_c_arg("), "a runtime entry bound by a program's lib gets its strings flat")
     stamp = now_ms()
 
     cb_src = "${scratch()}/ffi-waveg-${stamp}-cb.av"

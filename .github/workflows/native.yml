@@ -47,8 +47,8 @@
 name: native
 
 env:
-  AVANT_SEED_VERSION: v0.47.0
-  AVANT_SEED_SHA256: a2106ab597c8949b7cc68376cbc4fbf857c4c792a371147450ac1ed081dce56d
+  AVANT_SEED_VERSION: v0.48.0
+  AVANT_SEED_SHA256: 2cc56c672fa88e812b5f677407aea050813a39f63e98a15123b7b64ec57ad1fb
 
 "on":
   push:
@@ -87,7 +87,7 @@ jobs:
 
       # LLVM 22.1.8, the compiler's in-process LLVM, is LLVM's official
       # release (Ubuntu's archive has 22.1.2): tools/install-llvm.sh checks
-      # its sha256 and signature, and the job caches the 350 MB it keeps.
+      # its sha256 and signature, and the job caches the 630 MB it keeps.
       # tools/build-llvm.sh merges it with libstdc++, zlib, and zstd into
       # runtime/build/avant_llvm.o, which only the compiler links.
       - name: Prepare the LLVM directory
@@ -108,7 +108,8 @@ jobs:
         run: |
           echo "llvm: $("$LLVM_CONFIG" --version) ($LLVM_CONFIG)"
           echo "libclang (bind): $(llvm-config-20 --version)"
-          echo "cc: $(cc --version | head -n 1)"
+          echo "cc (link, compiler glue): $(cc --version | head -n 1)"
+          echo "runtime cc: $(sh runtime/build.sh --cc) ($("$(sh runtime/build.sh --cc)" --version | head -n 1))"
 
       - name: Build runtime objects
         run: sh runtime/build.sh

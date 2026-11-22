@@ -18,16 +18,108 @@
 # (a PLT entry, a C start file, a larger runtime unit): a time measured
 # across them is a time that one address cannot decide.
 #
+# Two more settings move the C code within its lines, for the sub-line
+# layouts (a program compiled with AVANT_CODE_SHIFT=K, whose own functions
+# start K bytes into their lines):
+#
+#   LAYOUT_C_SHIFT=K (1 to 63)  a compile (`-c`) is run as asked but to
+#       assembly (`-S`), K bytes of nop are put before every function's
+#       label (after its alignment; never run), and the result is
+#       assembled (a label's trailing comment, as clang writes one, is
+#       read past): each function starts K bytes after its alignment and its
+#       loops sit at other offsets of their lines, with the compiler's code
+#       itself unchanged. (gcc's -fpatchable-function-entry=K,K, which
+#       places the same nops, also changes the code: its register
+#       allocation and frames differ in 11 of the runtime's 26 objects.)
+#       LAYOUT_C_LOOPS=N adds -falign-loops=N after the compile's own
+#       flags (a second layout axis: the loops' alignment).
+#       LAYOUT_C_ASM=1 takes the same path with no nops: the object is
+#       then the plain compile's byte for byte (tools/layout-runtime.sh
+#       --check proves it). tools/layout-runtime.sh builds the runtime's
+#       objects through this.
+#   LAYOUT_RUNTIME=RTDIR  a link takes each runtime object it names
+#       (an argument .../runtime/build/NAME.o) from RTDIR/NAME.o instead:
+#       the runtime built at the program's own sub-line shift
+#       (tools/layout-runtime.sh), so the runtime's C code moves with the
+#       program's. A runtime object missing from RTDIR fails the link.
+#
 # A link that fails fails the wrapper; a shifted link that fails, too
-# (with OUT already written). Without LAYOUT_DIR the wrapper is the real
-# compiler. Exit status: the real compiler's, 2 on a bad shift.
+# (with OUT already written). Without LAYOUT_DIR, LAYOUT_RUNTIME and
+# LAYOUT_C_SHIFT the wrapper is the real compiler. Exit status: the real
+# compiler's, 2 on a bad shift or a missing runtime object.
 set -u
 real=${LAYOUT_REAL_CC:-/usr/bin/cc}
+cshift=${LAYOUT_C_SHIFT:-}
+case "$cshift" in
+  ''|0) cshift="" ;;
+  *[!0-9]*|0*) echo "layout-cc.sh: LAYOUT_C_SHIFT '$cshift' is not a number of bytes from 1 to 63" >&2; exit 2 ;;
+  *) [ "$cshift" -le 63 ] || { echo "layout-cc.sh: LAYOUT_C_SHIFT $cshift is not below 64" >&2; exit 2; } ;;
+esac
+loops=${LAYOUT_C_LOOPS:-}
+case "$loops" in ''|16|32|64) ;; *) echo "layout-cc.sh: LAYOUT_C_LOOPS '$loops' is not 16, 32 or 64" >&2; exit 2 ;; esac
 for a in "$@"; do
-  case "$a" in -c|-E|-S|--version|-v|-dumpversion|-dumpmachine|-print-*) exec "$real" "$@" ;; esac
+  case "$a" in
+    -E|-S|--version|-v|-dumpversion|-dumpmachine|-print-*) exec "$real" "$@" ;;
+  esac
+done
+for a in "$@"; do
+  if [ "$a" = -c ]; then
+    [ -n "$cshift" ] || [ -n "$loops" ] || [ -n "${LAYOUT_C_ASM:-}" ] || exec "$real" "$@"
+    obj=""; prev=""
+    for b in "$@"; do [ "$prev" = "-o" ] && obj=$b; prev=$b; done
+    [ -n "$obj" ] || { echo "layout-cc.sh: a compile with LAYOUT_C_SHIFT needs -o" >&2; exit 2; }
+    asm=$obj.layout$$.s
+    # The arguments again, -S for -c and the assembly as the output.
+    first=1; prev=""
+    for b in "$@"; do
+      [ $first = 1 ] && set --
+      first=0
+      if [ "$prev" = "-o" ]; then set -- "$@" "$asm"; prev=$b; continue; fi
+      if [ "$b" = -c ]; then set -- "$@" -S; else set -- "$@" "$b"; fi
+      prev=$b
+    done
+    "$real" "$@" ${loops:+-falign-loops=$loops} || { rm -f "$asm"; exit 1; }
+    if [ -n "$cshift" ]; then
+      awk -v k="$cshift" '
+        /^[ \t]*\.type[ \t]/ && /@function/ { n = $2; sub(/,.*/, "", n); fn[n] = 1 }
+        { l = $0; sub(/[ \t]*#.*$/, "", l); sub(/[ \t]*$/, "", l) }
+        l ~ /:$/ { n = substr(l, 1, length(l) - 1); if (n in fn) { printf "\t.skip %d, 0x90\n", k; delete fn[n] } }
+        { print }' "$asm" > "$asm.k" && mv -f "$asm.k" "$asm" || { rm -f "$asm" "$asm.k"; exit 2; }
+    fi
+    case "$("$real" --version 2> /dev/null)" in
+      *clang*)
+        # clang assembles its own assembly without the tuning a compile
+        # has, so its padding nops would be at most 10 bytes long where
+        # the compile's object has 15: its assembler is run as the driver
+        # would run it, with that one tuning feature added, and the
+        # object is again the plain compile's byte for byte.
+        line=$("$real" -### -c -o "$obj" "$asm" 2>&1 | tail -n 1)
+        case "$line" in *'"-cc1as"'*'"-target-cpu"'*) ;; *) echo "layout-cc.sh: $real -### names no assembler run" >&2; rm -f "$asm"; exit 2 ;; esac
+        line=$(printf '%s\n' "$line" | sed 's/"-target-cpu" "\([^"]*\)"/"-target-cpu" "\1" "-target-feature" "+fast-15bytenop"/')
+        eval "$line" || { rm -f "$asm"; exit 1; } ;;
+      *) "$real" -c -o "$obj" "$asm" || { rm -f "$asm"; exit 1; } ;;
+    esac
+    rm -f "$asm"
+    exit 0
+  fi
 done
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out=$a; prev=$a; done
+rt=${LAYOUT_RUNTIME:-}
+if [ -n "$rt" ] && [ -n "$out" ]; then
+  # The arguments again, each runtime object from RTDIR.
+  first=1
+  for a in "$@"; do
+    [ $first = 1 ] && set --
+    first=0
+    case "$a" in
+      */runtime/build/*.o)
+        [ -f "$rt/${a##*/}" ] || { echo "layout-cc.sh: $rt/${a##*/}: no such runtime object (tools/layout-runtime.sh builds them)" >&2; exit 2; }
+        set -- "$@" "$rt/${a##*/}" ;;
+      *) set -- "$@" "$a" ;;
+    esac
+  done
+fi
 [ -n "${LAYOUT_DIR:-}" ] && [ -n "$out" ] || exec "$real" "$@"
 "$real" "$@" || exit $?
 dir=$LAYOUT_DIR

@@ -93,6 +93,26 @@ static void on_fatal(const char *reason) {
   exit(70);
 }
 
+/* A measurement knob for the layout tools, beside AVANT_CODE_SHIFT below:
+ * AVANT_LOOP_ALIGN=16 or 64 aligns innermost loop headers to that many
+ * bytes instead of 32, a second layout axis. With loops on 32 bytes, a loop
+ * sits at offset 0 or 32 of its line whatever its function's shift, so the
+ * sub-line layouts give an aligned loop two placements; on 16 it takes the
+ * other two. Unset, empty or 32 changes nothing; any other value fails the
+ * compile with a message (finish_module). */
+static int g_loop_align = 0;
+
+static int loop_align(void) {
+  if (!g_loop_align) {
+    const char *v = getenv("AVANT_LOOP_ALIGN");
+    g_loop_align = 32;
+    if (v && v[0]) {
+      g_loop_align = strcmp(v, "16") == 0 ? 16 : strcmp(v, "32") == 0 ? 32 : strcmp(v, "64") == 0 ? 64 : -1;
+    }
+  }
+  return g_loop_align;
+}
+
 /* Initializes the native (x86-64) target once. 0 or AVANT_LLVM_TARGET. */
 int64_t avant_llvm_init(void) {
   if (!g_initialized) {
@@ -110,10 +130,21 @@ int64_t avant_llvm_init(void) {
      * loop cost 13% when it did. LLVM (20 to 23) offers no per-target-machine
      * setting for it in the C API (llc's -align-loops lives in its own
      * flags library), so it is this X86 option, set once per process;
-     * the compiler compiles nothing else with this LLVM. */
+     * the compiler compiles nothing else with this LLVM.
+     *
+     * Switches: a jump table only from 9 cases (LLVM's default is 4).
+     * A dispatch of 4 to 8 cases on data the branch predictor cannot
+     * learn (an interpreter's next operation, a parser's token kind) ran
+     * far slower through the table's indirect jump than as LLVM's tree
+     * of compares: 29% to 40% on two interpreter loops, 3% on a third,
+     * at every code layout, for a few more instructions. Larger switches
+     * keep their tables: no measurement covers them yet. */
     {
-      static const char *const argv[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=5"};
-      LLVMParseCommandLineOptions(2, argv, "avant");
+      static const char *const argv[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=5", "-min-jump-table-entries=9"};
+      static const char *const argv16[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=4", "-min-jump-table-entries=9"};
+      static const char *const argv64[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=6", "-min-jump-table-entries=9"};
+      int a = loop_align();
+      LLVMParseCommandLineOptions(3, a == 16 ? argv16 : a == 64 ? argv64 : argv, "avant");
     }
     g_initialized = 1;
   }
@@ -248,6 +279,10 @@ static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t leve
   LLVMTargetMachineRef tm = NULL;
   int32_t status = AVANT_LLVM_OK;
 
+  if (loop_align() < 0) {
+    set_error("", "AVANT_LOOP_ALIGN must be 16, 32 or 64 bytes (or unset: 32)");
+    return AVANT_LLVM_TARGET;
+  }
   code_shift();
   if (g_code_shift_bad) {
     set_error("", "AVANT_CODE_SHIFT must be a number of bytes from 1 to 63 (or 0, unset: no shift)");

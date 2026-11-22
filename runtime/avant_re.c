@@ -196,20 +196,14 @@ __attribute__((weak)) void *avant_re2c_handle(avant_int id) {
   return NULL;
 }
 
-__attribute__((weak)) int32_t avant_re2c_count(int32_t id, const char *s) {
-  (void)id;
-  (void)s;
-  return 0;
-}
-
 __attribute__((weak)) int32_t avant_re2c_groups(int32_t id) {
   (void)id;
   return 0;
 }
 
 __attribute__((weak)) int32_t avant_re2c_find_into(void *re, const char *s,
-                                                   int32_t from,
-                                                   int32_t *spans,
+                                                   avant_int from,
+                                                   avant_int *spans,
                                                    int32_t max_pairs) {
   (void)re;
   (void)s;
@@ -528,8 +522,9 @@ avant_int avant_regex_group_index(void *handle, const char *name) {
 
 int64_t avant_regex_find(void *handle, const char *s, avant_int from);
 
-/* Offsets travel as int32_t: in g_last_spans, the two halves of a packed
- * pair (avant_regex_span_pair) and the re2c scanners' spans. That holds
+/* Offsets travel as int32_t in g_last_spans and the two halves of a packed
+ * pair (avant_regex_span_pair); the re2c scanners compute them as
+ * avant_int and they are narrowed only there. That holds
  * because no text is longer than a String may be (AVANT_SIZE_MAX, every
  * String is made through a check of it, a C string result included), so
  * every offset, the end of the text included, fits; widening String
@@ -540,10 +535,11 @@ _Static_assert(AVANT_SIZE_MAX <= INT32_MAX,
 /* The text a compiled pattern scans (std.regex's find, span and count take
  * the program's String as it is: these calls never collect). PCRE2 reads
  * the bytes and their count, a view's in place. A pattern compiled into
- * the program (re2c) reads a string object to its terminator: a flat
- * string is passed as it is, and a view as a terminated copy in C memory
- * with a string header (RE_TEXT_FREE gives it back), so nothing here
- * allocates on the heap. */
+ * the program (re2c) reads a string object's bytes up to its count, NUL
+ * bytes included, and needs the terminator after them as its end mark: a
+ * flat string is passed as it is, and a view as a terminated copy in C
+ * memory with a string header (RE_TEXT_FREE gives it back), so nothing
+ * here allocates on the heap. */
 typedef struct {
   const char *bytes;
   size_t n;
@@ -722,7 +718,7 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
     s = AVANT_STR_EMPTY;
   }
   if (avant_re2c_owns(handle)) {
-    int32_t local[4];
+    avant_int local[4];
     int32_t groups = avant_re2c_groups((int32_t)(uintptr_t)handle);
     int32_t found;
     local[0] = local[1] = local[2] = local[3] = -1;
@@ -734,7 +730,7 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
       g_re_match_err = PCRE2_ERROR_NOMEMORY;
       return -2;
     }
-    found = avant_re2c_find_into(handle, re_text_obj(&txt, s), from < 0 ? 0 : (int32_t)from, local, 2);
+    found = avant_re2c_find_into(handle, re_text_obj(&txt, s), from < 0 ? 0 : from, local, 2);
     re_text_free(&txt);
     if (!found) {
       return -1;
@@ -743,11 +739,11 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
     if (pairs > 64) {
       pairs = 64;
     }
-    g_last_spans[0] = local[0];
-    g_last_spans[1] = local[1];
+    g_last_spans[0] = (int32_t)local[0];
+    g_last_spans[1] = (int32_t)local[1];
     if (pairs > 1) {
-      g_last_spans[2] = local[2];
-      g_last_spans[3] = local[3];
+      g_last_spans[2] = (int32_t)local[2];
+      g_last_spans[3] = (int32_t)local[3];
     }
     g_last_pairs = pairs;
     return avant_regex_span_pair(0);
@@ -824,20 +820,6 @@ static inline __attribute__((always_inline)) avant_int re_count(void *handle, co
   }
   if (!s) {
     s = AVANT_STR_EMPTY;
-  }
-  if (avant_re2c_owns(handle)) {
-    ReText txt;
-    int32_t got;
-    if (!re_text(&txt, s)) {
-      if (!trap) {
-        g_re_match_err = PCRE2_ERROR_NOMEMORY;
-        return -1;
-      }
-      re_trap("regex.Regex.count", PCRE2_ERROR_NOMEMORY);
-    }
-    got = avant_re2c_count((int32_t)(uintptr_t)handle, re_text_obj(&txt, s));
-    re_text_free(&txt);
-    return got;
   }
   e = (ReEntry *)handle;
   /* PCRE2 reads the bytes by their count: a view's in place. */

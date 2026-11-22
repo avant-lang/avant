@@ -1,0 +1,162 @@
+import harness
+import backends
+import std.process
+
+// Register tiles of loop nests (compiler/mir/tile.av): a nest over
+// independent outputs with an inner reduction is computed several
+// outputs at a time, each output summing its own products in its own
+// order, so its results are the plain loop's.
+//
+// Where two NaNs meet (a NaN product added to a NaN sum, or a NaN
+// times a NaN), which one's sign and payload the result carries is the
+// machine's choice of operand order (a load folded into a multiply, a
+// packed multiply), not the source's: the fixture counts those cases on
+// its last line and the test does not compare it (the plain loop's own
+// NaN bits differ between --cpu levels and between --debug and
+// --release).
+//
+// tests/fixtures/llvm/tiles.av compares a tiled depth-3 nest (matrix
+// multiply) and a tiled depth-2 nest (a matrix-vector product) with the
+// same nests written so that they are not tiled (a call in the store),
+// over 2,058 cases: sizes from empty to 17 that are not multiples of any
+// tile's sides, inputs with NaN, the infinities, both zeros and
+// subnormals, and output rows that are input rows (the tile's guard
+// sends those to the plain loop). It runs at --cpu=v2 and v3 (whose
+// tiles differ), at --debug, and under the collector's environments.
+// The fixture's .ll shows the tiles are there: at the default level the
+// depth-3 nest holds 20 more multiplies than its untiled twin (a 4 x 4
+// tile and the 4-row tail of its columns) and the depth-2 nest 4 more.
+// tests/fixtures/llvm/tiles_trap.av: a row shorter than the inner
+// bound; the plain loop runs and traps at the same index, after the
+// first product's rows were written.
+// tests/fixtures/llvm/tiles_threads.av, a program that spawns: its loops
+// over arrays only one task holds, or frozen ones, are versioned and its
+// nests tiled as in one that does not (workers' bands from shared
+// operands, the sender's own product beside a task reading them), and
+// the bits agree; multiplying into rows a running task reads, the tile
+// sees them frozen, the plain loop runs and the first store traps,
+// naming its site.
+
+fn ll_fn(ll: String, sym: String): String {
+  key = "@\"${sym}\"("
+  out = Buf.new()
+  inside = false
+  for line in ll.split("\n") {
+    if !inside && line.size > 7 && line[0] == 100 && line.contains(key) {
+      inside = true
+    }
+    if inside {
+      out.push_str(line)
+      out.push_str("\n")
+      if line == "}" {
+        return out.to_s()
+      }
+    }
+  }
+  ""
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_STRESS=1"]
+}
+
+fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/llvm/tiles.av"
+  ll = "${dir}/tiles.ll"
+  c.eq_int(emit_ll(compiler, src, ll, "${dir}/tiles.ll.log"), 0, "tiles.av: __emit-ll")
+  text = log_text(ll)
+  mm = ll_fn(text, "av.tiles/mm").count("fmul double")
+  mm_ref = ll_fn(text, "av.tiles/mm_ref").count("fmul double")
+  mv = ll_fn(text, "av.tiles/mv").count("fmul double")
+  mv_ref = ll_fn(text, "av.tiles/mv_ref").count("fmul double")
+  c.expect(mm_ref > 0 && mv_ref > 0, "tiles.av: the untiled nests multiply")
+  c.eq_int(mm, mm_ref + 20, "tiles.av: the depth-3 nest is tiled (4 x 4 at the default level, and its tail of columns)")
+  c.eq_int(mv, mv_ref + 4, "tiles.av: the depth-2 nest is tiled (4 rows)")
+
+  want = "2058 cases, 0 differ\nNaN outputs of the 64 square: 1871\n"
+  forms = [["--release", "--cpu=v2"], ["--release", "--cpu=v3"], ["--debug"]]
+  names = ["v2", "v3", "debug"]
+  jobs: Array(HJob) = []
+  for f in 0..forms.size {
+    a: Array(String) = ["compile", src, "${dir}/tiles-${names[f]}"]
+    a.concat(forms[f])
+    jobs.push(env_job("", compiler, a, "${dir}/tiles-${names[f]}.log"))
+  }
+  tsrc = "${root}/tests/fixtures/llvm/tiles_trap.av"
+  jobs.push(env_job("", compiler, ["compile", tsrc, "${dir}/tiles-trap", "--release", "--cpu=v3"], "${dir}/tiles-trap.log"))
+  hsrc = "${root}/tests/fixtures/llvm/tiles_threads.av"
+  jobs.push(env_job("", compiler, ["compile", hsrc, "${dir}/tiles-threads", "--release", "--cpu=v3"], "${dir}/tiles-threads.log"))
+  run_waves(jobs)
+  for f in 0..jobs.size {
+    c.eq_int(jobs[f].code, 0, "tiles: compile ${f} exits 0")
+  }
+  runs: Array(HJob) = []
+  for n in names {
+    runs.push(run_job(dir, "tiles-${n}", "tiles-${n}.b"))
+  }
+  envs = gc_envs()
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "tiles-v3", "tiles-v3.g${e}", envs[e]))
+  }
+  runs.push(run_job(dir, "tiles-trap", "tiles-trap.b"))
+  tw = runs.size
+  runs.push(run_job(dir, "tiles-threads", "tiles-threads.b"))
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "tiles-threads", "tiles-threads.g${e}", envs[e]))
+  }
+  ta: Array(String) = ["-c", "cd ${dir} && exec ./tiles-threads trap > tiles-threads.t.out 2> tiles-threads.t.err < /dev/null"]
+  runs.push(HJob.new("/bin/sh", ta, "${dir}/tiles-threads.t.sh.log"))
+  run_waves(runs)
+  for f in 0..names.size {
+    c.eq_int(runs[f].code, 0, "tiles.av (${names[f]}): exit 0")
+    c.expect(log_text("${dir}/tiles-${names[f]}.b.out").starts_with(want), "tiles.av (${names[f]}): every tiled output is the plain loop's in every non-NaN bit")
+  }
+  for e in 0..envs.size {
+    r = runs[names.size + e]
+    c.eq_int(r.code, 0, "tiles.av (v3) under ${envs[e]}: exit 0")
+    c.expect(log_text("${dir}/tiles-v3.g${e}.out").starts_with(want), "tiles.av (v3) under ${envs[e]}: every tiled output is the plain loop's in every non-NaN bit")
+    c.eq_str(log_text("${dir}/tiles-v3.g${e}.err"), "", "tiles.av (v3) under ${envs[e]}: nothing on stderr")
+  }
+  tr = runs[tw - 1]
+  c.eq_int(tr.code, 1, "tiles_trap.av: the short row traps")
+  c.eq_str(log_text("${dir}/tiles-trap.b.out"), "1210.0\n-37510.0\n", "tiles_trap.av: the first product's outputs, then nothing")
+  c.expect(log_text("${dir}/tiles-trap.b.err").contains("index 9 out of bounds (size 9)"), "tiles_trap.av: the plain loop's trap, at the short row's end")
+
+  hll = "${dir}/tiles_threads.ll"
+  c.eq_int(emit_ll(compiler, hsrc, hll, "${dir}/tiles_threads.ll.log"), 0, "tiles_threads.av: __emit-ll")
+  htext = log_text(hll)
+  hmm_ref = ll_fn(htext, "av.tiles_threads/mm_ref").count("fmul double")
+  c.expect(hmm_ref > 0, "tiles_threads.av: the untiled nest multiplies")
+  c.eq_int(ll_fn(htext, "av.tiles_threads/mm").count("fmul double"), hmm_ref + 20, "tiles_threads.av: the sender's nest is tiled in a program that spawns")
+  c.eq_int(ll_fn(htext, "av.tiles_threads/band_tiled").count("fmul double"), hmm_ref + 20, "tiles_threads.av: a worker's band is tiled")
+  hwant = "bands alike: 4 of 4\n2.980586223821665\n74\ntrue\n"
+  c.eq_int(runs[tw].code, 0, "tiles_threads.av: exit 0")
+  c.eq_str(log_text("${dir}/tiles-threads.b.out"), hwant, "tiles_threads.av: the tiled bands and product are the plain loop's")
+  for e in 0..envs.size {
+    c.eq_int(runs[tw + 1 + e].code, 0, "tiles_threads.av under ${envs[e]}: exit 0")
+    c.eq_str(log_text("${dir}/tiles-threads.g${e}.out"), hwant, "tiles_threads.av under ${envs[e]}: the tiled bands and product are the plain loop's")
+  }
+  tt = runs[runs.size - 1]
+  c.eq_int(tt.code, 1, "tiles_threads.av trap: the store into rows a running task reads traps")
+  c.eq_str(log_text("${dir}/tiles-threads.t.out"), "before\n", "tiles_threads.av trap: before the first store")
+  c.expect(log_text("${dir}/tiles-threads.t.err").contains("an element store on an array a running task reads") && log_text("${dir}/tiles-threads.t.err").contains("before changing the array at tiles_threads.av:28:9"), "tiles_threads.av trap: the plain loop's trap at the store's site")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_loop_tiles.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_tiles(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

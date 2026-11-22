@@ -23,6 +23,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The address conversions are called through their plain symbols. With
+   _FORTIFY_SOURCE, glibc 2.42's headers route inet_pton and inet_ntop to
+   __inet_pton_chk and __inet_ntop_chk, which exist only from glibc 2.42,
+   and the runtime is linked into every user program, which must run on
+   glibc 2.38. The fortified forms only check that the destination is as
+   large as the address family needs; both calls below pass destinations
+   sized by the family (struct in_addr, INET6_ADDRSTRLEN with its size). */
+extern int avant_inet_pton(int af, const char *restrict src, void *restrict dst) __asm__("inet_pton");
+extern const char *avant_inet_ntop(int af, const void *restrict src, char *restrict dst,
+                                   socklen_t size) __asm__("inet_ntop");
+
 /* std.http backing: a cleartext HTTP/1.1 server and a blocking fetch
  * primitive on uSockets, with picohttpparser for request and response
  * parsing. The Avant side owns routing and handler values; this file
@@ -1504,7 +1515,7 @@ char *avant_http_headers_peer(const char *data) {
   }
   p = (const unsigned char *)data + n - 17;
   if ((p[0] != 4 && p[0] != 16) ||
-      !inet_ntop(p[0] == 4 ? AF_INET : AF_INET6, p + 1, text, sizeof text)) {
+      !avant_inet_ntop(p[0] == 4 ? AF_INET : AF_INET6, p + 1, text, sizeof text)) {
     return avant_str_empty();
   }
   return make_string(text, strlen(text));
@@ -4268,7 +4279,8 @@ static int32_t pick_ephemeral_port(const char *host) {
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (strcmp(host, "127.0.0.1") != 0 && strcmp(host, "localhost") != 0) {
     struct in_addr ia;
-    if (inet_pton(AF_INET, host, &ia) == 1) {
+    _Static_assert(sizeof ia == 4, "an IPv4 address is 4 bytes");
+    if (avant_inet_pton(AF_INET, host, &ia) == 1) {
       addr.sin_addr = ia;
     }
   }

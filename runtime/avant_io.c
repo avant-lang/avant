@@ -631,11 +631,41 @@ static int32_t exit_code_of(int st) {
   return 1;
 }
 
-/* The child a blocking process_run waits on, and the live jobs (each the
- * leader of its own process group). The scratch signal handler reads
- * these to stop children before it removes the directory. */
+/* The children blocking runs wait on, one slot per waiting thread (each
+ * task in a process.run has its own), and the live jobs (each the leader
+ * of its own process group). The scratch signal handler reads these to
+ * stop children before it removes the directory. A slot is claimed and
+ * given back with atomics, so the handler, which only reads, sees each
+ * pid whole; g_waits_hi bounds its scan. */
 #define JOB_MAX 1024
-static volatile pid_t g_wait_child;
+#define WAIT_MAX 1100
+static pid_t g_waits[WAIT_MAX];
+static int32_t g_waits_hi;
+static __thread int32_t t_wait_slot = -1;
+
+static void wait_begin(pid_t pid) {
+  int32_t i;
+  for (i = 0; i < WAIT_MAX; i++) {
+    pid_t z = 0;
+    if (__atomic_compare_exchange_n(&g_waits[i], &z, pid, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+      int32_t hi = __atomic_load_n(&g_waits_hi, __ATOMIC_RELAXED);
+      while (hi < i + 1 && !__atomic_compare_exchange_n(&g_waits_hi, &hi, i + 1, 1, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+      }
+      t_wait_slot = i;
+      return;
+    }
+  }
+  /* More threads waiting at once than slots: this child is not stopped
+   * by a crash (the pool has at most 1024 threads, so never in practice). */
+  t_wait_slot = -1;
+}
+
+static void wait_end(void) {
+  if (t_wait_slot >= 0) {
+    __atomic_store_n(&g_waits[t_wait_slot], 0, __ATOMIC_SEQ_CST);
+    t_wait_slot = -1;
+  }
+}
 static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
@@ -663,18 +693,18 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
     child_exec(path, argv, out_path, err_path, 0, no_stdin, -1);
   }
   free_argv(argv);
-  g_wait_child = pid;
+  wait_begin(pid);
   /* The process wait is native (rule 2). */
   avant_gc_native_begin();
   while (waitpid(pid, &st, 0) < 0) {
     if (errno != EINTR) {
-      g_wait_child = 0;
+      wait_end();
       avant_gc_native_end();
       return 1;
     }
   }
   avant_gc_native_end();
-  g_wait_child = 0;
+  wait_end();
   return exit_code_of(st);
 }
 
@@ -725,7 +755,7 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   }
   close(fds[1]);
   free_argv(argv);
-  g_wait_child = pid;
+  wait_begin(pid);
   /* The pipe read and the process wait are native (a native wait
    * touches C memory only). */
   avant_gc_native_begin();
@@ -738,7 +768,7 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   close(fds[0]);
   while (waitpid(pid, &st, 0) < 0) {
     if (errno != EINTR) {
-      g_wait_child = 0;
+      wait_end();
       g_sys_errno = errno;
       g_sys_stage = 2;
       avant_gc_native_end();
@@ -746,7 +776,7 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
     }
   }
   avant_gc_native_end();
-  g_wait_child = 0;
+  wait_end();
   if (got == (ssize_t)sizeof msg) {
     g_sys_stage = msg[0];
     g_sys_errno = msg[1];
@@ -1049,7 +1079,7 @@ static int cmp_names(const void *a, const void *b) {
 }
 
 /* The names in directory path, except . and .., sorted, in C memory:
- * 0 and *out/*np, or the errno that stopped the listing (a name that
+ * 0 with *out and *np set, or the errno that stopped the listing (a name that
  * cannot be stored is ENOMEM, never a shorter list). */
 /* gc-lint: no reference word (names is malloc'ed C memory). */
 static int list_names(const char *path, char ***out, int32_t *np) {
@@ -1311,24 +1341,34 @@ static void tmp_finish(void) {
   tmp_remove();
 }
 
-/* Stops what this process started before the directory goes:
- * SIGTERM to every job's group and to the child a blocking process_run
- * waits on, then reap them for up to about two seconds, then SIGKILL
- * whatever is left and reap briefly. Async-signal-safe calls only. */
+/* Stops what this process started before it ends by a crash, a trap
+ * or a signal, and before its directory goes (avant_stop_children):
+ * SIGTERM to every job's group and to every child a blocking run waits
+ * on (one per waiting task), then reap them for up to about two seconds,
+ * then SIGKILL whatever is left and reap briefly. Async-signal-safe
+ * calls only; the waited pids are read once, before the first kill. */
 static void tmp_stop_children(void) {
   struct timespec pause = {0, 10 * 1000 * 1000};
+  static pid_t kids[WAIT_MAX];
   int32_t i;
+  int32_t nk = 0;
+  int32_t hi = __atomic_load_n(&g_waits_hi, __ATOMIC_SEQ_CST);
   int round;
-  pid_t child = g_wait_child;
   int32_t n = g_njobs;
-  if (n == 0 && child <= 0) {
+  for (i = 0; i < hi && i < WAIT_MAX; i++) {
+    pid_t p = __atomic_load_n(&g_waits[i], __ATOMIC_SEQ_CST);
+    if (p > 0) {
+      kids[nk++] = p;
+    }
+  }
+  if (n == 0 && nk == 0) {
     return;
   }
   for (i = 0; i < n; i++) {
     kill(-g_jobs[i], SIGTERM);
   }
-  if (child > 0) {
-    kill(child, SIGTERM);
+  for (i = 0; i < nk; i++) {
+    kill(kids[i], SIGTERM);
   }
   for (round = 0; round < 250; round++) {
     int st;
@@ -1341,8 +1381,10 @@ static void tmp_stop_children(void) {
         live = 1;
       }
     }
-    if (child > 0 && kill(child, 0) == 0) {
-      live = 1;
+    for (i = 0; i < nk; i++) {
+      if (kill(kids[i], 0) == 0) {
+        live = 1;
+      }
     }
     if (!live) {
       return;
@@ -1351,8 +1393,8 @@ static void tmp_stop_children(void) {
       for (i = 0; i < n; i++) {
         kill(-g_jobs[i], SIGKILL);
       }
-      if (child > 0) {
-        kill(child, SIGKILL);
+      for (i = 0; i < nk; i++) {
+        kill(kids[i], SIGKILL);
       }
     }
     nanosleep(&pause, NULL);
@@ -1443,6 +1485,11 @@ static void out_check_at_exit(void) {
  * check is registered first, so it runs after tmp_finish. */
 static void tmp_catch(int sig);
 
+/* The process the program started as: the children it waits on are
+ * stopped only by it, never by a forked child that has not exec'd yet
+ * (avant_stop_children). */
+static pid_t g_io_pid;
+
 __attribute__((constructor)) static void avant_io_start(void) {
   struct sigaction sa;
   sigset_t set;
@@ -1454,20 +1501,34 @@ __attribute__((constructor)) static void avant_io_start(void) {
   sigaddset(&set, SIGPIPE);
   sigprocmask(SIG_UNBLOCK, &set, NULL);
   atexit(out_check_at_exit);
+  g_io_pid = getpid();
   /* A program ended by SIGTERM or SIGINT (kill, Ctrl-C) keeps what it
    * printed: the handler writes stdout's buffer before the default
-   * action (tmp_on_signal). Only a default action is replaced. */
+   * action (tmp_on_signal). Every signal that ends it (these, SIGHUP, a
+   * closed pipe) stops the children it waits on first, whether or not
+   * it made its private directory. Only a default action is replaced. */
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
+  tmp_catch(SIGHUP);
+  tmp_catch(SIGPIPE);
+}
+
+/* Every way a program ends other than its main returning (a crash, a
+ * trap, a signal) stops the children it waits on, with or without its
+ * private directory: a child left running keeps the program's pipes
+ * open (`prog | cat` would wait on it). Only the process the program
+ * started as stops them. */
+void avant_stop_children(void) {
+  if (g_io_pid != 0 && getpid() == g_io_pid) {
+    tmp_stop_children();
+  }
 }
 
 /* The private directory's cleanup on a crash, from a fault handler that
  * ends the process itself (avant_stack.c): the same work as tmp_on_signal
  * before its re-raise. */
 void avant_tmp_on_crash(void) {
-  if (g_tmp_ready && getpid() == g_tmp_owner) {
-    tmp_stop_children();
-  }
+  avant_stop_children();
   tmp_finish();
 }
 
@@ -1482,9 +1543,7 @@ static void tmp_on_signal(int sig) {
   if (sig != SIGPIPE) {
     avant_out_pending();
   }
-  if (g_tmp_ready && getpid() == g_tmp_owner) {
-    tmp_stop_children();
-  }
+  avant_stop_children();
   tmp_finish();
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = SIG_DFL;
@@ -1802,8 +1861,13 @@ __attribute__((noreturn)) void avant_io_child_fail(int errfd, int32_t stage) {
   _exit(127);
 }
 
-/* The child a blocking run waits on, which the scratch directory's
- * signal handler stops before it removes the directory. */
+/* The child a blocking run of this thread waits on (0: the wait ended),
+ * which the scratch directory's signal handler stops before it removes
+ * the directory. */
 void avant_io_wait_child(int32_t pid) {
-  g_wait_child = (pid_t)pid;
+  if (pid > 0) {
+    wait_begin((pid_t)pid);
+  } else {
+    wait_end();
+  }
 }

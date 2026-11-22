@@ -34,6 +34,8 @@
 #   6. require: GATE_PRIVATE_TMP=require refuses to fall back;
 #   7. bind-missing: when the runtime's build skipped avant-bind (its
 #      notice), the gate stops after the runtime with that reason.
+#   re2c-missing: a checkout without bin/re2c is refused at once (status 2),
+#     the message naming tools/build-re2c.sh;
 # Prints one line per check, `ok: NAME`, `skip: NAME: why` or
 # `FAIL: NAME: why`, then `done`.
 set -u
@@ -43,6 +45,7 @@ w=$(realpath -m "$1")
 gate=${2:-$root/tools/gate.sh}
 fake=$w/fake
 mkdir -p "$fake/tools" "$fake/compiler" "$fake/runtime" "$fake/bin" "$w/seed"
+: > "$fake/bin/re2c"; chmod +x "$fake/bin/re2c"
 : > "$fake/compiler/main.av"
 : > "$fake/runtime/build.sh"
 cp "$gate" "$fake/tools/gate.sh"
@@ -196,4 +199,10 @@ fb bind-missing "$w/fb-bind.out" STUB_NO_BIND=1
 rc=$?
 [ $rc -eq 1 ] && grep -q '^GATE FAIL: avant-bind was not built: skipped avant-bind: llvm-config-22 not found (avant bind needs llvm-config and libclang) (build-runtime.log)$' "$w/fb-bind.out/summary.txt" 2>/dev/null && [ ! -e "$w/fb-bind.out/suite-b.log" ]
 say bind-missing $? "status $rc: $(tail -1 "$w/fb-bind.out/summary.txt" 2>/dev/null)"
+
+# 8. re2c-missing: a checkout without bin/re2c stops at once, naming the way to get one.
+rm -f "$fake/bin/re2c"
+o=$(cd "$fake" && STUB_SEED="$w/seed" timeout -k 10 60 sh tools/gate.sh < /dev/null 2>&1); rc=$?
+[ $rc -eq 2 ] && printf '%s' "$o" | grep -q '^gate: no bin/re2c in .*sh tools/build-re2c.sh bin/re2c$'
+say re2c-missing $? "status $rc: $o"
 echo done

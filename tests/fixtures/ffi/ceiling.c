@@ -72,7 +72,8 @@ static CeilArr *fake_arr(int32_t size) {
 /* mode: 1 Buf append past the ceiling, 2 Buf push_byte at the ceiling,
  * 3 Array push of an Int at the ceiling, 4 Array push of a slot (any
  * element) at the ceiling, 5 Hash growth past its slot ceiling, 7 Buf
- * ranges whose end passes the ceiling. Returns only if the runtime did
+ * ranges whose end passes the ceiling, 8 Array push of a byte-wide slot
+ * at the ceiling, 9 Array push of an 8-byte slot at one object's storage. Returns only if the runtime did
  * not trap (a failure). */
 int64_t ceil_probe(int64_t mode) {
   static const char text[] = "abcd";
@@ -84,6 +85,13 @@ int64_t ceil_probe(int64_t mode) {
     avant_array_push_i32(fake_arr(CEIL_MAX), 7);
   } else if (mode == 4) {
     (void)avant_array_push_slot(fake_arr(CEIL_MAX), 8, 0);
+  } else if (mode == 8) {
+    (void)avant_array_push_slot(fake_arr(CEIL_MAX), 1, 0);
+  } else if (mode == 9) {
+    /* An Array of 8-byte elements full at one object's storage
+     * (536870911 elements, 4294967288 bytes): its next push is past the
+     * ceiling, which the element count alone would not say. */
+    (void)avant_array_push_slot(fake_arr(536870911), 8, 0);
   } else if (mode == 5) {
     CeilHash *h = (CeilHash *)calloc(1, sizeof(CeilHash));
     h->keys = calloc(1, 16);

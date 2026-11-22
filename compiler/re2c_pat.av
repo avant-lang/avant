@@ -143,10 +143,12 @@ pub class RePat {
     buf.to_s()
   }
 
+  // A byte of a class, with its other case only when the pattern is
+  // caseless (PCRE2 matches `[a]` against `a` alone otherwise).
   pub fn push_class_char(buf: Buf, c: Int) {
     buf.push_str(class_atom(c))
     o = other_case(c)
-    if o != c {
+    if o != c && self.caseless != 0 {
       buf.push_str(class_atom(o))
     }
   }
@@ -158,16 +160,26 @@ pub class RePat {
     }
     c = self.peek()
     self.bump()
-    if c == 100 || c == 68 {
+    // A negated escape inside a class (`[\D]`) is every byte but those;
+    // a re2c class cannot hold that beside other members.
+    if c == 68 || c == 87 || c == 83 {
+      fail("negated escape inside a class")
+      return false
+    }
+    if c == 100 {
       buf.push_str("0-9")
       return true
     }
-    if c == 119 || c == 87 {
+    if c == 119 {
       buf.push_str("0-9A-Za-z_")
       return true
     }
-    if c == 115 || c == 83 {
+    if c == 115 {
       buf.push_str(" \\t\\n\\r\\f\\v")
+      return true
+    }
+    if c == 98 {
+      buf.push_str("\\x08")
       return true
     }
     if c == 110 {
@@ -186,16 +198,22 @@ pub class RePat {
       buf.push_str("\\f")
       return true
     }
-    if c == 118 {
-      buf.push_str("\\v")
-      return true
-    }
     if c >= 48 && c <= 57 {
       fail("backreference")
       return false
     }
+    // Any other letter is an escape this translation does not know (`\x41`,
+    // `\h`, `\e`, `\p{..}`): PCRE2 gives it a meaning of its own.
+    if is_letter(c) {
+      fail("escape")
+      return false
+    }
     push_class_char(buf, c)
     true
+  }
+
+  pub fn is_letter(c: Int): Bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
   }
 
   pub fn parse_class: String {
@@ -217,6 +235,9 @@ pub class RePat {
         if !class_escape(body) {
           return ""
         }
+      } else if c == 91 && self.at + 1 < self.len && self.s[self.at + 1] == 58 {
+        fail("POSIX class")
+        return ""
       } else if self.at + 2 < self.len && self.s[self.at + 1] == 45 && self.s[self.at + 2] != 93 {
         a = c
         b = self.s[self.at + 2]
@@ -226,7 +247,7 @@ pub class RePat {
         body.push_str(class_atom(b))
         oa = other_case(a)
         ob = other_case(b)
-        if oa != a && ob != b {
+        if oa != a && ob != b && self.caseless != 0 {
           body.push_str(class_atom(oa))
           body.push_byte(45)
           body.push_str(class_atom(ob))
@@ -366,6 +387,15 @@ pub class RePat {
     if c == 116 {
       return "L" + chr(9)
     }
+    if c == 102 {
+      return "L" + chr(12)
+    }
+    // Any other letter is an escape of PCRE2's own (`\x41`, `\A`, `\z`,
+    // `\Q`, `\h`, `\v`, `\e`): not a literal letter.
+    if is_letter(c) {
+      fail("escape")
+      return ""
+    }
     "L" + chr(c)
   }
 
@@ -454,6 +484,11 @@ pub class RePat {
       self.bump()
       return "R."
     }
+    // `^` and `$` are anchors in PCRE2, not bytes.
+    if c == 94 || c == 36 {
+      fail("anchor")
+      return ""
+    }
     if c == 91 {
       cls = parse_class()
       if self.bad {
@@ -530,7 +565,7 @@ pub class RePat {
       one = class_atom(raw[0])
       extra = ""
       other = other_case(raw[0])
-      if other != raw[0] {
+      if other != raw[0] && self.caseless != 0 {
         extra = class_atom(other)
       }
       return "[^${one}${extra}\\n]*"
@@ -544,10 +579,10 @@ pub class RePat {
     eb = ""
     oa = other_case(ch)
     ob = other_case(ch2)
-    if oa != ch {
+    if oa != ch && self.caseless != 0 {
       ea = class_atom(oa)
     }
-    if ob != ch2 {
+    if ob != ch2 && self.caseless != 0 {
       eb = class_atom(ob)
     }
     "([^${ca}${ea}\\n] | ${quoted} [^${cb}${eb}\\n])*"
@@ -856,7 +891,7 @@ pub class Re2cCollect {
       id = i + 1
       body = self.bodies[i]
       cap = body_has_capture(body)
-      buf.push_str("static int32_t avant_re2c_find_${id}(const char *s, int32_t from, int32_t *m0, int32_t *m1, int32_t *c0, int32_t *c1) {\n")
+      buf.push_str("static int32_t avant_re2c_find_${id}(const char *s, avant_int from, avant_int *m0, avant_int *m1, avant_int *c0, avant_int *c1) {\n")
       buf.push_str("  size_t n = avant_str_n(s ? s : \"\");\n")
       buf.push_str("  if (!s) s = \"\";\n")
       buf.push_str("  if (from < 0) from = 0;\n")
@@ -868,10 +903,17 @@ pub class Re2cCollect {
         buf.push_str("  size_t yynmatch = 0;\n")
         buf.push_str("  /*!stags:re2c format = 'const char *@@;\\n'; */\n")
       }
+      // The text is its bytes and their count: a NUL byte inside it is an
+      // ordinary byte that any rule may match. The end is YYLIMIT (s + n),
+      // where the string's terminator stands as re2c's sentinel: each time
+      // the scanner reads that byte value it compares the cursor with the
+      // limit (re2c's end-of-input rule, `$`), so it never reads past the
+      // text and stops only at its end. Positions are Ints.
       buf.push_str("  for (;;) {\n")
       buf.push_str("    const char *start = YYCURSOR;\n")
       buf.push_str("    /*!re2c\n")
       buf.push_str("      re2c:yyfill:enable = 0;\n")
+      buf.push_str("      re2c:eof = 0;\n")
       buf.push_str("      re2c:define:YYCTYPE = \"unsigned char\";\n")
       if any_cap {
         buf.push_str("      re2c:posix-captures = 1;\n")
@@ -879,58 +921,29 @@ pub class Re2cCollect {
       buf.push_str("\n      ${body} {\n")
       if cap {
         buf.push_str("        if (yynmatch > 0 && yypmatch[0] && yypmatch[1]) {\n")
-        buf.push_str("          *m0 = (int32_t)(yypmatch[0] - base);\n")
-        buf.push_str("          *m1 = (int32_t)(yypmatch[1] - base);\n")
+        buf.push_str("          *m0 = (avant_int)(yypmatch[0] - base);\n")
+        buf.push_str("          *m1 = (avant_int)(yypmatch[1] - base);\n")
         buf.push_str("        } else {\n")
-        buf.push_str("          *m0 = (int32_t)(start - base);\n")
-        buf.push_str("          *m1 = (int32_t)(YYCURSOR - base);\n")
+        buf.push_str("          *m0 = (avant_int)(start - base);\n")
+        buf.push_str("          *m1 = (avant_int)(YYCURSOR - base);\n")
         buf.push_str("        }\n")
         buf.push_str("        if (yynmatch > 1 && yypmatch[2] && yypmatch[3]) {\n")
-        buf.push_str("          *c0 = (int32_t)(yypmatch[2] - base);\n")
-        buf.push_str("          *c1 = (int32_t)(yypmatch[3] - base);\n")
+        buf.push_str("          *c0 = (avant_int)(yypmatch[2] - base);\n")
+        buf.push_str("          *c1 = (avant_int)(yypmatch[3] - base);\n")
         buf.push_str("        } else {\n")
         buf.push_str("          *c0 = *m0;\n")
         buf.push_str("          *c1 = *m1;\n")
         buf.push_str("        }\n")
       } else {
-        buf.push_str("        *m0 = (int32_t)(start - base);\n")
-        buf.push_str("        *m1 = (int32_t)(YYCURSOR - base);\n")
+        buf.push_str("        *m0 = (avant_int)(start - base);\n")
+        buf.push_str("        *m1 = (avant_int)(YYCURSOR - base);\n")
         buf.push_str("        *c0 = *m0;\n")
         buf.push_str("        *c1 = *m1;\n")
       }
       buf.push_str("        return 1;\n")
       buf.push_str("      }\n")
       buf.push_str("      * { continue; }\n")
-      buf.push_str("      [\\x00] { return 0; }\n")
-      buf.push_str("    */\n")
-      buf.push_str("  }\n")
-      buf.push_str("}\n\n")
-      buf.push_str("static int32_t avant_re2c_scan_${id}(const char *s) {\n")
-      buf.push_str("  size_t n = avant_str_n(s ? s : \"\");\n")
-      buf.push_str("  if (!s) s = \"\";\n")
-      buf.push_str("  const char *YYCURSOR = s, *YYMARKER = YYCURSOR, *YYLIMIT = s + n;\n")
-      if any_cap {
-        buf.push_str("  const char *yypmatch[YYMAXNMATCH * 2];\n")
-        buf.push_str("  size_t yynmatch = 0;\n")
-        buf.push_str("  /*!stags:re2c format = 'const char *@@;\\n'; */\n")
-      }
-      buf.push_str("  int32_t nmatch = 0;\n")
-      buf.push_str("  for (;;) {\n")
-      buf.push_str("    const char *start = YYCURSOR;\n")
-      buf.push_str("    /*!re2c\n")
-      buf.push_str("      re2c:yyfill:enable = 0;\n")
-      buf.push_str("      re2c:define:YYCTYPE = \"unsigned char\";\n")
-      if any_cap {
-        buf.push_str("      re2c:posix-captures = 1;\n")
-      }
-      buf.push_str("\n")
-      buf.push_str("      ${body} {\n")
-      buf.push_str("        nmatch++;\n")
-      buf.push_str("        if (YYCURSOR == start) YYCURSOR++;\n")
-      buf.push_str("        continue;\n")
-      buf.push_str("      }\n")
-      buf.push_str("      * { continue; }\n")
-      buf.push_str("      [\\x00] { return nmatch; }\n")
+      buf.push_str("      $ { return 0; }\n")
       buf.push_str("    */\n")
       buf.push_str("  }\n")
       buf.push_str("}\n\n")
@@ -943,9 +956,10 @@ pub class Re2cCollect {
     buf.push_str("void *avant_re2c_handle(avant_int id) {\n")
     buf.push_str("  return (void *)(uintptr_t)id;\n")
     buf.push_str("}\n\n")
-    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, int32_t from, int32_t *spans, int32_t max_pairs) {\n")
+    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, avant_int from, avant_int *spans, int32_t max_pairs) {\n")
     buf.push_str("  int32_t id = (int32_t)(uintptr_t)re;\n")
-    buf.push_str("  int32_t m0 = 0, m1 = 0, c0 = 0, c1 = 0, rc = 0;\n")
+    buf.push_str("  avant_int m0 = 0, m1 = 0, c0 = 0, c1 = 0;\n")
+    buf.push_str("  int32_t rc = 0;\n")
     buf.push_str("  if (!s) s = \"\";\n")
     buf.push_str("  switch (id) {\n")
     for i in 0..self.bodies.size {
@@ -973,15 +987,6 @@ pub class Re2cCollect {
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
     buf.push_str("}\n\n")
-    buf.push_str("int32_t avant_re2c_count(int32_t id, const char *s) {\n")
-    buf.push_str("  switch (id) {\n")
-    for i in 0..self.bodies.size {
-      id = i + 1
-      buf.push_str("    case ${id}: return avant_re2c_scan_${id}(s);\n")
-    }
-    buf.push_str("    default: return 0;\n")
-    buf.push_str("  }\n")
-    buf.push_str("}\n")
     buf.to_s()
   }
 }

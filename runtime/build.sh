@@ -1,9 +1,35 @@
 #!/bin/sh
 # Compile the runtime objects into runtime/build/.
 # The compiler links these objects; no Crystal is involved.
+#
+#   sh runtime/build.sh         build the objects
+#   sh runtime/build.sh --cc    print the C compiler it would build them with
+#
+# The C compiler is CC when it is set (CC=gcc builds the runtime with gcc,
+# the other compiler it is written for), else the clang of the LLVM the
+# compiler links (LLVM_CONFIG's bindir, by default /opt/llvm-22.1.8/bin;
+# else clang-22 on the PATH): one toolchain for the program's code and the
+# runtime's. Measured against gcc 15.2 over every LangArena task, the
+# runtime clang builds runs most of the runtime-heavy tasks faster (a radix
+# sort, the suffix sorting, the JSON codec, the allocator's slow path).
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-cc=${CC:-cc}
+llvm_default=/opt/llvm-22.1.8/bin/llvm-config
+[ -x "$llvm_default" ] || llvm_default=llvm-config-22
+if [ -n "${CC:-}" ]; then
+  cc=$CC
+elif bindir=$("${LLVM_CONFIG:-$llvm_default}" --bindir 2> /dev/null) && [ -x "$bindir/clang" ]; then
+  cc=$bindir/clang
+elif command -v clang-22 > /dev/null 2>&1; then
+  cc=clang-22
+else
+  echo "runtime/build.sh: no clang 22 found (${LLVM_CONFIG:-$llvm_default} --bindir, clang-22): install LLVM 22 with sh tools/install-llvm.sh, or build with gcc: CC=gcc sh runtime/build.sh" >&2
+  exit 1
+fi
+if [ "${1:-}" = --cc ]; then
+  echo "$cc"
+  exit 0
+fi
 mkdir -p "$root/build"
 # One build of a tree's runtime at a time: the objects are written in
 # place, and a second build started meanwhile (another test run of the
@@ -24,7 +50,14 @@ place="-falign-functions=64 -falign-loops=32"
 # one checkout is byte for byte the one built from the same commit in
 # another.
 prefix="-ffile-prefix-map=$root=runtime"
-cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place $prefix -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
+# The hardening and the format warnings Ubuntu's gcc turns on by default,
+# written out, so that clang (whose defaults have none of them) and a gcc
+# of another distribution build the same kind of code: stack protectors,
+# stack clash probes, control-flow protection (endbr64), the fortified
+# libc calls. With Ubuntu's gcc they change no byte of any object. Every
+# compile below takes them, the vendored libraries' included.
+harden="-fstack-protector-strong -fstack-clash-protection -fcf-protection=full -D_FORTIFY_SOURCE=3 -Wformat -Wformat-security"
+cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $harden $place $prefix -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
 compile() {
   "$cc" -c $cflags -o "$2" "$1"
@@ -118,7 +151,7 @@ zl_out="$root/build/zlib"
 rm -rf "$zl_out"
 mkdir -p "$zl_out"
 for f in adler32 compress crc32 deflate inffast inflate inftrees trees uncompr zutil; do
-  "$cc" -c -O3 -pthread -fno-omit-frame-pointer -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN \
+  "$cc" -c -O3 -pthread -fno-omit-frame-pointer $harden -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN \
     -I"$zl" -o "$zl_out/$f.o" "$zl/$f.c"
 done
 "$cc" -c $cflags -I"$zl" -o "$root/build/avant_zlib_own.o" "$root/avant_zlib.c"
@@ -144,7 +177,7 @@ for f in auto_possess chkdint chartables compile compile_cgroup compile_class co
   dfa_match error extuni find_bracket jit_compile maketables match match_data match_next newline ord2utf \
   pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
 do
-  "$cc" -c -O2 -pthread -fno-omit-frame-pointer -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
+  "$cc" -c -O2 -pthread -fno-omit-frame-pointer $harden -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
     -DHEAP_LIMIT=262144 -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
 done
 "$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
@@ -174,7 +207,8 @@ case "$(uname -m)" in
     ;;
 esac
 # shellcheck disable=SC2086
-( cd "$b64" && env $simd make lib/libbase64.o )
+# The library's Makefile adds its own flags to CFLAGS.
+( cd "$b64" && env CC="$cc" CFLAGS="$harden" $simd make lib/libbase64.o )
 cp "$b64/lib/libbase64.o" "$root/build/libbase64.o"
 # The aklomp object stays separate: the compiler links it only for a
 # program that imports std.base64. The SIMD codecs need their own -m
@@ -229,8 +263,6 @@ fi
 # letters.sh). It rebuilds only when LLVM or the glue changed, so a cached
 # run costs a few sha256 sums. Without its llvm-config it is skipped with a
 # notice, like avant-bind; building the compiler then stops and says why.
-llvm_default=/opt/llvm-22.1.8/bin/llvm-config
-[ -x "$llvm_default" ] || llvm_default=llvm-config-22
 if command -v "${LLVM_CONFIG:-$llvm_default}" > /dev/null 2>&1; then
   sh "$root/../tools/build-llvm.sh"
 else

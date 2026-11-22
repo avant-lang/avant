@@ -390,6 +390,16 @@ fn llvm_job_of(job: LinkJob): LlvmJob {
   lj
 }
 
+// The x86-64 level a --cpu value compiles for, native read as this
+// machine's level (0 when none was named).
+fn code_level(cpu: String): Int {
+  level = llvm_cpu_parse(cpu)
+  if level == 5 {
+    return llvm_host_level()
+  }
+  level
+}
+
 pub fn driver_run(args: Array(String)) {
   split = split_run_args(args)
   if split.err.size > 0 {
@@ -409,7 +419,7 @@ pub fn driver_run(args: Array(String)) {
   }
   paths: Array(String) = []
   paths.push(split.file)
-  box = compile_av_paths(paths)
+  box = compile_av_paths(paths, "", code_level(job.cpu))
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
@@ -459,7 +469,7 @@ pub fn driver_compile(args: Array(String)) {
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "compile")
-  box = compile_av_paths(split.paths, coverage_map_beside(out_path))
+  box = compile_av_paths(split.paths, coverage_map_beside(out_path), code_level(job.cpu))
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)

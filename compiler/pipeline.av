@@ -251,7 +251,11 @@ pub fn avant_root: String {
       }
     }
   }
-  if file_exists("runtime/build/avant_rt.o") {
+  // The working directory's runtime only for a compiler started from
+  // inside that tree (a seed in bin/vX/ links the tree it builds): a
+  // release run from a PATH or another directory inside a clone of the
+  // repository links its own runtime, not the clone's.
+  if file_exists("runtime/build/avant_rt.o") && args.size > 0 && started_inside_cwd(args[0]) {
     return "."
   }
   exe = self_exe_path()
@@ -262,6 +266,24 @@ pub fn avant_root: String {
     }
   }
   "."
+}
+
+// Whether the program path argv0 names a file under the working
+// directory: a relative path with a directory that does not climb out
+// (`./bin/v1/avant`, `bin/v1/avant`), or an absolute one below the
+// physical working directory. A bare name was found on PATH.
+pub fn started_inside_cwd(argv0: String): Bool {
+  if argv0.size == 0 {
+    return false
+  }
+  if argv0[0] == 47 {
+    here = cwd_physical()
+    return here.size > 1 && argv0.starts_with("${here}/")
+  }
+  if !argv0.contains("/") {
+    return false
+  }
+  !(argv0.starts_with("../") || argv0.contains("/../"))
 }
 
 pub fn runtime_object_names: Array(String) {
@@ -344,6 +366,12 @@ pub fn compile_program(src: Source, program: Program): IrBox {
 // cov_map is the coverage slot map's default path; empty means the
 // scratch directory, for a program that runs inside this process.
 pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
+  compile_program(src, program, cov_map, 0)
+}
+
+// cpu: the x86-64 level compiled for (llvm_cpu_parse's number, 0 when
+// none was named), which the loop tiles' shape follows.
+pub fn compile_program(src: Source, program: Program, cov_map: String, cpu: Int): IrBox {
   expander = Expander.new(src, program)
   expander.expand()
   if e = expander.err {
@@ -392,7 +420,7 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   } else {
     map = ""
   }
-  compile_program_llvm(src, program, checker.symbol_table(), map)
+  compile_program_llvm(src, program, checker.symbol_table(), map, cpu)
 }
 
 // Creates the directory of the coverage slot map at path when it is
@@ -452,8 +480,8 @@ pub fn coverage_map_path(fallback: String): String {
 // and dump; a construct the lowering does not support yet stops here
 // with its diagnostic. cov_map: the coverage slot map's path when
 // AVANT_COVERAGE is on, else empty.
-pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String): IrBox {
-  low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map)
+pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String, cpu: Int): IrBox {
+  low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map, cpu)
   if low.err.size > 0 {
     diag_puts(low.err)
     return IrBox.new(false)
@@ -810,6 +838,10 @@ pub fn compile_av_path(path: String): IrBox {
 }
 
 pub fn compile_av_path(path: String, cov_map: String): IrBox {
+  compile_av_path(path, cov_map, 0)
+}
+
+pub fn compile_av_path(path: String, cov_map: String, cpu: Int): IrBox {
   loader = Loader.new()
   if program = loader.load_root(path) {
     if e = loader.err {
@@ -820,7 +852,7 @@ pub fn compile_av_path(path: String, cov_map: String): IrBox {
     if text = file_read(path) {
       src = Source.new(path, text)
     }
-    box = compile_program(src, program, cov_map)
+    box = compile_program(src, program, cov_map, cpu)
     if box.ok && !plan_pkg_c(loader, box) {
       return IrBox.new(false)
     }
@@ -837,6 +869,10 @@ pub fn compile_av_paths(paths: Array(String)): IrBox {
 }
 
 pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
+  compile_av_paths(paths, cov_map, 0)
+}
+
+pub fn compile_av_paths(paths: Array(String), cov_map: String, cpu: Int): IrBox {
   if paths.size == 0 {
     diag_puts("compile needs a .av file")
     return IrBox.new(false)
@@ -845,7 +881,7 @@ pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
     diag_puts("compile takes one root .av (use import)")
     return IrBox.new(false)
   }
-  compile_av_path(paths[0], cov_map)
+  compile_av_path(paths[0], cov_map, cpu)
 }
 
 // The physical working directory, or "." when it cannot be read.
@@ -917,8 +953,9 @@ pub fn compile_re2c(src: String): String {
     diag_puts("re2c: ${e.message()}")
     return ""
   }
+  // No --bit-vectors: re2c's end-of-input rule, which lets a text hold
+  // NUL bytes (the scanner's own comment), cannot be used with it.
   args: Array(String) = []
-  args.push("-b")
   args.push("-o")
   args.push(c_path)
   args.push(re_path)

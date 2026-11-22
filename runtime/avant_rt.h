@@ -502,7 +502,7 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
  * a fill and only this thread's method calls froze it. */
 void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site);
 void avant_array_unhold(void **slot);
-void avant_array_frozen(void *arr, int32_t op);
+void avant_array_frozen_at(void *arr, int32_t op, int32_t site);
 /* A store through a struct method's receiver p (site: the store's), in a
  * program with such calls that spawns: traps when p is an element of an
  * array this thread's call holds and a task reads too. */
@@ -657,6 +657,14 @@ void avant_const_ready(void *slot, uint64_t words);
 #define AVANT_SIZE_HASH 3
 __attribute__((noreturn, cold)) void avant_trap_size(int32_t kind);
 __attribute__((noreturn, cold)) void avant_trap_size_at(int32_t kind, int32_t site);
+/* The most elements an Array of elem_size-byte elements holds: its
+ * 32-bit size's ceiling, or fewer when that many would pass one object's
+ * storage (UINT32_MAX bytes, the 32-bit size of the object header). */
+static inline uint64_t avant_array_max(uint64_t elem_size) {
+  uint64_t by_bytes = elem_size > 0 ? (uint64_t)UINT32_MAX / elem_size : (uint64_t)AVANT_SIZE_MAX;
+  return by_bytes < (uint64_t)AVANT_SIZE_MAX ? by_bytes : (uint64_t)AVANT_SIZE_MAX;
+}
+__attribute__((noreturn, cold)) void avant_trap_array_size(uint64_t elem_size);
 /* An Avant Int the runtime passes on to a C int (an HTTP status, an errno,
  * a signal number): the value, or a trap naming the C type (the correct
  * value or a trap). */
@@ -740,6 +748,7 @@ __attribute__((visibility("hidden"))) void avant_stack_thread_init(void *lo, voi
 __attribute__((visibility("hidden"))) void avant_stack_role(int role);
 __attribute__((visibility("hidden"))) void avant_stack_ensure(void);
 __attribute__((visibility("hidden"))) void avant_tmp_on_crash(void);
+__attribute__((visibility("hidden"))) void avant_stop_children(void);
 __attribute__((visibility("hidden"))) void avant_out_pending(void);
 __attribute__((visibility("hidden"))) void avant_out_whole(const char *p, size_t n, int nl);
 __attribute__((visibility("hidden"))) void (*avant_tmp_crash_handler(void))(int);

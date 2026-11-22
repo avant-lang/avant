@@ -6,6 +6,7 @@
 import source
 import mir.types
 import mir.ir
+import mir.flow
 import llvm.emit_core
 
 // Frames. A frame function keeps its frame record in its own stack
@@ -126,10 +127,12 @@ pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
 // when it is one pointer word and its address is never taken (an address
 // could be stored through without the copy seeing it). Only in an
 // optimized build (shadows_on): without mem2reg the copies would be
-// loads and stores of their own.
+// loads and stores of their own. A copy is read again only where it is
+// live (ll_shadow_plan).
 pub fn ll_shadow_slots(e: LlEmit, f: MFunc) {
   e.shadow = []
   e.resync_pending = false
+  e.sh_nw = 0
   if !e.shadows_on || e.frame_words < 0 {
     return
   }
@@ -158,6 +161,199 @@ pub fn ll_shadow_slots(e: LlEmit, f: MFunc) {
       e.line("%sh${i} = alloca ptr, align 8")
     }
   }
+  ll_shadow_plan(e, f)
+}
+
+// Whether call statement st, once emitted, has its call expanded in line
+// with a slow block, the only one that calls the runtime, which reads the
+// copies again right after that call (LlEmit.resync), while the fast path
+// keeps them as they were. The emitter checks it (ll_stmt): a statement
+// this says no to whose expansion read the copies again in its slow block
+// reads the live ones again after it as well, so a wrong answer costs
+// loads, never a stale copy.
+pub fn ll_sh_inline(e: LlEmit, st: MStmt): Bool {
+  if fo = st.indirect {
+    return false
+  }
+  if g = e.m.func(st.callee) {
+    return false
+  }
+  if x = e.m.ext(st.callee) {
+    n = x.name
+    if n == "avant_gc_poll" {
+      return true
+    }
+    if x.alloc {
+      return ll_alloc_inline(e, st.args)
+    }
+    if !e.inline_fast {
+      return false
+    }
+    return n == "avant_buf_push_byte" || n == "avant_array_push_i32" || n == "avant_array_push_i64" || n == "avant_array_push_ptr" || n == "avant_array_push_slot" || n == "avant_array_pop_ptr" || n == "avant_array_pop_slot" || n == "avant_str_flat" || n == "avant_str_c_arg"
+  }
+  false
+}
+
+// Whether statement st replaces every copy on every path through it: a
+// collecting call not expanded in line, after which each live copy is
+// read again. A call that cannot collect is not counted so, though its
+// copies are read again too: LLVM may know it writes no frame slot (the
+// runtime's never rows carry memory attributes; it infers others), and
+// then forwards a reload made before it to the one after it; counting it
+// would move that load, and the optimized code with it.
+pub fn ll_sh_kills(e: LlEmit, st: MStmt): Bool {
+  st.kind == msk_call() && st.collects && !ll_sh_inline(e, st)
+}
+
+// Block b's transfer backward on the set w (at 0, changed in place),
+// from its end to its head; with rec, the set after each statement j is
+// left at j * sh_nw of e.sh_after.
+fn ll_sh_back(e: LlEmit, f: MFunc, b: Int, w: Array(UInt64), rec: Bool) {
+  nw = e.sh_nw
+  blk = f.blocks[b]
+  if rec {
+    need = blk.stmts.size * nw
+    while e.sh_after.size < need {
+      e.sh_after.push(0)
+    }
+  }
+  if t = blk.term {
+    reads: Array(Int) = []
+    mir_term_reads(f, t, reads)
+    for k in reads {
+      if e.shadowed(k) {
+        mir_bit_on(w, 0, k)
+      }
+    }
+  }
+  j = blk.stmts.size - 1
+  while j >= 0 {
+    st = blk.stmts[j]
+    if rec {
+      for i in 0..nw {
+        e.sh_after[j * nw + i] = w[i]
+      }
+    }
+    if ll_sh_kills(e, st) {
+      for i in 0..nw {
+        w[i] = 0
+      }
+    } else {
+      d = mir_stmt_def(st)
+      if d >= 0 && e.shadowed(d) {
+        mir_bit_off(w, 0, d)
+      }
+    }
+    ll_sh_reads(e, st, w)
+    j -= 1
+  }
+}
+
+// The copies' liveness (sh_* of LlEmit): a copy is live where some path
+// reads it before a store of its local or a collecting call that reads
+// every live copy again (ll_sh_kills); backward, the least solution, each
+// block's end set the union of its successors' head sets. A reload is
+// emitted only for a live copy (LlEmit.resync): a dead one is read by no
+// path before it is replaced, so leaving it out changes no value read
+// and no optimized instruction, and the .ll shrinks by the reloads that
+// calls × references made.
+pub fn ll_shadow_plan(e: LlEmit, f: MFunc) {
+  any = false
+  for x in e.shadow {
+    if x {
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  nw = mir_nwords(f.locals.size)
+  nb = f.blocks.size
+  e.sh_nw = nw
+  e.sh_mask = mir_zero_words(nw)
+  for i in 0..e.shadow.size {
+    if e.shadow[i] {
+      mir_bit_on(e.sh_mask, 0, i)
+    }
+  }
+  // Each block's transfer once: gen, read before a replacement in the
+  // block; kill, replaced in it.
+  gen = mir_zero_words(nb * nw)
+  kill = mir_zero_words(nb * nw)
+  w = mir_zero_words(nw)
+  for b in 0..nb {
+    blk = f.blocks[b]
+    for i in 0..nw {
+      w[i] = 0
+    }
+    k = mir_zero_words(nw)
+    if t = blk.term {
+      reads: Array(Int) = []
+      mir_term_reads(f, t, reads)
+      for x in reads {
+        if e.shadowed(x) {
+          mir_bit_on(w, 0, x)
+        }
+      }
+    }
+    j = blk.stmts.size - 1
+    while j >= 0 {
+      st = blk.stmts[j]
+      if ll_sh_kills(e, st) {
+        for i in 0..nw {
+          w[i] = 0
+          k[i] = e.sh_mask[i]
+        }
+      } else {
+        d = mir_stmt_def(st)
+        if d >= 0 && e.shadowed(d) {
+          mir_bit_off(w, 0, d)
+          mir_bit_on(k, 0, d)
+        }
+      }
+      ll_sh_reads(e, st, w)
+      j -= 1
+    }
+    for i in 0..nw {
+      gen[b * nw + i] = w[i]
+      kill[b * nw + i] = k[i]
+    }
+  }
+  e.sh_live = mir_zero_words(nb * nw)
+  ins = mir_zero_words(nb * nw)
+  changed = true
+  while changed {
+    changed = false
+    b = nb - 1
+    while b >= 0 {
+      succ = mir_succ(f.blocks[b])
+      for i in 0..nw {
+        x = 0u64
+        for s in succ {
+          if s >= 0 && s < nb {
+            x = x | ins[s * nw + i]
+          }
+        }
+        e.sh_live[b * nw + i] = x
+        y = gen[b * nw + i] | (x & ~kill[b * nw + i])
+        if y != ins[b * nw + i] {
+          ins[b * nw + i] = y
+          changed = true
+        }
+      }
+      b -= 1
+    }
+  }
+}
+
+// e.sh_after for block b: the copies live after each of its statements.
+pub fn ll_sh_after(e: LlEmit, f: MFunc, b: Int) {
+  nw = e.sh_nw
+  w = mir_zero_words(nw)
+  for i in 0..nw {
+    w[i] = e.sh_live[b * nw + i]
+  }
+  ll_sh_back(e, f, b, w, true)
 }
 
 pub fn ll_gc_frame_type(e: LlEmit): String {
@@ -288,8 +484,11 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   test = e.part("test")
   call = e.part("call")
   cont = e.part("cont")
-  z = e.tmp()
-  e.line("${z} = icmp eq ptr ${h}, null")
+  z = "false"
+  if !ll_barrier_derefs(e, o) {
+    z = e.tmp()
+    e.line("${z} = icmp eq ptr ${h}, null")
+  }
   if ll_barrier_stores_nil(e, o) {
     // The store it precedes writes nil: no reference to remember, so the
     // barrier matters only to the collector's store log (a reference is
@@ -300,9 +499,13 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
     e.line("${lg} = load i8, ptr @avant_gc_proof_logging, align 1")
     off = e.tmp()
     e.line("${off} = icmp eq i8 ${lg}, 0")
-    z2 = e.tmp()
-    e.line("${z2} = or i1 ${z}, ${off}")
-    z = z2
+    if z == "false" {
+      z = off
+    } else {
+      z2 = e.tmp()
+      e.line("${z2} = or i1 ${z}, ${off}")
+      z = z2
+    }
   }
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
@@ -320,6 +523,24 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   ll_barrier_call(e, h, k)
   e.line("br label %${cont}")
   e.block(cont)
+}
+
+// Whether the statement after the barrier on O (a bare local) stores
+// through it (`(*_h)... = ...`): a null holder would fault at that store
+// anyway, so the barrier need not test for null. The optimizer drops the
+// test itself only when it sees the store's address as the same value
+// along the null edge (a merged reload), not when the holder is one value
+// read once, as through a slot's register copy.
+fn ll_barrier_derefs(e: LlEmit, o: MOperand): Bool {
+  stmts = e.f.blocks[e.bk].stmts
+  k = e.si + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() {
+    return true
+  }
+  false
 }
 
 // Whether the statement after the barrier on O (a bare local) stores nil
@@ -424,6 +645,23 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
 // below: the runtime's avant_alloc_slow, and under the stress mode the
 // inline allocation itself after it); avant_alloc_unzeroed's is itself.
+// Whether ll_alloc expands an allocation in line: always with the fast
+// forms, but for a constant size over the inline path's limits.
+pub fn ll_alloc_inline(e: LlEmit, args: Array(MOperand)): Bool {
+  if !e.inline_fast {
+    return false
+  }
+  if args[0].kind == mok_int() && args[1].kind == mok_int() {
+    sz = args[0].ival
+    if sz == 0 {
+      sz = 8
+    }
+    tot = (sz + 15) & -8
+    return tot <= 8192 && !(args[1].ival == 0 && sz >= 6144)
+  }
+  true
+}
+
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -441,14 +679,12 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     size = s8
   }
   total = "0"
+  if !ll_alloc_inline(e, args) {
+    return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
+  }
   if const_size {
     tot = (sz + 15) & -8
-    if !e.inline_fast || tot > 8192 || (tid == 0 && sz >= 6144) {
-      return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
-    }
     total = "${tot}"
-  } else if !e.inline_fast {
-    return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   }
   e.used_alloc_globals = true
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")

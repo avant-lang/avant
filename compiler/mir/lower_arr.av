@@ -16,6 +16,7 @@ import token
 import type
 import ast
 import typed_ir
+import array_verbs
 import mir.types
 import mir.ir
 import mir.build
@@ -355,7 +356,9 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
   ok = lw.trap_open(neg, true)
   lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
-  // The ceiling: the header keeps a 32-bit size.
+  // The ceiling: the header keeps a 32-bit size. An element count
+  // under it whose bytes pass one object's storage is refused by the
+  // allocation, so no second compare runs here.
   big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647)))
   ok2 = lw.trap_open(big, true)
   lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
@@ -572,10 +575,11 @@ pub fn mir_frozen_store: Int {
 // A program with a call that freezes the Array holding its receiver
 // (Expr.elem_hold, lower_agg.av held_method_call) tests `clear` and a
 // sort with a block too, whether it spawns or not; there the cold block
-// asks the runtime (`avant_array_frozen`), which names the method call
-// when this thread's call froze the Array, and lets an element store
-// through when only such calls did (they freeze the size and the order,
-// not the elements).
+// asks the runtime (`avant_array_frozen`, called with the change's site:
+// llvm/emit.av), which names the method call when this thread's call
+// froze the Array, traps at the change's file and line when a task's
+// freeze holds it, and lets an element store through when only such
+// calls did (they freeze the size and the order, not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
   holds = lw.lw_m.elem_holds
   if !lw.lw_m.shared && !lw.lw_m.const_arrays && (!holds || op == mir_frozen_store()) {
@@ -613,16 +617,7 @@ pub fn (lw: MirLower) mutator_frozen_check(h: Int, op: Int, loc: Location) {
 // change is tested against the array's freeze here, at the call, under
 // the verb's own name (frozen_check, above).
 pub fn mir_verb_frozen_op(callee: String): Int {
-  if callee == "__avant_fill" {
-    return mir_frozen_fill()
-  }
-  if callee == "__avant_shuffle" {
-    return mir_frozen_shuffle()
-  }
-  if callee == "__avant_try_delete_at" {
-    return mir_frozen_delete_at()
-  }
-  -1
+  array_verb_frozen_op(array_verb_of_template(callee))
 }
 
 pub fn (lw: MirLower) verb_frozen_check(e: Expr, args: Array(MOperand)) {

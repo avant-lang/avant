@@ -187,6 +187,20 @@ floor=$(for f in "$dir/avant" "$dir/avant-bind" "$floor_dir/all"; do
   objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' || true
 done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
 [ -n "$floor" ] || fail "could not measure the glibc floor"
+# The archive promises to run on glibc_max_floor (the oldest glibc the
+# release workflows install on); a newer symbol, often a fortified
+# variant a newer glibc's headers route a call to, breaks that promise.
+glibc_max_floor=${AVANT_GLIBC_FLOOR:-2.38}
+if [ "$(printf '%s\n%s\n' "$floor" "$glibc_max_floor" | sort -V | tail -n 1)" != "$glibc_max_floor" ]; then
+  for f in "$dir/avant" "$dir/avant-bind" "$floor_dir/all"; do
+    objdump -T "$f" 2>/dev/null | awk -v m="$glibc_max_floor" -v f="$(basename "$f")" '
+      { for (i = 1; i <= NF; i++) if ($i ~ /^\(?GLIBC_[0-9]/) { v = $i; gsub(/[()]|GLIBC_/, "", v); print v, $NF, f } }' |
+      while read -r v sym f; do
+        [ "$(printf '%s\n%s\n' "$v" "$glibc_max_floor" | sort -V | tail -n 1)" = "$glibc_max_floor" ] || echo "  $f: $sym needs glibc $v" >&2
+      done
+  done
+  fail "glibc floor $floor is above $glibc_max_floor"
+fi
 echo "glibc-floor: $floor" >> "$dir/versions.txt"
 echo "package: glibc floor $floor"
 

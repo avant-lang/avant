@@ -1133,6 +1133,20 @@ int64_t crash_write_null(int64_t k) {
   *p = 1;
   return 0;
 }
+/* An integer division by zero (SIGFPE), an instruction the processor
+ * refuses (SIGILL) and abort() (SIGABRT), each in C code. */
+int64_t crash_div(int64_t k) {
+  volatile int64_t z = k;
+  return 7 / z;
+}
+int64_t crash_ill(void) {
+  __builtin_trap();
+  return 0;
+}
+int64_t crash_abort(void) {
+  abort();
+  return 0;
+}
 int64_t crash_bus(void) {
   char path[4096];
   const char *base = getenv("TMPDIR");

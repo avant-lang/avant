@@ -6,6 +6,7 @@ import checker
 import checker.spawn
 import checker.clone
 import typed_ir
+import array_verbs
 
 // What may happen to the guarded value inside `Mutex.with`. The lock
 // protects the cell only while the block runs, so the guarded value, and
@@ -810,8 +811,10 @@ pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
 // `insert` (the position is plain), `fill`, and `concat`, which stores
 // the elements of its argument (so the argument array must be new,
 // plain or reached as a stored value would be).
+// Whether the Array method callee stores its argument, or the argument's
+// elements, in its array (array_verbs.av).
 pub fn array_stores_arg(callee: String): Bool {
-  callee == "push" || callee == "insert" || callee == "fill" || callee == "concat"
+  array_verb_has(callee, av_stores())
 }
 
 pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {

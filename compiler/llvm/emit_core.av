@@ -19,6 +19,7 @@ import mir.runtime
 import mir.ir
 import mir.print
 import mir.verify_core
+import mir.flow
 import llvm.glue
 
 pub class LlEmit {
@@ -53,6 +54,18 @@ pub class LlEmit {
   pub shadow: Array(Bool)
   pub shadows_on: Bool = false
   pub resync_pending: Bool = false
+  // Where a copy is read again (ll_shadow_plan), as word bit sets over
+  // the locals, sh_nw words each (0: no copies): sh_mask the shadowed
+  // locals, sh_live at block b * sh_nw the copies live at its end,
+  // sh_after at stmt j * sh_nw of the block being emitted the copies live
+  // after that statement; sh_inner while a call statement's own
+  // expansion is emitted (its slow block's reload also keeps what the
+  // rest of the statement reads).
+  pub sh_nw: Int = 0
+  pub sh_mask: Array(UInt64)
+  pub sh_live: Array(UInt64)
+  pub sh_after: Array(UInt64)
+  pub sh_inner: Bool = false
   pub cur_file: Int = 0
   pub cur_line: Int = 0
   pub cur_col: Int = 0
@@ -81,6 +94,14 @@ pub class LlEmit {
   pub used_tbaa: Bool = false
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
+  // The metadata numbers after ll_tbaa_last are shared by the cold
+  // loops' nodes and the field tags (field_tag): field_md maps a byte
+  // offset to its access tag's number (its type node is the number
+  // before it), field_at a tag's or type node's number to its offset;
+  // cold_loops whether a cold loop node exists.
+  pub field_md: Hash(Int, Int)
+  pub field_at: Hash(Int, Int)
+  pub cold_loops: Bool = false
   pub ov_ty: Int = 0
   // What LLVM is told about the constants computed before main
   // (ll_const_facts): the functions the start-up reaches, which read
@@ -110,9 +131,14 @@ pub class LlEmit {
     self.intr_seen = Hash(String, Int).new()
     self.loop_md = Hash(String, Int).new()
     self.loop_md_n = ll_tbaa_last()
+    self.field_md = Hash(Int, Int).new()
+    self.field_at = Hash(Int, Int).new()
     self.frame_at = []
     self.frame_maps = []
     self.shadow = []
+    self.sh_mask = []
+    self.sh_live = []
+    self.sh_after = []
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
     self.arith_keys = []
@@ -329,22 +355,47 @@ pub class LlEmit {
     }
   }
 
-  // After a call that may collect or write a slot: every shadowed slot
+  // After a call that may collect or write a slot: a shadowed slot
   // local's copy read again from the frame record, where a moving
-  // collection rewrote it. A copy read again and not used before its
-  // local's next store is dead, and the optimizer removes the load. Once
-  // per call: an inline fast path calls it in its slow block, right after
-  // the runtime's call, so that the fast path keeps the copies.
+  // collection rewrote it, when the copy is live here (ll_shadow_plan:
+  // some path reads it before its local's next store or the next reload
+  // that replaces it). A dead copy's reload would be removed by the
+  // optimizer, after it paid to parse and optimize it. Once per call: an
+  // inline fast path calls it in its slow block, right after the
+  // runtime's call, so that the fast path keeps the copies; there the
+  // copies the rest of the statement reads are kept too.
   pub fn resync {
     if !self.resync_pending {
       return
     }
     self.resync_pending = false
-    for i in 0..self.shadow.size {
-      if self.shadow[i] {
-        t = tmp()
-        line("${t} = load ptr, ptr ${local_addr(i)}, align 8")
-        line("store ptr ${t}, ptr %sh${i}, align 8")
+    if self.sh_nw == 0 {
+      return
+    }
+    nw = self.sh_nw
+    want = mir_zero_words(nw)
+    for w in 0..nw {
+      want[w] = self.sh_after[self.si * nw + w]
+    }
+    if self.sh_inner {
+      ll_sh_reads(self, self.f.blocks[self.bk].stmts[self.si], want)
+    }
+    sh_reload_set(want)
+  }
+
+  // The copies of the set xs read again from their slots, in local order.
+  pub fn sh_reload_set(xs: Array(UInt64)) {
+    for w in 0..self.sh_nw {
+      x = xs[w] & self.sh_mask[w]
+      if x != 0 {
+        for k in 0..64 {
+          if ((x >> k.to_u64()) & 1) != 0 {
+            i = w * 64 + k
+            t = tmp()
+            line("${t} = load ptr, ptr ${local_addr(i)}, align 8")
+            line("store ptr ${t}, ptr %sh${i}, align 8")
+          }
+        }
       }
     }
   }
@@ -412,6 +463,9 @@ pub class LlEmit {
     region = 0
     pend = 0
     arr = false
+    // In region 5, the byte offset from the object's start of the part
+    // reached (-1 once an index makes it unknown).
+    foff = -1
     self.pa_cslot = -1
     self.pa_cfield = false
     if self.cslots.size > 0 {
@@ -420,7 +474,7 @@ pub class LlEmit {
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
-        ptr = load_tagged(mt_ptr(), ptr, volatile, ll_tbaa_tag(region))
+        ptr = load_tagged(mt_ptr(), ptr, volatile, region_tag(region, foff, mt_ptr()))
         volatile = false
         region = -1
         pend = -1
@@ -442,12 +496,18 @@ pub class LlEmit {
         t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
+        off = self.ts.layouts[mt.layout].offsets[pr.field]
         ty = self.ts.layouts[mt.layout].fields[pr.field]
         if pend == 2 {
           region = 2 + pr.field
         } else if pend == 3 {
           region = 5
-        } else if region > 1 && region != 5 {
+          foff = off
+        } else if region == 5 {
+          if foff >= 0 {
+            foff += off
+          }
+        } else if region > 1 {
           region = -1
         }
         pend = 0
@@ -464,6 +524,7 @@ pub class LlEmit {
         line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
+        foff = -1
         if pend == 1 {
           region = 1
         } else if region > 1 && region != 5 {
@@ -476,11 +537,44 @@ pub class LlEmit {
     self.pa_vol = volatile
     self.pa_atomic = region == 4 && arr
     self.pa_size = region == 3
-    self.pa_tbaa = ll_tbaa_tag(region)
+    self.pa_tbaa = region_tag(region, foff, ty)
     if self.pa_tbaa.size > 0 {
       self.used_tbaa = true
     }
     ptr
+  }
+
+  // The tag of an access of type ty to region at byte offset foff of an
+  // object (region 5). A scalar part of an object at a known offset
+  // takes that offset's own tag (field_tag); a whole aggregate, or a
+  // part an index reaches, the tag every object field shares, which
+  // aliases every offset's.
+  fn region_tag(region: Int, foff: Int, ty: Int): String {
+    if region == 5 && foff >= 0 && self.ts.get(ty).kind != mk_agg() {
+      return field_tag(foff)
+    }
+    ll_tbaa_tag(region)
+  }
+
+  // The tag of the scalar part of an object at byte offset off. Every
+  // generated access to an object's memory reads or writes one whole
+  // scalar part at the offset its layout gives it, and an object keeps
+  // the layout it was allocated with (a reference's type names that
+  // layout; no conversion gives one object a second layout), so two
+  // scalar parts at different offsets never overlap, whether they are in
+  // one object or two: their tags are siblings under the object field
+  // tag (no alias), and an access through that shared tag (a whole
+  // aggregate, a part reached by an index) still aliases them all.
+  fn field_tag(off: Int): String {
+    if got = self.field_md.get(off) {
+      return ", !tbaa !${got}"
+    }
+    self.loop_md_n += 2
+    n = self.loop_md_n
+    self.field_md[off] = n
+    self.field_at[n - 1] = off
+    self.field_at[n] = off
+    ", !tbaa !${n}"
   }
 
   // A read of a constant computed before main (ll_const_facts): `*_a`
@@ -725,4 +819,26 @@ pub fn ll_local(name: String): String {
 // A layout's LLVM struct type: always quoted.
 pub fn ll_type_name(name: String): String {
   "%\"${name}\""
+}
+
+// The shadowed locals whose copy statement st may read, added to the set
+// xs (word bit sets at 0): its reads as liveness counts them
+// (mir_stmt_reads), and the local of any place with a projection, whose
+// address the emitter starts from (read_addr). Over-counting a read only
+// keeps a reload the optimizer would remove; missing one would leave a
+// stale copy, so the extra rule leans to the safe side.
+pub fn ll_sh_reads(e: LlEmit, st: MStmt, xs: Array(UInt64)) {
+  reads: Array(Int) = []
+  mir_stmt_reads(st, reads)
+  if p = st.place, p.proj.size > 0 {
+    reads.push(p.local)
+  }
+  if r = st.rv, p = r.place, p.proj.size > 0 {
+    reads.push(p.local)
+  }
+  for k in reads {
+    if e.shadowed(k) {
+      mir_bit_on(xs, 0, k)
+    }
+  }
 }

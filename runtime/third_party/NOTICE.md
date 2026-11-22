@@ -27,6 +27,12 @@ The tree is upstream v0.10.0 plus the change below, marked "Avant patch" in the 
 
 - `yyjson/yyjson.c`, `read_root_minify` and `read_root_pretty`, and `yyjson/yyjson.h`: a nesting limit. yyjson's reader takes any depth (it keeps no stack of its own), so a document of a million `[` is read, and every reader that walks it after by recursion (`std.json`'s `to_value`, a typed decode, a program's own walk) runs out of stack on it. The reader now counts the arrays and objects it is inside, the root's being 1, and refuses a container past the reading thread's `yyjson_avant_max_depth` with `YYJSON_READ_ERROR_AVANT_DEPTH` at its bracket; 0 is no limit, yyjson's own behaviour. `std.json`'s `Json.parse` sets it from its `max_depth` (`runtime/avant_json.c`). Cost: an increment and a compare per container read.
 
+## base64: local patches
+
+The tree is upstream `e4cc438` plus the change below, marked "Avant patch" in the source. An update of the pin re-applies it or drops it with the upstream change that makes it unnecessary, and says which in the commit message.
+
+- `base64/lib/arch/avx2/dec_reshuffle.c`, `dec_reshuffle`, compiled by clang only: the lane permute's index is passed through an empty `asm` so that clang reads it as a register. As a constant, clang works out that the indices of the top two dwords pick zero dwords and adds a `vpblendd` with zero after every permute, one more instruction per 24 bytes decoded (1.2% of `Base64::Decode`'s instructions); those two dwords are written over by the next block's store, so their value never mattered. gcc's build is unchanged (the original line, under `#else`).
+
 ## uSockets: local patches
 
 The tree is upstream `7a7c820` plus the changes below, each marked "Avant patch" in the source. An update of the pin re-applies each one or drops it with the upstream change that makes it unnecessary, and says which in the commit message.

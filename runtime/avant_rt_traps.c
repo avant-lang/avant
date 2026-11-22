@@ -117,6 +117,9 @@ __attribute__((noreturn)) static void trap_tail(void) {
     fprintf(stderr, ", computing %.*s before main", (int)n, d);
   }
   fputc('\n', stderr);
+  /* The children the program waits on stop with it, as at a crash or a
+   * signal (avant_io.c); the private directory goes at exit. */
+  avant_stop_children();
   exit(1);
 }
 
@@ -384,6 +387,31 @@ void avant_trap_size(int32_t kind) {
   } else {
     trap_out("%s would exceed %d %s", what[k], AVANT_SIZE_MAX, k == AVANT_SIZE_ARRAY ? "elements" : "bytes");
   }
+  trap_tail();
+}
+
+/* An Array of elem_size-byte elements past its ceiling: the 32-bit size
+ * (AVANT_SIZE_MAX elements) or, for elements of 4 bytes or more, the
+ * storage of one object (at most UINT32_MAX bytes), whichever comes first
+ * (avant_array_max). */
+void avant_trap_array_size(uint64_t elem_size) {
+  uint64_t max = avant_array_max(elem_size);
+  trap_head();
+  if (max < (uint64_t)AVANT_SIZE_MAX) {
+    trap_out("Array would exceed %llu elements of %llu bytes (one object's storage is at most 4294967295 bytes)", (unsigned long long)max, (unsigned long long)elem_size);
+  } else {
+    trap_out("Array would exceed %d elements", AVANT_SIZE_MAX);
+  }
+  trap_tail();
+}
+
+/* An allocation of more bytes than one object holds (avant_alloc): an
+ * Array(T).new(n) whose count is under the 32-bit size but whose elements
+ * pass the storage, or C code asking for such an object. The count and
+ * element size are not known here, so the bytes are named. */
+void avant_trap_object_size(uint64_t nbytes) {
+  trap_head();
+  trap_out("an object of %llu bytes would exceed one object's storage (at most 4294967295 bytes)", (unsigned long long)nbytes);
   trap_tail();
 }
 
