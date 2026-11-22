@@ -70,6 +70,9 @@ pub class RePat {
   bad: Bool = false
   why: String = ""
   nongreedy: Bool = false
+  // The byte every match starts with, or -1 when there is no single one
+  // (an alternation, a class, a quantified or caseless first atom).
+  first: Int = -1
 
   fn initialize {
   }
@@ -677,9 +680,18 @@ pub class RePat {
       fail("empty pattern")
       return ""
     }
+    self.first = -1
     parts = parse_alt()
     if self.bad {
       return ""
+    }
+    // A leading unquantified literal (parse_repeat makes a quantified one
+    // a class-like piece) is the first byte of every match.
+    if parts.size > 0 && parts[0].size > 1 && parts[0][0] == 76 {
+      c = parts[0][1]
+      if caseless == 0 || other_case(c) == c {
+        self.first = c
+      }
     }
     if self.at != self.len {
       fail("unparsed tail")
@@ -725,6 +737,7 @@ pub class Re2cCollect {
   flags: Array(Int)
   groups: Array(Int)
   bodies: Array(String)
+  firsts: Array(Int)
   notes: Array(String)
 
   fn initialize {
@@ -734,6 +747,7 @@ pub class Re2cCollect {
     self.flags = []
     self.groups = []
     self.bodies = []
+    self.firsts = []
     self.notes = []
   }
 
@@ -760,6 +774,7 @@ pub class Re2cCollect {
     self.flags.push(flags)
     self.groups.push(ngroups)
     self.bodies.push(body)
+    self.firsts.push(tr.first)
     self.ids[key] = self.pats.size
   }
 
@@ -879,7 +894,8 @@ pub class Re2cCollect {
     buf = buf_new()
     buf.push_str("#include \"avant_rt.h\"\n")
     buf.push_str("#include <stddef.h>\n")
-    buf.push_str("#include <stdint.h>\n\n")
+    buf.push_str("#include <stdint.h>\n")
+    buf.push_str("#include <string.h>\n\n")
     buf.push_str("/*!maxnmatch:re2c*/\n\n")
     any_cap = false
     for bd in self.bodies {
@@ -910,6 +926,14 @@ pub class Re2cCollect {
       // limit (re2c's end-of-input rule, `$`), so it never reads past the
       // text and stops only at its end. Positions are Ints.
       buf.push_str("  for (;;) {\n")
+      // Every match starts with one byte: memchr finds the next place one
+      // can start, within the text, where the scanner would have tried
+      // and dropped each byte before it one at a time.
+      first = self.firsts[i]
+      if first >= 0 {
+        buf.push_str("    YYCURSOR = (const char *)memchr(YYCURSOR, ${first}, (size_t)(YYLIMIT - YYCURSOR));\n")
+        buf.push_str("    if (!YYCURSOR) return 0;\n")
+      }
       buf.push_str("    const char *start = YYCURSOR;\n")
       buf.push_str("    /*!re2c\n")
       buf.push_str("      re2c:yyfill:enable = 0;\n")
