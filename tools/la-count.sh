@@ -39,8 +39,14 @@
 # another; a peak is not a time, and a run's file is its own).
 # OUT.mem.tsv beside OUT.tsv gets one line per program:
 #
-#   SLUG <TAB> MEDIAN KB <TAB> MIN KB <TAB> MAX KB <TAB> RUNS KB (comma-separated)
+#   SLUG <TAB> MEDIAN KB <TAB> MIN KB <TAB> MAX KB <TAB> RUNS KB (comma-separated) <TAB> ON RUNS KB
 #
+# ON RUNS are LA_MEM_ON_RUNS more runs (default N; 0: none, and no sixth
+# field) with address randomization on, started with the others: with it
+# off, a binary keeps one set of mapping addresses, and a change that only
+# moves where a mapping lands can read as a moved peak in every run (a
+# JSON task read 2.96% higher at equal collector work, and lower with it
+# on); tools/la-mem.py calls a peak moved only when these runs agree.
 # tools/la-mem.py compares two such files (the 50 tasks' average peak, its
 # spread, and the programs to run again).
 # LA_RUNNER and LA_GROUP split the programs into shared runs of their own
@@ -62,21 +68,30 @@ if [ "${1:-}" = --one ]; then
   printf '%s\t%s\t%s\t%s\t%s\n' "$s" "${n:--}" "$(md5sum < "$t.out" | cut -c1-12)" "$rc" "$(head -n 1 "$t.out" | cut -c1-60)"
   # The memory runs of one program start together (LA_MEM_PARALLEL=0: one
   # after another): a peak is not a time, and each run writes a file of its own.
-  i=0; runs=""
-  while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
+  i=0; runs=""; onr=""
+  nm=${LA_MEM_RUNS:-0}; non=${LA_MEM_ON_RUNS:-$nm}
+  [ "$nm" -gt 0 ] || non=0
+  while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))
+    # Runs past the first N keep address randomization on.
+    if [ "$i" -le "$nm" ]; then nr="setarch -R"; else nr=; fi
     if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
     else
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 setarch -R /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
     fi
   done
   wait
   i=0
-  while [ "$i" -lt "${LA_MEM_RUNS:-0}" ]; do
+  while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))
-    runs="$runs${runs:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
+    if [ "$i" -le "$nm" ]; then
+      runs="$runs${runs:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
+    else
+      onr="$onr${onr:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
+    fi
   done
+  [ -n "$onr" ] && runs="$runs	$onr"
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
   rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
@@ -131,7 +146,7 @@ if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
   done | awk -F'\t' '{ n = split($2, r, ","); for (i = 1; i <= n; i++) v[i] = r[i] + 0
       for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { x = v[i]; v[i] = v[j]; v[j] = x }
       m = (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2
-      printf "%s\t%s\t%s\t%s\t%s\n", $1, m, v[1], v[n], $2 }' | LC_ALL=C sort > "${out%.tsv}.mem.tsv"
+      printf "%s\t%s\t%s\t%s\t%s%s\n", $1, m, v[1], v[n], $2, (NF > 2 ? "\t" $3 : "") }' | LC_ALL=C sort > "${out%.tsv}.mem.tsv"
 fi
 rm -rf "$LAC_TMP"
 mv "$out.part" "$out"

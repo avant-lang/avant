@@ -21,11 +21,23 @@ address randomization off, and the runs. Printed:
   overlap (the runs do not decide it: run that program again with more
   runs, LA_MEM_RUNS, or read its runs' modes);
 - `repeat` too for a program whose own runs spread more than 1% on either
-  side (its peak is not one value: more runs before its change is read).
+  side (its peak is not one value: more runs before its change is read);
+- with the runs taken with address randomization on (the files' sixth
+  field, la-count.sh's LA_MEM_ON_RUNS) on both sides, a program is `moved`
+  only when those runs' ranges part too, the same way: with it off each
+  binary keeps one set of mapping addresses, so a change that moves only
+  where a mapping lands reads as a moved peak in every run; such a row
+  reads `repeat (ASLR on does not confirm)`, and the average of the
+  ASLR-on medians is printed beside the other.
 
 Status 0; 2 on usage or a file of another shape.
 """
 import sys
+
+def median(v):
+    v = sorted(v)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 def load(p):
     r = {}
@@ -33,7 +45,8 @@ def load(p):
         f = line.rstrip("\n").split("\t")
         if len(f) < 5:
             sys.exit("la-mem.py: %s: not a la-count.sh mem file (%r)" % (p, line))
-        r[f[0]] = (float(f[1]), float(f[2]), float(f[3]), [float(x) for x in f[4].split(",")])
+        on = [float(x) for x in f[5].split(",") if x] if len(f) > 5 else []
+        r[f[0]] = (float(f[1]), float(f[2]), float(f[3]), [float(x) for x in f[4].split(",")], on)
     return r
 
 def main(argv):
@@ -56,16 +69,22 @@ def main(argv):
     verdict = "lower" if hi < 1 else "higher" if lo > 1 else "within the spread"
     out = []
     out.append("average peak over %d tasks: base %.1f KB, head %.1f KB, head/base %.4f (passes %.4f–%.4f): %s" % (len(tasks), ab, ah, ah / ab, lo, hi, verdict))
+    if all(b[s][4] and h[s][4] for s in tasks):
+        aob = sum(median(b[s][4]) for s in tasks) / len(tasks)
+        aoh = sum(median(h[s][4]) for s in tasks) / len(tasks)
+        out.append("with ASLR on: base %.1f KB, head %.1f KB, head/base %.4f" % (aob, aoh, aoh / aob))
     out.append("the passes' own spread: base %.3f%%, head %.3f%% of the average (1%% of the base's average is %.0f KB)" % (100 * (max(pb) - min(pb)) / ab, 100 * (max(ph) - min(ph)) / ah, ab / 100))
     rows = []
     for s in both:
-        mb, nb, xb, _ = b[s]
-        mh, nh, xh, _ = h[s]
+        mb, nb, xb, _, ob = b[s]
+        mh, nh, xh, _, oh = h[s]
         wide = (xb - nb) > 0.01 * mb or (xh - nh) > 0.01 * mh
         if mb == mh and not wide:
             continue
         if xh < nb or nh > xb:
             v = "moved"
+            if ob and oh and not ((xh < nb and max(oh) < min(ob)) or (nh > xb and min(oh) > max(ob))):
+                v = "repeat (ASLR on does not confirm)"
         else:
             v = "repeat"
         if wide:

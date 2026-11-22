@@ -63,7 +63,9 @@
 #     rebuilds the checkout's runtime objects byte for byte;
 #   mem-compare: tools/la-mem.py reads a lower average over the tasks (the
 #     twins left out), a program whose ranges part as moved, and one whose
-#     runs take two values as one to run again.
+#     runs take two values as one to run again;
+#   mem-aslr-on: with ASLR-on runs on both sides, a peak moved with ASLR
+#     off but not with it on reads as one to run again.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -323,4 +325,13 @@ o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head.tsv" 2>&1)
 echo "$o" | grep -q '^average peak over 3 tasks: .*: lower$' && echo "$o" | grep -q '^a_one.*moved$' \
   && echo "$o" | grep -q '^b_two.*repeat' && echo "$o" | grep -q '^to run again: b_two$'
 say mem-compare $? "$(echo "$o" | tr '\n' ';')"
+# With the runs taken with ASLR on (a sixth field), a peak that moved with
+# it off is moved only when those runs part too: a_one's do, d_four's (a
+# mapping that landed elsewhere) do not.
+printf 'a_one\t1000\t1000\t1000\t1000,1000,1000\t1000,1064,1000\nd_four\t8916\t8916\t8916\t8916,8916,8916\t9108,9112,9044\n' > "$lmm/base-on.tsv"
+printf 'a_one\t900\t900\t900\t900,900,900\t964,900,900\nd_four\t9180\t9180\t9180\t9180,9180,9180\t9052,9184,9024\n' > "$lmm/head-on.tsv"
+o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-on.tsv" "$lmm/head-on.tsv" 2>&1)
+echo "$o" | grep -q '^a_one.*moved$' && echo "$o" | grep -q '^d_four.*repeat (ASLR on does not confirm)$' \
+  && echo "$o" | grep -q '^with ASLR on: base 5054.0 KB, head 4976.0 KB' && echo "$o" | grep -q '^to run again: d_four$'
+say mem-aslr-on $? "$(echo "$o" | tr '\n' ';')"
 echo done
