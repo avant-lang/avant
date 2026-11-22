@@ -18,7 +18,11 @@
 # WAVE_RUNNER, a stub runner that runs its command in its place (as a
 # runner that does not stop its own tree): stopped by a TERM to its outer
 # `timeout`, it must leave nothing either; a fifth the same with
-# WAVE_GROUP=1 (the shared steps one runner call). Prints one line per check,
+# WAVE_GROUP=1 (the shared steps one runner call); a sixth whose step has a
+# process that left its tree (reparented away) before the TERM; a seventh
+# through the runner with a `ps` that fails, so no listing of the tree finds
+# the step's processes: both are found by the run's mark in their
+# environment. Prints one line per check,
 # `ok: NAME` or `FAIL: NAME: why`; test_tools.av expects each NAME.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-stop.sh WORK" >&2; exit 2; }
@@ -35,6 +39,9 @@ cat > "$fake/tools/run-goldens.sh" <<'EOF'
 d=$WF_STUB
 if [ "${WF_STUB_QUICK:-0}" = 1 ]; then echo "1 same, 0 different, 0 skipped"; exit 0; fi
 echo $$ > "$d/step.pid"
+# WF_STUB_ESCAPE=1: a process that leaves the step's tree (its parent exits,
+# so it is reparented away), found only by the run's mark.
+if [ "${WF_STUB_ESCAPE:-0}" = 1 ]; then sh -c 'setsid sleep 600 & echo $! > "$1/escaped.pid"' escape "$d"; fi
 timeout -k 5 600 sh -c 'd=$1; echo $$ > "$d/inner.pid"; setsid sleep 600 & echo $! > "$d/session.pid"; sleep 600 & echo $! > "$d/child.pid"; wait' inner "$d" &
 echo $! > "$d/timeout.pid"
 while [ ! -s "$d/session.pid" ] || [ ! -s "$d/child.pid" ]; do sleep 0.05; done
@@ -77,11 +84,12 @@ reap() { # STUBDIR
 # timeout's PID. In an emptied environment: run inside a real final
 # evidence (the gate's suite under wave-final.sh), the caller's WAVE_LA,
 # WAVE_LA_SIDE and GATE_* would otherwise reach the fake run, whose
-# LangArena step would then run in the real checkout.
+# LangArena step would then run in the real checkout. The steps run in
+# turn (WAVE_BESIDE=0): the fake checkout is no git checkout to copy.
 start() { # NAME LIMIT [VAR=VALUE...]
   n=$1; l=$2; shift 2
   mkdir -p "$w/$n.stub"
-  env -i PATH="$PATH" HOME="$HOME" "$@" WF_STUB="$w/$n.stub" WAVE_PRIVATE_TMP=0 timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$HOME" WAVE_BESIDE=0 "$@" WF_STUB="$w/$n.stub" WAVE_PRIVATE_TMP=0 timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
   tp=$!
 }
 started() { # NAME: wait up to 60 s for the stub step to start
@@ -164,4 +172,43 @@ else
   say group-term-leaves-nothing 1 "the stub step did not start"
 fi
 reap "$w/group.stub"
+
+# 6. A process that left the step's tree before the TERM (reparented away
+# from it, which no listing of the tree finds): the run's mark finds it.
+start escape 300 WF_STUB_ESCAPE=1
+if started escape; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/escape.stub" | tr '\n' ' ')
+  [ -s "$w/escape.stub/escaped.pid" ] && [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say escape-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/escape.out/SUMMARY.txt"
+  say escape-summary $? "$(tail -1 "$w/escape.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say escape-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/escape.stub"
+
+# 7. Through the runner with a `ps` that fails (lists nothing, status 1,
+# as an overloaded machine's may): the listing of the tree is empty, and
+# the run's mark still finds every process of the step.
+mkdir -p "$w/failing-ps"
+printf '#!/bin/sh\nexit 1\n' > "$w/failing-ps/ps"; chmod +x "$w/failing-ps/ps"
+start psfail 300 WAVE_RUNNER="sh $w/runner" PATH="$w/failing-ps:$PATH"
+if started psfail; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/psfail.stub" | tr '\n' ' ')
+  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say psfail-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/psfail.out/SUMMARY.txt"
+  say psfail-summary $? "$(tail -1 "$w/psfail.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say psfail-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/psfail.stub"
 echo done

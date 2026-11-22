@@ -229,7 +229,21 @@ cur=""; curname=""; beside_pid=""; beside_tree=""; beside_used=""
 # A command a non-interactive shell starts in the background ignores SIGINT
 # and SIGQUIT; env --default-signal gives the step the dispositions it had
 # in the foreground (a test that sends SIGINT to a child expects it to act).
-run() { env --default-signal=INT,QUIT "$@" & cur=$!; wait "$cur"; rc_run=$?; cur=""; return $rc_run; }
+# Every step's environment carries the run's mark, WAVE_FINAL_RUN (this
+# script's PID and start time; a run started inside another one's step, such
+# as the shared part of WAVE_GROUP=1 or the beside run, appends its own to the
+# one it inherited): the stop finds the step's processes by it too, not only
+# by a listing of the step's tree, so a process the listing missed (a `ps`
+# that failed, a process reparented away) is still stopped.
+run_start=""
+if { read -r run_start < /proc/$$/stat; } 2>/dev/null; then
+  run_start=${run_start##*) }
+  # shellcheck disable=SC2086
+  run_start=$(set -- $run_start; shift 19; echo "$1")
+fi
+[ -n "$run_start" ] || run_start=$(date +%s%N)
+run_mark=${WAVE_FINAL_RUN:+$WAVE_FINAL_RUN/}$$-$run_start
+run() { env --default-signal=INT,QUIT WAVE_FINAL_RUN="$run_mark" "$@" & cur=$!; wait "$cur"; rc_run=$?; cur=""; return $rc_run; }
 # lk shared|timed STEP CMD...: run CMD through WAVE_RUNNER on that side of
 # the machine lock, as `final: STEP`; without WAVE_RUNNER, run it as it is.
 runner=${WAVE_RUNNER:-}
@@ -259,27 +273,85 @@ tree() {
   echo "$1"
   for t_child in $(ps -o pid= --ppid "$1" 2>/dev/null); do tree "$t_child"; done
 }
-# True while PID exists and is not a zombie (a dead child not yet reaped).
-alive() { t_st=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; case "$t_st" in Z*|"") return 1 ;; esac; return 0; }
+# False only when PID is known gone: no /proc entry, or a zombie (a dead
+# child not yet reaped). Read from /proc with the shell's own `read`, no
+# process started; when /proc cannot say, `ps`; when that fails too, the
+# state is unknown and reads as alive (a stop never takes an unknown process
+# for a stopped one).
+alive() {
+  if { read -r t_st < "/proc/$1/stat"; } 2>/dev/null; then
+    t_st=${t_st##*) }
+    case "$t_st" in Z*|X*) return 1 ;; esac
+    return 0
+  fi
+  if [ -d /proc/self ]; then [ -e "/proc/$1" ] || return 1; fi
+  t_st=$(ps -o stat= -p "$1" 2>/dev/null); t_rc=$?
+  case "$t_rc:$t_st" in 0:Z*) return 1 ;; 0:?*) return 0 ;; 1:) return 1 ;; esac
+  return 0
+}
+# This script and its ancestors: never stopped by the sweep.
+self_line() {
+  s_p=$$; s_l=" $$ "
+  while [ "$s_p" -gt 1 ] 2>/dev/null && { read -r s_st < "/proc/$s_p/stat"; } 2>/dev/null; do
+    s_st=${s_st##*) }
+    # shellcheck disable=SC2086
+    s_p=$(set -- $s_st; echo "$2")
+    s_l="$s_l$s_p "
+  done
+  echo "$s_l"
+}
+# The live processes of this user whose environment carries the run's mark
+# (or a mark that begins with it), parents first by PID; never this script
+# or an ancestor of it.
+marked() {
+  m_self=$(self_line)
+  grep -lsz -E "^WAVE_FINAL_RUN=$run_mark(/.*)?\$" /proc/[0-9]*/environ 2>/dev/null | while IFS=/ read -r _ _ m_p _; do
+    case "$m_self" in *" $m_p "*) continue ;; esac
+    [ -O "/proc/$m_p" ] && alive "$m_p" && echo "$m_p"
+  done | LC_ALL=C sort -nu | tr '\n' ' '
+}
+stop_left=""; t_grace=50
 stop_step() {
-  [ -n "$cur" ] || return 0
+  if [ -n "$cur" ]; then stop_tree; fi
+  # The sweep: whatever still carries the run's mark, the step's tree or
+  # not, stopped the same way (frozen, TERM, KILL after 1 s, within the
+  # outer timeout's 10 s); `stopped:` says every process stopped only when
+  # it then finds nothing.
+  t_k=0
+  while :; do
+    t_m=$(marked)
+    [ -z "$t_m" ] && break
+    [ $t_k -ge 2 ] && break
+    t_roots=$t_m; t_grace=10; stop_freeze; t_grace=50
+    t_k=$((t_k + 1))
+  done
+  stop_left=$t_m
+  if [ -n "$cur" ]; then wait "$cur" 2>/dev/null; fi
+  cur=""
+}
+stop_tree() {
   t_roots=$cur
   if [ -n "$via" ]; then
     # The runner stops its own tree and frees the lock: give it 5 s, then
-    # stop whatever of the tree it had then is left.
+    # stop whatever of the tree it had then is left, and whatever carries
+    # the mark.
     t_list=$(tree "$cur" | tr '\n' ' ')
     kill -TERM "$cur" 2>/dev/null
     t_i=0
     while alive "$cur" && [ $t_i -lt 50 ]; do sleep 0.1; t_i=$((t_i + 1)); done
     t_roots=""
-    for t_p in $t_list; do alive "$t_p" && t_roots="$t_roots $t_p"; done
-    if [ -z "$t_roots" ]; then wait "$cur" 2>/dev/null; cur=""; return 0; fi
+    for t_p in $t_list $(marked); do alive "$t_p" && t_roots="$t_roots $t_p"; done
+    if [ -z "$t_roots" ]; then return 0; fi
   fi
+  stop_freeze
+}
+# Stop t_roots and their trees, with whatever carries the mark.
+stop_freeze() {
   # Freeze the tree until a listing finds nothing new: a stopped process
   # neither forks nor dies, so none of the tree is reparented away from it.
   t_all=""
   while :; do
-    t_now=$(for t_r in $t_roots; do tree "$t_r"; done | LC_ALL=C sort -nu | tr '\n' ' ')
+    t_now=$(for t_r in $t_roots $(marked); do tree "$t_r"; done | LC_ALL=C sort -nu | tr '\n' ' ')
     # shellcheck disable=SC2086
     kill -STOP $t_now 2>/dev/null
     [ "$t_now" = "$t_all" ] && break
@@ -292,7 +364,7 @@ stop_step() {
     t_left=""
     for t_p in $t_all; do alive "$t_p" && t_left="$t_left $t_p"; done
     [ -z "$t_left" ] && break
-    if [ $t_i -ge 50 ]; then
+    if [ $t_i -ge "$t_grace" ]; then
       # What is left, and anything it started meanwhile.
       for t_p in $t_left; do
         # shellcheck disable=SC2086
@@ -303,8 +375,6 @@ stop_step() {
     fi
     sleep 0.1; t_i=$((t_i + 1))
   done
-  wait "$cur" 2>/dev/null
-  cur=""
 }
 on_signal() { # NAME NUMBER
   trap '' TERM INT HUP
@@ -314,7 +384,12 @@ on_signal() { # NAME NUMBER
   fi
   [ -n "$beside_tree" ] && { git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; }
   stop_step
-  echo "stopped: SIG$1 during ${curname:-no step}; every process of the step stopped" >> "$out/SUMMARY.txt"
+  if [ -z "$stop_left" ]; then
+    echo "stopped: SIG$1 during ${curname:-no step}; every process of the step stopped" >> "$out/SUMMARY.txt"
+  else
+    s_what=""; for t_p in $stop_left; do s_what="$s_what $t_p ($(tr '\0' ' ' < "/proc/$t_p/cmdline" 2>/dev/null | cut -c1-80))"; done
+    echo "stopped: red: SIG$1 during ${curname:-no step}; still alive after the stop, carrying the run's mark:$s_what" >> "$out/SUMMARY.txt"
+  fi
   exit $((128 + $2))
 }
 trap 'on_signal TERM 15' TERM
@@ -391,7 +466,7 @@ if [ "${WAVE_BESIDE:-1}" = 1 ] && want gate && { want goldens || want stats || w
      && { [ ! -d langarena ] || cp -a langarena "$beside_tree/avant/langarena"; } \
      && ln -s "$(realpath "$root/../LangArena" 2>/dev/null || echo /nonexistent)" "$beside_tree/LangArena"; then
     rm -rf "$beside_tree/avant/langarena/tmp"
-    (cd "$beside_tree/avant" && exec env WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
+    (cd "$beside_tree/avant" && exec env WAVE_FINAL_RUN="$run_mark" WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
     beside_pid=$!; beside_used=1
     echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1, the default; WAVE_BESIDE=0 runs them after it), pid $beside_pid"
   else
