@@ -1568,6 +1568,10 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
   // A loop with no call that may collect, in a program with one thread:
   // no object moves while it runs.
   quiet = !shared
+  // The address is formed again right after each collecting call, which
+  // a call that returns an element's slot cannot have: the store through
+  // the slot must follow it at once (V13).
+  reformable = !shared
   b = 0
   while b < f.blocks.size {
     if body[b] {
@@ -1580,6 +1584,9 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
         }
         if mir_lv_call_collects(m, blk.stmts[j], coll) {
           quiet = false
+          if d >= 0 && m.types.is_addr(f.locals[d].ty) {
+            reformable = false
+          }
         }
         j += 1
       }
@@ -1602,7 +1609,7 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && !shared
+        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && (quiet || reformable)
         if data || (st.kind == msk_call() && (st.callee == "avant_str_size" || st.callee == "avant_str_view_test") && st.args.size == 1 && st.dest >= 0) {
           v = lv_local(st.args[0])
           if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
