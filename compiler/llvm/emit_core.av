@@ -46,6 +46,10 @@ pub class LlEmit {
   pub frame_align: Int = 8
   pub frame_desc: String = ""
   pub frame_maps: Array(String)
+  // Whether the function being emitted names each slot local's address
+  // once, in its entry block (%sl<n>, an optimized build), instead of a
+  // GEP at each use (local_addr).
+  pub slot_named: Bool = false
   // The slot locals read through a copy of their own (ll_shadow_slots):
   // true at each such local's index, in the function being emitted;
   // whether this module's functions get them (an optimized build), and
@@ -320,9 +324,13 @@ pub class LlEmit {
   // into the access's frame address; one GEP made in the entry block
   // would be a value spilled there and reloaded at every use in another
   // block (the compiler compiling itself --debug took 2.5% more
-  // instructions so). -O3 merges the repeated GEPs.
+  // instructions so). An optimized build names each one once in the entry
+  // block instead (slot_named): -O3 merged the repeated GEPs anyway.
   pub fn local_addr(n: Int): String {
     if self.frame_words >= 0 && n < self.frame_at.size && self.frame_at[n] >= 0 {
+      if self.slot_named {
+        return "%sl${n}"
+      }
       t = tmp()
       line("${t} = getelementptr inbounds i8, ptr %gcf, i64 ${self.frame_at[n]}")
       return t
