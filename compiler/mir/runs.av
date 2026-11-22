@@ -1,0 +1,619 @@
+// Runs of bounds checks: stores or reads at v + c1, v + c2, ... of one
+// Array, Buf or string, in one block or a chain of blocks that only a
+// trap's branch splits (a Buf store's byte check), with nothing between
+// them that changes v or that holder's size,
+//
+//   dst[di] = a; dst[di + 1] = b; dst[di + 2] = c; dst[di + 3] = d
+//
+// each test their own index, since each traps with its own message. One
+// test before the run, `v + cmin` and `v + cmax` below the size as
+// unsigned numbers (a negative or wrapped sum fails), proves them all:
+// the block then goes on in a copy of the run without those checks, and
+// when the test fails, in the run as it was, every check in place, so a
+// failing index traps at the same check with the same message. Only the
+// checks are left out of the copy; every other statement is copied
+// unchanged (no pass after this one changes them). The pass runs after
+// loop versioning (a fast loop's body is where such runs are hot) and
+// before the GC passes, which see the copy like any code.
+//
+// A check is `check.bounds copy _i, copy _n` with _i set in the block as
+// `add[.chk] copy _v, const c`, `sub ... const c` or `copy _v` (or _i
+// itself, c = 0), and _n the holder's size: `cast copy _s to i64` of
+// `_s = copy (*_h).1` (an Array or Buf), or a local the block does not
+// set (a string's size computed before). Between the run's first index
+// and its last check: no statement sets v, _h or the size local, stores
+// a size field, or calls anything that might change a size (loops.av's
+// list and summary).
+
+import source
+import mir.types
+import mir.ir
+import mir.flow
+import mir.loops
+
+fn rn_local(o: MOperand?): Int {
+  if x = o, x.kind == mok_copy() {
+    if p = x.place, p.proj.size == 0 {
+      return p.local
+    }
+  }
+  -1
+}
+
+fn rn_const(o: MOperand?, out: Array(Int)): Bool {
+  if x = o, x.kind == mok_int() && x.ival <= 1000000 && x.ival >= -1000000 {
+    out[0] = x.ival.to_i()
+    return true
+  }
+  false
+}
+
+fn rn_copy_local(local: Int): MOperand {
+  o = MOperand.new(mok_copy(), -1)
+  o.place = MPlace.new(local)
+  o
+}
+
+fn rn_assign(loc: MLoc, dest: Int, rv: MRvalue): MStmt {
+  st = MStmt.new(msk_assign(), loc)
+  st.place = MPlace.new(dest)
+  st.rv = rv
+  st
+}
+
+fn rn_rv2(kind: Int, op: Int, a: MOperand, b: MOperand): MRvalue {
+  r = MRvalue.new(kind)
+  r.op = op
+  r.a = a
+  r.b = b
+  r
+}
+
+fn rn_c64(v: Int): MOperand {
+  o = MOperand.new(mok_int(), mt_i64())
+  o.ival = v.to_i()
+  o
+}
+
+fn rn_new_local(f: MFunc, ty: Int): Int {
+  f.locals.push(MLocal.new(ty, ""))
+  f.locals.size - 1
+}
+
+fn rn_new_block(f: MFunc): MBlock {
+  blk = MBlock.new(f.blocks.size)
+  f.blocks.push(blk)
+  blk
+}
+
+fn rn_stmt_copy(st: MStmt): MStmt {
+  c = MStmt.new(st.kind, st.loc)
+  c.place = st.place
+  c.rv = st.rv
+  c.fresh = st.fresh
+  c.dest = st.dest
+  c.callee = st.callee
+  c.indirect = st.indirect
+  c.args.concat(st.args)
+  c.collects = st.collects
+  c.sig = st.sig
+  c.locals.concat(st.locals)
+  c
+}
+
+// The index at check j: out[0] = v, out[1] = c, out[2] = the position of
+// the statement that set _i (j when _i is v itself); false when its form
+// is none of the above.
+fn rn_index(f: MFunc, blk: MBlock, j: Int, out: Array(Int)): Bool {
+  st = blk.stmts[j]
+  i = rn_local(st.args[0])
+  if i < 0 || f.locals[i].ty != mt_i64() {
+    return false
+  }
+  k = j - 1
+  while k >= 0 {
+    if mir_stmt_def(blk.stmts[k]) == i {
+      d = blk.stmts[k]
+      if d.kind != msk_assign() {
+        return false
+      }
+      if r = d.rv {
+        c = [0]
+        if r.kind == mrk_use() {
+          v = rn_local(r.a)
+          if v >= 0 {
+            out[0] = v
+            out[1] = 0
+            out[2] = k
+            return true
+          }
+          return false
+        }
+        if (r.kind == mrk_binary() || r.kind == mrk_checked()) && (r.op == mop_add() || r.op == mop_sub()) && rn_const(r.b, c) {
+          v = rn_local(r.a)
+          if v < 0 || f.locals[v].ty != mt_i64() {
+            return false
+          }
+          out[0] = v
+          out[1] = c[0]
+          if r.op == mop_sub() {
+            out[1] = 0 - c[0]
+          }
+          out[2] = k
+          return true
+        }
+      }
+      return false
+    }
+    k -= 1
+  }
+  out[0] = i
+  out[1] = 0
+  out[2] = j
+  true
+}
+
+// The size at check j: out[0] = the holder _h (-1 for a size local),
+// out[1] = the size local the key names (_n itself when not set in the
+// block), out[2] = the first position of its chain in the block (j when
+// none).
+fn rn_size(m: MModule, f: MFunc, blk: MBlock, j: Int, out: Array(Int)): Bool {
+  st = blk.stmts[j]
+  n = rn_local(st.args[1])
+  if n < 0 {
+    return false
+  }
+  k = j - 1
+  while k >= 0 {
+    if mir_stmt_def(blk.stmts[k]) == n {
+      d = blk.stmts[k]
+      if d.kind != msk_assign() {
+        return false
+      }
+      r = d.rv ?? MRvalue.new(0)
+      if r.kind != mrk_cast() {
+        return false
+      }
+      s = rn_local(r.a)
+      if s < 0 {
+        return false
+      }
+      q = k - 1
+      while q >= 0 {
+        if mir_stmt_def(blk.stmts[q]) == s {
+          sd = blk.stmts[q]
+          if sd.kind != msk_assign() {
+            return false
+          }
+          sr = sd.rv ?? MRvalue.new(0)
+          if sr.kind != mrk_use() {
+            return false
+          }
+          a = sr.a ?? MOperand.new(0, -1)
+          p = a.place ?? MPlace.new(-1)
+          if a.kind != mok_copy() || p.local < 0 || p.proj.size != 2 || p.proj[0].kind != mpk_deref() || p.proj[1].kind != mpk_field() || p.proj[1].field != 1 {
+            return false
+          }
+          ty = f.locals[p.local].ty
+          ts = m.types
+          if ts.kind(ty) != mk_ref() {
+            return false
+          }
+          lay = ts.get(ty).layout
+          if lay < 0 || !(ts.layouts[lay].kind == mlk_array() || ts.layouts[lay].kind == mlk_buf()) {
+            return false
+          }
+          out[0] = p.local
+          out[1] = -1
+          out[2] = q
+          return true
+        }
+        q -= 1
+      }
+      return false
+    }
+    k -= 1
+  }
+  out[0] = -1
+  out[1] = n
+  out[2] = j
+  true
+}
+
+// Whether statement st keeps every size (no size store, no call that
+// might change one).
+fn rn_keeps(m: MModule, f: MFunc, st: MStmt, keep: Array(Bool)): Bool {
+  if st.kind == msk_assign() {
+    if p = st.place, p.last_deref() >= 0 {
+      return !rn_writes_size(m.types, f, p)
+    }
+    return true
+  }
+  if st.kind != msk_call() {
+    return true
+  }
+  if fo = st.indirect {
+    return false
+  }
+  if i = m.func_index.get(st.callee) {
+    return keep[i]
+  }
+  if st.callee.starts_with("av.") {
+    return false
+  }
+  mir_lv_keeps_sizes(st.callee)
+}
+
+fn rn_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
+  ty = f.locals[p.local].ty
+  for pr in p.proj {
+    mt = ts.get(ty)
+    if pr.kind == mpk_deref() {
+      if ts.is_refkind(ty) && mt.layout >= 0 {
+        ty = ts.agg(mt.layout)
+      } else {
+        ty = mt.pointee
+      }
+      if ty < 0 {
+        return true
+      }
+    } else if pr.kind == mpk_field() {
+      if mt.layout < 0 {
+        return true
+      }
+      lay = ts.layouts[mt.layout]
+      if (lay.kind == mlk_array() || lay.kind == mlk_buf()) && pr.field == 1 {
+        return true
+      }
+      if pr.field >= lay.fields.size {
+        return true
+      }
+      ty = lay.fields[pr.field]
+    } else {
+      if mt.kind == mk_agg() && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems() {
+        ty = ts.layouts[mt.layout].fields[0]
+      }
+    }
+  }
+  false
+}
+
+// One run found in a block: its checks' positions, v, the size key, the
+// constants' range, and where it starts (the earliest statement of its
+// first check's index and size chains).
+class RnRun {
+  v: Int = -1
+  h: Int = -1
+  n: Int = -1
+  cmin: Int = 0
+  cmax: Int = 0
+  at: Array(Int)
+  sz: MOperand
+  open: Bool = true
+
+  fn initialize(v: Int, h: Int, n: Int, c: Int, j: Int, sz: MOperand) {
+    self.v = v
+    self.h = h
+    self.n = n
+    self.cmin = c
+    self.cmax = c
+    self.at = []
+    self.at.push(j)
+    self.sz = sz
+  }
+}
+
+// Whether, from statement `from` up to j, nothing changes a size or sets
+// v, _h or the size local (the chains' own statements at ip and sp
+// aside).
+fn rn_clean(m: MModule, f: MFunc, blk: MBlock, from: Int, j: Int, ip: Int, sp: Int, v: Int, h: Int, n: Int, keep: Array(Bool)): Bool {
+  q = from
+  while q < j {
+    st = blk.stmts[q]
+    if !rn_keeps(m, f, st, keep) {
+      return false
+    }
+    d = mir_stmt_def(st)
+    if q != ip && q != sp && d >= 0 && (d == v || d == h || d == n) {
+      return false
+    }
+    q += 1
+  }
+  true
+}
+
+// Finds the first run of three or more checks in blk (the test costs
+// two compares, so a shorter run gains nothing); nil when none.
+fn rn_find(m: MModule, f: MFunc, blk: MBlock, keep: Array(Bool)): RnRun? {
+  runs: Array(RnRun) = []
+  ix = [0, 0, 0]
+  sz = [0, 0, 0]
+  for j in 0..blk.stmts.size {
+    st = blk.stmts[j]
+    // What this statement changes closes the runs it touches.
+    d = mir_stmt_def(st)
+    kept = rn_keeps(m, f, st, keep)
+    for r in runs {
+      if r.open {
+        if !kept || (d >= 0 && (d == r.v || d == r.h || d == r.n)) {
+          r.open = false
+        }
+      }
+    }
+    if !kept {
+      for r in runs {
+        if r.at.size >= 3 {
+          return r
+        }
+      }
+      runs = []
+    }
+    if st.kind == msk_check_bounds() && st.args.size == 2 && rn_index(f, blk, j, ix) && rn_size(m, f, blk, j, sz) {
+      // v and the size hold from the first statement of this check's
+      // index and size on.
+      start = ix[2]
+      if sz[2] < start {
+        start = sz[2]
+      }
+      clean = rn_clean(m, f, blk, start, j, ix[2], sz[2], ix[0], sz[0], sz[1], keep)
+      found = false
+      for r in runs {
+        if clean && !found && r.open && r.v == ix[0] && r.h == sz[0] && r.n == sz[1] {
+          found = true
+          r.at.push(j)
+          if ix[1] < r.cmin {
+            r.cmin = ix[1]
+          }
+          if ix[1] > r.cmax {
+            r.cmax = ix[1]
+          }
+        }
+      }
+      if !found && clean {
+        runs.push(RnRun.new(ix[0], sz[0], sz[1], ix[1], j, st.args[1]))
+      }
+    }
+  }
+  for r in runs {
+    if r.at.size >= 3 {
+      return r
+    }
+  }
+  nil
+}
+
+// Whether block b is a trap's sink: a call that does not return (an
+// avant_trap_ helper) and `unreachable`.
+fn rn_trap_block(f: MFunc, b: Int): Bool {
+  blk = f.blocks[b]
+  if t = blk.term, t.kind == mtk_unreachable() {
+    for st in blk.stmts {
+      if !(st.kind == msk_call() && st.callee.starts_with("avant_trap_")) {
+        return false
+      }
+    }
+    return blk.stmts.size > 0
+  }
+  false
+}
+
+// The chain from block b: each next block is the other target of a
+// branch whose one target is a trap's sink, and has no other
+// predecessor (an element store's byte check splits a run so).
+fn rn_chain(f: MFunc, b: Int, preds: Array(Array(Int))): Array(Int) {
+  chain: Array(Int) = []
+  chain.push(b)
+  cur = b
+  while chain.size < 64 {
+    t = f.blocks[cur].term ?? MTerm.new(0, f.loc)
+    if t.kind != mtk_branch() || t.targets.size != 2 {
+      return chain
+    }
+    nx = -1
+    if rn_trap_block(f, t.targets[1]) {
+      nx = t.targets[0]
+    } else if rn_trap_block(f, t.targets[0]) {
+      nx = t.targets[1]
+    }
+    if nx < 0 || nx >= preds.size || preds[nx].size != 1 {
+      return chain
+    }
+    for c in chain {
+      if c == nx {
+        return chain
+      }
+    }
+    chain.push(nx)
+    cur = nx
+  }
+  chain
+}
+
+// Splits the chain at the run: the test at the end of its first block's
+// statements before the run, a copy of the run (its blocks, their trap
+// branches kept) without the run's checks, the run as it was, and a new
+// block holding what followed the run's last check. Returns that block.
+fn rn_split(f: MFunc, chain: Array(Int), cb: Array(Int), cj: Array(Int), run: RnRun): MBlock {
+  p = run.at[0]
+  q = run.at[run.at.size - 1]
+  bp = cb[p]
+  jp = cj[p]
+  bq = cb[q]
+  jq = cj[q]
+  first = f.blocks[chain[bp]]
+  last = f.blocks[chain[bq]]
+  loc = first.stmts[jp].loc
+  // Each statement's place in the run: skip the run's checks in the copy.
+  skip: Array(Array(Bool)) = []
+  for i in 0..chain.size {
+    skip.push(mir_bools(f.blocks[chain[i]].stmts.size, false))
+  }
+  for a in run.at {
+    skip[cb[a]][cj[a]] = true
+  }
+  rest = rn_new_block(f)
+  j = jq + 1
+  while j < last.stmts.size {
+    rest.stmts.push(last.stmts[j])
+    j += 1
+  }
+  rest.term = last.term
+  // The copy, block by block.
+  fast: Array(MBlock) = []
+  for i in bp..bq + 1 {
+    fast.push(rn_new_block(f))
+  }
+  for i in bp..bq + 1 {
+    src = f.blocks[chain[i]]
+    fb = fast[i - bp]
+    from = 0
+    if i == bp {
+      from = jp
+    }
+    to = src.stmts.size - 1
+    if i == bq {
+      to = jq
+    }
+    k = from
+    while k <= to {
+      if !skip[i][k] {
+        fb.stmts.push(rn_stmt_copy(src.stmts[k]))
+      }
+      k += 1
+    }
+    if i < bq {
+      ot = src.term ?? MTerm.new(mtk_unreachable(), loc)
+      nt = MTerm.new(ot.kind, ot.loc)
+      nt.cond = ot.cond
+      for x in ot.targets {
+        if x == chain[i + 1] {
+          nt.targets.push(fast[i + 1 - bp].id)
+        } else {
+          nt.targets.push(x)
+        }
+      }
+      nt.values.concat(ot.values)
+      fb.term = nt
+    } else {
+      tg = MTerm.new(mtk_goto(), loc)
+      tg.targets.push(rest.id)
+      fb.term = tg
+    }
+  }
+  // The run as it was: from its first check on, in a block of its own.
+  slow = rn_new_block(f)
+  if bp == bq {
+    k = jp
+    while k <= jq {
+      slow.stmts.push(first.stmts[k])
+      k += 1
+    }
+    ts = MTerm.new(mtk_goto(), loc)
+    ts.targets.push(rest.id)
+    slow.term = ts
+  } else {
+    k = jp
+    while k < first.stmts.size {
+      slow.stmts.push(first.stmts[k])
+      k += 1
+    }
+    slow.term = first.term
+    kept: Array(MStmt) = []
+    k = 0
+    while k <= jq {
+      kept.push(last.stmts[k])
+      k += 1
+    }
+    last.stmts = kept
+    tl = MTerm.new(mtk_goto(), loc)
+    tl.targets.push(rest.id)
+    last.term = tl
+  }
+  head: Array(MStmt) = []
+  for k2 in 0..jp {
+    head.push(first.stmts[k2])
+  }
+  first.stmts = head
+  // The test, unsigned: v + cmin < size and v + cmax < size. A size is
+  // below 2^31, so a sum that is negative, or that wrapped, reads as at
+  // least 2^63 and fails; when both pass, every v + c between them is in
+  // [0, size).
+  cur = first
+  un = rn_new_local(f, mt_u64())
+  cur.stmts.push(rn_assign(loc, un, rn_cast(run.sz, mt_u64())))
+  lo = rn_new_local(f, mt_i64())
+  cur.stmts.push(rn_assign(loc, lo, rn_rv2(mrk_binary(), mop_add(), rn_copy_local(run.v), rn_c64(run.cmin))))
+  ulo = rn_new_local(f, mt_u64())
+  cur.stmts.push(rn_assign(loc, ulo, rn_cast(rn_copy_local(lo), mt_u64())))
+  g1 = rn_new_local(f, mt_bool())
+  cur.stmts.push(rn_assign(loc, g1, rn_rv2(mrk_cmp(), mop_lt(), rn_copy_local(ulo), rn_copy_local(un))))
+  cur = rn_test(f, loc, cur, g1, slow.id)
+  hi = rn_new_local(f, mt_i64())
+  cur.stmts.push(rn_assign(loc, hi, rn_rv2(mrk_binary(), mop_add(), rn_copy_local(run.v), rn_c64(run.cmax))))
+  uhi = rn_new_local(f, mt_u64())
+  cur.stmts.push(rn_assign(loc, uhi, rn_cast(rn_copy_local(hi), mt_u64())))
+  g4 = rn_new_local(f, mt_bool())
+  cur.stmts.push(rn_assign(loc, g4, rn_rv2(mrk_cmp(), mop_lt(), rn_copy_local(uhi), rn_copy_local(un))))
+  t = MTerm.new(mtk_branch(), loc)
+  t.cond = rn_copy_local(g4)
+  t.targets.push(fast[0].id)
+  t.targets.push(slow.id)
+  cur.term = t
+  rest
+}
+
+fn rn_cast(a: MOperand, ty: Int): MRvalue {
+  r = MRvalue.new(mrk_cast())
+  r.a = a
+  r.ty = ty
+  r
+}
+
+fn rn_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
+  nx = rn_new_block(f)
+  t = MTerm.new(mtk_branch(), loc)
+  t.cond = rn_copy_local(g)
+  t.targets.push(nx.id)
+  t.targets.push(fail)
+  blk.term = t
+  nx
+}
+
+// The pass (after the loop pass, before the GC passes): every function
+// whose kind is unset.
+pub fn mir_runs_pass(m: MModule) {
+  keep = mir_lv_summary(m)
+  for f in m.funcs {
+    if f.kind == mfk_unset() {
+      work: Array(Int) = []
+      for b in 0..f.blocks.size {
+        work.push(b)
+      }
+      budget = 64
+      while work.size > 0 && budget > 0 {
+        b = work[work.size - 1]
+        work.pop()
+        preds = mir_preds(f)
+        chain = rn_chain(f, b, preds)
+        // The chain's statements as one sequence (each block dominates the
+        // next), with each one's block and position.
+        flat = MBlock.new(-1)
+        cb: Array(Int) = []
+        cj: Array(Int) = []
+        for i in 0..chain.size {
+          blk = f.blocks[chain[i]]
+          for j in 0..blk.stmts.size {
+            flat.stmts.push(blk.stmts[j])
+            cb.push(i)
+            cj.push(j)
+          }
+        }
+        if run = rn_find(m, f, flat, keep) {
+          rest = rn_split(f, chain, cb, cj, run)
+          work.push(rest.id)
+          budget -= 1
+        }
+      }
+    }
+  }
+}
