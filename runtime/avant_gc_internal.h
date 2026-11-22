@@ -241,7 +241,7 @@ typedef struct GcTune {
   uint64_t dflt;      /* AVANT_GC_TUNE_DEFAULT_KB: YOUNG_BYTES_DEFAULT */
   uint64_t cap;       /* AVANT_GC_TUNE_CAP_KB: YOUNG_BYTES_CAP */
   uint64_t heap_div;  /* AVANT_GC_TUNE_HEAP_DIV: YOUNG_HEAP_DIV */
-  uint64_t high_pct;  /* AVANT_GC_TUNE_HIGH_PCT: the survival that grows the budget, 50 */
+  uint64_t high_pct;  /* AVANT_GC_TUNE_HIGH_PCT: the survival that grows the budget, YOUNG_GROW_PCT */
   uint64_t low_pct;   /* AVANT_GC_TUNE_LOW_PCT: a low-survival collection, 10 */
   uint64_t streak;    /* AVANT_GC_TUNE_STREAK: high collections in a row to grow, 2 */
   uint64_t grow_pct;  /* AVANT_GC_TUNE_GROW_PCT: the growth step, 200 (doubling) */
@@ -1677,6 +1677,9 @@ typedef struct GcHeap {
   /* The last young collection's survival exceeded half its young bytes
    * (young_size). */
   uint8_t young_high_prev;
+  /* The last young collection's survival exceeded YOUNG_GROW_PCT percent
+   * of its young bytes (young_size: the budget's growth). */
+  uint8_t young_grow_prev;
   /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c): on, the
    * retirements left before the next probe, and the probes' interval. */
   uint8_t tenure_on;

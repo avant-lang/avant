@@ -1,0 +1,87 @@
+import harness
+import backends
+import std.process
+
+// The young budget's growth rule (runtime/avant_gc_collect.c, young_size):
+// the budget doubles at the second budget collection in a row where more
+// than YOUNG_GROW_PCT percent (70) of the young bytes survived. Growth at
+// more than half held the peak of programs whose survival stays between
+// half and two thirds while their live set grows (the budget, not their
+// data, at the cap).
+//
+// heap/grow_survival.av keeps a fixed share of 1,500,000 small nodes in a
+// chain. At its default share (45 percent; more than half of what each
+// collection sees survives, with the copies of the last collection's
+// survivors) the budget stays at its default, 4 MiB; at 95 percent it
+// grows. Both run with AVANT_GC_STATS=1 (yng_max), and the default share
+// runs plainly and under AVANT_GC_VERIFY=1 with its known stdout.
+fn test_gc_sizing(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/grow_survival.av", "${dir}/grow_survival", "${dir}/grow_survival.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "grow_survival.av: compiles")
+  want = "kept: 675000\nwalked: 675000\nsum: 4500001 check: 3375001\n"
+  want_high = "kept: 1425000\nwalked: 1425000\nsum: 4500001 check: 7124992\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "grow_survival", "grow_survival.g${e}", envs[e]))
+    e += 1
+  }
+  clean = "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  runs.push(run_job_env(dir, "grow_survival", "grow_survival.mid", clean))
+  runs.push(run_job_env(dir, "grow_survival", "grow_survival.high", "${clean} GROW_SURVIVAL_KEEP=95"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "grow_survival.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/grow_survival.g${e}.out"), want, "grow_survival.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/grow_survival.g${e}.err"), "", "grow_survival.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  mid = runs[envs.size]
+  high = runs[envs.size + 1]
+  c.eq_int(mid.code, 0, "grow_survival.av at 45 percent with AVANT_GC_STATS=1: exit 0")
+  c.eq_str(log_text("${dir}/grow_survival.mid.out"), want, "grow_survival.av at 45 percent with AVANT_GC_STATS=1: the known stdout")
+  c.eq_int(high.code, 0, "grow_survival.av at 95 percent: exit 0")
+  c.eq_str(log_text("${dir}/grow_survival.high.out"), want_high, "grow_survival.av at 95 percent: the known stdout")
+  m = stat_of(log_text("${dir}/grow_survival.mid.err"), "yng_max")
+  h = stat_of(log_text("${dir}/grow_survival.high.err"), "yng_max")
+  c.eq_int(m, 4194304, "grow_survival.av at 45 percent: the budget stays at 4 MiB (yng_max ${m})")
+  c.expect(h > 4194304, "grow_survival.av at 95 percent: the budget grows (yng_max ${h})")
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_sizing.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_gc_sizing(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

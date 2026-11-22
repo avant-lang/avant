@@ -1,0 +1,49 @@
+// The young budget's growth (runtime/avant_gc_collect.c, young_size): it
+// doubles at the second budget collection in a row where more than
+// YOUNG_GROW_PCT percent (70) of the young bytes survived. This program
+// allocates 1,500,000 small nodes and keeps a fixed share of them in a
+// chain (GROW_SURVIVAL_KEEP percent, 45 by default). With the kept share
+// and the copies of the last collection's survivors, more than half of
+// what its young collections see survives, which grew the budget to
+// 16 MiB under the earlier rule (growth past half), but not 70 percent
+// twice in a row: the budget stays at its default. At 95 it grows.
+// tests/cases/test_gc_sizing.av runs both with AVANT_GC_STATS=1 and reads
+// yng_max, and runs the default under AVANT_GC_VERIFY=1.
+import std.process
+
+class Cell {
+  next: Cell?
+  v: Int
+  w: Int
+}
+
+fn main {
+  keep = (process.env("GROW_SURVIVAL_KEEP") ?? "45").to_i() ?? 45
+  head: Cell? = nil
+  kept = 0
+  sum = 0
+  i = 0
+  while i < 1500000 {
+    c = Cell.new()
+    c.v = i
+    c.w = i * 3
+    sum += c.w % 7
+    if (i * 7919) % 100 < keep {
+      c.next = head
+      head = c
+      kept += 1
+    }
+    i += 1
+  }
+  walked = 0
+  check = 0
+  p = head
+  while n = p {
+    walked += 1
+    check += n.v % 11
+    p = n.next
+  }
+  puts("kept: ${kept}")
+  puts("walked: ${walked}")
+  puts("sum: ${sum} check: ${check}")
+}

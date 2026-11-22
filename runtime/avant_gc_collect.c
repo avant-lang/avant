@@ -59,6 +59,22 @@ uint64_t avant_nursery_held;
 #ifndef YOUNG_HEAP_DIV
 #define YOUNG_HEAP_DIV 12
 #endif
+/* The survival that grows the budget: more than YOUNG_GROW_PCT percent
+ * of a collection's young bytes, at two budget collections in a row
+ * (young_size). 70 by measurement on the 64 LangArena programs (50, the
+ * half the rule used before, 60, 65, 70, 75, 80 and 90): at 50 the
+ * budget doubled to the cap in programs whose survival stays between
+ * half and two thirds while their live set grows, and the budget then
+ * held their peak (Graph::BFS / DFS / AStar 152 / 142 / 157 MB at 50,
+ * 135 / 127 / 139 MB at 70; Calculator::Interpreter 61 -> 44 MB, its
+ * budget 32 -> 16 MiB); 60 and 65 still grew it for the Graph rows
+ * (157 / 150 / 156 MB); from 75 Etc::GameOfLife, whose grids survive at
+ * about three quarters, stopped growing it and copied more (+2.4%
+ * instructions, 45 -> 47 MB). The half stays the high-survival test of
+ * the tenured phase and of dense blocks (young_high_prev). */
+#ifndef YOUNG_GROW_PCT
+#define YOUNG_GROW_PCT 70
+#endif
 
 /* The settings' one parsing rule (the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
@@ -160,7 +176,7 @@ static void gc_tune_read(void) {
     gc_tune.cap = gc_tune.dflt;
   }
   gc_tune.heap_div = env_u64("AVANT_GC_TUNE_HEAP_DIV", YOUNG_HEAP_DIV, 1, 1u << 20);
-  gc_tune.high_pct = env_u64("AVANT_GC_TUNE_HIGH_PCT", 50, 0, 100);
+  gc_tune.high_pct = env_u64("AVANT_GC_TUNE_HIGH_PCT", YOUNG_GROW_PCT, 0, 100);
   gc_tune.low_pct = env_u64("AVANT_GC_TUNE_LOW_PCT", 10, 0, 100);
   gc_tune.streak = env_u64("AVANT_GC_TUNE_STREAK", 2, 1, 64);
   gc_tune.grow_pct = env_u64("AVANT_GC_TUNE_GROW_PCT", 200, 101, 1600);
@@ -243,7 +259,7 @@ uint64_t gc_tune_stamp_of(const void *block_base) {
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
- * than half the young bytes survived, and halves back toward its floor
+ * than YOUNG_GROW_PCT percent of the young bytes survived, and halves back toward its floor
  * when less than a tenth survived. The floor is the larger of
  * YOUNG_BYTES_DEFAULT and the heap in use (mature blocks and large
  * objects) / YOUNG_HEAP_DIV; the budget is raised to it at once.
@@ -258,6 +274,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
   uint64_t floor = TUNE(dflt, YOUNG_BYTES_DEFAULT);
   uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / TUNE(heap_div, YOUNG_HEAP_DIV);
   int high;
+#ifndef AVANT_GC_TUNE
+  int grow;
+#endif
   if (used == 0) {
     return;
   }
@@ -304,8 +323,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
     }
   }
 #else
-  if (high) {
-    if (gc_heap.young_high_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
+  grow = surv * 100 > used * YOUNG_GROW_PCT;
+  if (grow) {
+    if (gc_heap.young_grow_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
       avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
                                                                  : avant_young_bytes * 2;
       gc_heap.ctr.size.grows++;
@@ -350,6 +370,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
    * instructions). */
   if (budget) {
     gc_heap.young_high_prev = (uint8_t)high;
+#ifndef AVANT_GC_TUNE
+    gc_heap.young_grow_prev = (uint8_t)grow;
+#endif
   }
 }
 
