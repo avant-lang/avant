@@ -72,7 +72,10 @@
 // The shape (UI x UJ) is chosen by the CPU level compiled for, measured
 // on matrix multiply: a two-level tile, 4 x 2 at v3 and v4 (four rows of
 // the first operand, two of the second's transpose), 4 x 4 at v2 and
-// below; a depth-2 nest takes UI rows.
+// below; a depth-2 nest takes UI rows. A depth-3 nest also has a cache
+// tile (tl_panel): a panel of rows computed a block of columns at a time,
+// its sizes chosen where the nest starts from the detected cache sizes
+// and the threads the program runs.
 
 import source
 import mir.types
@@ -416,7 +419,6 @@ fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch, preds: Array(Array(Int))):
       cur = t.targets[0]
       continue
     }
-
     if t.kind != mtk_branch() || t.targets.size != 2 || blk.stmts.size < 2 {
       return false
     }
@@ -1294,25 +1296,17 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
 
 // ---- the tile
 
-fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int) {
-  h0 = nest.h0
-  fail = h0
-  hb = f.blocks[h0]
-  loc = hb.stmts[0].loc
-  preds = mir_preds(f)
-  ity = f.locals[nest.ind_i].ty
-  // JH0: UI rows left?
-  jh0 = tl_new_block(f)
-  blk = jh0
+// The tests where a tile of UI rows starts at i (every one failing to
+// fail): the rows' i, the ranged locals, the outer level's pre
+// statements and the inner versionings' guards for each row, the
+// distinctness of what the tile stores into and reads, the freeze of
+// every array it stores into, and at depth 3 the scan of L1's columns.
+// The stores' data pointers go to wdata. Returns the block to continue
+// in.
+fn tl_checks(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, blk0: MBlock, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, fail: Int): MBlock {
+  blk = blk0
   wo: Array(Int) = [0]
-  blk = tl_wide(f, loc, blk, tl_copy(nest.ind_i), fail, wo)
-  i64 = wo[0]
-  blk = tl_wide(f, loc, blk, nest.hd0.bound, fail, wo)
-  x64 = wo[0]
-  last = tl_new_local(f, mt_i64())
-  blk.stmts.push(tl_assign(loc, last, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_int(ui - 1, mt_i64()))))
-  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(last), tl_copy(x64), fail)
-  // The rows' i.
+  ity = f.locals[nest.ind_i].ty
   nm.ix = [nest.ind_i]
   for x in 1..ui {
     v = tl_new_local(f, ity)
@@ -1322,7 +1316,7 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
   for v in nest.ranged {
     blk = tl_wide(f, loc, blk, tl_copy(v), fail, wo)
   }
-  if nest.depth == 3 {
+  if nest.depth == 3 && nm.jname < 0 {
     nm.jname = tl_new_local(f, f.locals[nest.ind_j].ty)
   }
   nm.jy = [nm.jname]
@@ -1362,94 +1356,403 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
     }
   }
   if nest.depth == 2 {
+    return blk
+  }
+  jty = f.locals[nest.ind_j].ty
+  j = nm.jname
+  // j and L1's bound within the i32 range, so j + UJ - 1 is exact.
+  blk = tl_wide(f, loc, blk, tl_copy(j), fail, wo)
+  xb = tl_c_operand(f, nm, nest.hd1.bound, 0, 0)
+  blk = tl_wide(f, loc, blk, xb, fail, wo)
+  // The scan: for every column, each row's L1 pre statements, the
+  // inner loop's guard and the distinctness of what they load.
+  sj = tl_new_local(f, jty)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(j)
+  blk.stmts.push(tl_assign(loc, sj, ru))
+  sh = tl_new_block(f)
+  blk.term = tl_goto(loc, sh.id)
+  sb = tl_new_block(f)
+  sdone = tl_new_block(f)
+  sc = tl_new_local(f, mt_bool())
+  sh.stmts.push(tl_assign(loc, sc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(sj), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
+  st = MTerm.new(mtk_branch(), loc)
+  st.cond = tl_copy(sc)
+  st.targets.push(sb.id)
+  st.targets.push(sdone.id)
+  sh.term = st
+  nm.jy = [sj]
+  sblk = tl_emit_tested(f, nm, sb, nest.pre1, ui, fail)
+  for x in 0..ui {
+    sblk = tl_emit_chain(f, nm, sblk, nest.g2, x, 0, fail)
+  }
+  sblk = tl_emit_distinct(f, nm, loc, sblk, stores, wdata, loads, 1, ui, fail)
+  tl_step(f, loc, sblk, sj, 1)
+  sblk.term = tl_goto(loc, sh.id)
+  nm.jy = [nm.jname]
+  sdone
+}
+
+// The columns of a tile of UI rows from j (nm.jname) up to bound (an
+// operand of j's type), UJ at a time and then one at a time, entered
+// from blk; returns the block entered when they are done.
+fn tl_columns(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, blk: MBlock, ui: Int, uj: Int, bound: MOperand, fail: Int): MBlock {
+  jty = f.locals[nest.ind_j].ty
+  j = nm.jname
+  // JH1: UJ columns left?
+  jh1 = tl_new_block(f)
+  blk.term = tl_goto(loc, jh1.id)
+  wj: Array(Int) = [0]
+  jb = tl_wide(f, loc, jh1, tl_copy(j), fail, wj)
+  j64 = wj[0]
+  jb = tl_wide(f, loc, jb, bound, fail, wj)
+  xj64 = wj[0]
+  jl = tl_new_local(f, mt_i64())
+  jb.stmts.push(tl_assign(loc, jl, tl_rv2(mrk_binary(), mop_add(), tl_copy(j64), tl_int(uj - 1, mt_i64()))))
+  jc = tl_new_local(f, mt_bool())
+  jb.stmts.push(tl_assign(loc, jc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jl), tl_copy(xj64))))
+  tb = tl_new_block(f)
+  rh1 = tl_new_block(f)
+  jt = MTerm.new(mtk_branch(), loc)
+  jt.cond = tl_copy(jc)
+  jt.targets.push(tb.id)
+  jt.targets.push(rh1.id)
+  jb.term = jt
+  // The tile of UI x UJ outputs.
+  nm.jy = [j]
+  for y in 1..uj {
+    v = tl_new_local(f, jty)
+    tb.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(j), tl_int(y, jty))))
+    nm.jy.push(v)
+  }
+  tl_emit(f, nm, tb, nest.pre1, ui, uj, false)
+  tout = tl_emit_inner(f, nm, nest, tb, ui, uj)
+  tl_emit(f, nm, tout, nest.post1, ui, uj, true)
+  tl_step(f, loc, tout, j, uj)
+  tout.term = tl_goto(loc, jh1.id)
+  // The columns left, one at a time, for the UI rows.
+  nm.jy = [j]
+  rc = tl_new_local(f, mt_bool())
+  rh1.stmts.push(tl_assign(loc, rc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(j), bound)))
+  rb = tl_new_block(f)
+  done = tl_new_block(f)
+  rt = MTerm.new(mtk_branch(), loc)
+  rt.cond = tl_copy(rc)
+  rt.targets.push(rb.id)
+  rt.targets.push(done.id)
+  rh1.term = rt
+  tl_emit(f, nm, rb, nest.pre1, ui, 1, false)
+  rout = tl_emit_inner(f, nm, nest, rb, ui, 1)
+  tl_emit(f, nm, rout, nest.post1, ui, 1, true)
+  tl_step(f, loc, rout, j, 1)
+  rout.term = tl_goto(loc, rh1.id)
+  done
+}
+
+// The bytes one inner iteration reads from the element loads whose
+// array depends on j and not on i (want_j), or on i and not on j.
+fn tl_inner_bytes(f: MFunc, nest: TlNest, nm: TlNames, want_j: Bool): Int {
+  n = 0
+  for st in nest.bn {
+    places: Array(MPlace) = []
+    tl_loads(st, places)
+    d = mir_stmt_def(st)
+    for p in places {
+      if p.proj[1].kind == mpk_index() && d >= 0 && p.local < nm.vi.size {
+        vi = nm.vi[p.local]
+        vj = nm.vj[p.local]
+        if (want_j && vj && !vi) || (!want_j && vi && !vj) {
+          ty = f.locals[d].ty
+          if ty == mt_u8() || ty == mt_i8() || ty == mt_bool() {
+            n += 1
+          } else if ty == mt_i16() || ty == mt_u16() {
+            n += 2
+          } else if ty == mt_i32() || ty == mt_u32() {
+            n += 4
+          } else {
+            n += 8
+          }
+        }
+      }
+    }
+  }
+  n
+}
+
+// The value of o as the nest's entry can read it: o itself when it is
+// a constant or a local the region does not define, else the operand a
+// local the region defines once, as a plain copy, copies (a loop's
+// bound held in a local: `_e = copy _n`); nil when there is none.
+fn tl_outside(f: MFunc, nest: TlNest, nm: TlNames, o: MOperand): MOperand? {
+  cur = o
+  for step in 0..8 {
+    if cur.kind == mok_int() {
+      return cur
+    }
+    v = tl_local(cur)
+    if v < 0 {
+      return nil
+    }
+    if !nm.inreg[v] {
+      return cur
+    }
+    found: MOperand? = nil
+    count = 0
+    for st in tl_all(f, nest) {
+      if mir_stmt_def(st) == v {
+        count += 1
+        if r = st.rv, r.kind == mrk_use(), a = r.a, st.kind == msk_assign() {
+          found = a
+        }
+      }
+    }
+    if count != 1 {
+      return nil
+    }
+    cur = found ?? return nil
+  }
+  nil
+}
+
+// min(a, b) of two i64 locals, in a new local (out[0]); returns the
+// block to continue in.
+fn tl_min64(f: MFunc, loc: MLoc, blk: MBlock, a: Int, b: Int, out: Array(Int)): MBlock {
+  m = tl_new_local(f, mt_i64())
+  c = tl_new_local(f, mt_bool())
+  blk.stmts.push(tl_assign(loc, c, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(a), tl_copy(b))))
+  ba = tl_new_block(f)
+  bb = tl_new_block(f)
+  nx = tl_new_block(f)
+  t = MTerm.new(mtk_branch(), loc)
+  t.cond = tl_copy(c)
+  t.targets.push(ba.id)
+  t.targets.push(bb.id)
+  blk.term = t
+  ra = MRvalue.new(mrk_use())
+  ra.a = tl_copy(a)
+  ba.stmts.push(tl_assign(loc, m, ra))
+  ba.term = tl_goto(loc, nx.id)
+  rb = MRvalue.new(mrk_use())
+  rb.a = tl_copy(b)
+  bb.stmts.push(tl_assign(loc, m, rb))
+  bb.term = tl_goto(loc, nx.id)
+  out[0] = m
+  nx
+}
+
+fn tl_call_fit(f: MFunc, loc: MLoc, blk: MBlock, bytes: Int, k64: Int, level: Int, unit: Int): Int {
+  b = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, b, tl_rv2(mrk_binary(), mop_mul(), tl_copy(k64), tl_int(bytes, mt_i64()))))
+  out = tl_new_local(f, mt_i64())
+  call = MStmt.new(msk_call(), loc)
+  call.dest = out
+  call.callee = "avant_tile_fit"
+  call.args.push(tl_copy(b))
+  call.args.push(tl_int(level, mt_i64()))
+  call.args.push(tl_int(unit, mt_i64()))
+  call.collects = false
+  blk.stmts.push(call)
+  out
+}
+
+// The cache tile (depth 3): a panel of R rows (a multiple of UI) is
+// computed a block of B columns (a multiple of UJ) at a time, every tile
+// of the panel's rows over one block before the next block, so that the
+// block's rows of the second operand stay in the worker's share of L2
+// while the panel's rows are read again, and the panel stays in its
+// share of L3. The runtime chooses B and R where the nest starts
+// (avant_tile_fit: the cache sizes it detected and the threads the
+// program runs). Every output is still computed by one tile, its sum in
+// its own order, and written once: only which outputs come next changes.
+// All the panel's tiles are tested first (tl_checks for each, failing
+// to the panel's first row in the tile of rows, which tests again and
+// falls back as before); nothing the tile stores is read by these tests
+// (tl_try), so the tests the panel repeats before each block pass too.
+// Returns the entry block, or -1 when the nest has nothing to block.
+fn tl_panel(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int, jh0: Int): Int {
+  if nest.depth != 3 {
+    return -1
+  }
+  jbytes = tl_inner_bytes(f, nest, nm, true)
+  ibytes = tl_inner_bytes(f, nest, nm, false)
+  if jbytes == 0 {
+    return -1
+  }
+  xbo = tl_outside(f, nest, nm, nest.hd1.bound) ?? return -1
+  ko = tl_outside(f, nest, nm, nest.hdn.bound) ?? return -1
+  ity = f.locals[nest.ind_i].ty
+  jty = f.locals[nest.ind_j].ty
+  i = nest.ind_i
+  j = nm.jname
+  wo: Array(Int) = [0]
+  // PP: the block sizes, once per entry.
+  pp = tl_new_block(f)
+  blk = tl_wide(f, loc, pp, ko, jh0, wo)
+  k64 = wo[0]
+  cols = tl_call_fit(f, loc, blk, jbytes, k64, 2, uj)
+  if ibytes == 0 {
+    ibytes = 1
+  }
+  rows = tl_call_fit(f, loc, blk, ibytes, k64, 3, ui)
+  // PH: a panel of R rows left, and more columns than one block?
+  ph = tl_new_block(f)
+  blk.term = tl_goto(loc, ph.id)
+  blk = tl_wide(f, loc, ph, tl_copy(i), jh0, wo)
+  i64 = wo[0]
+  blk = tl_wide(f, loc, blk, nest.hd0.bound, jh0, wo)
+  x64 = wo[0]
+  blk = tl_wide(f, loc, blk, xbo, jh0, wo)
+  xb64 = wo[0]
+  // The panel: R rows, or the whole tiles of rows left when fewer.
+  rl = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rl, tl_rv2(mrk_binary(), mop_sub(), tl_copy(x64), tl_copy(i64))))
+  blk = tl_cmp_test(f, loc, blk, mop_ge(), tl_copy(rl), tl_int(ui, mt_i64()), jh0)
+  rr = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rr, tl_rv2(mrk_binary(), mop_rem(), tl_copy(rl), tl_int(ui, mt_i64()))))
+  rf = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rf, tl_rv2(mrk_binary(), mop_sub(), tl_copy(rl), tl_copy(rr))))
+  pm: Array(Int) = [0]
+  blk = tl_min64(f, loc, blk, rows, rf, pm)
+  e64 = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, e64, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_copy(pm[0]))))
+  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(cols), tl_copy(xb64), jh0)
+  i0 = tl_new_local(f, ity)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i)
+  blk.stmts.push(tl_assign(loc, i0, ru))
+  iend = tl_new_local(f, ity)
+  blk.stmts.push(tl_assign(loc, iend, tl_cast(tl_copy(e64), ity)))
+  // RST: a test failed: the panel's first row, in the tile of rows.
+  rst = tl_new_block(f)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i0)
+  rst.stmts.push(tl_assign(loc, i, ru))
+  rst.term = tl_goto(loc, jh0)
+  // CH: every tile of the panel tested.
+  ch = tl_new_block(f)
+  blk.term = tl_goto(loc, ch.id)
+  cc = tl_new_local(f, mt_bool())
+  ch.stmts.push(tl_assign(loc, cc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(i), tl_copy(iend))))
+  cb = tl_new_block(f)
+  ce = tl_new_block(f)
+  ct = MTerm.new(mtk_branch(), loc)
+  ct.cond = tl_copy(cc)
+  ct.targets.push(cb.id)
+  ct.targets.push(ce.id)
+  ch.term = ct
+  cout = tl_checks(f, nest, nm, loc, cb, stores, loads, ui, rst.id)
+  tl_step(f, loc, cout, i, ui)
+  cout.term = tl_goto(loc, ch.id)
+  // CE: the first block starts at j's start (pre0 sets it, the same for
+  // every row).
+  jb = tl_new_local(f, jty)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(j)
+  ce.stmts.push(tl_assign(loc, jb, ru))
+  je = tl_new_local(f, jty)
+  // BH: a block left?
+  bh = tl_new_block(f)
+  ce.term = tl_goto(loc, bh.id)
+  jb64 = tl_new_local(f, mt_i64())
+  bh.stmts.push(tl_assign(loc, jb64, tl_cast(tl_copy(jb), mt_i64())))
+  bc = tl_new_local(f, mt_bool())
+  bh.stmts.push(tl_assign(loc, bc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jb64), tl_copy(xb64))))
+  bb = tl_new_block(f)
+  be = tl_new_block(f)
+  bt = MTerm.new(mtk_branch(), loc)
+  bt.cond = tl_copy(bc)
+  bt.targets.push(bb.id)
+  bt.targets.push(be.id)
+  bh.term = bt
+  // BB: the block's end, min(jb + B, bound), in i64.
+  t64 = tl_new_local(f, mt_i64())
+  bb.stmts.push(tl_assign(loc, t64, tl_rv2(mrk_binary(), mop_add(), tl_copy(jb64), tl_copy(cols))))
+  em: Array(Int) = [0]
+  bi = tl_min64(f, loc, bb, t64, xb64, em)
+  bi.stmts.push(tl_assign(loc, je, tl_cast(tl_copy(em[0]), jty)))
+  // BI: the panel's tiles over the block.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i0)
+  bi.stmts.push(tl_assign(loc, i, ru))
+  ih = tl_new_block(f)
+  bi.term = tl_goto(loc, ih.id)
+  ic = tl_new_local(f, mt_bool())
+  ih.stmts.push(tl_assign(loc, ic, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(i), tl_copy(iend))))
+  ib = tl_new_block(f)
+  ie = tl_new_block(f)
+  it = MTerm.new(mtk_branch(), loc)
+  it.cond = tl_copy(ic)
+  it.targets.push(ib.id)
+  it.targets.push(ie.id)
+  ih.term = it
+  // IB: the rows' i, the outer pre statements and guards (as tested),
+  // then the block's columns.
+  iblk = ib
+  nm.ix = [i]
+  for x in 1..ui {
+    v = tl_new_local(f, ity)
+    iblk.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(i), tl_int(x, ity))))
+    nm.ix.push(v)
+  }
+  nm.jy = [j]
+  iblk = tl_emit_tested(f, nm, iblk, nest.pre0, ui, rst.id)
+  for x in 0..ui {
+    iblk = tl_emit_chain(f, nm, iblk, nest.g1, x, 0, rst.id)
+  }
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(jb)
+  iblk.stmts.push(tl_assign(loc, j, ru))
+  idone = tl_columns(f, nest, nm, loc, iblk, ui, uj, tl_copy(je), rst.id)
+  tl_step(f, loc, idone, i, ui)
+  idone.term = tl_goto(loc, ih.id)
+  // IE: the next block.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(je)
+  ie.stmts.push(tl_assign(loc, jb, ru))
+  ie.term = tl_goto(loc, bh.id)
+  // BE: the next panel.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(iend)
+  be.stmts.push(tl_assign(loc, i, ru))
+  be.term = tl_goto(loc, ph.id)
+  pp.id
+}
+
+fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int) {
+  h0 = nest.h0
+  fail = h0
+  hb = f.blocks[h0]
+  loc = hb.stmts[0].loc
+  preds = mir_preds(f)
+  // JH0: UI rows left?
+  jh0 = tl_new_block(f)
+  blk = jh0
+  wo: Array(Int) = [0]
+  blk = tl_wide(f, loc, blk, tl_copy(nest.ind_i), fail, wo)
+  i64 = wo[0]
+  blk = tl_wide(f, loc, blk, nest.hd0.bound, fail, wo)
+  x64 = wo[0]
+  last = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, last, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_int(ui - 1, mt_i64()))))
+  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(last), tl_copy(x64), fail)
+  blk = tl_checks(f, nest, nm, loc, blk, stores, loads, ui, fail)
+  if nest.depth == 2 {
     out = tl_emit_inner(f, nm, nest, blk, ui, 1)
     tl_emit(f, nm, out, nest.post0, ui, 1, true)
     tl_step(f, loc, out, nest.ind_i, ui)
     out.term = tl_goto(loc, jh0.id)
   } else {
-    jty = f.locals[nest.ind_j].ty
-    j = nm.jname
-    // j and L1's bound within the i32 range, so j + UJ - 1 is exact.
-    blk = tl_wide(f, loc, blk, tl_copy(j), fail, wo)
-    xb = tl_c_operand(f, nm, nest.hd1.bound, 0, 0)
-    blk = tl_wide(f, loc, blk, xb, fail, wo)
-    // The scan: for every column, each row's L1 pre statements, the
-    // inner loop's guard and the distinctness of what they load.
-    sj = tl_new_local(f, jty)
-    ru = MRvalue.new(mrk_use())
-    ru.a = tl_copy(j)
-    blk.stmts.push(tl_assign(loc, sj, ru))
-    sh = tl_new_block(f)
-    blk.term = tl_goto(loc, sh.id)
-    sb = tl_new_block(f)
-    sdone = tl_new_block(f)
-    sc = tl_new_local(f, mt_bool())
-    sh.stmts.push(tl_assign(loc, sc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(sj), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
-    st = MTerm.new(mtk_branch(), loc)
-    st.cond = tl_copy(sc)
-    st.targets.push(sb.id)
-    st.targets.push(sdone.id)
-    sh.term = st
-    nm.jy = [sj]
-    sblk = tl_emit_tested(f, nm, sb, nest.pre1, ui, fail)
-    for x in 0..ui {
-      sblk = tl_emit_chain(f, nm, sblk, nest.g2, x, 0, fail)
-    }
-    sblk = tl_emit_distinct(f, nm, loc, sblk, stores, wdata, loads, 1, ui, fail)
-    tl_step(f, loc, sblk, sj, 1)
-    sblk.term = tl_goto(loc, sh.id)
-    // JH1: UJ columns left?
-    jh1 = tl_new_block(f)
-    sdone.term = tl_goto(loc, jh1.id)
-    wj: Array(Int) = [0]
-    jb = tl_wide(f, loc, jh1, tl_copy(j), fail, wj)
-    j64 = wj[0]
-    jb = tl_wide(f, loc, jb, tl_c_operand(f, nm, nest.hd1.bound, 0, 0), fail, wj)
-    xj64 = wj[0]
-    jl = tl_new_local(f, mt_i64())
-    jb.stmts.push(tl_assign(loc, jl, tl_rv2(mrk_binary(), mop_add(), tl_copy(j64), tl_int(uj - 1, mt_i64()))))
-    jc = tl_new_local(f, mt_bool())
-    jb.stmts.push(tl_assign(loc, jc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jl), tl_copy(xj64))))
-    tb = tl_new_block(f)
-    rh1 = tl_new_block(f)
-    jt = MTerm.new(mtk_branch(), loc)
-    jt.cond = tl_copy(jc)
-    jt.targets.push(tb.id)
-    jt.targets.push(rh1.id)
-    jb.term = jt
-    // The tile of UI x UJ outputs.
-    nm.jy = [j]
-    for y in 1..uj {
-      v = tl_new_local(f, jty)
-      tb.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(j), tl_int(y, jty))))
-      nm.jy.push(v)
-    }
-    tl_emit(f, nm, tb, nest.pre1, ui, uj, false)
-    tout = tl_emit_inner(f, nm, nest, tb, ui, uj)
-    tl_emit(f, nm, tout, nest.post1, ui, uj, true)
-    tl_step(f, loc, tout, j, uj)
-    tout.term = tl_goto(loc, jh1.id)
-    // The columns left, one at a time, for the UI rows.
-    nm.jy = [j]
-    rc = tl_new_local(f, mt_bool())
-    rh1.stmts.push(tl_assign(loc, rc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(j), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
-    rb = tl_new_block(f)
-    done = tl_new_block(f)
-    rt = MTerm.new(mtk_branch(), loc)
-    rt.cond = tl_copy(rc)
-    rt.targets.push(rb.id)
-    rt.targets.push(done.id)
-    rh1.term = rt
-    tl_emit(f, nm, rb, nest.pre1, ui, 1, false)
-    rout = tl_emit_inner(f, nm, nest, rb, ui, 1)
-    tl_emit(f, nm, rout, nest.post1, ui, 1, true)
-    tl_step(f, loc, rout, j, 1)
-    rout.term = tl_goto(loc, rh1.id)
+    done = tl_columns(f, nest, nm, loc, blk, ui, uj, tl_c_operand(f, nm, nest.hd1.bound, 0, 0), fail)
     tl_emit(f, nm, done, nest.post0, ui, 1, true)
     tl_step(f, loc, done, nest.ind_i, ui)
     done.term = tl_goto(loc, jh0.id)
   }
-  // The nest's entry edges (from outside L0) now enter JH0; the
+  entry = jh0.id
+  pe = tl_panel(f, nest, nm, loc, stores, loads, ui, uj, jh0.id)
+  if pe >= 0 {
+    entry = pe
+  }
+  // The nest's entry edges (from outside L0) now enter the tile; the
   // original's latch still enters its header.
   inner = mir_bools(f.blocks.size, false)
   for b in nest.blocks {
@@ -1462,7 +1765,7 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
       if t = f.blocks[p].term {
         for x in 0..t.targets.size {
           if t.targets[x] == h0 {
-            t.targets[x] = jh0.id
+            t.targets[x] = entry
           }
         }
       }
@@ -1483,10 +1786,13 @@ fn tl_step(f: MFunc, loc: MLoc, blk: MBlock, v: Int, by: Int) {
 // guard failed), and so is a nest inside one already tiled.
 // headers and bodies are f's loops (loops.av mir_lv_loops) as versioning
 // left them.
-pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int) {
+// Returns whether a cache tile now calls avant_tile_fit (the caller
+// declares it in the module).
+pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int): Bool {
   if recs.size < 2 {
-    return
+    return false
   }
+  made = false
   shape = mir_tile_shape(cpu)
   n0 = f.blocks.size
   cold = mir_bools(n0, false)
@@ -1506,6 +1812,7 @@ pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: 
     if r.fast < n0 && !cold[r.fast] {
       if nest = tl_nest(f, r, recs) {
         if tl_try(f, nest, shape[0], shape[1]) {
+          made = true
           for li in 0..headers.size {
             if headers[li] == r.fast {
               bd = bodies[li]
@@ -1520,4 +1827,14 @@ pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: 
       }
     }
   }
+  if made {
+    for blk in f.blocks {
+      for st in blk.stmts {
+        if st.kind == msk_call() && st.callee == "avant_tile_fit" {
+          return true
+        }
+      }
+    }
+  }
+  false
 }

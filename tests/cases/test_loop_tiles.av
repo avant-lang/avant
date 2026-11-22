@@ -26,6 +26,14 @@ import std.process
 // The fixture's .ll shows the tiles are there: at the default level the
 // depth-3 nest holds 20 more multiplies than its untiled twin (a 4 x 4
 // tile and the 4-row tail of its columns) and the depth-2 nest 4 more.
+// The cache tile: a depth-3 nest also has a second form that computes a
+// panel of rows a block of columns at a time, its sizes chosen where the
+// nest starts from the cache sizes the runtime detected and the threads
+// the program runs (avant_tile_fit); at these sizes the caches hold the
+// whole product, so the fixtures run it again with the cache sizes set
+// small (AVANT_TILE_CACHE_L2 and AVANT_TILE_CACHE_L3: blocks of one
+// tile's columns and panels of one tile's rows, then of a few), at every
+// level, and the threaded fixture at 1, 2, 3, 4 and 8 threads.
 // tests/fixtures/llvm/loop_freeze.av: in a program that spawns, a loop
 // over an array a local holds, with no call that may spawn, tests the
 // array's freeze once before the loop and stores without the test; the
@@ -66,6 +74,17 @@ fn gc_envs: Array(String) {
   ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_STRESS=1"]
 }
 
+// Cache sizes that make the cache tile's blocks and panels small: one
+// tile's columns and rows, then a few.
+fn cache_envs: Array(String) {
+  ["AVANT_TILE_CACHE_L2=1 AVANT_TILE_CACHE_L3=1", "AVANT_TILE_CACHE_L2=2048 AVANT_TILE_CACHE_L3=8192"]
+}
+
+fn run_threads_job(dir: String, bin: String, key: String, envs: String, threads: Int): HJob {
+  a: Array(String) = ["-c", "cd ${dir} && exec env ${envs} ./${bin} --avant-threads=${threads} > ${key}.out 2> ${key}.err < /dev/null"]
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
 fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   src = "${root}/tests/fixtures/llvm/tiles.av"
   ll = "${dir}/tiles.ll"
@@ -76,7 +95,7 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   mv = ll_fn(text, "av.tiles/mv").count("fmul double")
   mv_ref = ll_fn(text, "av.tiles/mv_ref").count("fmul double")
   c.expect(mm_ref > 0 && mv_ref > 0, "tiles.av: the untiled nests multiply")
-  c.eq_int(mm, mm_ref + 20, "tiles.av: the depth-3 nest is tiled (4 x 4 at the default level, and its tail of columns)")
+  c.eq_int(mm, mm_ref + 40, "tiles.av: the depth-3 nest is tiled (4 x 4 at the default level, and its tail of columns), and again in its cache tile")
   c.eq_int(mv, mv_ref + 4, "tiles.av: the depth-2 nest is tiled (4 rows)")
 
   want = "2058 cases, 0 differ\nNaN outputs of the 64 square: 1871\n"
@@ -104,6 +123,22 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   for e in 0..envs.size {
     runs.push(run_job_env(dir, "tiles-v3", "tiles-v3.g${e}", envs[e]))
   }
+  cenvs = cache_envs()
+  cw = runs.size
+  for e in 0..cenvs.size {
+    for n in names {
+      runs.push(run_job_env(dir, "tiles-${n}", "tiles-${n}.c${e}", cenvs[e]))
+    }
+  }
+  runs.push(run_job_env(dir, "tiles-v3", "tiles-v3.cg", "${cenvs[0]} AVANT_GC_STRESS=1"))
+  runs.push(run_job_env(dir, "tiles-trap", "tiles-trap.c0", cenvs[0]))
+  thr = [1, 2, 3, 4, 8]
+  hw = runs.size
+  for e in 0..cenvs.size {
+    for t in thr {
+      runs.push(run_threads_job(dir, "tiles-threads", "tiles-threads.c${e}t${t}", cenvs[e], t))
+    }
+  }
   runs.push(run_job(dir, "tiles-trap", "tiles-trap.b"))
   tw = runs.size
   runs.push(run_job(dir, "tiles-threads", "tiles-threads.b"))
@@ -123,6 +158,20 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
     c.expect(log_text("${dir}/tiles-v3.g${e}.out").starts_with(want), "tiles.av (v3) under ${envs[e]}: every tiled output is the plain loop's in every non-NaN bit")
     c.eq_str(log_text("${dir}/tiles-v3.g${e}.err"), "", "tiles.av (v3) under ${envs[e]}: nothing on stderr")
   }
+  for e in 0..cenvs.size {
+    for f in 0..names.size {
+      r = runs[cw + e * names.size + f]
+      key = "tiles-${names[f]}.c${e}"
+      c.eq_int(r.code, 0, "tiles.av (${names[f]}) with ${cenvs[e]}: exit 0")
+      c.expect(log_text("${dir}/${key}.out").starts_with(want), "tiles.av (${names[f]}) with ${cenvs[e]}: every output of the cache tile is the plain loop's in every non-NaN bit")
+    }
+  }
+  cg = cw + cenvs.size * names.size
+  c.eq_int(runs[cg].code, 0, "tiles.av (v3) with small caches under AVANT_GC_STRESS=1: exit 0")
+  c.expect(log_text("${dir}/tiles-v3.cg.out").starts_with(want), "tiles.av (v3) with small caches under AVANT_GC_STRESS=1: every output is the plain loop's in every non-NaN bit")
+  c.eq_int(runs[cg + 1].code, 1, "tiles_trap.av with small caches: the short row traps")
+  c.eq_str(log_text("${dir}/tiles-trap.c0.out"), "1210.0\n-37510.0\n", "tiles_trap.av with small caches: the first product's outputs, then nothing")
+  c.expect(log_text("${dir}/tiles-trap.c0.err").contains("index 9 out of bounds (size 9)"), "tiles_trap.av with small caches: the plain loop's trap, at the short row's end")
   tr = runs[tw - 1]
   c.eq_int(tr.code, 1, "tiles_trap.av: the short row traps")
   c.eq_str(log_text("${dir}/tiles-trap.b.out"), "1210.0\n-37510.0\n", "tiles_trap.av: the first product's outputs, then nothing")
@@ -133,14 +182,21 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   htext = log_text(hll)
   hmm_ref = ll_fn(htext, "av.tiles_threads/mm_ref").count("fmul double")
   c.expect(hmm_ref > 0, "tiles_threads.av: the untiled nest multiplies")
-  c.eq_int(ll_fn(htext, "av.tiles_threads/mm").count("fmul double"), hmm_ref + 20, "tiles_threads.av: the sender's nest is tiled in a program that spawns")
-  c.eq_int(ll_fn(htext, "av.tiles_threads/band_tiled").count("fmul double"), hmm_ref + 20, "tiles_threads.av: a worker's band is tiled")
+  c.eq_int(ll_fn(htext, "av.tiles_threads/mm").count("fmul double"), hmm_ref + 40, "tiles_threads.av: the sender's nest is tiled in a program that spawns, with its cache tile")
+  c.eq_int(ll_fn(htext, "av.tiles_threads/band_tiled").count("fmul double"), hmm_ref + 40, "tiles_threads.av: a worker's band is tiled, with its cache tile")
   hwant = "bands alike: 4 of 4\n2.980586223821665\n74\ntrue\n"
   c.eq_int(runs[tw].code, 0, "tiles_threads.av: exit 0")
   c.eq_str(log_text("${dir}/tiles-threads.b.out"), hwant, "tiles_threads.av: the tiled bands and product are the plain loop's")
   for e in 0..envs.size {
     c.eq_int(runs[tw + 1 + e].code, 0, "tiles_threads.av under ${envs[e]}: exit 0")
     c.eq_str(log_text("${dir}/tiles-threads.g${e}.out"), hwant, "tiles_threads.av under ${envs[e]}: the tiled bands and product are the plain loop's")
+  }
+  for e in 0..cenvs.size {
+    for x in 0..thr.size {
+      key = "tiles-threads.c${e}t${thr[x]}"
+      c.eq_int(runs[hw + e * thr.size + x].code, 0, "tiles_threads.av at ${thr[x]} threads with ${cenvs[e]}: exit 0")
+      c.eq_str(log_text("${dir}/${key}.out"), hwant, "tiles_threads.av at ${thr[x]} threads with ${cenvs[e]}: the tiled bands and product are the plain loop's")
+    }
   }
   tt = runs[runs.size - 1]
   c.eq_int(tt.code, 1, "tiles_threads.av trap: the store into rows a running task reads traps")

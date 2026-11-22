@@ -1794,6 +1794,22 @@ fn lv_hoist_sizes(f: MFunc, shared: Bool) {
   }
 }
 
+// A runtime function's call-table row, declared in the module on first
+// use (a cache tile's avant_tile_fit).
+fn lv_declare(m: MModule, name: String) {
+  if e = m.ext(name) {
+    return
+  }
+  if r = m.rt.find(name) {
+    sg = m.rt.sig_of(r, m.types)
+    if sg >= 0 {
+      x = MExtern.new(name, sg, r.cls)
+      m.extern_index[name] = m.externs.size
+      m.externs.push(x)
+    }
+  }
+}
+
 // The pass (after verify(lowered), before the leaf pass): every
 // function whose kind is unset.
 pub fn mir_loop_pass(m: MModule) {
@@ -1804,7 +1820,9 @@ pub fn mir_loop_pass(m: MModule) {
       lv_func(m, f, keep, recs)
       if recs.size >= 2 {
         lps = mir_lv_loops(f)
-        mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu)
+        if mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu) {
+          lv_declare(m, "avant_tile_fit")
+        }
       }
       lv_hoist_sizes(f, m.shared)
     }

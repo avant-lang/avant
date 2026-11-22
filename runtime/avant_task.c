@@ -563,6 +563,148 @@ avant_int avant_pool_size_fix(void) {
   return avant_chosen_threads();
 }
 
+/*
+ * The cache tile of a loop nest (compiler/mir/tile.av, which calls this
+ * once where a tiled nest starts): how many items of `bytes` each fit in
+ * this thread's share of cache `level`, as a multiple of `unit` and at
+ * least `unit`: level 2, the block of columns, the whole L2 when the
+ * thread has its L2 alone; level 3, the panel of rows, half of its share
+ * of the L3. 1 << 30 (the nest runs as one block, as without a cache
+ * tile) when the size is unknown, and for level 2 when two of the
+ * program's threads share an L2 (SMT siblings: measured on matrix
+ * multiply, a block re-reads the first operand's rows through the L1 the
+ * siblings share more than it saves of the L3; one thread per L2 gains).
+ *
+ * Read once: each level's size (sysconf, the C library's reading of the
+ * CPU's own report) and how many CPUs share one instance of it (cpu0's
+ * shared_cpu_list in sysfs; one when unreadable). The share is the
+ * instance's size divided among the threads the program runs on it: the
+ * pool's bound once the pool runs (the chosen thread count, an explicit
+ * one included), else one thread, spread evenly over the instances the
+ * process's CPUs reach. AVANT_TILE_CACHE_L2 and AVANT_TILE_CACHE_L3 (in
+ * bytes) replace a detected size: tests/cases/test_loop_tiles.av sets them
+ * to reach the cache tile with small sizes; not a user knob.
+ */
+static long tile_cache_size[4];
+static long tile_cache_cpus[4];
+static int tile_cache_read;
+
+static long tile_cpus_in_list(const char *path) {
+  char buf[256];
+  long n = 0;
+  size_t len;
+  size_t k = 0;
+  FILE *fp = fopen(path, "r");
+  if (!fp) {
+    return 1;
+  }
+  len = fread(buf, 1, sizeof(buf) - 1, fp);
+  fclose(fp);
+  buf[len] = 0;
+  while (k < len) {
+    long a = 0;
+    long b;
+    int digits = 0;
+    while (buf[k] >= '0' && buf[k] <= '9') {
+      a = a * 10 + (buf[k] - '0');
+      k++;
+      digits++;
+    }
+    if (!digits) {
+      break;
+    }
+    b = a;
+    if (buf[k] == '-') {
+      k++;
+      b = 0;
+      while (buf[k] >= '0' && buf[k] <= '9') {
+        b = b * 10 + (buf[k] - '0');
+        k++;
+      }
+    }
+    if (b >= a) {
+      n += b - a + 1;
+    }
+    if (buf[k] != ',') {
+      break;
+    }
+    k++;
+  }
+  return n > 0 ? n : 1;
+}
+
+static long tile_env_size(const char *name, long dflt) {
+  const char *v = getenv(name);
+  if (v && *v) {
+    char *end = NULL;
+    long x = strtol(v, &end, 10);
+    if (end && *end == 0 && x > 0) {
+      return x;
+    }
+  }
+  return dflt;
+}
+
+static void tile_cache_init(void) {
+  long l2 = sysconf(_SC_LEVEL2_CACHE_SIZE);
+  long l3 = sysconf(_SC_LEVEL3_CACHE_SIZE);
+  tile_cache_size[2] = tile_env_size("AVANT_TILE_CACHE_L2", l2 > 0 ? l2 : 0);
+  tile_cache_size[3] = tile_env_size("AVANT_TILE_CACHE_L3", l3 > 0 ? l3 : 0);
+  tile_cache_cpus[2] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index2/shared_cpu_list");
+  tile_cache_cpus[3] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list");
+}
+
+avant_int avant_tile_fit(avant_int bytes, avant_int level, avant_int unit) {
+  long size;
+  long cpus;
+  long instances;
+  long threads = 1;
+  long per;
+  long n;
+  if (unit < 1) {
+    unit = 1;
+  }
+  if (level < 2 || level > 3 || bytes <= 0) {
+    return (avant_int)(1L << 30);
+  }
+  if (!__atomic_load_n(&tile_cache_read, __ATOMIC_ACQUIRE)) {
+    tile_cache_init();
+    __atomic_store_n(&tile_cache_read, 1, __ATOMIC_RELEASE);
+  }
+  size = tile_cache_size[level];
+  if (size <= 0) {
+    return (avant_int)(1L << 30);
+  }
+  if (__atomic_load_n(&pool_started, __ATOMIC_ACQUIRE)) {
+    threads = __atomic_load_n(&pool_bound, __ATOMIC_RELAXED);
+  }
+  if (threads < 1) {
+    threads = 1;
+  }
+  cpus = (long)avant_usable_cpus();
+  instances = cpus / tile_cache_cpus[level];
+  if (instances < 1) {
+    instances = 1;
+  }
+  per = (threads + instances - 1) / instances;
+  if (level == 2) {
+    if (per > 1) {
+      return (avant_int)(1L << 30);
+    }
+    n = size / (long)bytes;
+  } else {
+    n = size / per / 2 / (long)bytes;
+  }
+  if (n > (1L << 30)) {
+    n = 1L << 30;
+  }
+  n -= n % (long)unit;
+  if (n < (long)unit) {
+    n = (long)unit;
+  }
+  return (avant_int)n;
+}
+
 /* The pool's thread limit for a bound of n: POOL_THREAD_LIMIT, or n when
  * larger. AVANT_POOL_THREAD_LIMIT (2 to POOL_THREAD_LIMIT) can only
  * lower it, never below n: tests/cases/test_threads.av sets it to reach
