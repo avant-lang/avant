@@ -1,0 +1,73 @@
+import std.gc
+
+// A one-thread program grows Bufs past their large storage; while the
+// growth's drop of the old storage waits for the world lock, a C thread
+// registers (its first callback) and collects, building large Bufs of its
+// own; then the drop goes on (drop_wait.c). The program must print the
+// same sums whatever the interleaving did.
+lib drop_wait {
+  fun drop_wait_start(f: fn(Int): Int): Int
+  fun drop_wait_join: Int
+}
+
+fn fill(n: Int, v: Int): Buf {
+  b = Buf.new()
+  for i in 0..n {
+    b.push_byte(v)
+  }
+  b
+}
+
+fn sum(b: Buf): Int {
+  s = 0
+  for i in 0..b.size {
+    s += b[i]
+  }
+  s
+}
+
+fn other(k: Int): Int {
+  gc.collect()
+  keep: Array(Buf) = []
+  for i in 0..8 {
+    keep.push(fill(300000, 7))
+  }
+  gc.collect()
+  more: Array(Buf) = []
+  for j in 0..8 {
+    more.push(fill(300000, 9))
+  }
+  t = 0
+  for b in keep {
+    t += sum(b)
+  }
+  for b2 in more {
+    t += sum(b2)
+  }
+  t
+}
+
+fn main {
+  puts(drop_wait.drop_wait_start(other))
+  // Two Bufs grown in turn: the pages after one's storage hold the
+  // other's, so a growth cannot extend in place and copies, then drops
+  // the old storage.
+  a = Buf.new()
+  b = Buf.new()
+  for i in 0..600000 {
+    a.push_byte(1)
+    b.push_byte(2)
+  }
+  puts(sum(a))
+  puts(sum(b))
+  puts(drop_wait.drop_wait_join())
+  after: Array(Buf) = []
+  for j in 0..8 {
+    after.push(fill(300000, 3))
+  }
+  t = 0
+  for x in after {
+    t += sum(x)
+  }
+  puts(t)
+}
