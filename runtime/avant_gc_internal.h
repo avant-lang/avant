@@ -226,6 +226,55 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #endif
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
 #define HEAP_FACTOR 2
+/* The policy's settings in a development build. A runtime compiled with
+ * -DAVANT_GC_TUNE (CC="clang -DAVANT_GC_TUNE" sh runtime/build.sh) reads
+ * the young sizing rule, the start budget, the ages, the hole rule and the
+ * full trigger from AVANT_GC_TUNE_* variables (gc_tune_read,
+ * avant_gc_collect.c, lists them), so one build serves a sweep of the
+ * policy; a release build has no such variable and no such read: TUNE(F,
+ * C) is the constant C there, and the code each setting adds is compiled
+ * only under the macro. The defaults are the constants, so a development
+ * build with no variable set makes the release build's decisions. */
+#ifdef AVANT_GC_TUNE
+typedef struct GcTune {
+  uint64_t start;     /* AVANT_GC_TUNE_START_KB: the first budget */
+  uint64_t dflt;      /* AVANT_GC_TUNE_DEFAULT_KB: YOUNG_BYTES_DEFAULT */
+  uint64_t cap;       /* AVANT_GC_TUNE_CAP_KB: YOUNG_BYTES_CAP */
+  uint64_t heap_div;  /* AVANT_GC_TUNE_HEAP_DIV: YOUNG_HEAP_DIV */
+  uint64_t high_pct;  /* AVANT_GC_TUNE_HIGH_PCT: the survival that grows the budget, 50 */
+  uint64_t low_pct;   /* AVANT_GC_TUNE_LOW_PCT: a low-survival collection, 10 */
+  uint64_t streak;    /* AVANT_GC_TUNE_STREAK: high collections in a row to grow, 2 */
+  uint64_t grow_pct;  /* AVANT_GC_TUNE_GROW_PCT: the growth step, 200 (doubling) */
+  uint64_t shrink_pct; /* AVANT_GC_TUNE_SHRINK_PCT: the shrink step, 50 (halving) */
+  uint64_t smooth;    /* AVANT_GC_TUNE_SMOOTH: 0 or 1 none, K: survival averaged with weight 1/K */
+  uint64_t large_age; /* AVANT_GC_TUNE_LARGE_AGE_KB: LARGE_AGE_BYTES */
+  uint64_t byte_age;  /* AVANT_GC_TUNE_BYTE_AGE_KB: 0 none, else a survivor block younger ages again in place */
+  uint64_t no_holes;  /* AVANT_GC_TUNE_NO_HOLES: 0, 1 small objects, 2 small and medium */
+  uint64_t ret;       /* AVANT_GC_TUNE_RETURN: 1 a chunk is decommitted only when the total stays at the target */
+  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young */
+  uint64_t plain_div; /* AVANT_GC_TUNE_PLAIN_DIV: PLAIN_LARGE_DIV */
+  uint64_t full_pct;  /* AVANT_GC_TUNE_FULL_PCT: (HEAP_FACTOR - 1) * 100 */
+  uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place */
+  uint64_t trace;     /* AVANT_GC_TUNE_TRACE: 1 a line a collection on stderr */
+  uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 1 a young collection's return keeps what its cycles used beyond the heap */
+  uint64_t ypeak, young_keep; /* state: the heap's high since the last young return, the kept use (decaying by 1/8) */
+  uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines */
+  uint64_t evac_lines; /* state: this collection's sparse test for such blocks */
+  /* State. */
+  uint64_t rate;      /* the smoothed survival, in millionths */
+  uint64_t highs;     /* high-survival budget collections in a row */
+  int keep_full_now;
+  uint64_t *stamp;    /* byte_age: per block, the young clock when it became a survivor block */
+  uint64_t stamp_n;
+} GcTune;
+extern GcTune gc_tune;
+#define TUNE(f, c) (gc_tune.f)
+void gc_tune_start_large(uint64_t bytes);
+void gc_tune_stamp(const void *block_base, uint64_t v);
+uint64_t gc_tune_stamp_of(const void *block_base);
+#else
+#define TUNE(f, c) (c)
+#endif
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 /* The defragmenter's least gain (avant_gc_defrag.c): an evacuation must free,
@@ -1725,6 +1774,11 @@ static inline void gc_note_cycle_peak(void) {
   if (gc_heap.heap_bytes > gc_heap.cycle_peak) {
     gc_heap.cycle_peak = gc_heap.heap_bytes;
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_heap.heap_bytes > gc_tune.ypeak) {
+    gc_tune.ypeak = gc_heap.heap_bytes;
+  }
+#endif
 }
 
 /* A mutator thread's collector state: gc_thread, thread-local, defined

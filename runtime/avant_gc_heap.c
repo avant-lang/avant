@@ -336,6 +336,21 @@ uint64_t gc_chunk_take(uint64_t n) {
     gc_heap_reserve();
   }
   hw = gc_heap.committed >> CHUNK_SHIFT;
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace && n > 1) {
+    /* The chunk map at a huge object's take: S small, L large-object, H
+     * huge, F free resident, f free not resident. */
+    char m[512];
+    uint64_t i, j = 0;
+    for (i = 0; i < hw && j < sizeof m - 1; i++) {
+      const GcChunk *ch = &gc_heap.chunks[i];
+      m[j++] = ch->kind == CHUNK_FREE ? (ch->dirty && !ch->decommitted ? 'F' : 'f')
+               : ch->kind == CHUNK_SMALL ? 'S' : ch->kind == CHUNK_LARGE ? 'L' : 'H';
+    }
+    m[j] = 0;
+    fprintf(stderr, "avant gc trace: take %llu chunks: %s\n", (unsigned long long)n, m);
+  }
+#endif
   if (gc_heap.free_chunks >= n) {
     for (c = 0; c < hw; c++) {
       if (gc_heap.chunks[c].kind != CHUNK_FREE) {
@@ -638,6 +653,11 @@ void gc_heap_return(uint64_t live) {
       keep = gc_heap.retain_hist[k];
     }
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.retain_young && gc_tune.young_keep > keep) {
+    keep = gc_tune.young_keep;
+  }
+#endif
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
   uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;
@@ -662,6 +682,12 @@ void gc_heap_return(uint64_t live) {
       gc_die("avant gc verify: the count of the empty chunks with nothing resident differs from the chunk map's");
     }
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace) {
+    fprintf(stderr, "avant gc trace: return total=%llu keep=%llu clean_empty=%u\n", (unsigned long long)total,
+            (unsigned long long)keep, gc_heap.clean_empty_chunks);
+  }
+#endif
   if (total <= keep && gc_heap.clean_empty_chunks == 0) {
     return;
   }
@@ -677,7 +703,11 @@ void gc_heap_return(uint64_t live) {
       continue;
     }
     r = chunk_resident_free(c);
+#ifdef AVANT_GC_TUNE
+    if (r == 0 || (gc_tune.ret ? total - r >= keep : total > keep)) {
+#else
     if (r == 0 || total > keep) {
+#endif
       if (ch->kind == CHUNK_SMALL) {
         gc_heap.free_resident -= r;
       }

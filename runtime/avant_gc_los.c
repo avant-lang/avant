@@ -427,7 +427,7 @@ void gc_reclaim_young_large(void) {
                (h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
                ((h->flags & AVANT_FLAG_SURVIVED) &&
                 (gc_heap.stress_now ||
-                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)LARGE_AGE_BYTES))) {
+                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;
@@ -495,6 +495,11 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   }
   gc_heap.ctr.los.allocs++;
   gc_heap.ctr.los.alloc_bytes += (uint64_t)bytes;
+#ifdef AVANT_GC_TUNE
+  if (young) {
+    gc_tune_start_large((uint64_t)bytes);
+  }
+#endif
   {
     int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
     gc_heap.ctr.los.hist[bucket]++;

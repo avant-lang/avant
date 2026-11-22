@@ -114,6 +114,10 @@ static const char *const retired_knobs[] = {
     "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
     "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE"};
 
+#ifdef AVANT_GC_TUNE
+static void gc_tune_read(void);
+#endif
+
 static void gc_settings_read(GcSettings *s) {
   size_t i;
   /* Sizes in MiB stay below 2^44 so the byte count fits (1 << 20 GiB). */
@@ -130,6 +134,9 @@ static void gc_settings_read(GcSettings *s) {
   s->stress = env_bool("AVANT_GC_STRESS", 0);
   s->walk = s->stats | s->verify | s->stress;
   s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
+#ifdef AVANT_GC_TUNE
+  gc_tune_read();
+#endif
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
     if (v && v[0]) {
@@ -138,6 +145,100 @@ static void gc_settings_read(GcSettings *s) {
     }
   }
 }
+
+#ifdef AVANT_GC_TUNE
+GcTune gc_tune;
+
+/* The development build's policy settings (GcTune, avant_gc_internal.h),
+ * each defaulting to the release build's constant. */
+static void gc_tune_read(void) {
+  uint64_t kb = 1ull << 30;
+  gc_tune.dflt = env_u64("AVANT_GC_TUNE_DEFAULT_KB", YOUNG_BYTES_DEFAULT / 1024, 64, kb) * 1024ull;
+  gc_tune.start = env_u64("AVANT_GC_TUNE_START_KB", gc_tune.dflt / 1024, 64, kb) * 1024ull;
+  gc_tune.cap = env_u64("AVANT_GC_TUNE_CAP_KB", YOUNG_BYTES_CAP / 1024, 64, kb) * 1024ull;
+  if (gc_tune.cap < gc_tune.dflt) {
+    gc_tune.cap = gc_tune.dflt;
+  }
+  gc_tune.heap_div = env_u64("AVANT_GC_TUNE_HEAP_DIV", YOUNG_HEAP_DIV, 1, 1u << 20);
+  gc_tune.high_pct = env_u64("AVANT_GC_TUNE_HIGH_PCT", 50, 0, 100);
+  gc_tune.low_pct = env_u64("AVANT_GC_TUNE_LOW_PCT", 10, 0, 100);
+  gc_tune.streak = env_u64("AVANT_GC_TUNE_STREAK", 2, 1, 64);
+  gc_tune.grow_pct = env_u64("AVANT_GC_TUNE_GROW_PCT", 200, 101, 1600);
+  gc_tune.shrink_pct = env_u64("AVANT_GC_TUNE_SHRINK_PCT", 50, 1, 99);
+  gc_tune.smooth = env_u64("AVANT_GC_TUNE_SMOOTH", 0, 0, 64);
+  gc_tune.large_age = env_u64("AVANT_GC_TUNE_LARGE_AGE_KB", LARGE_AGE_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.byte_age = env_u64("AVANT_GC_TUNE_BYTE_AGE_KB", 0, 0, kb) * 1024ull;
+  gc_tune.no_holes = env_u64("AVANT_GC_TUNE_NO_HOLES", 0, 0, 2);
+  gc_tune.ret = env_u64("AVANT_GC_TUNE_RETURN", 0, 0, 1);
+  gc_tune.keep_full = env_u64("AVANT_GC_TUNE_KEEP_FULL", 0, 0, 1);
+  gc_tune.plain_div = env_u64("AVANT_GC_TUNE_PLAIN_DIV", PLAIN_LARGE_DIV, 1, 1u << 20);
+  gc_tune.full_pct = env_u64("AVANT_GC_TUNE_FULL_PCT", (HEAP_FACTOR - 1) * 100, 1, 10000);
+  gc_tune.mixed_age = env_u64("AVANT_GC_TUNE_MIXED_AGE", 0, 0, LINES_PER_BLOCK);
+  gc_tune.trace = env_u64("AVANT_GC_TUNE_TRACE", 0, 0, 1);
+  gc_tune.retain_young = env_u64("AVANT_GC_TUNE_RETAIN_YOUNG", 0, 0, 1);
+  gc_tune.mixed_evac = env_u64("AVANT_GC_TUNE_MIXED_EVAC", 0, 0, LINES_PER_BLOCK);
+}
+
+static void young_start_end(void) {
+  if (avant_young_bytes < gc_tune.dflt) {
+    avant_young_bytes = gc_tune.dflt;
+    gc_heap.ctr.size.grows++;
+  }
+}
+
+/* The start phase (a first budget below the default): a young large
+ * object as large as the budget ends it (gc_los_alloc). */
+void gc_tune_start_large(uint64_t bytes) {
+  if (!gc_heap.set.young_fixed && bytes >= avant_young_bytes) {
+    young_start_end();
+  }
+}
+
+/* The start phase: a budget collection whose survivors pass an eighth of
+ * the young bytes it saw raises the budget to max(2 * budget, 16 * surv),
+ * the default at most, which ends the phase; the heap's floor raises it
+ * too. No high-survival or tenure decision is made in the phase. */
+static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget) {
+  if (avant_young_bytes >= gc_tune.dflt) {
+    return 0;
+  }
+  if (budget && surv * 8 > used) {
+    uint64_t want = surv * 16;
+    if (want < avant_young_bytes * 2) {
+      want = avant_young_bytes * 2;
+    }
+    avant_young_bytes = want > gc_tune.dflt ? gc_tune.dflt : want;
+    gc_heap.ctr.size.grows++;
+  }
+  if (h > avant_young_bytes) {
+    avant_young_bytes = h > gc_tune.dflt ? gc_tune.dflt : h;
+  }
+  if (budget) {
+    gc_heap.young_high_prev = 0;
+    gc_tune.highs = 0;
+  }
+  return 1;
+}
+
+void gc_tune_stamp(const void *block_base, uint64_t v) {
+  uint64_t bi = (uint64_t)((uintptr_t)block_base - (uintptr_t)gc_heap.base) >> BLOCK_SHIFT;
+  if (bi >= gc_tune.stamp_n) {
+    uint64_t n = (gc_heap.committed >> BLOCK_SHIFT) + 64;
+    if (n <= bi) {
+      n = bi + 64;
+    }
+    gc_tune.stamp = gc_xrealloc(gc_tune.stamp, (size_t)n * sizeof(uint64_t));
+    memset(gc_tune.stamp + gc_tune.stamp_n, 0, (size_t)(n - gc_tune.stamp_n) * sizeof(uint64_t));
+    gc_tune.stamp_n = n;
+  }
+  gc_tune.stamp[bi] = v;
+}
+
+uint64_t gc_tune_stamp_of(const void *block_base) {
+  uint64_t bi = (uint64_t)((uintptr_t)block_base - (uintptr_t)gc_heap.base) >> BLOCK_SHIFT;
+  return bi < gc_tune.stamp_n ? gc_tune.stamp[bi] : 0;
+}
+#endif
 
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
@@ -154,16 +255,55 @@ static void gc_settings_read(GcSettings *s) {
  * (44.6 s against 42.3) and raises the compiler's peak_heap (245 ->
  * 318 MB). */
 static void young_size(uint64_t used, uint64_t surv, int budget) {
-  uint64_t floor = YOUNG_BYTES_DEFAULT;
-  uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / YOUNG_HEAP_DIV;
+  uint64_t floor = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+  uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / TUNE(heap_div, YOUNG_HEAP_DIV);
   int high;
   if (used == 0) {
     return;
   }
+#ifdef AVANT_GC_TUNE
+  if (young_start_size(used, surv, h, budget)) {
+    return;
+  }
+#endif
   if (h > floor) {
-    floor = h > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP : h;
+    floor = h > TUNE(cap, YOUNG_BYTES_CAP) ? TUNE(cap, YOUNG_BYTES_CAP) : h;
   }
   high = surv * 2 > used;
+#ifdef AVANT_GC_TUNE
+  {
+    /* The family: survival (smoothed over collections with weight
+     * 1/smooth) above high_pct for streak budget collections in a row
+     * grows the budget by grow_pct, below low_pct shrinks it by
+     * shrink_pct. */
+    uint64_t r = (uint64_t)((double)surv * 1e6 / (double)used);
+    int th, tl;
+    uint64_t highs;
+    if (gc_tune.smooth > 1) {
+      gc_tune.rate = gc_tune.rate ? (gc_tune.rate * (gc_tune.smooth - 1) + r) / gc_tune.smooth : r;
+      th = gc_tune.rate > gc_tune.high_pct * 10000;
+      tl = gc_tune.rate < gc_tune.low_pct * 10000;
+    } else {
+      th = surv * 100 > used * gc_tune.high_pct;
+      tl = surv * 100 < used * gc_tune.low_pct;
+    }
+    highs = th ? gc_tune.highs + 1 : 0;
+    if (th) {
+      if (highs >= gc_tune.streak && avant_young_bytes < gc_tune.cap) {
+        uint64_t g = avant_young_bytes * gc_tune.grow_pct / 100;
+        avant_young_bytes = g > gc_tune.cap ? gc_tune.cap : g;
+        gc_heap.ctr.size.grows++;
+      }
+    } else if (tl && avant_young_bytes > floor) {
+      uint64_t k = avant_young_bytes * gc_tune.shrink_pct / 100;
+      avant_young_bytes = k < floor ? floor : k;
+      gc_heap.ctr.size.shrinks++;
+    }
+    if (budget) {
+      gc_tune.highs = highs;
+    }
+  }
+#else
   if (high) {
     if (gc_heap.young_high_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
       avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
@@ -174,6 +314,7 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
     avant_young_bytes = avant_young_bytes / 2 < floor ? floor : avant_young_bytes / 2;
     gc_heap.ctr.size.shrinks++;
   }
+#endif
   if (avant_young_bytes < floor) {
     avant_young_bytes = floor;
   }
@@ -433,6 +574,14 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.keep_young = (uint8_t)(why == GC_WHY_EXPLICIT && proof != PROOF_THREADS && proof != PROOF_NURSERY &&
                                      proof != PROOF_OFF && !gc_heap.set.young_fixed &&
                                      avant_nursery_held && avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live);
+#ifdef AVANT_GC_TUNE
+      if (!gc_heap.keep_young && gc_tune.keep_full && why == GC_WHY_TRIGGER && proof != PROOF_THREADS &&
+          proof != PROOF_NURSERY && proof != PROOF_OFF && !gc_heap.set.young_fixed && avant_nursery_held &&
+          atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
+        gc_heap.keep_young = 1;
+        gc_tune.keep_full_now = 1;
+      }
+#endif
     } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
       /* It holds, and the trace is the cheaper complete collection
        * (PROOF_YOUNG_PER_OLD's comment). */
@@ -681,6 +830,12 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* What the next proof starts from: the roots as they are now,
      * an empty log. After everything this collection moves or frees. */
     gc_proof_full_end();
+#ifdef AVANT_GC_TUNE
+    if (gc_tune.keep_full_now) {
+      gc_proof_break(PROOF_REF_LOST);
+      gc_tune.keep_full_now = 0;
+    }
+#endif
     gc_heap.sticky = 0;
     gc_heap.keep_young = 0;
     gc_heap.keep_young_live = 0;
@@ -690,9 +845,42 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* The full trigger: max(4 MiB, (F - 1) * scanned live + plain large
      * live / PLAIN_LARGE_DIV), F = 2, uncapped (avant_gc_internal.h). */
     uint64_t plain = gc_heap.plain_large_live < gc_heap.live ? gc_heap.plain_large_live : gc_heap.live;
+#ifdef AVANT_GC_TUNE
+    uint64_t next = gc_tune.full_pct * (gc_heap.live - plain) / 100 + plain / gc_tune.plain_div;
+#else
     uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * (gc_heap.live - plain) + plain / PLAIN_LARGE_DIV;
+#endif
     gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace) {
+    /* AVANT_GC_TUNE_TRACE=1: one line a collection on stderr. */
+    static uint64_t t0;
+    uint64_t t = now_ns();
+    if (!t0) {
+      t0 = t;
+    }
+    unsigned long long vm = 0, rss = 0;
+    {
+      FILE *f = fopen("/proc/self/statm", "r");
+      if (f) {
+        if (fscanf(f, "%llu %llu", &vm, &rss) != 2) {
+          rss = 0;
+        }
+        fclose(f);
+      }
+    }
+    fprintf(stderr, "avant gc trace: ms=%llu %s why=%d budget=%llu mature_since=%llu trigger=%llu live=%llu mature=%llu large=%llu young_large=%llu held=%llu free_res=%llu free_other=%llu clock=%llu rss=%llu spare=%llu\n",
+            (unsigned long long)((t - t0) / 1000000), full ? "full" : "young", (int)why,
+            (unsigned long long)avant_young_bytes, (unsigned long long)gc_heap.mature_since_full,
+            (unsigned long long)gc_heap.full_trigger, (unsigned long long)gc_heap.live,
+            (unsigned long long)gc_heap.space[SPACE_MATURE].bytes, (unsigned long long)gc_heap.large_bytes,
+            (unsigned long long)gc_heap.young_large, (unsigned long long)avant_nursery_held,
+            (unsigned long long)gc_heap.free_resident, (unsigned long long)gc_heap.free_resident_other,
+            (unsigned long long)gc_heap.return_clock, rss * 4096ull,
+            (unsigned long long)(gc_heap.los_spare ? gc_heap.los_spare->size : 0));
+  }
+#endif
   if (gc_heap.ctr.yng.min == 0 || avant_young_bytes < gc_heap.ctr.yng.min) {
     gc_heap.ctr.yng.min = avant_young_bytes;
   }
@@ -729,6 +917,12 @@ void gc_maybe_collect(void) {
   /* A hold (std.gc) defers what falls due to its end, as a region does
    * to its first collection point after it. */
   if (gc_thread.collecting || gc_thread.nogc || gc_thread.hold) {
+#ifdef AVANT_GC_TUNE
+    /* A hold that spent the start phase's budget ends the phase. */
+    if (gc_thread.hold && !gc_heap.set.young_fixed && avant_nursery_held >= avant_young_bytes) {
+      young_start_end();
+    }
+#endif
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -812,7 +1006,7 @@ void gc_init_slow(void) {
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {
-    avant_young_bytes = YOUNG_BYTES_DEFAULT;
+    avant_young_bytes = TUNE(start, YOUNG_BYTES_DEFAULT);
   }
   /* The heap's address range: reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */
