@@ -27,6 +27,10 @@
 #     task whose binaries are byte-identical on both at every layout is not
 #     timed and is named (output, session.txt, identical.tsv, rounds.md);
 #     --time-identical times it;
+#   rounds-reuse-within, rounds-reuse-drift, rounds-reuse-refused:
+#     --reuse-base takes a record's base runs when its drift row is within
+#     the record's spread, times the whole base when it drifted, and refuses
+#     a record of another RUN_JS;
 #   rounds-layouts: rounds.py --layouts runs round r at the
 #     ((r - 1) mod K)-th shift, names it in each raw file and lists every
 #     layout's binary;
@@ -179,6 +183,46 @@ say rounds-identical-skipped $? "rc=$rc $(tail -3 "$ri/s.log" | tr '\n' ';')"
 rl t --time-identical; rc=$?
 [ $rc -eq 0 ] && [ -e "$ri/t/raw/round-1/a--fake_one.run" ] && grep -q '^Fake::One	yes	' "$ri/t/identical.tsv" && ! grep -q 'identical |' "$ri/t/rounds.md"
 say rounds-identical-timed $? "rc=$rc $(tail -3 "$ri/t.log" | tr '\n' ';')"
+
+# 4c. --reuse-base: a record of two sides, then sessions that reuse its
+# base. The record's spread is widened by hand (0.001 to 0.5 s) so the
+# drift rows' verdict does not depend on this machine's noise: with the
+# base's drift program as before it is within, and the other task is timed
+# on the head alone, its base runs the record's; with the drift program
+# made 1 s slower (the same bytes, a delay file it reads) it is a drift,
+# and the whole base is timed again. Another RUN_JS refuses the reuse.
+rb=$w/rb
+for sd in base head; do
+  mkdir -p "$rb/$sd/0"
+  printf '#!/bin/sh\nsleep "$(cat %s/delay)"\necho 111 # %s\n' "$rb" "$sd" > "$rb/$sd/0/fake_one"
+  printf '#!/bin/sh\necho 222 # %s\n' "$sd" > "$rb/$sd/0/fake_two"
+done
+chmod +x "$rb"/*/0/fake_*; echo 0 > "$rb/delay"
+printf '[\n  {\n    "name": "Fake::One",\n    "checksum": 111,\n  },\n  {\n    "name": "Fake::Two",\n    "checksum": 222,\n  },\n]\n' > "$rb/run.js"
+rr() { # OUT FLAGS...
+  o=$1; shift
+  python3 -I "$root/tools/rounds.py" langarena --rounds 3 --run-js "$rb/run.js" --out "$rb/$o" --side base="$rb/base" --side head="$rb/head" --layouts 0 --allow-governor \
+    --cpu-tolerance 1 --max-involuntary 100000 --max-outside 100 "$@" < /dev/null > "$rb/$o.log" 2>&1
+}
+rr rec; rc0=$?
+for k in 1 2 3; do
+  f=$rb/rec/raw/round-$k/base--fake_one.run
+  [ $k = 1 ] && sed -i 's/^wall_ns\t.*/wall_ns\t1000000/' "$f"; [ $k = 3 ] && sed -i 's/^wall_ns\t.*/wall_ns\t500000000/' "$f"
+done
+rr ok --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc0 -eq 0 ] && [ $rc -eq 0 ] && grep -q '^Fake::One	.*	within$' "$rb/ok/drift.tsv" && grep -q '^reused	' "$rb/ok/raw/round-2/base--fake_two.run" \
+  && grep -q 'base reuse: from .* for 1 tasks, drift rows Fake::One' "$rb/ok/session.txt" && [ -e "$rb/ok/raw/round-2/head--fake_two.run" ] \
+  && [ -e "$rb/ok/raw/round-2/base--fake_one.run" ] && ! grep -q '^reused' "$rb/ok/raw/round-2/base--fake_one.run" && grep -q '^Base reuse' "$rb/ok/rounds.md"
+say rounds-reuse-within $? "rc=$rc0/$rc $(tail -3 "$rb/ok.log" | tr '\n' ';')"
+echo 1 > "$rb/delay"
+rr drift --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc -eq 0 ] && grep -q '	DRIFT$' "$rb/drift/drift.tsv" && [ -e "$rb/drift/raw/round-2/base--fake_two.run" ] && ! grep -q '^reused' "$rb/drift/raw/round-2/base--fake_two.run" \
+  && grep -q 'whole base is timed again' "$rb/drift/session.txt"
+say rounds-reuse-drift $? "rc=$rc $(tail -3 "$rb/drift.log" | tr '\n' ';')"
+echo 0 > "$rb/delay"; printf '\n' >> "$rb/run.js"
+rr other --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc -eq 0 ] && grep -q 'base reuse: refused (another RUN_JS): the whole base is timed' "$rb/other/session.txt" && [ ! -e "$rb/other/drift.tsv" ]
+say rounds-reuse-refused $? "rc=$rc $(tail -3 "$rb/other.log" | tr '\n' ';')"
 
 # 5. layout-spread.py on fabricated sessions.
 sp=$w/sp; mkdir -p "$sp"

@@ -8,6 +8,7 @@ this mode costs N + 1 runs of every task.
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
           [--side NAME=BIN_DIR]... [--layouts S1,S2,...] [--pin CPU] [--short SECONDS]
           [--timeout SECONDS] [--allow-governor] [--time-identical] [--cpu-tolerance F]
+          [--reuse-base RECORD --drift TASK,...]
           [--max-involuntary N] [--max-outside CPUS] [--retries N] [TASK...]
   python3 tools/rounds.py table DIR
   python3 tools/rounds.py spawner DIR      (compiles the spawner into DIR, prints its path)
@@ -26,6 +27,18 @@ it) is not timed: it cannot differ but by noise. It is listed in
 identical.tsv, named in session.txt and on standard output, and its row in
 rounds.md reads `identical`; --time-identical times it anyway (a
 calibration that times one set of binaries as two sides needs it).
+
+--reuse-base RECORD --drift TASK,... (two sides, the first the base): the
+base side's timings are taken from RECORD, an earlier session of this
+script, instead of timing the base again, when RECORD's method is this
+session's (the same rounds, layouts, rule and RUN_JS, by its sha256) and
+its base binaries are these, byte for byte, for every task; otherwise the
+whole base is timed (and session.txt says why). The drift rows are timed on
+both sides first: when every drift row's new base median lies within
+RECORD's min-max for that row, the other tasks are timed on the head alone
+and their base runs are RECORD's (each raw file copied with a `reused`
+line); when one does not, the machine has drifted since RECORD and the
+whole base is timed again. drift.tsv has each drift row's verdict.
 
 --layouts S1,S2,... times every task across code layouts: each BIN_DIR then
 holds one directory per shift, BIN_DIR/S/SLUG, the same program with its
@@ -551,6 +564,7 @@ def checkout_of(path):
 def cmd_langarena(argv):
     rounds, run_js, out, sides, pin, short, limit, allow, only = None, None, None, [], None, 0.2, 900.0, False, []
     time_identical = False
+    reuse, drift = None, []
     layouts = []
     a = list(argv)
     while a:
@@ -586,6 +600,10 @@ def cmd_langarena(argv):
             allow = True
         elif x == "--time-identical":
             time_identical = True
+        elif x == "--reuse-base" and a:
+            reuse = os.path.abspath(a.pop(0))
+        elif x == "--drift" and a:
+            drift = [t.strip() for t in a.pop(0).split(",") if t.strip()]
         elif x.startswith("-"):
             die("unknown option %s" % x)
         else:
@@ -634,9 +652,22 @@ def cmd_langarena(argv):
     timed = [(n, c) for n, c in sel if n not in skipped]
     if not timed:
         die("every task is byte-identical on every side: nothing to time (--time-identical times them anyway)")
+    js_sha = hashlib.sha256(open(run_js, "rb").read()).hexdigest()
+    reused, why_not = [], ""
+    if reuse:
+        if len(sides) != 2 or not drift:
+            die("--reuse-base needs two sides (the first the base) and --drift TASK,...")
+        tnames = [n for n, _ in timed]
+        for t in drift:
+            if t not in tnames:
+                die("drift row %s: not a task this session times" % t)
+        why_not = reuse_mismatch(reuse, sides[0][0], rounds, layouts, js_sha, timed, lambda n: bins(sides[0][1], n), digest)
+        if not why_not:
+            reused = [n for n in tnames if n not in drift]
     lines = ["mode: langarena rounds (tools/rounds.py), for milestones and publication, never per gate",
              "rounds: %d (after one unmeasured warm-up of every row)" % rounds,
              "run_js: %s" % os.path.abspath(run_js),
+             "run_js sha256: %s" % js_sha,
              "tasks: %d; sides: %s" % (len(timed), " ".join(n for n, _ in sides)),
              "identical: %d task%s byte-identical on every side%s%s" % (
                  len(identical), "" if len(identical) == 1 else "s",
@@ -645,6 +676,8 @@ def cmd_langarena(argv):
              "layouts: %s" % ("shifts %s; round r runs every side at the ((r - 1) mod %d)-th, the warm-up at the first"
                               % (" ".join(layouts), len(layouts)) if layouts else "one (the binaries as built)"),
              "pin: %s" % ("cpu %d (Matmul::T* unpinned)" % pin if pin is not None else "none"),
+             "base reuse: %s" % (("from %s for %d tasks, drift rows %s" % (reuse, len(reused), " ".join(drift))) if reused
+                                 else ("refused (%s): the whole base is timed" % why_not) if reuse else "none"),
              "short: under %g s median is flagged" % short,
              "rule: " + rule_text(),
              "command per run: (cd <side>; <spawner> <result> ./<task>) < /dev/null > <file> 2> <file>; "
@@ -712,11 +745,104 @@ def cmd_langarena(argv):
         k = (r - 1) % len(sides)
         return [row for g in rotate(per_task, rounds, r) for row in g[k:] + g[:k]]
 
-    measure(spawn, rows, rounds, out, limit, check, note, pin, order_of)
+    if not reused:
+        measure(spawn, rows, rounds, out, limit, check, note, pin, order_of)
+    else:
+        # Phase 1: the drift rows on both sides, alternating as ever.
+        g1 = [g for g in per_task if g[0]["fields"]["task"] in drift]
+        measure(spawn, [r for g in g1 for r in g], rounds, out, limit, check, note, pin,
+                lambda r: [row for g in rotate(g1, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]])
+        ok, lines_d = drift_verdict(out, reuse, sides[0][0], drift)
+        with open(os.path.join(out, "drift.tsv"), "w") as f:
+            f.write("task\trecord_min_s\trecord_max_s\tnow_median_s\tverdict\n" + "".join(lines_d))
+        rest = [g for g in per_task if g[0]["fields"]["task"] not in drift]
+        if ok:
+            note("drift: every drift row's base median is within the record's spread; the base's other %d tasks are the record's" % len(rest))
+            heads = [[g[1]] for g in rest]
+            measure(spawn, [g[0] for g in heads], rounds, out, limit, check, note, pin,
+                    lambda r: [row for g in rotate(heads, rounds, r) for row in g], raw="raw-2")
+            merge_raw(out, "raw-2")
+            copy_base_runs(reuse, out, sides[0][0], [g[0]["fields"]["task"] for g in rest])
+        else:
+            note("drift: a drift row moved beyond the record's spread (drift.tsv): the whole base is timed again")
+            measure(spawn, [r for g in rest for r in g], rounds, out, limit, check, note, pin,
+                    lambda r: [row for g in rotate(rest, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]], raw="raw-2")
+            merge_raw(out, "raw-2")
     session_close(note, meta)
     write_tables(out)
     print("rounds: %s" % os.path.join(out, "rounds.md"))
     return 0
+
+
+def reuse_mismatch(rec, base, rounds, layouts, js_sha, timed, base_bins, digest):
+    """Why RECORD's base timings cannot stand for this session's ("" when they can): the method (rounds, layouts,
+    rule, RUN_JS) and the base binaries must be the same."""
+    try:
+        sess = open(os.path.join(rec, "session.txt")).read().splitlines()
+        params = dict(l.rstrip("\n").split("\t", 1) for l in open(os.path.join(rec, "params.tsv")))
+        bsums = {}
+        for l in open(os.path.join(rec, "binaries.sha256")):
+            h, _, name = l.strip().partition("  ")
+            bsums[name] = h
+    except OSError as e:
+        return "the record cannot be read: %s" % e
+    if ("rounds: %d (after one unmeasured warm-up of every row)" % rounds) not in sess:
+        return "another number of rounds"
+    if params.get("layouts", "") != " ".join(layouts):
+        return "other layouts"
+    if ("rule: " + rule_text()) not in sess:
+        return "another undisturbed rule"
+    if ("run_js sha256: %s" % js_sha) not in sess:
+        return "another RUN_JS"
+    if base not in params.get("sides", "").split():
+        return "no side named %s" % base
+    for n, _ in timed:
+        for i, p in enumerate(base_bins(n)):
+            key = "%s%s--%s" % (base, "@" + layouts[i] if layouts else "", slug_of(n))
+            if bsums.get(key) != digest[p]:
+                return "the base binary of %s differs from the record's" % n
+        if len(undisturbed([r for r in read_runs(rec).get("%s--%s" % (base, slug_of(n)), [])])) < rounds:
+            return "the record has fewer than %d undisturbed base runs of %s" % (rounds, n)
+    return ""
+
+
+def drift_verdict(out, rec, base, drift):
+    """Each drift row: its new base median against RECORD's min-max of the same row."""
+    now, then = read_runs(out), read_runs(rec)
+    ok, lines = True, []
+    for t in drift:
+        a = summary(now.get("%s--%s" % (base, slug_of(t)), []))
+        b = summary(then.get("%s--%s" % (base, slug_of(t)), []))
+        good = bool(a and b and b["min"] <= a["med"] <= b["max"])
+        ok = ok and good
+        lines.append("%s\t%.6f\t%.6f\t%s\t%s\n" % (t, b["min"] if b else 0, b["max"] if b else 0,
+                                                    "%.6f" % a["med"] if a else "-", "within" if good else "DRIFT"))
+    return ok, lines
+
+
+def merge_raw(out, raw):
+    """A second phase's raw files moved into raw/ round by round."""
+    src = os.path.join(out, raw)
+    for r in os.listdir(src):
+        dst = os.path.join(out, "raw", r)
+        os.makedirs(dst, exist_ok=True)
+        for f in os.listdir(os.path.join(src, r)):
+            os.rename(os.path.join(src, r, f), os.path.join(dst, f))
+        os.rmdir(os.path.join(src, r))
+    os.rmdir(src)
+
+
+def copy_base_runs(rec, out, base, tasks):
+    """RECORD's base runs of these tasks copied into this session's raw/, each with a `reused` line."""
+    rd = os.path.join(rec, "raw")
+    for r in os.listdir(rd):
+        for t in tasks:
+            f = "%s--%s.run" % (base, slug_of(t))
+            p = os.path.join(rd, r, f)
+            if os.path.exists(p):
+                os.makedirs(os.path.join(out, "raw", r), exist_ok=True)
+                with open(os.path.join(out, "raw", r, f), "w") as g:
+                    g.write(open(p).read().rstrip("\n") + "\nreused\t%s\n" % rec)
 
 
 # ---- tables -----------------------------------------------------------------
@@ -878,6 +1004,14 @@ def write_tables(d):
             line += " | " + " | ".join(rat)
         md.append(line + " | %s |" % flag)
     md.append("")
+    dt = os.path.join(d, "drift.tsv")
+    if os.path.exists(dt):
+        rows_d = [l.split("\t") for l in open(dt).read().splitlines()[1:]]
+        md.append("Base reuse (`--reuse-base`): drift rows %s; %s." % (
+            ", ".join("%s %s" % (x[0], x[4]) for x in rows_d),
+            "the other tasks' base runs are the record's (each raw file has its `reused` line)" if all(x[4] == "within" for x in rows_d)
+            else "a drift row moved, so the whole base was timed again"))
+        md.append("")
     if skipped:
         md.append("Not timed: %d task%s whose binaries are byte-identical on every side at every layout (`identical.tsv`): %s." % (
             len(skipped), "" if len(skipped) == 1 else "s", ", ".join(skipped)))
