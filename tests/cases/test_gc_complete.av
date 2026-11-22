@@ -340,6 +340,35 @@ fn stat_value(text: String, key: String): Int {
   -1
 }
 
+// ffi/drop_wait.av: a Buf's growth drops its old large storage, and the
+// drop waits for the world lock while a C thread registers and collects
+// (drop_wait.c makes the wait happen through the runtime's test hook). The
+// drop must see the program shared and leave the storage to the
+// collector: the sums are the same in every environment, with the oracle
+// silent, and the wait happened (the callback's result came back).
+fn test_drop_wait(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/drop_wait.av", "${dir}/drop_wait", "${dir}/drop_wait.log", ["--cc", "${root}/tests/fixtures/ffi/drop_wait.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "drop_wait.av: compiles")
+  want = "0\n600000\n1200000\n38400000\n7200000\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "drop_wait", "drop_wait.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "drop_wait.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/drop_wait.g${e}.out"), want, "drop_wait.av ${what}: the sums, and the callback's result after the wait")
+    c.eq_str(log_text("${dir}/drop_wait.g${e}.err"), "", "drop_wait.av ${what}: no stderr")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_complete.av")
   if compiler = process.env("AVANT_COMPILER") {
@@ -350,6 +379,7 @@ fn test_main(c: Checks) {
     test_sticky_full(c, compiler, avant_test_root(), scratch_dir())
     test_sticky_reuse(c, compiler, avant_test_root(), scratch_dir())
     test_grow_tail(c, compiler, avant_test_root(), scratch_dir())
+    test_drop_wait(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
