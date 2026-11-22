@@ -1155,6 +1155,35 @@ static inline int dense_block(const Block *b) {
   return fr > b->young_lo && lines * SPLUS_DENSE_DEN > (uint64_t)(fr - b->young_lo) * SPLUS_DENSE_NUM;
 }
 
+/* Young block I (YB, with mature lines) keeps which of its lines are
+ * live in slot N of gc_heap.stress_lines, one bit a line, grown as the
+ * mixed blocks need it; mixed_restore gives them back as marks (the
+ * epoch, or 0: no line is live at 0, and the epoch does not change
+ * within a young collection). */
+static void mixed_snapshot(const Block *yb, uint32_t i, uint32_t n) {
+  uint64_t *w;
+  int l;
+  if (n >= gc_heap.mixed_cap) {
+    gc_heap.mixed_cap = gc_heap.mixed_cap ? gc_heap.mixed_cap * 2 : 64;
+    gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.mixed_cap * MIXED_SNAP_BYTES);
+  }
+  w = (uint64_t *)(void *)(gc_heap.stress_lines + (size_t)n * MIXED_SNAP_BYTES);
+  w[0] = 0;
+  w[1] = 0;
+  for (l = 0; l < LINES_PER_BLOCK; l++) {
+    w[l >> 6] |= (uint64_t)(yb->line_mark[l] == gc_heap.line_epoch) << (l & 63);
+  }
+  gc_heap.mixed_slot[i] = n;
+}
+
+static void mixed_restore(Block *b, uint32_t i) {
+  const uint64_t *w = (const uint64_t *)(const void *)(gc_heap.stress_lines + (size_t)gc_heap.mixed_slot[i] * MIXED_SNAP_BYTES);
+  int l;
+  for (l = 0; l < LINES_PER_BLOCK; l++) {
+    b->line_mark[l] = (uint8_t)(((w[l >> 6] >> (l & 63)) & 1) ? gc_heap.line_epoch : 0);
+  }
+}
+
 static void splus_evacuate(void) {
   uint32_t i;
   int any = 0;
@@ -1379,7 +1408,7 @@ static void splus_evacuate(void) {
        * mature lines stay live, the lines this collection's promotions
        * marked are free again. */
       uint64_t lines = (uint64_t)gc_block_live_lines(b);
-      memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
+      mixed_restore(b, i);
       lines = (lines - (uint64_t)gc_block_live_lines(b)) * LINE_SIZE;
       gc_heap.ctr.sticky.inplace -= b->idle;
       gc_heap.live -= b->idle;
@@ -1406,7 +1435,7 @@ static void splus_evacuate(void) {
       uint64_t lines = (uint64_t)b->search * LINE_SIZE;
 #ifdef AVANT_GC_TUNE
       if (gc_tune.mixed_age && !gc_heap.evac_mixed && gc_heap.stress_mixed[i]) {
-        memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
+        mixed_restore(b, i);
       } else
 #endif
       {
@@ -1702,10 +1731,11 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
+    uint32_t mixed_n = 0;
     if ((gc_heap.evac_mixed || TUNE(mixed_age, 0)) && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
       gc_heap.stress_lines_cap = gc_heap.young_blocks_n * 2;
-      gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.stress_lines_cap * LINES_PER_BLOCK);
       gc_heap.stress_mixed = gc_xrealloc(gc_heap.stress_mixed, (size_t)gc_heap.stress_lines_cap);
+      gc_heap.mixed_slot = gc_xrealloc(gc_heap.mixed_slot, (size_t)gc_heap.stress_lines_cap * sizeof(uint32_t));
     }
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
@@ -1727,7 +1757,7 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
       if (gc_tune.mixed_age && !gc_heap.evac_mixed) {
         int again = yb->bump == yb->base + BLOCK_SIZE && yb->limit == yb->base + BLOCK_SIZE && yb->search == LINES_PER_BLOCK;
         if (mature_lines && !again) {
-          memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
+          mixed_snapshot(yb, i, mixed_n++);
         }
         gc_heap.stress_mixed[i] = (uint8_t)(mature_lines && !again);
       }
@@ -1737,7 +1767,9 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
          * (EVAC_MIXED's comment below): a block with mature lines is
          * evacuated too (splus_evacuate), its marks restored from this
          * copy afterwards. */
-        memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
+        if (mature_lines) {
+          mixed_snapshot(yb, i, mixed_n++);
+        }
         gc_heap.stress_mixed[i] = (uint8_t)mature_lines;
       }
       yb->kept = mature_lines ? (gc_heap.evac_mixed ? SPLUS_MIXED : 0)

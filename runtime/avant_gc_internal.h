@@ -1740,9 +1740,18 @@ typedef struct GcHeap {
    * each such return. */
   uint64_t young_peak;
   uint64_t young_keep;
+  /* The line marks, before the trace, of this collection's young blocks
+   * with mature lines (evac_mixed): stress_mixed[i] says young block i
+   * has mature lines, and its live lines are the MIXED_SNAP_BYTES bytes
+   * (a bit a line) at stress_lines + mixed_slot[i] * MIXED_SNAP_BYTES,
+   * one slot a mixed block only (a copy of every young block's 128 marks
+   * cost an aging young collection that takes them a resident 256 KB at
+   * a 32 MiB budget: Binarytrees::Obj, Etc::GameOfLife +0.4% peak). */
   uint8_t *stress_lines;
   uint8_t *stress_mixed;
+  uint32_t *mixed_slot;
   uint32_t stress_lines_cap;
+  uint32_t mixed_cap;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -2108,6 +2117,8 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 #ifndef MIXED_EVAC_LINES
 #define MIXED_EVAC_LINES 1
 #endif
+#define MIXED_SNAP_BYTES (LINES_PER_BLOCK / 8)
+_Static_assert(LINES_PER_BLOCK == 128, "a mixed block's snapshot is two 64-bit words");
 /* The young cycles' retention: gc_heap_return keeps resident what the
  * last full collections' cycles used beyond the live bytes (retain_hist),
  * which only a full collection writes; a program that runs none (above:
