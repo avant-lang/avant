@@ -569,8 +569,9 @@ avant_int avant_pool_size_fix(void) {
  * this thread's share of cache `level`, as a multiple of `unit` and at
  * least `unit`: level 2, the block of columns, the whole L2 when the
  * thread has its L2 alone; level 3, the panel of rows, half of its share
- * of the L3. 1 << 30 (the nest runs as one block, as without a cache
- * tile) when the size is unknown, and for level 2 when two of the
+ * of the L3. Sizes the C library cannot read are taken as 256 KiB (L2)
+ * and 2 MiB (L3). 1 << 30 (the nest runs as one block, as without a
+ * cache tile) for level 2 when two of the
  * program's threads share an L2 (SMT siblings: measured on matrix
  * multiply, a block re-reads the first operand's rows through the L1 the
  * siblings share more than it saves of the L3; one thread per L2 gains).
@@ -645,13 +646,35 @@ static long tile_env_size(const char *name, long dflt) {
   return dflt;
 }
 
+/* The sizes used when the C library cannot read the caches (some
+ * virtual machines, other C libraries, CPUs it does not know): small
+ * enough for any x86-64 CPU of the last decade, one CPU per instance. */
+#define TILE_FALLBACK_L2 (256L * 1024)
+#define TILE_FALLBACK_L3 (2048L * 1024)
+
 static void tile_cache_init(void) {
   long l2 = sysconf(_SC_LEVEL2_CACHE_SIZE);
   long l3 = sysconf(_SC_LEVEL3_CACHE_SIZE);
-  tile_cache_size[2] = tile_env_size("AVANT_TILE_CACHE_L2", l2 > 0 ? l2 : 0);
-  tile_cache_size[3] = tile_env_size("AVANT_TILE_CACHE_L3", l3 > 0 ? l3 : 0);
-  tile_cache_cpus[2] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index2/shared_cpu_list");
-  tile_cache_cpus[3] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list");
+  /* AVANT_TILE_CACHE_UNKNOWN=1 takes every reading as failed:
+   * tests/cases/test_loop_tiles.av reaches the fixed sizes with it; not
+   * a user knob. */
+  const char *unk = getenv("AVANT_TILE_CACHE_UNKNOWN");
+  int unknown = unk && strcmp(unk, "1") == 0;
+  if (unknown || l2 <= 0) {
+    l2 = TILE_FALLBACK_L2;
+  }
+  if (unknown || l3 <= 0) {
+    l3 = TILE_FALLBACK_L3;
+  }
+  tile_cache_size[2] = tile_env_size("AVANT_TILE_CACHE_L2", l2);
+  tile_cache_size[3] = tile_env_size("AVANT_TILE_CACHE_L3", l3);
+  if (unknown) {
+    tile_cache_cpus[2] = 1;
+    tile_cache_cpus[3] = 1;
+  } else {
+    tile_cache_cpus[2] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index2/shared_cpu_list");
+    tile_cache_cpus[3] = tile_cpus_in_list("/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list");
+  }
 }
 
 avant_int avant_tile_fit(avant_int bytes, avant_int level, avant_int unit) {

@@ -46,6 +46,10 @@ import std.process
 // cases (frozen before the loop, frozen by a spawn in the loop, frozen
 // by a task's task, thawed by the join) trap or run as with every test
 // in place: --release and --debug agree on output, error and status.
+// tests/fixtures/llvm/tile_fit.av: the block sizes the runtime chooses;
+// with AVANT_TILE_CACHE_UNKNOWN=1 every reading of the caches counts as
+// failed and the fixed sizes (256 KiB L2, 2 MiB L3) give them, and
+// tiles.av and tiles_threads.av keep every bit in that case too.
 // tests/fixtures/llvm/tiles_trap.av: a row shorter than the inner
 // bound; the plain loop runs and traps at the same index, after the
 // first product's rows were written.
@@ -293,11 +297,36 @@ fn test_freeze(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/lf-release-4.out"), "1000\n1998000.0\n", "loop_freeze.av [after]: joined, the stores run")
 }
 
+fn test_fallback(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/llvm/tile_fit.av"
+  jobs: Array(HJob) = [env_job("", compiler, ["compile", src, "${dir}/tile-fit", "--release", "--cpu=v3"], "${dir}/tile-fit.log")]
+  jobs.push(env_job("", compiler, ["compile", "${root}/tests/fixtures/llvm/tiles.av", "${dir}/tiles-v3", "--release", "--cpu=v3"], "${dir}/tiles-v3.log"))
+  jobs.push(env_job("", compiler, ["compile", "${root}/tests/fixtures/llvm/tiles_threads.av", "${dir}/tiles-threads", "--release", "--cpu=v3"], "${dir}/tiles-threads.log"))
+  run_waves(jobs)
+  for j in jobs {
+    c.eq_int(j.code, 0, "tile_fit.av, tiles.av, tiles_threads.av: compile")
+  }
+  runs: Array(HJob) = []
+  runs.push(run_job(dir, "tile-fit", "tile-fit.d"))
+  runs.push(run_job_env(dir, "tile-fit", "tile-fit.u", "AVANT_TILE_CACHE_UNKNOWN=1"))
+  runs.push(run_job_env(dir, "tile-fit", "tile-fit.uo", "AVANT_TILE_CACHE_UNKNOWN=1 AVANT_TILE_CACHE_L2=80000"))
+  runs.push(run_job_env(dir, "tiles-v3", "tiles-v3.u", "AVANT_TILE_CACHE_UNKNOWN=1"))
+  runs.push(run_job_env(dir, "tiles-threads", "tiles-threads.u", "AVANT_TILE_CACHE_UNKNOWN=1"))
+  run_waves(runs)
+  c.eq_str(log_text("${dir}/tile-fit.d.out"), "true\n", "tile_fit.av: the detected sizes give whole units")
+  c.eq_str(log_text("${dir}/tile-fit.u.out"), "32 128\n", "tile_fit.av: caches unreadable: 256 KiB and 2 MiB give 32 columns and 128 rows")
+  c.eq_str(log_text("${dir}/tile-fit.uo.out"), "10 128\n", "tile_fit.av: caches unreadable, an L2 size given: it is used")
+  c.eq_int(runs[3].code, 0, "tiles.av (v3), caches unreadable: exit 0")
+  c.expect(log_text("${dir}/tiles-v3.u.out").starts_with("2058 cases, 0 differ\n"), "tiles.av (v3), caches unreadable: every output is the plain loop's in every non-NaN bit")
+  c.eq_str(log_text("${dir}/tiles-threads.u.out"), "bands alike: 4 of 4\n2.980586223821665\n74\ntrue\n", "tiles_threads.av, caches unreadable: the tiled bands and product are the plain loop's")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_loop_tiles.av")
   if compiler = process.env("AVANT_COMPILER") {
     test_tiles(c, compiler, avant_test_root(), scratch_dir())
     test_freeze(c, compiler, avant_test_root(), scratch_dir())
+    test_fallback(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
