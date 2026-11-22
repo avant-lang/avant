@@ -143,10 +143,12 @@ pub class RePat {
     buf.to_s()
   }
 
+  // A byte of a class, with its other case only when the pattern is
+  // caseless (PCRE2 matches `[a]` against `a` alone otherwise).
   pub fn push_class_char(buf: Buf, c: Int) {
     buf.push_str(class_atom(c))
     o = other_case(c)
-    if o != c {
+    if o != c && self.caseless != 0 {
       buf.push_str(class_atom(o))
     }
   }
@@ -158,16 +160,26 @@ pub class RePat {
     }
     c = self.peek()
     self.bump()
-    if c == 100 || c == 68 {
+    // A negated escape inside a class (`[\D]`) is every byte but those;
+    // a re2c class cannot hold that beside other members.
+    if c == 68 || c == 87 || c == 83 {
+      fail("negated escape inside a class")
+      return false
+    }
+    if c == 100 {
       buf.push_str("0-9")
       return true
     }
-    if c == 119 || c == 87 {
+    if c == 119 {
       buf.push_str("0-9A-Za-z_")
       return true
     }
-    if c == 115 || c == 83 {
+    if c == 115 {
       buf.push_str(" \\t\\n\\r\\f\\v")
+      return true
+    }
+    if c == 98 {
+      buf.push_str("\\x08")
       return true
     }
     if c == 110 {
@@ -186,16 +198,22 @@ pub class RePat {
       buf.push_str("\\f")
       return true
     }
-    if c == 118 {
-      buf.push_str("\\v")
-      return true
-    }
     if c >= 48 && c <= 57 {
       fail("backreference")
       return false
     }
+    // Any other letter is an escape this translation does not know (`\x41`,
+    // `\h`, `\e`, `\p{..}`): PCRE2 gives it a meaning of its own.
+    if is_letter(c) {
+      fail("escape")
+      return false
+    }
     push_class_char(buf, c)
     true
+  }
+
+  pub fn is_letter(c: Int): Bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
   }
 
   pub fn parse_class: String {
@@ -217,6 +235,9 @@ pub class RePat {
         if !class_escape(body) {
           return ""
         }
+      } else if c == 91 && self.at + 1 < self.len && self.s[self.at + 1] == 58 {
+        fail("POSIX class")
+        return ""
       } else if self.at + 2 < self.len && self.s[self.at + 1] == 45 && self.s[self.at + 2] != 93 {
         a = c
         b = self.s[self.at + 2]
@@ -226,7 +247,7 @@ pub class RePat {
         body.push_str(class_atom(b))
         oa = other_case(a)
         ob = other_case(b)
-        if oa != a && ob != b {
+        if oa != a && ob != b && self.caseless != 0 {
           body.push_str(class_atom(oa))
           body.push_byte(45)
           body.push_str(class_atom(ob))
@@ -366,6 +387,15 @@ pub class RePat {
     if c == 116 {
       return "L" + chr(9)
     }
+    if c == 102 {
+      return "L" + chr(12)
+    }
+    // Any other letter is an escape of PCRE2's own (`\x41`, `\A`, `\z`,
+    // `\Q`, `\h`, `\v`, `\e`): not a literal letter.
+    if is_letter(c) {
+      fail("escape")
+      return ""
+    }
     "L" + chr(c)
   }
 
@@ -454,6 +484,11 @@ pub class RePat {
       self.bump()
       return "R."
     }
+    // `^` and `$` are anchors in PCRE2, not bytes.
+    if c == 94 || c == 36 {
+      fail("anchor")
+      return ""
+    }
     if c == 91 {
       cls = parse_class()
       if self.bad {
@@ -530,7 +565,7 @@ pub class RePat {
       one = class_atom(raw[0])
       extra = ""
       other = other_case(raw[0])
-      if other != raw[0] {
+      if other != raw[0] && self.caseless != 0 {
         extra = class_atom(other)
       }
       return "[^${one}${extra}\\n]*"
@@ -544,10 +579,10 @@ pub class RePat {
     eb = ""
     oa = other_case(ch)
     ob = other_case(ch2)
-    if oa != ch {
+    if oa != ch && self.caseless != 0 {
       ea = class_atom(oa)
     }
-    if ob != ch2 {
+    if ob != ch2 && self.caseless != 0 {
       eb = class_atom(ob)
     }
     "([^${ca}${ea}\\n] | ${quoted} [^${cb}${eb}\\n])*"
