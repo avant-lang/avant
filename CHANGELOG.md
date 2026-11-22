@@ -1,5 +1,25 @@
 # Avant Language changelog
 
+## 0.49.0 - 2026-11-22
+
+### Changed
+
+* A loop nest that computes independent outputs (a matrix multiply) is computed a register tile at a time, each output summing its own products in the written order, so every result is bit-identical (the README's float section: only a NaN's sign and payload are not specified). Loops in a program that spawns drop their bounds checks as in one that does not.
+* The runtime is compiled by the clang of the LLVM that compiles your program, with the same hardening (`CC=gcc sh runtime/build.sh` builds it with gcc; `tools/install-llvm.sh` also installs clang): programs whose time is in the runtime are faster. The release archive still needs only glibc 2.38.
+* Less memory: a full collection comes sooner when the live data is mostly large buffers without references.
+* Code generation: a `switch` becomes a jump table only from 9 cases, an `if` chain below; checked arithmetic with a constant operand, and every checked multiply, is one operation and its overflow jump; the optimizer tells object fields at different offsets apart; a write barrier skips its null test when the store goes through the holder; `--release` emits far less IR for functions holding references across many calls (faster builds, the same code).
+* The README's benchmark tables are this release's, on one server, at five code layouts that move the runtime's code with the program's.
+* The compiler is built from v0.48.0.
+
+### Fixed
+
+* Refused at compile time: a `.parallel` body that changes its element parameter, `sort_by` on an array a task reads or a walk is reading, a `lib` binding of a runtime function with another signature. An index after `delete_at`, `try_delete_at` or `delete_if` is checked again.
+* An `Array` grows by `push` to its real ceiling (536,870,911 `Int`s) and past it traps naming the count and size; `Array(T).new(n)` past one object's storage traps naming the bytes.
+* A crash, trap or signal stops every child process a blocking run waits on; a division by zero or an illegal instruction in C code prints one line after the program's output; `abort()` keeps the output; a change to an `Array` a task holds traps at its own file and line.
+* A literal regex finds a match after or across a NUL byte in the text, and a class that matches NUL no longer reads past the text's end.
+* A literal regex now matches as PCRE2 does: a class's letters match their other case only in a caseless pattern, `\b` in a class is a backspace, and a pattern the compiled scanner cannot keep exactly (`^` and `$`, a negated escape or a POSIX class inside a class, an escape such as `\x41`, `\A`, `\z`) runs on PCRE2.
+* Inside a dependency, `import shared` opens the package's own `shared.av`; a release compiler run inside a clone of the repository links its own runtime.
+
 ## 0.48.0 - 2026-11-20
 
 ### Added
