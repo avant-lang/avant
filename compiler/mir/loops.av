@@ -1814,13 +1814,14 @@ fn lv_declare(m: MModule, name: String) {
 // function whose kind is unset.
 pub fn mir_loop_pass(m: MModule) {
   keep = mir_lv_summary(m)
+  pure = mir_tile_pure(m)
   for f in m.funcs {
     if f.kind == mfk_unset() && f.blocks.size > 1 {
       recs: Array(TlRec) = []
       lv_func(m, f, keep, recs)
-      if recs.size >= 2 {
+      if recs.size >= 1 {
         lps = mir_lv_loops(f)
-        if mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu) {
+        if mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu, pure) {
           lv_declare(m, "avant_tile_fit")
         }
       }

@@ -9,7 +9,8 @@
 // and exactly its own operations in its own order, so every result keeps
 // its bits (no reassociation, no contraction): only which output
 // advances next changes. Two shapes are taken, on the fast copy of a
-// versioned loop L0 (induction i, step 1):
+// versioned loop L0, or on a loop L0 versioning did not copy (no check
+// at its own level) (induction i, step 1):
 //
 //   depth 2   L0 { pre0; L1 { body }; post0 }           tile of UI rows
 //   depth 3   L0 { pre0; L1 { pre1; L2 { body }; post1 }; post0 }
@@ -17,17 +18,21 @@
 //
 // where every inner loop is the fast copy of its own versioning (its
 // guard between the pre statements and its header), every pre, body and
-// post statement is an assignment of a pure value (no call, no trap: an
-// integer division, a shift or any other checked operation refuses the
-// nest), and the only memory writes are element stores in post1 (depth
+// post statement is an assignment of a pure value (no call but one of a
+// pure function, mir_tile_pure: a value of its scalar arguments, which
+// reads no memory and never collects; no trap: an integer division, a
+// shift or any other checked operation refuses the nest), and the only
+// memory writes are element stores in post1 (depth
 // 3) or post0 (depth 2), each to an array the outer level holds, at the
 // index of its own level's induction (one output per iteration). Three
 // forms that could trap are taken, each tested where the tile starts so
 // that in the tile it cannot: a bounds check among the pre statements
 // (versioning left it: `band[i - lo]`), tested there or, for L1's, in
 // the scan below; a checked Int sum, difference or product of values in
-// the i32 range (i, j, constants, and locals set outside the nest, which
-// the tile tests), which cannot overflow; and the freeze test of a store
+// the i32 range (i, j, constants, locals set outside the nest, which the
+// tile tests, and the inner loop's induction between two such values),
+// which cannot overflow, also as the arguments of a pure function whose
+// checked operations take them; and the freeze test of a store
 // in a program that spawns, tested once per array (nothing in the tile
 // can freeze one, and no other task reaches an array this one may store
 // into unless it is frozen already).
@@ -62,8 +67,8 @@
 //   sizes and of data pointers read array headers, which an element
 //   store never writes.
 // So no store of the tile is read by the tile: the reordered outputs see
-// the values the original saw. The tile calls nothing, so nothing
-// collects, no object moves and no array changes size while it runs; a
+// the values the original saw. The tile calls only pure functions, so
+// nothing collects, no object moves and no array changes size while it runs; a
 // locals the region defines is fresh in the tile (the original's are
 // untouched for the fallback) and none of them is read after the nest or
 // carried from one iteration of L0 to the next (liveness), so the state
@@ -616,9 +621,24 @@ fn tl_operand_ok(o: MOperand?): Bool {
   true
 }
 
-// A pure assignment: no call, no trap (a checked operation, an integer
-// division or remainder), no address.
-fn tl_stmt_ok(f: MFunc, st: MStmt): Bool {
+// A pure assignment: no call but one of a pure function (pure), no
+// trap (a checked operation, an integer division or remainder), no
+// address.
+fn tl_stmt_ok(f: MFunc, st: MStmt, pure: Hash(String, Int)): Bool {
+  if st.kind == msk_call() {
+    if ind = st.indirect {
+      return false
+    }
+    if st.dest < 0 || (pure.get(st.callee) ?? 0) == 0 {
+      return false
+    }
+    for a in st.args {
+      if !tl_plain_operand(a) || a.kind == mok_global() || a.kind == mok_fn() || a.kind == mok_str() {
+        return false
+      }
+    }
+    return true
+  }
   if st.kind == msk_check_bounds() {
     // Only in the pre statements (tl_try): the tile tests it where it
     // starts or in its scan.
@@ -665,6 +685,121 @@ fn tl_stmt_ok(f: MFunc, st: MStmt): Bool {
     return false
   }
   tl_operand_ok(r.a) && tl_operand_ok(r.b)
+}
+
+// The pure functions of m, by symbol: a function of scalar parameters
+// and a scalar result whose blocks run straight to its return (gotos
+// forward only), each statement an assignment to a local of a value
+// computed from locals and constants only (no memory read, no call, no
+// allocation, so a call never collects), with no trap but a checked Int
+// sum, difference or product of two parameters or constants: such a
+// call is a value of its arguments, the same wherever and however often
+// it runs, and its checked operations cannot overflow when its
+// arguments lie in the i32 range. 1: no checked operation; 2: the
+// arguments must lie in the i32 range.
+pub fn mir_tile_pure(m: MModule): Hash(String, Int) {
+  out = Hash(String, Int).new()
+  for g in m.funcs {
+    k = tl_pure_kind(g)
+    if k > 0 {
+      out[g.symbol] = k
+    }
+  }
+  out
+}
+
+fn tl_scalar(ty: Int): Bool {
+  ty == mt_bool() || ty == mt_u8() || ty == mt_i8() || ty == mt_i16() || ty == mt_u16() || ty == mt_i32() || ty == mt_u32() || ty == mt_i64() || ty == mt_u64() || ty == mt_f64()
+}
+
+fn tl_pure_operand(g: MFunc, o: MOperand?): Bool {
+  if x = o {
+    if x.kind == mok_global() || x.kind == mok_fn() || x.kind == mok_str() || x.kind == mok_null() {
+      return false
+    }
+    if p = x.place {
+      return p.proj.size == 0
+    }
+  }
+  true
+}
+
+fn tl_pure_kind(g: MFunc): Int {
+  if g.external || g.blocks.size == 0 || g.blocks.size > 8 || !g.has_ret() || !tl_scalar(g.locals[0].ty) {
+    return 0
+  }
+  for l in 1..g.nparams + 1 {
+    if l >= g.locals.size || !tl_scalar(g.locals[l].ty) {
+      return 0
+    }
+  }
+  kind = 1
+  for blk in g.blocks {
+    for st in blk.stmts {
+      if st.kind != msk_assign() {
+        return 0
+      }
+      p = st.place ?? return 0
+      if p.proj.size != 0 {
+        return 0
+      }
+      if p.local >= 1 && p.local <= g.nparams {
+        return 0
+      }
+      r = st.rv ?? return 0
+      k = r.kind
+      if k != mrk_use() && k != mrk_binary() && k != mrk_cmp() && k != mrk_cast() && k != mrk_unary() && k != mrk_checked() {
+        return 0
+      }
+      if r.ops.size > 0 {
+        return 0
+      }
+      if rp = r.place {
+        return 0
+      }
+      if !tl_pure_operand(g, r.a) || !tl_pure_operand(g, r.b) {
+        return 0
+      }
+      if k == mrk_unary() && r.op != mop_neg() && r.op != mop_not() {
+        return 0
+      }
+      if k == mrk_binary() && (r.op == mop_div() || r.op == mop_rem()) && g.locals[p.local].ty != mt_f64() {
+        return 0
+      }
+      if k == mrk_binary() && (r.op == mop_shl() || r.op == mop_shr()) {
+        return 0
+      }
+      if k == mrk_checked() {
+        if (r.op != mop_add() && r.op != mop_sub() && r.op != mop_mul()) || g.locals[p.local].ty != mt_i64() {
+          return 0
+        }
+        ops: Array(MOperand?) = [r.a, r.b]
+        for oo in ops {
+          o = oo ?? return 0
+          if o.kind == mok_int() {
+            if o.ival.to_i() < 0 - 2147483647 || o.ival.to_i() > 2147483647 {
+              return 0
+            }
+          } else {
+            v = tl_local(o)
+            if v < 1 || v > g.nparams || !tl_int_type(g.locals[v].ty) {
+              return 0
+            }
+          }
+        }
+        kind = 2
+      }
+    }
+    t = blk.term ?? return 0
+    if t.kind == mtk_goto() {
+      if t.targets.size != 1 || t.targets[0] <= blk.id {
+        return 0
+      }
+    } else if t.kind != mtk_return() {
+      return 0
+    }
+  }
+  kind
 }
 
 // The places of a statement's operands that read memory (with a deref).
@@ -822,6 +957,18 @@ fn tl_c_place(f: MFunc, nm: TlNames, p: MPlace, x: Int, y: Int, def: Bool): MPla
 
 fn tl_c_stmt(f: MFunc, nm: TlNames, st: MStmt, x: Int, y: Int): MStmt {
   c = MStmt.new(st.kind, st.loc)
+  if st.kind == msk_call() {
+    // A pure function's call (mir_tile_pure): it reads no memory and
+    // never collects.
+    c.callee = st.callee
+    c.dest = tl_name(f, nm, st.dest, x, y, true)
+    for a in st.args {
+      c.args.push(tl_c_operand(f, nm, a, x, y))
+    }
+    c.collects = false
+    c.sig = st.sig
+    return c
+  }
   if r = st.rv {
     // A checked operation of the tile cannot overflow (tl_try): plain.
     kind = r.kind
@@ -1019,7 +1166,7 @@ fn tl_emit_distinct(f: MFunc, nm: TlNames, loc: MLoc, blk0: MBlock, stores: Arra
 
 // ---- one nest
 
-fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
+fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int, pure: Hash(String, Int)): Bool {
   uj = uj0
   if nest.depth == 2 {
     uj = 1
@@ -1027,7 +1174,7 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   n = f.locals.size
   all = tl_all(f, nest)
   for st in all {
-    if !tl_stmt_ok(f, st) {
+    if !tl_stmt_ok(f, st, pure) {
       return false
     }
   }
@@ -1108,28 +1255,22 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   // values in the i32 range (i and j there, constants, locals set
   // outside the nest that the tile tests), whose result an Int holds:
   // it cannot overflow, here or in the original.
+  // So are the arguments of a call of a pure function with a checked
+  // operation (mir_tile_pure), whose operands are its parameters.
   for st in all {
     if r = st.rv, r.kind == mrk_checked() {
       ops: Array(MOperand?) = [r.a, r.b]
       for oo in ops {
         o = oo ?? return false
-        if o.kind == mok_int() {
-          if o.ival.to_i() < 0 - 2147483647 || o.ival.to_i() > 2147483647 {
-            return false
-          }
-        } else {
-          v = tl_local(o)
-          if v < 0 || !tl_int_type(f.locals[v].ty) {
-            return false
-          }
-          if v != nest.ind_i && v != nest.ind_j {
-            if nm.inreg[v] {
-              return false
-            }
-            if !tl_listed(nest.ranged, v) {
-              nest.ranged.push(v)
-            }
-          }
+        if !tl_range_ok(f, nest, nm, o) {
+          return false
+        }
+      }
+    }
+    if st.kind == msk_call() && (pure.get(st.callee) ?? 0) == 2 {
+      for o in st.args {
+        if !tl_range_ok(f, nest, nm, o) {
+          return false
         }
       }
     }
@@ -1292,6 +1433,83 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   }
   tl_build(f, nest, nm, stores, loads, ui, uj)
   true
+}
+
+// An integer operand of a checked operation (or of a call whose checked
+// operations take its arguments) that lies in the i32 range: a constant
+// there, i or j, a local set outside the nest (tested where the tile
+// starts: nest.ranged), or the inner loop's induction when it starts at
+// such a value, only grows by one, and stops below a bound that is one
+// too (both tested where the tile starts).
+fn tl_range_ok(f: MFunc, nest: TlNest, nm: TlNames, o: MOperand): Bool {
+  if o.kind == mok_int() {
+    return o.ival.to_i() >= 0 - 2147483647 && o.ival.to_i() <= 2147483647
+  }
+  v = tl_local(o)
+  if v < 0 || !tl_int_type(f.locals[v].ty) {
+    return false
+  }
+  if v == nest.ind_i || v == nest.ind_j {
+    return true
+  }
+  if !nm.inreg[v] {
+    if !tl_listed(nest.ranged, v) {
+      nest.ranged.push(v)
+    }
+    return true
+  }
+  if v != nest.hdn.ind {
+    return false
+  }
+  // The inner induction: set once by its own level's pre statements,
+  // increased by one at the end of the inner body, nowhere else.
+  pre = nest.pre1
+  if nest.depth == 2 {
+    pre = nest.pre0
+  }
+  init: MOperand? = nil
+  count = 0
+  for st in tl_all(f, nest) {
+    if mir_stmt_def(st) == v {
+      count += 1
+    }
+  }
+  for st in pre {
+    if mir_stmt_def(st) == v {
+      if r = st.rv, r.kind == mrk_use(), st.kind == msk_assign() {
+        init = r.a
+      }
+    }
+  }
+  if count != 2 || tl_incr_tail_list(nest.bn, v) == 0 {
+    return false
+  }
+  io = init ?? return false
+  start = tl_outside(f, nest, nm, io) ?? return false
+  bound = tl_outside(f, nest, nm, nest.hdn.bound) ?? return false
+  ends: Array(MOperand) = [start, bound]
+  for e in ends {
+    if e.kind == mok_int() {
+      if e.ival.to_i() < 0 - 2147483647 || e.ival.to_i() > 2147483647 {
+        return false
+      }
+    } else {
+      w = tl_local(e)
+      if w < 0 || !tl_int_type(f.locals[w].ty) {
+        return false
+      }
+      if !tl_listed(nest.ranged, w) {
+        nest.ranged.push(w)
+      }
+    }
+  }
+  true
+}
+
+fn tl_incr_tail_list(xs: Array(MStmt), v: Int): Int {
+  blk = MBlock.new(0)
+  blk.stmts = xs
+  tl_incr_tail(blk, v)
 }
 
 // ---- the tile
@@ -1780,7 +1998,8 @@ fn tl_step(f: MFunc, loc: MLoc, blk: MBlock, v: Int, by: Int) {
 
 // ---- the pass
 
-// Tiles the nests at the fast copies of recs (outermost first), in a
+// Tiles the nests at the fast copies of recs and at the loops versioning
+// left alone whose inner loops it versioned (outermost first), in a
 // function loop versioning just versioned: a nest inside the original
 // (slow) copy of a versioned loop is left alone (it runs only when a
 // guard failed), and so is a nest inside one already tiled.
@@ -1788,8 +2007,8 @@ fn tl_step(f: MFunc, loc: MLoc, blk: MBlock, v: Int, by: Int) {
 // left them.
 // Returns whether a cache tile now calls avant_tile_fit (the caller
 // declares it in the module).
-pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int): Bool {
-  if recs.size < 2 {
+pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int, pure: Hash(String, Int)): Bool {
+  if recs.size < 1 {
     return false
   }
   made = false
@@ -1808,10 +2027,51 @@ pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: 
       }
     }
   }
-  for r in recs {
+  // The candidates for L0, outermost first: the fast copy of every
+  // versioning, and every other loop (one whose own level had no check
+  // to remove: its inner loops' versionings are what the tile needs;
+  // a check left at its own level refuses the nest).
+  cands: Array(TlRec) = []
+  sizes: Array(Int) = []
+  for li in 0..headers.size {
+    h = headers[li]
+    if h < n0 && !cold[h] {
+      slow = false
+      for r in recs {
+        if r.slow == h {
+          slow = true
+        }
+      }
+      if !slow {
+        rec = TlRec.new(-1, h, -1)
+        for r in recs {
+          if r.fast == h {
+            rec = r
+          }
+        }
+        sz = 0
+        for b in 0..n0 {
+          if bodies[li][b] {
+            sz += 1
+          }
+        }
+        k = cands.size
+        cands.push(rec)
+        sizes.push(sz)
+        while k > 0 && sizes[k - 1] < sz {
+          cands[k] = cands[k - 1]
+          sizes[k] = sizes[k - 1]
+          cands[k - 1] = rec
+          sizes[k - 1] = sz
+          k -= 1
+        }
+      }
+    }
+  }
+  for r in cands {
     if r.fast < n0 && !cold[r.fast] {
       if nest = tl_nest(f, r, recs) {
-        if tl_try(f, nest, shape[0], shape[1]) {
+        if tl_try(f, nest, shape[0], shape[1], pure) {
           made = true
           for li in 0..headers.size {
             if headers[li] == r.fast {

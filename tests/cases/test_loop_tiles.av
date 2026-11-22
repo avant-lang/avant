@@ -34,6 +34,12 @@ import std.process
 // small (AVANT_TILE_CACHE_L2 and AVANT_TILE_CACHE_L3: blocks of one
 // tile's columns and panels of one tile's rows, then of a few), at every
 // level, and the threaded fixture at 1, 2, 3, 4 and 8 threads.
+// tests/fixtures/llvm/tiles_calls.av: nests whose inner body calls a
+// pure function (Spectralnorm's matrix entry, with a checked sum of its
+// arguments; a checked product; a function of a loaded element) are
+// tiled, each row's copy making its own call; a call that reads an
+// array is not pure and its nest stays as written; at v2, v3, --debug,
+// with small caches and under the collector's stress mode.
 // tests/fixtures/llvm/loop_freeze.av: in a program that spawns, a loop
 // over an array a local holds, with no call that may spawn, tests the
 // array's freeze once before the loop and stores without the test; the
@@ -111,10 +117,17 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   jobs.push(env_job("", compiler, ["compile", tsrc, "${dir}/tiles-trap", "--release", "--cpu=v3"], "${dir}/tiles-trap.log"))
   hsrc = "${root}/tests/fixtures/llvm/tiles_threads.av"
   jobs.push(env_job("", compiler, ["compile", hsrc, "${dir}/tiles-threads", "--release", "--cpu=v3"], "${dir}/tiles-threads.log"))
+  csrc = "${root}/tests/fixtures/llvm/tiles_calls.av"
+  for f in 0..forms.size {
+    a: Array(String) = ["compile", csrc, "${dir}/tiles-calls-${names[f]}"]
+    a.concat(forms[f])
+    jobs.push(env_job("", compiler, a, "${dir}/tiles-calls-${names[f]}.log"))
+  }
   run_waves(jobs)
   for f in 0..jobs.size {
     c.eq_int(jobs[f].code, 0, "tiles: compile ${f} exits 0")
   }
+  test_calls(c, compiler, csrc, dir, names)
   runs: Array(HJob) = []
   for n in names {
     runs.push(run_job(dir, "tiles-${n}", "tiles-${n}.b"))
@@ -201,7 +214,41 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   tt = runs[runs.size - 1]
   c.eq_int(tt.code, 1, "tiles_threads.av trap: the store into rows a running task reads traps")
   c.eq_str(log_text("${dir}/tiles-threads.t.out"), "before\n", "tiles_threads.av trap: before the first store")
-  c.expect(log_text("${dir}/tiles-threads.t.err").contains("an element store on an array a running task reads") && log_text("${dir}/tiles-threads.t.err").contains("before changing the array at tiles_threads.av:28:9"), "tiles_threads.av trap: the plain loop's trap at the store's site")
+  c.expect(log_text("${dir}/tiles-threads.t.err").contains("an element store on an array a running task reads") && log_text("${dir}/tiles-threads.t.err").contains("before changing the array at tiles_threads.av:34:9"), "tiles_threads.av trap: the plain loop's trap at the store's site")
+}
+
+fn calls_of(text: String, fname: String, callee: String): Int {
+  ll_fn(text, "av.tiles_calls/${fname}").count("@\"av.tiles_calls/${callee}\"(")
+}
+
+fn test_calls(c: Checks, compiler: String, csrc: String, dir: String, names: Array(String)) {
+  cll = "${dir}/tiles_calls.ll"
+  c.eq_int(emit_ll(compiler, csrc, cll, "${dir}/tiles_calls.ll.log"), 0, "tiles_calls.av: __emit-ll")
+  text = log_text(cll)
+  c.expect(calls_of(text, "mv_ref", "ev") > 0, "tiles_calls.av: the untiled nest calls ev")
+  c.eq_int(calls_of(text, "mv", "ev"), calls_of(text, "mv_ref", "ev") + 4, "tiles_calls.av: the depth-2 nest over a pure call is tiled (4 rows, a call each)")
+  c.eq_int(calls_of(text, "mvt", "ev"), calls_of(text, "mvt_ref", "ev") + 4, "tiles_calls.av: the transposed entry is tiled")
+  c.eq_int(calls_of(text, "mvt", "scale"), calls_of(text, "mvt_ref", "scale") + 4, "tiles_calls.av: a pure function of a loaded element is tiled with it")
+  c.eq_int(calls_of(text, "mm", "ew"), calls_of(text, "mm_ref", "ew") + 16, "tiles_calls.av: the depth-3 nest over a pure call is tiled (a call per row in the tile, its tail of columns and its cache tile)")
+  c.eq_int(calls_of(text, "mvp", "picked"), calls_of(text, "mvp_ref", "picked"), "tiles_calls.av: a call that reads an array is not tiled")
+  want = "850 cases, 0 differ\n"
+  runs: Array(HJob) = []
+  for n in names {
+    runs.push(run_job(dir, "tiles-calls-${n}", "tiles-calls-${n}.b"))
+  }
+  runs.push(run_job_env(dir, "tiles-calls-v3", "tiles-calls-v3.c0", cache_envs()[0]))
+  runs.push(run_job_env(dir, "tiles-calls-v3", "tiles-calls-v3.g", "AVANT_GC_STRESS=1"))
+  run_waves(runs)
+  keys: Array(String) = []
+  for n in names {
+    keys.push("tiles-calls-${n}.b")
+  }
+  keys.push("tiles-calls-v3.c0")
+  keys.push("tiles-calls-v3.g")
+  for k in 0..keys.size {
+    c.eq_int(runs[k].code, 0, "tiles_calls.av (${keys[k]}): exit 0")
+    c.expect(log_text("${dir}/${keys[k]}.out").starts_with(want), "tiles_calls.av (${keys[k]}): every tiled output is the plain loop's in every non-NaN bit")
+  }
 }
 
 fn test_freeze(c: Checks, compiler: String, root: String, dir: String) {
