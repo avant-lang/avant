@@ -61,10 +61,12 @@
 #     named steps (the others read `skipped`), builds C' first only when the
 #     gate is not among them, ends `WAVE PARTIAL GREEN` and never `WAVE FINAL`,
 #     and refuses a name that is no step;
-#   beside-merged, beside-differs: with WAVE_BESIDE=1 the goldens and the
-#     statistics run in a copy beside the gate and their lines (and a
-#     build of C') join the summary, the copy removed; when the copy's
-#     binaries are not the gate's, a `beside:` line is red;
+#   beside-merged, beside-differs: by default (WAVE_BESIDE unset) the
+#     goldens and the statistics run in a copy beside the gate and their
+#     lines (and a build of C') join the summary, the copy removed; when the
+#     copy's binaries are not the gate's, a `beside:` line is red;
+#   beside-off: WAVE_BESIDE=0 runs them in turn after the gate, no copy, no
+#     `beside:` line;
 #   neutral-count: the neutral line counts the programs that moved outside
 #     the change (by kind) and names the first five.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
@@ -96,7 +98,13 @@ EOF
 }
 # Run wave-final.sh in checkout F into OUT, the environment emptied but for
 # the given variables.
+# The fake checkouts run the steps in turn (WAVE_BESIDE=0) unless a check
+# names it; final_default leaves it unset, to check the default.
 final() { # F OUT VAR=VALUE...
+  f=$1 o=$2; shift 2
+  (cd "$f" && env -i PATH="$PATH" HOME="$w/home" WAVE_BESIDE=0 "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
+}
+final_default() { # F OUT VAR=VALUE...
   f=$1 o=$2; shift 2
   (cd "$f" && env -i PATH="$PATH" HOME="$w/home" "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
 }
@@ -470,7 +478,7 @@ STUB
 final "$f" "$w/ncount.out" WAVE_TMP="$w/tmp1" WAVE_BASE=base WAVE_ONLY=neutral
 has 'outside the change: 6 moved (4 sources, 2 LangArena), the first five: a/one.av a/two.av a/three.av a/five.av six ' "$w/ncount.out/SUMMARY.txt"
 say neutral-count $? "$(line neutral: "$w/ncount.out/SUMMARY.txt")"
-# 16. WAVE_BESIDE=1: the goldens and the statistics run in a copy (a detached
+# 16. WAVE_BESIDE (default 1): the goldens and the statistics run in a copy (a detached
 # worktree of HEAD with its own build of C') while the gate runs; their lines
 # join the summary, and the copy's C' must be the gate's byte for byte.
 beside_fake() { # NAME LETTERS_BODY
@@ -484,7 +492,7 @@ beside_fake() { # NAME LETTERS_BODY
   echo "$f"
 }
 f=$(beside_fake beside 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
-final "$f" "$w/beside.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
+final_default "$f" "$w/beside.out" WAVE_ONLY=gate,goldens,stats
 s=$w/beside.out/SUMMARY.txt
 has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && has "^build: C' built by the letters" "$s" \
   && has "^beside: the copy's B, C' and runtime are the gate's, byte for byte" "$s" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s" \
@@ -496,4 +504,10 @@ final "$f" "$w/besidediff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
 s=$w/besidediff.out/SUMMARY.txt
 has "^beside: red (the copy's bin/avant-b bin/avant-c-llvm differ from the gate's" "$s" && has '^WAVE PARTIAL RED: beside' "$s"
 say beside-differs $? "$(line beside: "$s"); $(line WAVE "$s")"
+f=$(beside_fake besideoff 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
+final "$f" "$w/besideoff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=0
+s=$w/besideoff.out/SUMMARY.txt
+has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && ! has '^beside:' "$s" && ! has '^build:' "$s" \
+  && [ ! -e "$w/besideoff.out/beside" ] && ! grep -q 'run beside the gate' "$w/besideoff.out.log" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s"
+say beside-off $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-700)"
 echo done

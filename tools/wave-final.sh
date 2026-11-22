@@ -43,7 +43,8 @@
 # timing, about seven minutes, not a whole final: check out WAVE_BASE's commit,
 # `WAVE_ONLY=stats,la WAVE_LA=1 ...`, and name its OUT as BASE_STATS.
 #
-# WAVE_BESIDE=1: the goldens, the statistics, the smoke test and the
+# WAVE_BESIDE (default 1; WAVE_BESIDE=0 runs them in turn after the gate, the
+# serial form): the goldens, the statistics, the smoke test and the
 # neutrality run beside the gate instead of after it: a detached worktree of
 # HEAD (OUT/beside-tree/avant, LangArena beside it, removed at the end) gets a
 # second wave-final.sh of its own (WAVE_ONLY those steps, OUT/beside/, its own
@@ -56,6 +57,8 @@
 # the gate's load beside it can double. The shared part's wall drops by about
 # the goldens' stress pass and the rest of the steps; the gate runs beside
 # more load, so its own wall is not comparable with a gate that ran alone.
+# On a machine running nothing else it gave identical verdicts with the shared
+# part 29% shorter (797 s against 1,117 s in turn), hence the default.
 #
 # OUT is a new directory under results/ or outside the repository. Steps, in
 # order, each logged under OUT; a red step is reported and the later steps
@@ -339,7 +342,7 @@ esac
 [ "${WAVE_PART:-}" = shared ] || echo "wave-final: $lock_line"
 # want STEP: whether WAVE_ONLY (a comma-separated list of cases, gate,
 # goldens, stats, smoke, neutral, la; unset: all) names the step.
-# beside_steps: the steps the beside run (WAVE_BESIDE=1, below) takes once it is
+# beside_steps: the steps the beside run (WAVE_BESIDE, below) takes once it is
 # started (beside_used set; beside_pid is its process until it is waited for):
 # this instance neither runs nor reports them itself.
 beside_steps=goldens,stats,smoke,neutral
@@ -374,13 +377,13 @@ case "$cases_line" in
 esac
 else skipped cases cases; fi
 
-# 1c. WAVE_BESIDE=1: the goldens, the statistics, the smoke test and the
+# 1c. WAVE_BESIDE (default 1): the goldens, the statistics, the smoke test and the
 # neutrality (the steps that read only C') run in a copy of the checkout, a
 # second wave-final.sh of its own (WAVE_ONLY those steps, its own build of C'),
 # while the gate runs here. They are the same checks; what they prove is the
 # copy's C', which step 3's sha256 check against the gate's own C' makes the
 # one the gate proved. The wall drops by the goldens' stress pass and the rest.
-if [ "${WAVE_BESIDE:-0}" = 1 ] && want gate && { want goldens || want stats || want smoke || want neutral; }; then
+if [ "${WAVE_BESIDE:-1}" = 1 ] && want gate && { want goldens || want stats || want smoke || want neutral; }; then
   bo=""; for b_x in goldens stats smoke neutral; do if want "$b_x"; then bo="$bo${bo:+,}$b_x"; fi; done
   beside_tree=$out/beside-tree
   if mkdir -p "$beside_tree" && git worktree add -q --detach "$beside_tree/avant" HEAD < /dev/null > "$out/beside-setup.log" 2>&1 \
@@ -390,7 +393,7 @@ if [ "${WAVE_BESIDE:-0}" = 1 ] && want gate && { want goldens || want stats || w
     rm -rf "$beside_tree/avant/langarena/tmp"
     (cd "$beside_tree/avant" && exec env WAVE_ONLY="$bo" WAVE_BESIDE=0 WAVE_GROUP=0 WAVE_PART= WAVE_LA=0 GOLDEN_RUN_LIMIT_STRESS="${WAVE_BESIDE_STRESS_LIMIT:-1500}" sh tools/wave-final.sh "$out/beside" ${base:+"$base"} < /dev/null > "$out/beside.log" 2>&1) &
     beside_pid=$!; beside_used=1
-    echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1), pid $beside_pid"
+    echo "wave-final: $bo run beside the gate in $beside_tree/avant (WAVE_BESIDE=1, the default; WAVE_BESIDE=0 runs them after it), pid $beside_pid"
   else
     step "beside: red (the copy of the checkout could not be made: beside-setup.log)"
     git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; beside_tree=""
