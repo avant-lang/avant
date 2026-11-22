@@ -1,0 +1,383 @@
+import std.regex
+
+// A literal pattern is compiled into the program as a scanner; the same
+// pattern built at run time is PCRE2's. The translation of each pattern
+// for the scanner must keep PCRE2's meaning: a class's letters match
+// their other case only when the pattern is caseless, an escape the
+// translation does not know (\x41, \A, \z, \h, \v, \e, \Q, a negated
+// escape inside a class) and the anchors ^ and $ keep the pattern on
+// PCRE2.
+
+fn answers(r: regex.Regex, s: String): String {
+  b = Buf.new()
+  if m = r.find(s) {
+    b.push_str("find ${m.start}..${m.end}")
+    if sp = m.span(1) {
+      b.push_str(" g1 ${sp.lo}..${sp.hi}")
+    }
+  } else {
+    b.push_str("find nil")
+  }
+  if m = r.find(s, 2) {
+    b.push_str(" from2 ${m.start}..${m.end}")
+  } else {
+    b.push_str(" from2 nil")
+  }
+  b.push_str(" all")
+  it = r.matches(s)
+  while m = it.next() {
+    b.push_str(" ${m.start}..${m.end}")
+  }
+  b.push_str(" count ${r.count(s)}")
+  b.to_s()
+}
+
+fn show(s: String): String {
+  b = Buf.new()
+  for i in 0..s.size {
+    c = s[i]
+    if c < 32 {
+      b.push_str("\\x")
+      b.push_fmt_i(c)
+    } else {
+      b.push_byte(c)
+    }
+  }
+  b.to_s()
+}
+
+fn texts: Array(String) {
+  t: Array(String) = []
+  t.push("ab")
+  t.push("AB")
+  t.push("aab")
+  t.push("xAb")
+  t.push("aBb")
+  t.push("a.b")
+  t.push("ABC")
+  t.push("abc")
+  t.push("12ab")
+  t.push("  x")
+  t.push("ab-")
+  t.push("x\x1b")
+  t.push("\x08")
+  t.push("{{a}}{b}}{{c")
+  t.push("{{a\x00b}} {{ x }}")
+  t.push("{X {x")
+  t.push("a\nb")
+  t.push("x^ab")
+  t.push("ab$x")
+  t.push("A")
+  t.push("x41")
+  t.push("aZ")
+  t.push("5")
+  t.push("\t")
+  t.push("\x0b")
+  t.push("\x0c")
+  t.push("1.25 .5")
+  t.push("xy xZ XY")
+  t.push("abbbc")
+  t.push("")
+  t
+}
+
+fn compare(name: String, lit: regex.Regex, dyn: regex.Regex, d: Int): Int {
+  differ = d
+  for s in texts() {
+    a = answers(lit, s)
+    w = answers(dyn, s)
+    if a != w {
+      puts("${name} on ${show(s)}:")
+      puts("  literal ${a}")
+      puts("  runtime ${w}")
+      differ += 1
+    }
+  }
+  differ
+}
+
+fn main {
+  cases = 0
+  differ = 0
+  q0 = "[a]"
+  q0 = q0 + ""
+  if lit = regex.Regex.compile("[a]") {
+    if dyn = regex.Regex.compile(q0) {
+      differ = compare(q0, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q1 = "[a-c]+"
+  q1 = q1 + ""
+  if lit = regex.Regex.compile("[a-c]+") {
+    if dyn = regex.Regex.compile(q1) {
+      differ = compare(q1, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q2 = "[a-c]+"
+  q2 = q2 + ""
+  if lit = regex.Regex.compile("[a-c]+", true) {
+    if dyn = regex.Regex.compile(q2, true) {
+      differ = compare(q2, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q3 = "[^a-c]+"
+  q3 = q3 + ""
+  if lit = regex.Regex.compile("[^a-c]+") {
+    if dyn = regex.Regex.compile(q3) {
+      differ = compare(q3, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q4 = "[^a-c]+"
+  q4 = q4 + ""
+  if lit = regex.Regex.compile("[^a-c]+", true) {
+    if dyn = regex.Regex.compile(q4, true) {
+      differ = compare(q4, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q5 = "x[yz]"
+  q5 = q5 + ""
+  if lit = regex.Regex.compile("x[yz]") {
+    if dyn = regex.Regex.compile(q5) {
+      differ = compare(q5, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q6 = "x[yz]"
+  q6 = q6 + ""
+  if lit = regex.Regex.compile("x[yz]", true) {
+    if dyn = regex.Regex.compile(q6, true) {
+      differ = compare(q6, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q7 = "a.*?b"
+  q7 = q7 + ""
+  if lit = regex.Regex.compile("a.*?b") {
+    if dyn = regex.Regex.compile(q7) {
+      differ = compare(q7, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q8 = "a.*?b"
+  q8 = q8 + ""
+  if lit = regex.Regex.compile("a.*?b", true) {
+    if dyn = regex.Regex.compile(q8, true) {
+      differ = compare(q8, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q9 = "a.*?bc"
+  q9 = q9 + ""
+  if lit = regex.Regex.compile("a.*?bc") {
+    if dyn = regex.Regex.compile(q9) {
+      differ = compare(q9, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q10 = "\\{\\{(.*?)\\}\\}"
+  q10 = q10 + ""
+  if lit = regex.Regex.compile("\\{\\{(.*?)\\}\\}") {
+    if dyn = regex.Regex.compile(q10) {
+      differ = compare(q10, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q11 = "ab"
+  q11 = q11 + ""
+  if lit = regex.Regex.compile("ab") {
+    if dyn = regex.Regex.compile(q11) {
+      differ = compare(q11, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q12 = "ab"
+  q12 = q12 + ""
+  if lit = regex.Regex.compile("ab", true) {
+    if dyn = regex.Regex.compile(q12, true) {
+      differ = compare(q12, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q13 = "{x"
+  q13 = q13 + ""
+  if lit = regex.Regex.compile("{x", true) {
+    if dyn = regex.Regex.compile(q13, true) {
+      differ = compare(q13, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q14 = "b+c"
+  q14 = q14 + ""
+  if lit = regex.Regex.compile("b+c") {
+    if dyn = regex.Regex.compile(q14) {
+      differ = compare(q14, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q15 = "\\.\\d+"
+  q15 = q15 + ""
+  if lit = regex.Regex.compile("\\.\\d+") {
+    if dyn = regex.Regex.compile(q15) {
+      differ = compare(q15, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q16 = "[\\d.]+"
+  q16 = q16 + ""
+  if lit = regex.Regex.compile("[\\d.]+") {
+    if dyn = regex.Regex.compile(q16) {
+      differ = compare(q16, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q17 = "[\\b]"
+  q17 = q17 + ""
+  if lit = regex.Regex.compile("[\\b]") {
+    if dyn = regex.Regex.compile(q17) {
+      differ = compare(q17, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q18 = "\\f"
+  q18 = q18 + ""
+  if lit = regex.Regex.compile("\\f") {
+    if dyn = regex.Regex.compile(q18) {
+      differ = compare(q18, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q19 = "[\\s]+"
+  q19 = q19 + ""
+  if lit = regex.Regex.compile("[\\s]+") {
+    if dyn = regex.Regex.compile(q19) {
+      differ = compare(q19, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q20 = "[\\D]+"
+  q20 = q20 + ""
+  if lit = regex.Regex.compile("[\\D]+") {
+    if dyn = regex.Regex.compile(q20) {
+      differ = compare(q20, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q21 = "[\\S]"
+  q21 = q21 + ""
+  if lit = regex.Regex.compile("[\\S]") {
+    if dyn = regex.Regex.compile(q21) {
+      differ = compare(q21, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q22 = "[\\W]"
+  q22 = q22 + ""
+  if lit = regex.Regex.compile("[\\W]") {
+    if dyn = regex.Regex.compile(q22) {
+      differ = compare(q22, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q23 = "x\\e"
+  q23 = q23 + ""
+  if lit = regex.Regex.compile("x\\e") {
+    if dyn = regex.Regex.compile(q23) {
+      differ = compare(q23, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q24 = "\\Aab"
+  q24 = q24 + ""
+  if lit = regex.Regex.compile("\\Aab") {
+    if dyn = regex.Regex.compile(q24) {
+      differ = compare(q24, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q25 = "ab\\z"
+  q25 = q25 + ""
+  if lit = regex.Regex.compile("ab\\z") {
+    if dyn = regex.Regex.compile(q25) {
+      differ = compare(q25, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q26 = "[\\x41]"
+  q26 = q26 + ""
+  if lit = regex.Regex.compile("[\\x41]") {
+    if dyn = regex.Regex.compile(q26) {
+      differ = compare(q26, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q27 = "\\x41"
+  q27 = q27 + ""
+  if lit = regex.Regex.compile("\\x41") {
+    if dyn = regex.Regex.compile(q27) {
+      differ = compare(q27, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q28 = "[[:digit:]]"
+  q28 = q28 + ""
+  if lit = regex.Regex.compile("[[:digit:]]") {
+    if dyn = regex.Regex.compile(q28) {
+      differ = compare(q28, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q29 = "a\\Qb"
+  q29 = q29 + ""
+  if lit = regex.Regex.compile("a\\Qb") {
+    if dyn = regex.Regex.compile(q29) {
+      differ = compare(q29, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q30 = "\\h"
+  q30 = q30 + ""
+  if lit = regex.Regex.compile("\\h") {
+    if dyn = regex.Regex.compile(q30) {
+      differ = compare(q30, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q31 = "\\v"
+  q31 = q31 + ""
+  if lit = regex.Regex.compile("\\v") {
+    if dyn = regex.Regex.compile(q31) {
+      differ = compare(q31, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q32 = "[\\v]"
+  q32 = q32 + ""
+  if lit = regex.Regex.compile("[\\v]") {
+    if dyn = regex.Regex.compile(q32) {
+      differ = compare(q32, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q33 = "^ab"
+  q33 = q33 + ""
+  if lit = regex.Regex.compile("^ab") {
+    if dyn = regex.Regex.compile(q33) {
+      differ = compare(q33, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  q34 = "ab$"
+  q34 = q34 + ""
+  if lit = regex.Regex.compile("ab$") {
+    if dyn = regex.Regex.compile(q34) {
+      differ = compare(q34, lit, dyn, differ)
+      cases += texts().size
+    }
+  }
+  puts("${cases} cases, ${differ} differ")
+}

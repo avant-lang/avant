@@ -663,6 +663,13 @@ fn test_std_regex(c: Checks) {
     nul_src = fs.read("tests/fixtures/strings/regex_nul.av") ?? ""
     c.expect(nul_src.size > 0, "regex_nul.av read")
     regex_child(c, compiler, stamp, "regex-nul", nul_src, "", "stays on PCRE2", "[0-9]+ on ab\\0cd42: 5..7\n156 cases, 0 differ\n")
+
+    // The translation keeps PCRE2's meaning: a class's letters take their
+    // other case only in a caseless pattern, an escape it does not know
+    // and the anchors keep the pattern on PCRE2 (each said on stderr).
+    tr_src = fs.read("tests/fixtures/strings/regex_translate.av") ?? ""
+    c.expect(tr_src.size > 0, "regex_translate.av read")
+    regex_child(c, compiler, stamp, "regex-translate", tr_src, "re2c: pattern stays on PCRE2 (anchor): ^ab", "", "1050 cases, 0 differ\n")
   }
 }
 
