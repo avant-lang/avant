@@ -26,6 +26,12 @@ import std.process
 // The fixture's .ll shows the tiles are there: at the default level the
 // depth-3 nest holds 20 more multiplies than its untiled twin (a 4 x 4
 // tile and the 4-row tail of its columns) and the depth-2 nest 4 more.
+// tests/fixtures/llvm/loop_freeze.av: in a program that spawns, a loop
+// over an array a local holds, with no call that may spawn, tests the
+// array's freeze once before the loop and stores without the test; the
+// cases (frozen before the loop, frozen by a spawn in the loop, frozen
+// by a task's task, thawed by the join) trap or run as with every test
+// in place: --release and --debug agree on output, error and status.
 // tests/fixtures/llvm/tiles_trap.av: a row shorter than the inner
 // bound; the plain loop runs and traps at the same index, after the
 // first product's rows were written.
@@ -142,10 +148,53 @@ fn test_tiles(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(log_text("${dir}/tiles-threads.t.err").contains("an element store on an array a running task reads") && log_text("${dir}/tiles-threads.t.err").contains("before changing the array at tiles_threads.av:28:9"), "tiles_threads.av trap: the plain loop's trap at the store's site")
 }
 
+fn test_freeze(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/llvm/loop_freeze.av"
+  ll = "${dir}/loop_freeze.ll"
+  c.eq_int(emit_ll(compiler, src, ll, "${dir}/loop_freeze.ll.log"), 0, "loop_freeze.av: __emit-ll")
+  text = log_text(ll)
+  c.eq_int(ll_fn(text, "av.loop_freeze/fill").count("avant_trap_frozen"), 1, "loop_freeze.av: the store loop's copy has no freeze test (the original keeps its one)")
+  c.eq_int(ll_fn(text, "av.loop_freeze/fill_spawning").count("avant_trap_frozen"), 2, "loop_freeze.av: a loop that spawns keeps its freeze test in both copies")
+  modes = ["release", "debug"]
+  jobs: Array(HJob) = []
+  for m in modes {
+    jobs.push(env_job("", compiler, ["compile", src, "${dir}/loop-freeze-${m}", "--${m}", "--cpu=v3"], "${dir}/loop-freeze-${m}.log"))
+  }
+  run_waves(jobs)
+  for j in jobs {
+    c.eq_int(j.code, 0, "loop_freeze.av: compiles")
+  }
+  cases = ["", "outside", "inside", "other", "after"]
+  runs: Array(HJob) = []
+  for m in modes {
+    for k in 0..cases.size {
+      a: Array(String) = ["-c", "cd ${dir} && exec ./loop-freeze-${m} ${cases[k]} > lf-${m}-${k}.out 2> lf-${m}-${k}.err < /dev/null"]
+      runs.push(HJob.new("/bin/sh", a, "${dir}/lf-${m}-${k}.sh.log"))
+    }
+  }
+  run_waves(runs)
+  codes = [0, 1, 1, 1, 0]
+  for k in 0..cases.size {
+    r = runs[k]
+    d = runs[cases.size + k]
+    c.eq_int(r.code, codes[k], "loop_freeze.av [${cases[k]}]: exit status")
+    c.eq_int(d.code, r.code, "loop_freeze.av [${cases[k]}]: --debug's exit status is --release's")
+    c.eq_str(log_text("${dir}/lf-debug-${k}.out"), log_text("${dir}/lf-release-${k}.out"), "loop_freeze.av [${cases[k]}]: --debug's output is --release's")
+    c.eq_str(log_text("${dir}/lf-debug-${k}.err"), log_text("${dir}/lf-release-${k}.err"), "loop_freeze.av [${cases[k]}]: --debug's error is --release's")
+  }
+  c.eq_str(log_text("${dir}/lf-release-0.out"), "999000.0\n5\n", "loop_freeze.av: the sums")
+  c.expect(log_text("${dir}/lf-release-1.err").contains("before changing the array at loop_freeze.av:22:7"), "loop_freeze.av [outside]: the first store traps, naming its site")
+  c.eq_str(log_text("${dir}/lf-release-2.out"), "stored 0\nstored 1\nstored 2\nstored 3\n", "loop_freeze.av [inside]: the stores before the spawn run")
+  c.expect(log_text("${dir}/lf-release-2.err").contains("before changing the array at loop_freeze.av:34:7"), "loop_freeze.av [inside]: the store after the spawn traps")
+  c.expect(log_text("${dir}/lf-release-3.err").contains("before changing the array at loop_freeze.av:22:7"), "loop_freeze.av [other]: a task's task keeps the array frozen")
+  c.eq_str(log_text("${dir}/lf-release-4.out"), "1000\n1998000.0\n", "loop_freeze.av [after]: joined, the stores run")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_loop_tiles.av")
   if compiler = process.env("AVANT_COMPILER") {
     test_tiles(c, compiler, avant_test_root(), scratch_dir())
+    test_freeze(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

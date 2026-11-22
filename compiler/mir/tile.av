@@ -399,7 +399,7 @@ fn tl_head_stmts(blk: MBlock, keep: Int): Array(MStmt) {
 // nothing in the tile can freeze an array, and no other task can reach
 // one it may store into unless the array is frozen already); the blocks
 // to blocks.
-fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch): Bool {
+fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch, preds: Array(Array(Int))): Bool {
   cur = q
   while out.blocks.size < 64 {
     out.blocks.push(cur)
@@ -409,6 +409,14 @@ fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch): Bool {
       out.stmts.concat(blk.stmts)
       return true
     }
+    // A goto on to the next block of the latch (where loop versioning
+    // did a store's freeze test in its guard), entered only from here.
+    if t.kind == mtk_goto() && t.targets.size == 1 && t.targets[0] != cur && preds[t.targets[0]].size == 1 {
+      out.stmts.concat(blk.stmts)
+      cur = t.targets[0]
+      continue
+    }
+
     if t.kind != mtk_branch() || t.targets.size != 2 || blk.stmts.size < 2 {
       return false
     }
@@ -483,8 +491,9 @@ fn tl_nest(f: MFunc, rec: TlRec, recs: Array(TlRec)): TlNest? {
   nest.pre0 = f.blocks[b0].stmts
   nest.g1 = tl_chain(f, r1) ?? return nil
   hd1 = tl_header(f, r1.fast) ?? return nil
+  preds = mir_preds(f)
   l0 = TlLatch.new()
-  if !tl_latch(f, hd1.exit, rec.fast, l0) {
+  if !tl_latch(f, hd1.exit, rec.fast, l0, preds) {
     return nil
   }
   ti = tl_tail_of(l0.stmts, nest.ind_i)
@@ -522,7 +531,7 @@ fn tl_nest(f: MFunc, rec: TlRec, recs: Array(TlRec)): TlNest? {
     return nil
   }
   l1 = TlLatch.new()
-  if !tl_latch(f, hd2.exit, r1.fast, l1) {
+  if !tl_latch(f, hd2.exit, r1.fast, l1, preds) {
     return nil
   }
   tj = tl_tail_of(l1.stmts, nest.ind_j)
