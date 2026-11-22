@@ -464,9 +464,15 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
       } else if t = blk.term {
         loc = t.loc
       }
-      for k in 0..n {
-        if mir_bit(dead_from, 0, k) {
-          head.push(mir_clear_stmt(k, loc))
+      for w in 0..nw {
+        x = dead_from[w]
+        if x != 0 {
+          for kb in 0..64 {
+            k = w * 64 + kb
+            if k < n && ((x >> kb.to_u64()) & 1) != 0 {
+              head.push(mir_clear_stmt(k, loc))
+            }
+          }
         }
       }
     }
