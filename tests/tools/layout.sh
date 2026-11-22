@@ -23,6 +23,10 @@
 #     later in the others, each of which runs;
 #   cc-passthrough: a compile (-c) and a link without LAYOUT_DIR pass
 #     through untouched; cc-bad-shift: a shift not a multiple of 64 fails;
+#   rounds-identical-skipped, rounds-identical-timed: with two sides, a
+#     task whose binaries are byte-identical on both at every layout is not
+#     timed and is named (output, session.txt, identical.tsv, rounds.md);
+#     --time-identical times it;
 #   rounds-layouts: rounds.py --layouts runs round r at the
 #     ((r - 1) mod K)-th shift, names it in each raw file and lists every
 #     layout's binary;
@@ -147,6 +151,34 @@ python3 -I "$root/tools/rounds.py" langarena --rounds 3 --run-js "$r/run.js" --o
   && grep -qx 'layout	0' "$r/s/raw/round-3/x--fake_one.run" && grep -q '  x@64--fake_one$' "$r/s/binaries.sha256" \
   && grep -q '  x@0--fake_one$' "$r/s/binaries.sha256" && grep -q '^Layouts: round r ran' "$r/s/rounds.md" && grep -q '^layouts: shifts 0 64' "$r/s/session.txt"
 say rounds-layouts $? "rc=$rc $(tail -2 "$r/log" | tr '\n' ';')"
+
+# 4b. Two sides: a task byte-identical on both at every layout is not timed,
+# and is named; one that differs at one layout is timed; --time-identical
+# times both.
+ri=$w/ri
+for sd in a b; do
+  mkdir -p "$ri/$sd/0" "$ri/$sd/64"
+  for l in 0 64; do
+    printf '#!/bin/sh\necho 111\n' > "$ri/$sd/$l/fake_one"
+    printf '#!/bin/sh\n# %s\necho 222\n' "$([ $sd = b ] && [ $l = 64 ] && echo moved || echo same)" > "$ri/$sd/$l/fake_two"
+  done
+done
+chmod +x "$ri"/*/*/fake_*
+printf '[\n  {\n    "name": "Fake::One",\n    "checksum": 111,\n  },\n  {\n    "name": "Fake::Two",\n    "checksum": 222,\n  },\n]\n' > "$ri/run.js"
+rl() { # OUT FLAGS...
+  o=$1; shift
+  python3 -I "$root/tools/rounds.py" langarena --rounds 2 --run-js "$ri/run.js" --out "$ri/$o" --side a="$ri/a" --side b="$ri/b" --layouts 0,64 --allow-governor \
+    --cpu-tolerance 1 --max-involuntary 100000 --max-outside 100 "$@" < /dev/null > "$ri/$o.log" 2>&1
+}
+rl s; rc=$?
+[ $rc -eq 0 ] && grep -q '^identical on every side, not timed: Fake::One$' "$ri/s.log" && [ ! -e "$ri/s/raw/round-1/a--fake_one.run" ] \
+  && [ -e "$ri/s/raw/round-1/a--fake_two.run" ] && [ -e "$ri/s/raw/round-2/b--fake_two.run" ] && grep -q '^Fake::One	no	' "$ri/s/identical.tsv" \
+  && grep -q '^| Fake::One | identical |' "$ri/s/rounds.md" && grep -q '^Not timed: 1 task whose binaries are byte-identical' "$ri/s/rounds.md" \
+  && grep -q 'identical: 1 task byte-identical on every side, not timed: Fake::One' "$ri/s/session.txt" && ! grep -q '^Fake::Two' "$ri/s/identical.tsv"
+say rounds-identical-skipped $? "rc=$rc $(tail -3 "$ri/s.log" | tr '\n' ';')"
+rl t --time-identical; rc=$?
+[ $rc -eq 0 ] && [ -e "$ri/t/raw/round-1/a--fake_one.run" ] && grep -q '^Fake::One	yes	' "$ri/t/identical.tsv" && ! grep -q 'identical |' "$ri/t/rounds.md"
+say rounds-identical-timed $? "rc=$rc $(tail -3 "$ri/t.log" | tr '\n' ';')"
 
 # 5. layout-spread.py on fabricated sessions.
 sp=$w/sp; mkdir -p "$sp"

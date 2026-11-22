@@ -7,7 +7,7 @@ this mode costs N + 1 runs of every task.
 
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
           [--side NAME=BIN_DIR]... [--layouts S1,S2,...] [--pin CPU] [--short SECONDS]
-          [--timeout SECONDS] [--allow-governor] [--cpu-tolerance F]
+          [--timeout SECONDS] [--allow-governor] [--time-identical] [--cpu-tolerance F]
           [--max-involuntary N] [--max-outside CPUS] [--retries N] [TASK...]
   python3 tools/rounds.py table DIR
   python3 tools/rounds.py spawner DIR      (compiles the spawner into DIR, prints its path)
@@ -19,6 +19,13 @@ no --side, the checkout's own langarena/tmp is the one side, named `avant`.
 Several sides (a base and a new tree) are measured in the same rounds, their
 order rotated by round. TASK names restrict the set (default: every task of
 RUN_JS with a binary in every side).
+
+With several sides, a task whose binaries are byte-identical on every side
+(the same sha256 at every layout: the program, with the runtime linked into
+it) is not timed: it cannot differ but by noise. It is listed in
+identical.tsv, named in session.txt and on standard output, and its row in
+rounds.md reads `identical`; --time-identical times it anyway (a
+calibration that times one set of binaries as two sides needs it).
 
 --layouts S1,S2,... times every task across code layouts: each BIN_DIR then
 holds one directory per shift, BIN_DIR/S/SLUG, the same program with its
@@ -543,6 +550,7 @@ def checkout_of(path):
 
 def cmd_langarena(argv):
     rounds, run_js, out, sides, pin, short, limit, allow, only = None, None, None, [], None, 0.2, 900.0, False, []
+    time_identical = False
     layouts = []
     a = list(argv)
     while a:
@@ -576,6 +584,8 @@ def cmd_langarena(argv):
                 limit = float(v)
         elif x == "--allow-governor":
             allow = True
+        elif x == "--time-identical":
+            time_identical = True
         elif x.startswith("-"):
             die("unknown option %s" % x)
         else:
@@ -608,10 +618,30 @@ def cmd_langarena(argv):
     out = os.path.abspath(out)
     if os.path.exists(out):
         die("%s exists" % out)
+    digest = {}
+    for name, bdir in sides:
+        for n, _ in sel:
+            for p in bins(bdir, n):
+                digest[p] = hashlib.sha256(open(p, "rb").read()).hexdigest()
+    # Byte-identical on every side at every layout: not timed (unless asked).
+    identical = []
+    if len(sides) > 1:
+        for n, _ in sel:
+            per = [[digest[p] for p in bins(b, n)] for _, b in sides]
+            if all(x == per[0] for x in per[1:]):
+                identical.append((n, per[0]))
+    skipped = [] if time_identical else [n for n, _ in identical]
+    timed = [(n, c) for n, c in sel if n not in skipped]
+    if not timed:
+        die("every task is byte-identical on every side: nothing to time (--time-identical times them anyway)")
     lines = ["mode: langarena rounds (tools/rounds.py), for milestones and publication, never per gate",
              "rounds: %d (after one unmeasured warm-up of every row)" % rounds,
              "run_js: %s" % os.path.abspath(run_js),
-             "tasks: %d; sides: %s" % (len(sel), " ".join(n for n, _ in sides)),
+             "tasks: %d; sides: %s" % (len(timed), " ".join(n for n, _ in sides)),
+             "identical: %d task%s byte-identical on every side%s%s" % (
+                 len(identical), "" if len(identical) == 1 else "s",
+                 " (timed anyway: --time-identical)" if time_identical and identical else (", not timed" if identical else ""),
+                 ": " + " ".join(n for n, _ in identical) if identical else ""),
              "layouts: %s" % ("shifts %s; round r runs every side at the ((r - 1) mod %d)-th, the warm-up at the first"
                               % (" ".join(layouts), len(layouts)) if layouts else "one (the binaries as built)"),
              "pin: %s" % ("cpu %d (Matmul::T* unpinned)" % pin if pin is not None else "none"),
@@ -640,8 +670,14 @@ def cmd_langarena(argv):
         for name, bdir in sides:
             for n, _ in sel:
                 for i, p in enumerate(bins(bdir, n)):
-                    f.write("%s  %s%s--%s\n" % (hashlib.sha256(open(p, "rb").read()).hexdigest(), name,
+                    f.write("%s  %s%s--%s\n" % (digest[p], name,
                                                 "@" + layouts[i] if layouts else "", slug_of(n)))
+    with open(os.path.join(out, "identical.tsv"), "w") as f:
+        f.write("task\ttimed\tsha256 (per layout)\n")
+        for n, ds in identical:
+            f.write("%s\t%s\t%s\n" % (n, "yes" if time_identical else "no", " ".join(ds)))
+    for n in skipped:
+        print("identical on every side, not timed: %s" % n)
     with open(os.path.join(out, "params.tsv"), "w") as f:
         f.write("short\t%g\nsides\t%s\n" % (short, " ".join(n for n, _ in sides)))
         if layouts:
@@ -651,7 +687,7 @@ def cmd_langarena(argv):
     measure(spawn, floor_rows, 2 * rounds, os.path.join(out, "floor"), 10.0,
             lambda row, res, o, e: None if res["exit"] == 0 else "exit %d" % res["exit"], note, pin)
     rows = []
-    for n, c in sel:
+    for n, c in timed:
         for side, bdir in sides:
             row = {"id": "%s--%s" % (side, slug_of(n)), "argv": ["./" + slug_of(n)], "cwd": os.path.abspath(bdir),
                    "pin": not n.startswith("Matmul::T"), "fields": {"task": n, "side": side, "checksum": c},
@@ -773,6 +809,11 @@ def write_tables(d):
     if os.path.exists(bs):
         for i, l in enumerate(open(bs)):
             pos.setdefault(l.split("--", 1)[1].strip(), i)
+    skipped = []
+    idf = os.path.join(d, "identical.tsv")
+    if os.path.exists(idf):
+        skipped = [l.split("\t")[0] for l in open(idf).read().splitlines()[1:] if l.split("\t")[1:2] == ["no"]]
+    order += [t for t in skipped if t not in order]
     order.sort(key=lambda t: pos.get(slug_of(t), 0))
     disturbed = "DISTURBED" in open(os.path.join(d, "session.txt")).read()
     tsv = ["side\ttask\tn\twall_median_s\twall_min_s\twall_max_s\tspread_pct\tslow_runs\trss_median_kb\trss_min_kb\trss_max_kb\tuser_median_s\tsys_median_s\tshort"]
@@ -802,6 +843,9 @@ def write_tables(d):
     lr = {s: [] for s in sides}
     few = []
     for t in order:
+        if t in skipped:
+            md.append("| %s | %s |" % (t, " | ".join(["identical"] * (ncol - 1))))
+            continue
         cells, sums, flag = [], {}, ""
         for s in sides:
             rs = runs.get("%s--%s" % (s, slug_of(t)))
@@ -834,6 +878,10 @@ def write_tables(d):
             line += " | " + " | ".join(rat)
         md.append(line + " | %s |" % flag)
     md.append("")
+    if skipped:
+        md.append("Not timed: %d task%s whose binaries are byte-identical on every side at every layout (`identical.tsv`): %s." % (
+            len(skipped), "" if len(skipped) == 1 else "s", ", ".join(skipped)))
+        md.append("")
     md += disturbed_section(d, few)
     open(os.path.join(d, "rounds.tsv"), "w").write("\n".join(tsv) + "\n")
     open(os.path.join(d, "rounds.md"), "w").write("\n".join(md))
