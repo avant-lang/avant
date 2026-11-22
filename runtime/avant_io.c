@@ -671,8 +671,38 @@ static volatile int32_t g_njobs;
 static int32_t g_job_status;
 static int32_t g_job_signal;
 
-static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
+/* The environment changes of a child, from an Avant Array(String) (NULL or
+ * empty: none), made before the fork (no allocation in the child): an entry
+ * NAME=VALUE sets NAME, an entry without '=' unsets it. The program is then
+ * started directly, never through env(1): env reads any word with '=' before
+ * the program as an assignment, so a program whose path holds '=' (a
+ * TMPDIR such as .../AVANT_NURSERY=0/...) would not run and env would print
+ * the environment instead, with status 0. */
+static char **build_envs(void *env) {
+  AvantArray *e = (AvantArray *)env;
+  if (!e || e->size <= 0) {
+    return NULL;
+  }
+  return build_argv("", env);
+}
+
+static void child_envs(char **envs) {
+  int32_t i;
+  if (!envs) {
+    return;
+  }
+  for (i = 1; envs[i]; i++) {
+    if (strchr(envs[i], '=')) {
+      putenv(envs[i]);
+    } else {
+      unsetenv(envs[i]);
+    }
+  }
+}
+
+static int32_t run_child_env(const char *path, void *args, void *env, const char *out_path, const char *err_path, int no_stdin) {
   char **argv;
+  char **envs;
   pid_t pid;
   int st = 0;
   if (!path) {
@@ -682,17 +712,29 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
   if (!argv) {
     return 1;
   }
+  envs = build_envs(env);
+  if (!envs && env && ((AvantArray *)env)->size > 0) {
+    free_argv(argv);
+    return 1;
+  }
   fflush(stdout);
   fflush(stderr);
   pid = fork();
   if (pid < 0) {
     free_argv(argv);
+    if (envs) {
+      free_argv(envs);
+    }
     return 1;
   }
   if (pid == 0) {
+    child_envs(envs);
     child_exec(path, argv, out_path, err_path, 0, no_stdin, -1);
   }
   free_argv(argv);
+  if (envs) {
+    free_argv(envs);
+  }
   wait_begin(pid);
   /* The process wait is native (rule 2). */
   avant_gc_native_begin();
@@ -706,6 +748,10 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
   avant_gc_native_end();
   wait_end();
   return exit_code_of(st);
+}
+
+static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
+  return run_child_env(path, args, NULL, out_path, err_path, no_stdin);
 }
 
 /* The prelude's process_run and process_run_out: a program name without '/' is
@@ -800,7 +846,14 @@ avant_int avant_fs_run(const char *path, void *args) {
  * out_path, stdin /dev/null, its own process group. Returns its pid, or
  * -1 when it cannot start. Internal to the test runner. */
 avant_int avant_job_start(const char *path, void *args, const char *out_path) {
+  return avant_job_start_env(path, args, NULL, out_path);
+}
+
+/* avant_job_start with environment changes (build_envs: NAME=VALUE sets,
+ * NAME unsets), the program started directly. */
+avant_int avant_job_start_env(const char *path, void *args, void *env, const char *out_path) {
   char **argv;
+  char **envs;
   pid_t pid;
   if (!path || g_njobs >= JOB_MAX) {
     return -1;
@@ -809,17 +862,29 @@ avant_int avant_job_start(const char *path, void *args, const char *out_path) {
   if (!argv) {
     return -1;
   }
+  envs = build_envs(env);
+  if (!envs && env && ((AvantArray *)env)->size > 0) {
+    free_argv(argv);
+    return -1;
+  }
   fflush(stdout);
   fflush(stderr);
   pid = fork();
   if (pid < 0) {
     free_argv(argv);
+    if (envs) {
+      free_argv(envs);
+    }
     return -1;
   }
   if (pid == 0) {
+    child_envs(envs);
     child_exec(path, argv, out_path, NULL, 1, 1, -1);
   }
   free_argv(argv);
+  if (envs) {
+    free_argv(envs);
+  }
   setpgid(pid, pid);
   g_jobs[g_njobs] = pid;
   g_njobs = g_njobs + 1;
@@ -881,6 +946,12 @@ avant_int avant_tool_run(const char *path, void *args, const char *out_path, con
  * sh. Like process_run, it forwards a signal to its child. Internal. */
 avant_int avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
   return run_child(path, args, out_path, err_path, 0);
+}
+
+/* avant_process_run_split with environment changes (build_envs), the
+ * program started directly. */
+avant_int avant_process_run_split_env(const char *path, void *args, void *env, const char *out_path, const char *err_path) {
+  return run_child_env(path, args, env, out_path, err_path, 0);
 }
 
 /* Internal file helpers, bound with lib/fun, no prelude name: the runner, the
@@ -1490,9 +1561,32 @@ static void tmp_catch(int sig);
  * (avant_stop_children). */
 static pid_t g_io_pid;
 
+/* `avant test`'s report that a test process ran: when the runner names a
+ * file in AVANT_TEST_RESULTS, the program writes `exit` to it as it exits
+ * (normally or by exit()), so a job that exits 0 without having been this
+ * program (a launcher that ran nothing, as env(1) given a path holding
+ * '=') is told from a pass. The variable is removed from the process's
+ * environment at start, so the programs it runs do not write the file. */
+static char g_test_results[4096];
+
+static void test_results_at_exit(void) {
+  int fd = open(g_test_results, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd >= 0) {
+    ssize_t w = write(fd, "exit\n", 5);
+    (void)w;
+    close(fd);
+  }
+}
+
 __attribute__((constructor)) static void avant_io_start(void) {
   struct sigaction sa;
   sigset_t set;
+  const char *results = getenv("AVANT_TEST_RESULTS");
+  if (results && results[0] && strlen(results) < sizeof g_test_results) {
+    memcpy(g_test_results, results, strlen(results) + 1);
+    atexit(test_results_at_exit);
+  }
+  unsetenv("AVANT_TEST_RESULTS");
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = SIG_DFL;
   sigemptyset(&sa.sa_mask);

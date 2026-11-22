@@ -38,7 +38,7 @@ pub class FileRun {
 }
 
 lib job_rt {
-  fun avant_job_start(path: String, args: Array(String), out: String): Int
+  fun avant_job_start_env(path: String, args: Array(String), env: Array(String), out: String): Int
   fun avant_job_wait: Int
   fun avant_job_status: Int
   fun avant_job_signal: Int
@@ -46,11 +46,17 @@ lib job_rt {
   fun avant_usable_cpus: Int
 }
 
-// One test job: /usr/bin/env with its variables and command as arguments,
-// stdout and stderr to log. No shell: statuses come from waitpid, and the
+// One test job: the program prog with args, its environment changed by env
+// (NAME=VALUE entries), stdout and stderr to log. The program is started
+// directly, never through env(1), which takes any word holding '=' before
+// the program for an assignment: a test binary under a TMPDIR such as
+// .../AVANT_NURSERY=0/... would not run, and env would print the
+// environment and exit 0. No shell: statuses come from waitpid, and the
 // runtime can stop every job's process group on a signal. kind 0 compiles
 // file, 1 runs its serial work, 2 runs one parallel name.
 pub class JobCmd {
+  env: Array(String)
+  prog: String = ""
   args: Array(String)
   log: String = ""
   pid: Int = 0
@@ -61,11 +67,14 @@ pub class JobCmd {
   file: Int = 0
   names: String = ""
   matches: String = ""
+  results: String = ""
   signal: Int = 0
   unstarted: Bool = false
   what: String = ""
 
-  fn initialize(args: Array(String), log: String, kind: Int, file: Int) {
+  fn initialize(env: Array(String), prog: String, args: Array(String), log: String, kind: Int, file: Int) {
+    self.env = env
+    self.prog = prog
     self.args = args
     self.log = log
     self.kind = kind
@@ -134,7 +143,7 @@ pub class JobSched {
       }
       cmd = self.jobs[k]
       cmd.started = true
-      pid = job_rt.avant_job_start("/usr/bin/env", cmd.args, cmd.log)
+      pid = job_rt.avant_job_start_env(cmd.prog, cmd.args, cmd.env, cmd.log)
       if pid < 0 {
         cmd.code = 127
         cmd.unstarted = true
@@ -174,6 +183,8 @@ pub class TestHost {
   // the runner's own path; a relative one made absolute from the runner's
   // directory, since a test may run it from another
   tests_compiler: String = ""
+  // the executable the compile jobs start
+  self_path: String = ""
   seq: Int = 0
   jobs: Int = 1
   coverage: Bool = false
@@ -185,6 +196,13 @@ pub class TestHost {
 
   fn initialize(compiler: String, jobs: Int) {
     self.compiler = compiler
+    // The compile jobs start this runner's own executable directly (no
+    // PATH lookup through env): /proc/self/exe, else the path it was
+    // started by.
+    self.self_path = self_exe_path()
+    if self.self_path.size == 0 {
+      self.self_path = absolute_tool(compiler)
+    }
     self.tests_compiler = absolute_tool(compiler)
     if given = env_get("AVANT_COMPILER") {
       if given.size > 0 {
@@ -353,6 +371,7 @@ fn listed(paths: Array(String), path: String): Bool {
 // file's serial run.
 fn env_base(compiler: String, names: String, only: String, frag: String, filter: String, matches: String): Array(String) {
   a: Array(String) = []
+  a.push("AVANT_TEST_RESULTS=")
   a.push("AVANT_COMPILER=${compiler}")
   a.push("AVANT_TEST_LIST=")
   a.push("AVANT_TEST_ONLY=${only}")
@@ -372,8 +391,12 @@ fn env_plain(compiler: String, coverage: Bool, map: String): Array(String) {
   a
 }
 
-fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: String, filter: String, matches: String): Array(String) {
+// results: the file the test process's runtime writes as it exits
+// (AVANT_TEST_RESULTS): a run that exits 0 and writes none was not the
+// test program (a launcher that ran nothing), and fails.
+fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: String, filter: String, matches: String, results: String): Array(String) {
   a = env_base(compiler, names, only, frag, filter, matches)
+  a.push("AVANT_TEST_RESULTS=${results}")
   if coverage {
     a.push("AVANT_COVERAGE=")
     a.push("AVANT_COVERAGE_LCOV=0")
@@ -462,6 +485,26 @@ fn job_failed(f: FileRun, cmd: JobCmd) {
   }
 }
 
+fn empty_args: Array(String) {
+  a: Array(String) = []
+  a
+}
+
+// A test process that exited 0 but wrote no results file never ran the
+// test program to its exit: a failure, never a pass.
+fn check_results(f: FileRun, cmd: JobCmd) {
+  if cmd.results.size == 0 {
+    return
+  }
+  if cmd.code == 0 && !file_exists(cmd.results) {
+    f.ok = false
+    if f.why.size == 0 {
+      f.why = "${cmd.what} exited 0 and reported no results"
+    }
+  }
+  rm_file(cmd.results)
+}
+
 fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
   base = host.fresh()
   names = "${base}.names"
@@ -474,11 +517,12 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
   if host.filter.size > 0 {
     matches = "${base}.matches"
   }
-  args = env_run(host.tests_compiler, names, "", host.coverage, frag, host.filter, matches)
-  args.push(f.bin)
-  run = JobCmd.new(args, "${base}.log", 1, at)
+  results = "${base}.results"
+  env = env_run(host.tests_compiler, names, "", host.coverage, frag, host.filter, matches, results)
+  run = JobCmd.new(env, f.bin, empty_args(), "${base}.log", 1, at)
   run.names = names
   run.matches = matches
+  run.results = results
   run.what = "the test process"
   sched.add(run)
 }
@@ -490,9 +534,10 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
       frag = "${host.fresh()}.junit"
       f.frags.push(frag)
     }
-    args = env_run(host.tests_compiler, "", name, host.coverage, frag, "", "")
-    args.push(f.bin)
-    cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
+    results = "${host.fresh()}.results"
+    env = env_run(host.tests_compiler, "", name, host.coverage, frag, "", "", results)
+    cmd = JobCmd.new(env, f.bin, empty_args(), "${host.fresh()}.log", 2, at)
+    cmd.results = results
     cmd.what = "the parallel test \"${name}\""
     sched.add(cmd)
     f.par_logs.push(cmd.log)
@@ -557,15 +602,15 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if host.coverage {
       f.map = "${host.fresh()}.map"
     }
-    args = env_plain(host.tests_compiler, host.coverage, f.map)
-    args.push(host.compiler)
+    env = env_plain(host.tests_compiler, host.coverage, f.map)
+    args: Array(String) = []
     args.push("compile")
     args.push(f.abs)
     args.push(f.bin)
     args.push("--debug")
     // The tests are local runs: the machine's highest level.
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
-    cjob = JobCmd.new(args, "${host.fresh()}.log", 0, i)
+    cjob = JobCmd.new(env, host.self_path, args, "${host.fresh()}.log", 0, i)
     cjob.what = "the compile"
     sched.add(cjob)
     i += 1
@@ -596,6 +641,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         f.ok = false
         job_failed(f, cmd)
       }
+      check_results(f, cmd)
       rm_file(cmd.log)
       found = name_lines(read_text(cmd.names))
       rm_file(cmd.names)
@@ -629,6 +675,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         f.ok = false
         job_failed(f, cmd)
       }
+      check_results(f, cmd)
       f.pending -= 1
       if f.pending == 0 {
         take_par_logs(f)

@@ -304,6 +304,25 @@ fn test_user_test(c: Checks) {
     en_sh = "#!/bin/sh\ncd ${ut_quote(root)}/envc && ENVC_OUT=${ut_quote(root)}/envc-none.seen env -u AVANT_COMPILER ${ut_quote(compiler)} test tests/test_env.av > ${ut_quote(root)}/envc-none.log 2>&1; echo $? > ${ut_quote(en_rc)}\n"
     c.eq_int(ut_sh(en_sh, en_rc), 0, "AVANT_COMPILER: the run without it passes")
     c.eq_str(fs.read("${root}/envc-none.seen") ?? "", compiler, "AVANT_COMPILER: unset, the tests get the runner's own path")
+    // A TMPDIR whose path holds '=' (as .../AVANT_NURSERY=0/...): the test
+    // binary under it runs (a launcher such as env(1) would take its path
+    // for an assignment and run nothing), and a test process that exits 0
+    // without running the test program to its exit is a failure.
+    mkdir_p("${root}/eqtmp/tests")
+    mkdir_p("${root}/eqtmp/tmp-AVANT_NURSERY=0")
+    _ = fs.write("${root}/eqtmp/avant.toml", "[package]\nname = \"eqtmp\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/eqtmp/tests/test_ran.av", "fn main: Int {\n  _ = fs.write(process.env(\"EQ_OUT\") ?? \"eq.out\", \"ran\")\n  0\n}\nimport std.fs\nimport std.process\n")
+    eq_rc = "${root}/eqtmp-ran.rc"
+    eq_sh = "#!/bin/sh\ncd ${ut_quote(root)}/eqtmp && EQ_OUT=${ut_quote(root)}/eqtmp-ran.seen TMPDIR=${ut_quote(root)}/eqtmp/tmp-AVANT_NURSERY=0 ${ut_quote(compiler)} test tests/test_ran.av > ${ut_quote(root)}/eqtmp-ran.log 2>&1; echo $? > ${ut_quote(eq_rc)}\n"
+    c.eq_int(ut_sh(eq_sh, eq_rc), 0, "TMPDIR holding '=': the run passes")
+    c.eq_str(fs.read("${root}/eqtmp-ran.seen") ?? "", "ran", "TMPDIR holding '=': the test binary ran")
+    mkdir_p("${root}/noreport/tests")
+    _ = fs.write("${root}/noreport/avant.toml", "[package]\nname = \"noreport\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/noreport/tests/test_silent.av", "lib c {\n  fun _exit(code: Int32)\n}\n\nfn main: Int {\n  c._exit(0)\n  0\n}\n")
+    nr_rc = "${root}/noreport.rc"
+    nr_sh = "#!/bin/sh\ncd ${ut_quote(root)}/noreport && ${ut_quote(compiler)} test tests/test_silent.av > ${ut_quote(root)}/noreport.log 2>&1; echo $? > ${ut_quote(nr_rc)}\n"
+    c.eq_int(ut_sh(nr_sh, nr_rc), 1, "no results: a test process that exits 0 without reaching the program's exit fails the run")
+    c.expect(ut_has(fs.read("${root}/noreport.log") ?? "", "FAIL tests/test_silent.av: the test process exited 0 and reported no results"), "no results: the FAIL line says so")
     dp_rc = "${root}/failcheck-pass.rc"
     dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/failcheck-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
     c.eq_int(ut_sh(dp_sh, dp_rc), 0, "failed check: a void main whose checks pass still passes")
