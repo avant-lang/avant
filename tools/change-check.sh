@@ -57,7 +57,17 @@
 #             (all 50 when runtime/ changed: the runtime moves the
 #             programs' code without moving their .ll), the ratio to the
 #             previous count, and whether the program's output stayed the
-#             same
+#             same. A range that changes the hash function, the hash tables
+#             or their probing (a file of hash_files below:
+#             runtime/avant_hash.c, compiler/mir/lower_hash.av,
+#             compiler/mir/upsert.av) counts under the 12 hash seeds of
+#             tools/la-count.sh (LA_SEEDS=12), on both sides: the counts
+#             of the base's side are taken again under the same seeds by
+#             the base cache's compiler, and the cell reads the ratio of
+#             the means with the per-seed ratios' range beside it, `SLUG
+#             1.0012 (12 seeds: 0.9990-1.0031)`; one seed can place a
+#             task's keys well or badly. CC_SEEDS=N forces N seeds (1 to
+#             12), CC_SEEDS=0 seed 0 alone; cache.txt says which
 #
 # One line per commit in OUT/table.md (and on stdout), the details in
 # OUT/NN-SHORT/ (changed.txt, tests.txt and the suite's log, corpus.txt and
@@ -121,6 +131,19 @@ t0=$(now)
 e=$(rn "base cache" sh "$here/base-cache.sh" "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache failed (run.log)" >&2; exit 1; }
 lap=$(rn "base cache" sh "$here/base-cache.sh" --la "$first^" 2>> "$log" < /dev/null) || { echo "change-check.sh: the base cache's LangArena part failed (run.log)" >&2; exit 1; }
 echo "base cache: $e, $lap ($(secs "$t0" "$(now)") s, $(grep -c 'built ' "$log") built)" >> "$out/cache.txt"
+# Hash seeds (above): on when the range reaches the hash code.
+hash_files="runtime/avant_hash.c compiler/mir/lower_hash.av compiler/mir/upsert.av"
+seeds=${CC_SEEDS:-}
+if [ -z "$seeds" ]; then
+  seeds=0
+  # shellcheck disable=SC2086
+  [ -n "$(git diff --name-only "$first^" "$head" -- $hash_files)" ] && seeds=12
+  hwhy="the range changes $(git diff --name-only "$first^" "$head" -- $hash_files | tr '\n' ' ')"
+else hwhy="CC_SEEDS=$seeds"; fi
+case "$seeds" in [0-9]|1[0-2]) ;; *) echo "change-check.sh: CC_SEEDS is a number from 0 to 12" >&2; exit 2 ;; esac
+if [ "$seeds" -gt 0 ]; then echo "hash seeds: the counts under $seeds seeds of tools/la-count.sh, both sides ($hwhy)" >> "$out/cache.txt"
+else echo "hash seeds: seed 0 alone (no file of $hash_files changed)" >> "$out/cache.txt"; fi
+seedenv=""; [ "$seeds" -gt 0 ] && seedenv="env LA_SEEDS=$seeds"
 # The base's side of LangArena: its own harness when the base compiler
 # refuses some of this checkout's stitched programs.
 blap=$lap
@@ -165,6 +188,7 @@ if [ -n "$tmap" ] && [ -f "$tmap/COMPLETE" ]; then echo "test map: $tmap (tree $
 else tmap=""; echo "test map: $tmwhy" >> "$out/cache.txt"; fi
 cp "$blap/ll.tsv" "$out/state/la.tsv"
 cp "$blap/ins.tsv" "$out/state/ins.tsv"
+: > "$out/state/ins-seeds.tsv"
 
 # The work tree, its seed and re2c as this checkout's.
 work=$out/work/avant
@@ -275,12 +299,34 @@ for c in $commits; do
   ins="-"
   if [ -s "$d/count.txt" ]; then
     # shellcheck disable=SC2046
-    rn "$short counts" sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
-    ins=$(awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; m[$1] = $3; next }
+    # shellcheck disable=SC2086
+    rn "$short counts" $seedenv sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
+    : > "$d/seed-ranges.tsv"
+    if [ "$seeds" -gt 0 ]; then
+      # The base's side under the same seeds, for the programs no earlier
+      # commit counted so (their previous count is the base's).
+      cut -f1 "$out/state/ins-seeds.tsv" | LC_ALL=C sort > "$d/seeded.txt"
+      LC_ALL=C sort "$d/count.txt" | LC_ALL=C comm -23 - "$d/seeded.txt" > "$d/base-count.txt"
+      if [ -s "$d/base-count.txt" ]; then
+        # shellcheck disable=SC2046,SC2086
+        rn "$short base counts" $seedenv sh "$here/la-count.sh" "$e/avant" "$blap" "$d/base-ins.tsv" $(cat "$d/base-count.txt") < /dev/null 2>> "$log"
+        awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } { if ($1 in n) print n[$1]; else print }' "$d/base-ins.tsv" "$out/state/ins.tsv" > "$d/ins-state.tsv"
+        mv "$d/ins-state.tsv" "$out/state/ins.tsv"
+        cat "$d/base-ins.seeds.tsv" >> "$out/state/ins-seeds.tsv"
+      fi
+      # Each program's per-seed ratios, new over old, seed by seed.
+      awk -F'\t' 'FILENAME == ARGV[1] { o[$1] = $6; next }
+        ($1 in o) { n = split($6, a, ","); m = split(o[$1], b, ","); lo = ""; hi = ""
+          for (i = 1; i <= n && i <= m; i++) if (b[i] > 0) { r = a[i] / b[i]; if (lo == "" || r < lo) lo = r; if (hi == "" || r > hi) hi = r }
+          if (lo != "") printf "%s\t (%d seeds: %.4f-%.4f)\n", $1, n, lo, hi }' "$out/state/ins-seeds.tsv" "${d}/ins.seeds.tsv" > "$d/seed-ranges.tsv"
+      awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } { if ($1 in n) { print n[$1]; delete n[$1] } else print } END { for (k in n) print n[k] }' "$d/ins.seeds.tsv" "$out/state/ins-seeds.tsv" > "$d/seeds-state.tsv"
+      mv "$d/seeds-state.tsv" "$out/state/ins-seeds.tsv"
+    fi
+    ins=$(awk -F'\t' 'FILENAME == ARGV[1] { sr[$1] = $2; next } FILENAME == ARGV[2] { n[$1] = $2; m[$1] = $3; next }
       { r = !($1 in n) && $2 ~ /^[0-9]+$/ ? "new (not a program of the base'"'"'s harness)" : ($2 ~ /^[0-9]+$/ && n[$1] ~ /^[0-9]+$/ && n[$1] > 0) ? sprintf("%.4f", $2 / n[$1]) : (n[$1] == "compile-failed" && $2 ~ /^[0-9]+$/) ? "new (the base refused it)" : "?"
         o = (!($1 in n) || $3 == m[$1] || n[$1] == "compile-failed") ? "" : " OUTPUT CHANGED"
-        s = s (s == "" ? "" : ", ") $1 " " r o }
-      END { print s }' "$out/state/ins.tsv" "$d/ins.tsv")
+        s = s (s == "" ? "" : ", ") $1 " " r sr[$1] o }
+      END { print s }' "$d/seed-ranges.tsv" "$out/state/ins.tsv" "$d/ins.tsv")
     grep -q 'OUTPUT CHANGED\| ?' <<EOF && bad=1
 $ins
 EOF
