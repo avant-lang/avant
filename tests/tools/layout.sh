@@ -41,6 +41,8 @@
 #     whole-line shifts are linked as before, each sub-line shift compiled
 #     with AVANT_CODE_SHIFT set, every layout's binary runs, and
 #     shifts.txt lists them all;
+#   check-build-threads: the build puts the task's configuration beside
+#     its layouts, where rounds.py reads its threads (cfg_threads);
 #   check-build-subline-checked: a stub that ignores AVANT_CODE_SHIFT is
 #     caught (main not where the shift puts it), the build fails;
 #   check-build-subline-bad: a sub-line shift of 64 is refused;
@@ -228,12 +230,18 @@ rm -f "$out.s"; exit $rc
 STUB
 chmod +x "$lb/root/bin/avant-c-llvm"
 echo 'fn main {}' > "$lb/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lb/la/args/x_one"
+printf 'fn cfg_threads: Int { 16 }\n' > "$lb/la/avant/langarena/tmp/x_one.cfg.av"
 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
 ok=0
 for k in 0 64 16 32; do "$lb/d/layouts/$k/x_one" < /dev/null || ok=1; done
 m16=$(nm "$lb/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
 [ $rc -eq 0 ] && [ $ok -eq 0 ] && [ "$(cat "$lb/d/shifts.txt")" = "0 64 16 32" ] && [ -n "$m16" ] && [ $((0x$m16 % 64)) -eq 16 ]
 say check-build-subline $? "rc=$rc runs=$ok main@16=$m16 shifts=$(cat "$lb/d/shifts.txt" 2>/dev/null); $(tail -2 "$lb/log" | tr '\n' ';')"
+# The task's configuration lands beside its layouts, where rounds.py reads
+# its threads.
+t=$(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import rounds; print(rounds.threads_of(sys.argv[2], "x_one"))' "$root/tools" "$lb/d/layouts")
+[ "$t" = 16 ]
+say check-build-threads $? "threads=$t"
 STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
 [ $rc -eq 1 ] && grep -q 'at sub-line shift 16: main is at .*, not 16 bytes into its line' "$lb/log2"
 say check-build-subline-checked $? "rc=$rc $(tr '\n' ';' < "$lb/log2")"

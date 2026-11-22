@@ -78,6 +78,10 @@ case "$1" in
       (cd "$src" && env -u AVANT_ROOT CC="$root/tools/layout-cc.sh" LAYOUT_DIR="$d/layouts" LAYOUT_SHIFTS="$shifts" \
         timeout -k 10 300 "$root/bin/avant-c-llvm" compile "$s.av" "$d/build/$s" "$@" < /dev/null > "$d/build/$s.log" 2>&1) \
         || { echo "layout-check.sh: $s did not compile ($d/build/$s.log)" >&2; exit 1; }
+      # The task's configuration beside its layouts: tools/rounds.py reads
+      # its threads there (cfg_threads), and scales its limit on
+      # involuntary switches for a program with more threads than its CPUs.
+      if [ -f "$src/$s.cfg.av" ]; then cp "$src/$s.cfg.av" "$d/layouts/$s.cfg.av" || exit 2; fi
       for e in $subline; do
         k=${e%%l*}; n=""; [ "$k" = "$e" ] || n=${e#*l}
         mkdir -p "$d/layouts/$e" || exit 2
