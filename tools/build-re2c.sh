@@ -8,7 +8,11 @@
 #
 # Needs curl, xz, a C++ compiler, make, and the static libstdc++ and libc
 # archives (Ubuntu: build-essential). Downloads and builds in a temporary
-# directory, removed at the end.
+# directory, removed at the end. With RE2C_TIMES=FILE, writes the seconds of
+# the download, the configure and the make to FILE (`download S`,
+# `configure S`, `make S`): the make, the same pinned sources and compiler
+# every time, is CI's reference timing of a runner's speed
+# (.github/runner-speed.sh).
 set -eu
 
 RE2C_VERSION=4.6
@@ -24,7 +28,12 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/avant-re2c-XXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT TERM
 
+now() { date +%s.%N; }
+lap() { [ -z "${RE2C_TIMES:-}" ] || awk -v n="$1" -v a="$2" -v b="$(now)" 'BEGIN { printf "%s %.2f\n", n, b - a }' >> "$RE2C_TIMES"; }
+[ -z "${RE2C_TIMES:-}" ] || : > "$RE2C_TIMES"
+t=$(now)
 curl -fsSL -o "$work/re2c.tar.xz" "$RE2C_URL"
+lap download "$t"
 echo "$RE2C_SHA256  $work/re2c.tar.xz" | sha256sum -c - > /dev/null || {
   echo "build-re2c: sha256 mismatch for $RE2C_URL" >&2
   exit 1
@@ -33,6 +42,7 @@ mkdir "$work/src" "$work/build"
 tar -C "$work/src" -xJf "$work/re2c.tar.xz"
 (
   cd "$work/build"
+  t=$(now)
   # Only re2c (C) is built; the other language front ends are on by default.
   "$work/src/re2c-$RE2C_VERSION/configure" --quiet --disable-dependency-tracking \
     --disable-dlang --disable-golang --disable-haskell --disable-java --disable-js \
@@ -42,6 +52,7 @@ tar -C "$work/src" -xJf "$work/re2c.tar.xz"
     cat "$work/configure.log" >&2
     exit 1
   }
+  lap configure "$t"; t=$(now)
   # Plain `make`: automake builds BUILT_SOURCES (the bootstrap lexer and
   # parser) only for `all`, so `make re2c` alone fails on a fresh tree.
   # The link goes through libtool, where a fully static program is
@@ -50,6 +61,7 @@ tar -C "$work/src" -xJf "$work/re2c.tar.xz"
     tail -40 "$work/make.log" >&2
     exit 1
   }
+  lap make "$t"
 )
 mkdir -p "$(dirname "$out")"
 install -m 755 "$work/build/re2c" "$out"

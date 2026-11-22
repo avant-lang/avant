@@ -81,12 +81,27 @@ fn test_tools(c: Checks) {
   wf = "${scratch_dir()}/wave-final"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
   whats.push("wave-final.sh")
-  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary", "runner-term-leaves-nothing", "runner-term-summary", "group-term-leaves-nothing", "group-term-summary"])
+  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary", "runner-term-leaves-nothing", "runner-term-summary", "group-term-leaves-nothing", "group-term-summary", "escape-leaves-nothing", "escape-summary", "psfail-leaves-nothing", "psfail-summary"])
+  // CI step times per unit of runner speed.
+  cis = "${scratch_dir()}/ci-steps"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/ci-steps.sh", cis], "${cis}.log"))
+  whats.push("ci-steps.py")
+  names.push(["ci-units-equal", "ci-ref-given", "ci-ref-step"])
+  // The run goldens' per-program run limits.
+  glw = "${scratch_dir()}/golden-limits"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/golden-limits.sh", glw], "${glw}.log"))
+  whats.push("run-goldens.sh limits")
+  names.push(["limit-own", "limit-mode", "limit-other-mode", "limit-summary"])
+  // The fixed point alone, and its use by `git bisect run` over merges.
+  fpw = "${scratch_dir()}/fixed-point"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/fixed-point.sh", fpw], "${fpw}.log"))
+  whats.push("fixed-point.sh")
+  names.push(["fp-same", "fp-differ", "fp-build-fails", "fp-bisect"])
   // The final evidence's provenance, litter and LR reference checks.
   wc = "${scratch_dir()}/wave-final-checks"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-checks.sh", wc], "${wc}.log"))
   whats.push("wave-final.sh checks")
-  names.push(["head-not-git", "head-clean", "tmp-gone-green", "tmp-new-red", "ref-other-machine", "ref-no-machine", "ref-cpu-parens", "ref-default", "ref-none", "runner-sides", "runner-lock-line", "runner-none", "runner-wall", "base-merge-base", "tmp-locale", "private-tmp", "private-tmp-paths", "cases-green", "cases-red", "cases-stdout", "cases-stop", "lock-old-form", "lock-old-form-runner", "lock-new-form-quiet", "lock-other-file", "group-one-call", "group-lines", "layout-marked", "layout-beyond", "layout-two-bases", "twins-at-once", "twins-in-the-passes"])
+  names.push(["head-not-git", "head-clean", "tmp-gone-green", "tmp-new-red", "ref-other-machine", "ref-no-machine", "ref-cpu-parens", "ref-default", "ref-none", "runner-sides", "runner-lock-line", "runner-none", "runner-wall", "base-merge-base", "tmp-locale", "private-tmp", "private-tmp-paths", "cases-green", "cases-red", "cases-stdout", "cases-stop", "lock-old-form", "lock-old-form-runner", "lock-new-form-quiet", "lock-other-file", "group-one-call", "group-lines", "layout-marked", "layout-beyond", "layout-two-bases", "twins-at-once", "twins-in-the-passes", "only-stats", "only-gate-no-build", "only-unknown", "beside-merged", "beside-differs", "beside-off", "neutral-count"])
   // The timing tools' undisturbed rule: the judge, the rounds' retries and
   // tables, the LR re-measure's counters.
   mt = "${scratch_dir()}/measure-rule"
