@@ -330,7 +330,16 @@ static inline int val_refs(const AvantHash *h) {
  * function but not the secret cannot choose keys that collide, where
  * FNV-1a with the seed in its start value kept the low bits of every
  * key's hash a function of the low bits of its bytes alone, whatever
- * the seed. The table takes the 64-bit result folded to 32 bits.
+ * the seed. The table takes the high half of the 64-bit result
+ * multiplied by a fixed odd constant (as many instructions as the xor of
+ * its halves that it replaces). The xor of the halves left the table's
+ * positions (the low bits) poorly spread under some secrets on keys
+ * that differ in a few bytes: one secret in a few hundred put the 35,000
+ * keys "v0" to "v34999" in clusters that cost twenty times the probes,
+ * and the median secret a quarter more than a random function's, and
+ * decimal, four-letter and padded keys fared alike; with the
+ * multiplication no secret of 20,000 tried costs more than an eighth
+ * over a random function's.
  *
  * The key is read through RD8 and RD4, which load a word at an offset:
  * hash_bytes reads one buffer, hash_concat_bytes two pieces as one key,
@@ -371,7 +380,7 @@ static inline uint64_t hash_fold(uint64_t a, uint64_t b) {
       b_ = RD8(n_ - 8); \
     } \
     uint64_t h_ = hash_fold(a_ ^ k1_, b_ ^ st_); \
-    (out) = (uint32_t)(h_ ^ (h_ >> 32)); \
+    (out) = (uint32_t)((h_ * 0x9e3779b97f4a7c15ull) >> 32); \
   } while (0)
 
 static inline uint64_t hb_rd8(const unsigned char *p) {

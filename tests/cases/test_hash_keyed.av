@@ -175,6 +175,37 @@ fn test_seeds(c: Checks) {
   }
 }
 
+// The table's positions under secrets that once spread them badly: the
+// 25,000 keys "v10000" to "v34999" (one letter and five digits, as a
+// program's generated names) over the low 16 bits. A random function
+// leaves about 20,750 distinct of 65,536 (a spread of about 60); the
+// xor of the 64-bit hash's halves left 16,945 under
+// AVANT_HASH_SEED=3694, which cost twenty times the probes of a table
+// of them, and 20,736 under 0.
+fn test_secrets(c: Checks) {
+  if compiler = process.env("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "${scratch()}/hash-secrets-${stamp}.av"
+    bin = "${scratch()}/hash-secrets-${stamp}"
+    clog = "${scratch()}/hash-secrets-${stamp}-cc.log"
+    body = "lib k {\n  fun avant_hash_str_hash(s: String, n: Int): Int\n}\nfn main {\n  seen = Set(Int).new()\n  for i in 10000..35000 {\n    s = \"v\${i}\"\n    _ = seen.add(k.avant_hash_str_hash(s, s.size) & 65535)\n  }\n  puts(seen.size)\n}\n"
+    c.wrote(fs.write(src, body), "write the secrets probe")
+    c.eq_int(compile_av(compiler, src, bin, clog), 0, "compile the secrets probe")
+    if fs.exists(bin) {
+      chmod_x(bin)
+      for seed in ["3694", "0"] {
+        log = "${scratch()}/hash-secrets-${stamp}-${seed}.log"
+        code = run_out("/usr/bin/env", ["AVANT_HASH_SEED=${seed}", bin], log) ?? -1
+        c.eq_int(code, 0, "run the secrets probe (AVANT_HASH_SEED=${seed})")
+        n = (fs.read(log) ?? "").strip().to_i() ?? 0
+        c.expect(n >= 20200, "25,000 generated names spread over the low 16 bits under AVANT_HASH_SEED=${seed} (${n} distinct)")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -186,6 +217,7 @@ fn main: Int {
   test_pieces(c)
   test_views(c)
   test_seeds(c)
+  test_secrets(c)
   c.finish()
 }
 
@@ -193,5 +225,5 @@ fn main: Int {
 // AVANT_HASH_SEED=0 derives, as an independent implementation of it
 // computes them (lengths 0, 1, 3, 4, 12, 16, 17 and 40: every path).
 fn known_seed0: String {
-  "4223743209\n261612863\n1065696343\n2027452599\n3017020195\n3923427755\n372860947\n861967022\n"
+  "3564563143\n328202381\n3652043487\n1129838054\n3768959918\n1489736477\n3693050016\n3381055734\n"
 }
