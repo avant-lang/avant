@@ -106,8 +106,9 @@ pub fn (checker_self: Checker) check_hash_key_uses {
 // program wrote (not one the checker derived: derive_eq_method's ==,
 // derive_hash_method's hash).
 pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
-  for ms in checker_self.methods {
-    if ms.is_method_of(ty) && ms.name == name && !ms.node.lazy {
+  for mi in checker_self.method_indices_named(name) {
+    ms = checker_self.methods[mi]
+    if ms.is_method_of(ty) && !ms.node.lazy {
       return true
     }
   }
@@ -116,8 +117,9 @@ pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
 
 // The struct's hash method, written by the program: `fn hash(h: Hasher)`.
 pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
-  for ms in checker_self.methods {
-    if ms.is_method_of(ty) && ms.name == "hash" && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+  for mi in checker_self.method_indices_named("hash") {
+    ms = checker_self.methods[mi]
+    if ms.is_method_of(ty) && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
       return ms
     }
   }
@@ -126,8 +128,9 @@ pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
 
 // The struct's hash method, its own or the one derive_hash_method wrote.
 pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
-  for ms in checker_self.methods {
-    if ms.is_method_of(ty) && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+  for mi in checker_self.method_indices_named("hash") {
+    ms = checker_self.methods[mi]
+    if ms.is_method_of(ty) && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
       return ms
     }
   }
@@ -371,8 +374,9 @@ pub fn (checker_self: Checker) has_order(ty: Ty, loc: Location): Bool {
   if !ty.is_struct() && !ty.is_class() {
     return false
   }
-  for ms in checker_self.methods {
-    if ms.is_method_of(ty) && ms.name == "compare" && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
+  for mi in checker_self.method_indices_named("compare") {
+    ms = checker_self.methods[mi]
+    if ms.is_method_of(ty) && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
       checker_self.derive_lt_method(ty, loc)
       return true
     }
@@ -472,8 +476,9 @@ pub fn (checker_self: Checker) check_hash_pairs {
 // The method of owner (of module owner_mod) with this name that the
 // program wrote, or nil.
 pub fn (checker_self: Checker) named_method(owner: String, owner_mod: String, name: String): FuncSig? {
-  for ms in checker_self.methods {
-    if ms.owner == owner && (owner_mod.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == owner_mod) && ms.name == name && !ms.node.lazy {
+  for mi in checker_self.method_indices_named(name) {
+    ms = checker_self.methods[mi]
+    if ms.owner == owner && (owner_mod.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == owner_mod) && !ms.node.lazy {
       return ms
     }
   }
@@ -482,8 +487,8 @@ pub fn (checker_self: Checker) named_method(owner: String, owner_mod: String, na
 
 // Whether ty (a struct or class) has a method of this name.
 pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
-  for ms in checker_self.methods {
-    if ms.is_method_of(ty) && ms.name == name {
+  for i in checker_self.method_indices_named(name) {
+    if checker_self.methods[i].is_method_of(ty) {
       return true
     }
   }

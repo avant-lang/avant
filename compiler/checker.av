@@ -3279,7 +3279,8 @@ pub class Checker {
           return field_ty
         }
         has_zero = false
-        for ms in self.methods {
+        for mi in method_indices_named(expr.ident) {
+          ms = self.methods[mi]
           owner_hit = false
           if ms.is_method_of(object) {
             owner_hit = true
@@ -3288,7 +3289,7 @@ pub class Checker {
               owner_hit = true
             }
           }
-          if owner_hit && ms.name == expr.ident && arity_ok(ms.node, 0) {
+          if owner_hit && arity_ok(ms.node, 0) {
             has_zero = true
           }
         }
@@ -3306,7 +3307,8 @@ pub class Checker {
           return t_int()
         }
         has_method = false
-        for ms in self.methods {
+        for mi in method_indices_named(expr.ident) {
+          ms = self.methods[mi]
           owner_hit = false
           if ms.is_method_of(object) {
             owner_hit = true
@@ -3315,7 +3317,7 @@ pub class Checker {
               owner_hit = true
             }
           }
-          if owner_hit && ms.name == expr.ident {
+          if owner_hit {
             has_method = true
           }
         }
@@ -3381,8 +3383,9 @@ pub class Checker {
   pub fn builtin_ext_call(expr: Expr, object: Ty): Ty? {
     owner = object.show()
     has_zero = false
-    for ms in self.methods {
-      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && method_is_visible(ms.node, self.current_module) {
+    for mi in method_indices_named(expr.ident) {
+      ms = self.methods[mi]
+      if ms.owner == owner && arity_ok(ms.node, 0) && method_is_visible(ms.node, self.current_module) {
         has_zero = true
       }
     }
@@ -3567,8 +3570,9 @@ pub class Checker {
       }
     }
     has_zero = false
-    for ms in self.methods {
-      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && ptr_method_of(ms, object) {
+    for mi in method_indices_named(expr.ident) {
+      ms = self.methods[mi]
+      if ms.owner == owner && arity_ok(ms.node, 0) && ptr_method_of(ms, object) {
         has_zero = true
       }
     }
@@ -5850,11 +5854,9 @@ pub class Checker {
     if ty.is_class() {
       shown = ty.show()
       has_init = false
-      for ms in self.methods {
-        if ms.is_method_of(ty) {
-          if ms.name == "initialize" {
-            has_init = true
-          }
+      for mi in method_indices_named("initialize") {
+        if self.methods[mi].is_method_of(ty) {
+          has_init = true
         }
       }
       if has_init {

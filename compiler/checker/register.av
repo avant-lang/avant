@@ -62,19 +62,14 @@ pub fn (checker_self: Checker) check_trailing_defaults(fnn: Function) {
 }
 
 pub fn (checker_self: Checker) count_named_fns(name: String): Int {
-  n = 0
-  for i in 1..checker_self.functions.size {
-    if checker_self.functions[i].name == name {
-      n += 1
-    }
-  }
-  n
+  checker_self.fn_indices_named(name).size
 }
 
 pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, owner_mod: String): Int {
   n = 0
-  for sig in checker_self.methods {
-    if sig.owner == owner && sig.node.owner_mod == owner_mod && sig.name == name {
+  for i in checker_self.method_indices_named(name) {
+    sig = checker_self.methods[i]
+    if sig.owner == owner && sig.node.owner_mod == owner_mod {
       n += 1
     }
   }
@@ -85,9 +80,9 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
 // or parameters whose names read the same (two modules' C types of one
 // name): both take their module in their emit name, which stays unique.
 pub fn (checker_self: Checker) pub_twin_elsewhere(sig: FuncSig): Bool {
-  for i in 1..checker_self.functions.size {
+  for i in checker_self.fn_indices_named(sig.name) {
     other = checker_self.functions[i]
-    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && (params_same(other.params, sig.params) || sig_mangle("", other.params) == sig_mangle("", sig.params)) {
+    if !other.node.generic && other.node.vis && other.node.mod_name != sig.node.mod_name && (params_same(other.params, sig.params) || sig_mangle("", other.params) == sig_mangle("", sig.params)) {
       return true
     }
   }
@@ -125,7 +120,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       name = sig.name
       if name == "main" {
         nroot = 0
-        for j in 1..checker_self.functions.size {
+        for j in checker_self.fn_indices_named(name) {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
@@ -148,7 +143,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       }
       if name == "run" {
         nroot = 0
-        for j in 1..checker_self.functions.size {
+        for j in checker_self.fn_indices_named(name) {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
@@ -170,7 +165,7 @@ pub fn (checker_self: Checker) assign_emit_names {
         }
       }
       mods: Array(String) = []
-      for j in 1..checker_self.functions.size {
+      for j in checker_self.fn_indices_named(name) {
         other = checker_self.functions[j]
         if !other.node.generic && other.name == name {
           found = false
@@ -189,8 +184,7 @@ pub fn (checker_self: Checker) assign_emit_names {
         base = "${sig.node.mod_name}__${name}"
       }
       g = 0
-      j = 1
-      while j < checker_self.functions.size {
+      for j in checker_self.fn_indices_named(name) {
         other = checker_self.functions[j]
         if !other.node.generic && other.name == name {
           if sig.node.vis {
@@ -203,10 +197,9 @@ pub fn (checker_self: Checker) assign_emit_names {
             }
           }
         }
-        j += 1
       }
       if g == 0 {
-        for jx in 1..checker_self.functions.size {
+        for jx in checker_self.fn_indices_named(name) {
           other = checker_self.functions[jx]
           if !other.node.generic && other.name == name {
             g += 1
@@ -235,7 +228,8 @@ pub fn (checker_self: Checker) assign_emit_names {
         }
       }
       n = 0
-      for other in checker_self.methods {
+      for oi in checker_self.method_indices_named(name) {
+        other = checker_self.methods[oi]
         if !other.node.generic && other.owner == owner && other.node.owner_mod == owner_mod && other.name == name {
           n += 1
         }
