@@ -19,8 +19,8 @@
 // A check is `check.bounds copy _i, copy _n` with _i set in the block as
 // `add[.chk] copy _v, const c`, `sub ... const c` or `copy _v` (or _i
 // itself, c = 0), and _n the holder's size: `cast copy _s to i64` of
-// `_s = copy (*_h).1` (an Array or Buf), or a local the block does not
-// set (a string's size computed before). Between the run's first index
+// `_s = copy (*_h).1` (an Array or Buf), `avant_str_size(_h)` (a
+// string), or a local the block does not set (a size computed before). Between the run's first index
 // and its last check: no statement sets v, _h or the size local, stores
 // a size field, or calls anything that might change a size (loops.av's
 // list and summary).
@@ -167,6 +167,18 @@ fn rn_size(m: MModule, f: MFunc, blk: MBlock, j: Int, out: Array(Int)): Bool {
   while k >= 0 {
     if mir_stmt_def(blk.stmts[k]) == n {
       d = blk.stmts[k]
+      if d.kind == msk_call() && d.callee == "avant_str_size" && d.args.size == 1 {
+        // A string's size: a string never changes, so its holder alone
+        // is the key.
+        sl = rn_local(d.args[0])
+        if sl < 0 || f.locals[sl].ty != mt_str() {
+          return false
+        }
+        out[0] = sl
+        out[1] = -1
+        out[2] = k
+        return true
+      }
       if d.kind != msk_assign() {
         return false
       }
