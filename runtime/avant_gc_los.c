@@ -389,7 +389,12 @@ static void promote_young_large(AvantHeader *h) {
     gc_heap.young_large_n--;
   }
   avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
-  gc_heap.mature_since_full += bytes;
+  /* One a full collection left young (LARGE_STAMP_SEEN) is in the
+   * live bytes that collection's trigger was made from: its promotion is
+   * not growth since then. */
+  if (!(((uint64_t *)h)[-1] & LARGE_STAMP_SEEN)) {
+    gc_heap.mature_since_full += bytes;
+  }
   if (h->type_id != AVANT_TYPE_BYTES) {
     gc_keep_add(payload_of(h));
   }
@@ -427,7 +432,8 @@ void gc_reclaim_young_large(void) {
                (h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
                ((h->flags & AVANT_FLAG_SURVIVED) &&
                 (gc_heap.stress_now ||
-                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
+                 gc_heap.young_clock - (((uint64_t *)h)[-1] & ~LARGE_STAMP_SEEN) >=
+                     (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;

@@ -278,6 +278,27 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #ifndef ALLOC_FULL_GROWN_PCT
 #define ALLOC_FULL_GROWN_PCT 65
 #endif
+/* FULL_KEEP_LARGE: an ordinary full collection the growth trigger asks
+ * for leaves the young large objects without references
+ * (AVANT_TYPE_BYTES: buffers) young, with their age, and remembers their
+ * holders; the small young objects it promotes as before. 0 promotes the buffers with everything it marks.
+ * A full collection lands where the program is, and a buffer of a run in
+ * progress it promoted died old and stayed to the next full collection:
+ * at a 1 MiB young start Json::ParseMapping's one full collection fell
+ * inside its first run and kept that run's 8.5 MB buffer to the exit
+ * (24 -> 35 MB; left young, 22 MB). Buffers only: one without references
+ * names no old object, so the proof and the remembered set's other
+ * entries stay as they are. A kept buffer's later promotion is not
+ * mature growth (LARGE_STAMP_SEEN): counted, Template::Parse ran 31 full
+ * collections for 1 (+4% instructions). */
+#ifndef FULL_KEEP_LARGE
+#define FULL_KEEP_LARGE 1
+#endif
+/* A young large object's birth stamp (the word before its header, on
+ * the young clock) with this bit set: a full collection found it live
+ * and left it young (keep_large), and counted it in the live bytes its
+ * trigger is made from, so its promotion is not mature growth again. */
+#define LARGE_STAMP_SEEN (1ull << 63)
 #ifndef ALLOC_FULL_QUIET_DIV
 #define ALLOC_FULL_QUIET_DIV 8
 #endif
@@ -321,6 +342,7 @@ typedef struct GcTune {
   uint64_t alloc_quiet; /* AVANT_GC_TUNE_ALLOC_QUIET_DIV: ALLOC_FULL_QUIET_DIV (0 any growth) */
   uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
   uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
+  uint64_t keep_large; /* AVANT_GC_TUNE_KEEP_LARGE: FULL_KEEP_LARGE (0 a full collection promotes young buffers too) */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
   uint64_t highs;     /* high-survival budget collections in a row */
@@ -1094,6 +1116,10 @@ typedef struct GcStickyCounters {
   uint64_t keeps;
   uint64_t keep_fell;
   uint64_t keep_bytes;
+  /* Ordinary full collections that left young buffers young
+   * (FULL_KEEP_LARGE), and those buffers' bytes. */
+  uint64_t large_keeps;
+  uint64_t large_keep_bytes;
   /* The sticky full collections, the bytes they marked (what is not
    * old) and the logged holders they scanned. */
   uint64_t stickies;
@@ -1783,6 +1809,11 @@ typedef struct GcHeap {
    * going back to an ordinary trace, and the proof is broken after it
    * (no path of old objects is known to reach every old object). */
   uint8_t keep_full;
+  /* keep_large: this ordinary trace leaves young large buffers young
+   * (FULL_KEEP_LARGE); keep_large_k0: the keep list's length when it
+   * started (their holders follow). */
+  uint8_t keep_large;
+  uint32_t keep_large_k0;
   /* The sticky full collection (avant_gc_proof.c): this full collection
    * marks from the roots and the logged holders and stops at every old
    * object (gc_collect sets it, gc_mark_roots reads it). lines_f: the
@@ -2126,6 +2157,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
+void gc_rem_keep_large_holders(void);
 void gc_cards_settle(void);
 void gc_rem_merge_all(void);
 void gc_rem_thread_leave(void);

@@ -149,6 +149,48 @@ fn test_stranded_set(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(g >= 1, "stranded_set.av: a full collection falls due by allocation (full_heap_goal ${g})")
 }
 
+// A full collection the growth trigger asks for leaves a young buffer
+// young: in tests/fixtures/heap/kept_buffer.av the trigger falls inside
+// runs while each run's 1 MB string, held by its frame alone, is young
+// (FULL_KEEP_LARGE in runtime/avant_gc_internal.h). With AVANT_GC_STATS=1
+// the collections that left one young are counted and the peak of large
+// objects stays at three strings (four when each full collection made
+// one old); the known stdout plainly, under AVANT_GC_VERIFY=1 and under
+// AVANT_GC_STRESS=1.
+fn test_kept_buffer(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/kept_buffer.av", "${dir}/kept_buffer", "${dir}/kept_buffer.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "kept_buffer.av: compiles")
+  want = "anchor: 50000\nsum: 4843656\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "kept_buffer", "kept_buffer.g${e}", envs[e]))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "kept_buffer", "kept_buffer.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "kept_buffer.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/kept_buffer.g${e}.out"), want, "kept_buffer.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/kept_buffer.g${e}.err"), "", "kept_buffer.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  c.eq_int(runs[envs.size].code, 0, "kept_buffer.av with AVANT_GC_STATS=1: exit 0")
+  st = log_text("${dir}/kept_buffer.stats.err")
+  k = stat_of(st, "full_kept_large")
+  c.expect(k >= 20, "kept_buffer.av: the full collections leave the run's string young (full_kept_large ${k})")
+  p = stat_of(st, "pk_large")
+  c.expect(p > 0 && p < 3500000, "kept_buffer.av: no dead string old beside the live ones (pk_large ${p})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_of(text: String, key: String): Int {
   parts = text.split(" ")
@@ -166,6 +208,7 @@ fn test_main(c: Checks) {
     test_gc_sizing(c, compiler, avant_test_root(), scratch_dir())
     test_holder_cycle(c, compiler, avant_test_root(), scratch_dir())
     test_stranded_set(c, compiler, avant_test_root(), scratch_dir())
+    test_kept_buffer(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

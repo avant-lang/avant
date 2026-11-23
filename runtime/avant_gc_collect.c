@@ -199,6 +199,7 @@ static void gc_tune_read(void) {
   gc_tune.alloc_grown = env_u64("AVANT_GC_TUNE_ALLOC_GROWN_PCT", ALLOC_FULL_GROWN_PCT, 0, 100);
   gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", 0, 0, kb) * 1024ull;
   gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 0, 0, 1);
+  gc_tune.keep_large = env_u64("AVANT_GC_TUNE_KEEP_LARGE", FULL_KEEP_LARGE, 0, 1);
   gc_tune.alloc_after = env_u64("AVANT_GC_TUNE_ALLOC_AFTER", 1, 0, 1);
   gc_tune.alloc_quiet = env_u64("AVANT_GC_TUNE_ALLOC_QUIET_DIV", ALLOC_FULL_QUIET_DIV, 0, 1u << 20);
 }
@@ -832,7 +833,25 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_clear_side_marks();
       /* The line marks: the epoch advances (no walk zeroing them). */
       gc_line_epoch_advance();
+      /* A trace the growth trigger asked for leaves the young buffers
+       * young (FULL_KEEP_LARGE): it lands where the program is, and a
+       * run's working buffer it would promote dies old and stays to the
+       * next full collection. (One the program asks for makes what it
+       * marks old, as it always did.) */
+      gc_heap.keep_large = (uint8_t)(TUNE(keep_large, FULL_KEEP_LARGE) && why == GC_WHY_TRIGGER && !gc_heap.keep_young &&
+                                     !gc_heap.set.young_fixed && !gc_heap.set.nursery_off && gc_heap.young_large_n);
+      gc_heap.keep_large_k0 = gc_heap.keep_n;
       gc_mark_roots();
+      if (gc_heap.keep_large) {
+        /* Their holders join the remembered set before anything moves
+         * (defragmentation rewrites the set's entries; the scrub then
+         * drops what names no young object). */
+        gc_rem_keep_large_holders();
+        if (gc_heap.keep_young_live) {
+          gc_heap.ctr.sticky.large_keeps++;
+          gc_heap.ctr.sticky.large_keep_bytes += gc_heap.keep_young_live;
+        }
+      }
     }
     /* Late start bits: when the mark's loop set none (gc_mark_roots), the
      * runs of every block it left a live line in are built now
@@ -876,9 +895,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_sweep_large();
     gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_heap.keep_young ? gc_keep_young_or_live : gc_keep_if_live);
     /* A full collection promotes every object it marks (the mark clears
-     * YOUNG), so no object is young after it: gc_sticky_full_end empties
-     * the young budget (avant_nursery_held). (E's nursery survivors used
-     * to be summed here.) */
+     * YOUNG) but the young buffers it leaves young (FULL_KEEP_LARGE,
+     * which the young budget does not count, as after a young
+     * collection), so no block object is young after it:
+     * gc_sticky_full_end empties the young budget (avant_nursery_held).
+     * (E's nursery survivors used to be summed here.) */
     gc_sticky_full_end();
     if (gc_heap.keep_young) {
       avant_nursery_held = keep_held;
@@ -907,6 +928,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.sticky = 0;
     gc_heap.keep_young = 0;
     gc_heap.keep_young_live = 0;
+    gc_heap.keep_large = 0;
   }
 
   if (full) {

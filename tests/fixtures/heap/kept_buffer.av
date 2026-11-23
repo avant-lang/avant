@@ -1,0 +1,93 @@
+// A run's buffer alive when a full collection falls inside the run: each
+// run makes a 1 MB string (a large object without references) that only
+// its frame holds, and chains of nodes built between garbage, kept for
+// the next four runs, so young collections promote them and the growth
+// trigger asks for a full collection inside runs. A full collection used
+// to promote everything it marked, the string too, which then died old
+// with its run and stayed to the next full collection; one the trigger
+// asks for now leaves a young buffer young (FULL_KEEP_LARGE in
+// runtime/avant_gc_internal.h), and it dies young.
+// tests/cases/test_gc_sizing.av reads with AVANT_GC_STATS=1 the full
+// collections that left one young, and runs it under AVANT_GC_VERIFY=1
+// and AVANT_GC_STRESS=1 with its known stdout.
+class Node {
+  next: Node?
+  v: Int
+}
+
+fn chain(n: Int, base: Int): Node? {
+  head: Node? = nil
+  i = 0
+  while i < n {
+    x = Node.new()
+    x.v = base + i
+    x.next = head
+    head = x
+    i += 1
+  }
+  head
+}
+
+fn count(p0: Node?): Int {
+  k = 0
+  p = p0
+  while n = p {
+    k += 1
+    p = n.next
+  }
+  k
+}
+
+// N bytes of text, every byte R's letter.
+fn text_of(n: Int, r: Int): String {
+  b = Buf.new(n)
+  i = 0
+  while i < n {
+    b.push_byte(97 + r % 26)
+    i += 1
+  }
+  b.to_s()
+}
+
+// One run: its text, then chains between garbage (young collections fall
+// inside the run), each kept in WINDOW's slot for this run until the run
+// four later replaces it, a sum.
+fn run(n: Int, r: Int, window: Array(Array(Node?))): Int {
+  text = text_of(n, r)
+  window[r % 4] = []
+  junk = 0
+  k = 0
+  while k < 6 {
+    window[r % 4].push(chain(4000, k))
+    j = 0
+    while j < 3000 {
+      s = "g-${j}-${r}"
+      junk += s.size
+      j += 1
+    }
+    k += 1
+  }
+  t = 0
+  for c in window[r % 4] {
+    t += count(c)
+  }
+  text[r % n] + text[(r * 7) % n] + t + junk % 5
+}
+
+fn main {
+  anchor = chain(50000, 0)
+  window: Array(Array(Node?)) = []
+  i = 0
+  while i < 4 {
+    window.push([])
+    i += 1
+  }
+  sum = 0
+  r = 0
+  while r < 200 {
+    sum += run(1000000, r, window)
+    r += 1
+  }
+  puts("anchor: ${count(anchor)}")
+  puts("sum: ${sum}")
+}

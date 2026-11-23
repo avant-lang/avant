@@ -19,10 +19,11 @@
  * NULL), whose side mark the caller has just set: its lines through the
  * block the lookup already gave (a second lookup used to find it again),
  * its bytes, and the work list. A full collection
- * promotes every object it reaches, so no object is young
- * after it (its remembered set and young budget are empty,
- * gc_sticky_full_end); the flags are written only when one is set, so a
- * collection of a heap that is already mature dirties no header. An
+ * promotes every object it reaches but the young buffers an ordinary
+ * trace leaves young (FULL_KEEP_LARGE), so no block object is young
+ * after it (its young budget is empty, gc_sticky_full_end); the flags
+ * are written only when one is set, so a collection of a heap that is
+ * already mature dirties no header. An
  * object the inline path allocated may have no start bit yet
  * (avant_gc_alloc.c, "Late start bits"), and the sweep and the
  * defragmenter find live objects by the bits. A root's object has its
@@ -36,6 +37,12 @@ static inline void mark_object(void *start, AvantHeader *h, Block *b) {
      * young, and its lines stay unmarked (its block is a young block). */
     gc_heap.keep_young_live += total;
     b = NULL;
+  } else if (TUNE(keep_large, FULL_KEEP_LARGE) && gc_heap.keep_large &&
+             (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) == (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE) &&
+             h->type_id == AVANT_TYPE_BYTES) {
+    /* A young buffer a root names, left young (keep_large). */
+    gc_heap.keep_young_live += total;
+    ((uint64_t *)h)[-1] |= LARGE_STAMP_SEEN;
   } else if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
@@ -134,7 +141,8 @@ static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, 
  * nest's registers were spilled around it (167 instructions per object of
  * a full collection against 149); the small record's loop is now its own
  * (drain) and the bitmap walk is a function of its own (scan_walk). */
-static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v, const int bits, const int keep) {
+static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v, const int bits, const int keep,
+                                                            void *holder) {
   uintptr_t off = (uintptr_t)v - c->base8;
   uint64_t g;
   uint64_t w;
@@ -162,6 +170,17 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v,
        * young): no flag cleared, no line marked. */
       gc_heap.keep_young_live += total;
       return h->type_id != AVANT_TYPE_BYTES;
+    }
+    if (TUNE(keep_large, FULL_KEEP_LARGE) &&
+        (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) == (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE) &&
+        h->type_id == AVANT_TYPE_BYTES && gc_heap.keep_large) {
+      /* A young buffer an ordinary trace leaves young (keep_large): it
+       * keeps its flags and its age, and HOLDER is remembered
+       * (gc_rem_keep_large_holders). Nothing to scan. */
+      gc_heap.keep_young_live += total;
+      ((uint64_t *)h)[-1] |= LARGE_STAMP_SEEN;
+      gc_keep_add(holder);
+      return 0;
     }
     if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
       h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
@@ -224,7 +243,7 @@ static inline __attribute__((always_inline)) void scan_walk(void *p, const int b
   mark_open(&c);
   EACH_REF_SLOT_WALK(p, slot, {
     void *v = *slot;
-    if (mark_field(&c, v, bits, keep)) {
+    if (mark_field(&c, v, bits, keep, p)) {
       mark_push(&c, v);
     }
   });
@@ -288,7 +307,7 @@ static inline __attribute__((always_inline)) void drain(const int bits, const in
           d >>= 8;
           if ((size_t)(d & 0xffu) < nw) {
             void *v = p[d & 0xffu];
-            if (mark_field(&c, v, bits, keep)) {
+            if (mark_field(&c, v, bits, keep, p)) {
               mark_push(&c, v);
             }
           }
@@ -296,7 +315,7 @@ static inline __attribute__((always_inline)) void drain(const int bits, const in
         d >>= 8;
         if ((size_t)(d & 0xffu) < nw) {
           void *v = p[d & 0xffu];
-          if (mark_field(&c, v, bits, keep)) {
+          if (mark_field(&c, v, bits, keep, p)) {
             next = v;
           }
         }
