@@ -226,6 +226,53 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #endif
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
 #define HEAP_FACTOR 2
+/* The policy's settings in a development build. A runtime compiled with
+ * -DAVANT_GC_TUNE (CC="clang -DAVANT_GC_TUNE" sh runtime/build.sh) reads
+ * the young sizing rule, the start budget, the ages, the hole rule and the
+ * full trigger from AVANT_GC_TUNE_* variables (gc_tune_read,
+ * avant_gc_collect.c, lists them), so one build serves a sweep of the
+ * policy; a release build has no such variable and no such read: TUNE(F,
+ * C) is the constant C there, and the code each setting adds is compiled
+ * only under the macro. The defaults are the constants, so a development
+ * build with no variable set makes the release build's decisions. */
+#ifdef AVANT_GC_TUNE
+typedef struct GcTune {
+  uint64_t start;     /* AVANT_GC_TUNE_START_KB: the first budget */
+  uint64_t dflt;      /* AVANT_GC_TUNE_DEFAULT_KB: YOUNG_BYTES_DEFAULT */
+  uint64_t cap;       /* AVANT_GC_TUNE_CAP_KB: YOUNG_BYTES_CAP */
+  uint64_t heap_div;  /* AVANT_GC_TUNE_HEAP_DIV: YOUNG_HEAP_DIV */
+  uint64_t high_pct;  /* AVANT_GC_TUNE_HIGH_PCT: the survival that grows the budget, YOUNG_GROW_PCT */
+  uint64_t low_pct;   /* AVANT_GC_TUNE_LOW_PCT: a low-survival collection, 10 */
+  uint64_t streak;    /* AVANT_GC_TUNE_STREAK: high collections in a row to grow, 2 */
+  uint64_t grow_pct;  /* AVANT_GC_TUNE_GROW_PCT: the growth step, 200 (doubling) */
+  uint64_t shrink_pct; /* AVANT_GC_TUNE_SHRINK_PCT: the shrink step, 50 (halving) */
+  uint64_t smooth;    /* AVANT_GC_TUNE_SMOOTH: 0 or 1 none, K: survival averaged with weight 1/K */
+  uint64_t large_age; /* AVANT_GC_TUNE_LARGE_AGE_KB: LARGE_AGE_BYTES */
+  uint64_t byte_age;  /* AVANT_GC_TUNE_BYTE_AGE_KB: 0 none, else a survivor block younger ages again in place */
+  uint64_t no_holes;  /* AVANT_GC_TUNE_NO_HOLES: 0, 1 small objects, 2 small and medium */
+  uint64_t ret;       /* AVANT_GC_TUNE_RETURN: 1 a chunk is decommitted only when the total stays at the target */
+  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young */
+  uint64_t plain_div; /* AVANT_GC_TUNE_PLAIN_DIV: PLAIN_LARGE_DIV */
+  uint64_t full_pct;  /* AVANT_GC_TUNE_FULL_PCT: (HEAP_FACTOR - 1) * 100 */
+  uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place (with MIXED_EVAC=0) */
+  uint64_t trace;     /* AVANT_GC_TUNE_TRACE: 1 a line a collection on stderr */
+  uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 0 a young collection's return keeps no young cycle's use (YOUNG_RETAIN) */
+  uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines (MIXED_EVAC_LINES; 0 none) */
+  /* State. */
+  uint64_t rate;      /* the smoothed survival, in millionths */
+  uint64_t highs;     /* high-survival budget collections in a row */
+  int keep_full_now;
+  uint64_t *stamp;    /* byte_age: per block, the young clock when it became a survivor block */
+  uint64_t stamp_n;
+} GcTune;
+extern GcTune gc_tune;
+#define TUNE(f, c) (gc_tune.f)
+void gc_tune_start_large(uint64_t bytes);
+void gc_tune_stamp(const void *block_base, uint64_t v);
+uint64_t gc_tune_stamp_of(const void *block_base);
+#else
+#define TUNE(f, c) (c)
+#endif
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 /* The defragmenter's least gain (avant_gc_defrag.c): an evacuation must free,
@@ -1628,6 +1675,9 @@ typedef struct GcHeap {
   /* The last young collection's survival exceeded half its young bytes
    * (young_size). */
   uint8_t young_high_prev;
+  /* The last young collection's survival exceeded YOUNG_GROW_PCT percent
+   * of its young bytes (young_size: the budget's growth). */
+  uint8_t young_grow_prev;
   /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c): on, the
    * retirements left before the next probe, and the probes' interval. */
   uint8_t tenure_on;
@@ -1677,11 +1727,31 @@ typedef struct GcHeap {
   uint32_t *lines_f_block;
   uint32_t lines_f_gen;
   /* This young collection evacuates blocks with mature lines too: the
-   * stress mode, and a complete collection (gc_sticky_collect). */
+   * stress mode, a complete collection, and an aging young collection
+   * for the blocks whose survivors fill at most MIXED_EVAC_LINES lines
+   * (gc_sticky_collect); evac_lines is the collection's sparse test for
+   * them (SPLUS_SPARSE_LINES or MIXED_EVAC_LINES). */
   uint8_t evac_mixed;
+  uint8_t evac_lines;
+  /* The young cycles' retention (YOUNG_RETAIN): the heap's bytes at
+   * their highest since the last young collection's return
+   * (gc_note_cycle_peak), and what the young cycles used beyond the
+   * heap, kept resident by gc_heap_return, decaying by an eighth at
+   * each such return. */
+  uint64_t young_peak;
+  uint64_t young_keep;
+  /* The line marks, before the trace, of this collection's young blocks
+   * with mature lines (evac_mixed): stress_mixed[i] says young block i
+   * has mature lines, and its live lines are the MIXED_SNAP_BYTES bytes
+   * (a bit a line) at stress_lines + mixed_slot[i] * MIXED_SNAP_BYTES,
+   * one slot a mixed block only (a copy of every young block's 128 marks
+   * cost an aging young collection that takes them a resident 256 KB at
+   * a 32 MiB budget: Binarytrees::Obj, Etc::GameOfLife +0.4% peak). */
   uint8_t *stress_lines;
   uint8_t *stress_mixed;
+  uint32_t *mixed_slot;
   uint32_t stress_lines_cap;
+  uint32_t mixed_cap;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -1724,6 +1794,9 @@ extern GcHeap gc_heap;
 static inline void gc_note_cycle_peak(void) {
   if (gc_heap.heap_bytes > gc_heap.cycle_peak) {
     gc_heap.cycle_peak = gc_heap.heap_bytes;
+  }
+  if (gc_heap.heap_bytes > gc_heap.young_peak) {
+    gc_heap.young_peak = gc_heap.heap_bytes;
   }
 }
 
@@ -2015,6 +2088,49 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * that holds mature lines is never evacuated: it cannot be freed. */
 #ifndef SPLUS_SPARSE_LINES
 #define SPLUS_SPARSE_LINES 128
+#endif
+/* A young collection's blocks with mature lines (recycled blocks whose
+ * holes young allocation took): their young survivors were promoted where
+ * they lay at their first survival, so a short-lived holder allocated
+ * there (a per-run work object built across a collection) became old at
+ * once, and, dead, kept the young storage stored into it after that
+ * through the remembered set until a full collection (Compress::LZWDecode:
+ * 479 full collections, 2.1 GB of large storage promoted, 14.5 MB). When
+ * the survivors fill at most MIXED_EVAC_LINES lines, an aging young
+ * collection evacuates them as a complete collection evacuates sparse
+ * ones: a first survivor ages in a survivor block and dies young
+ * (LZWDecode: no full collection, 8.3 MB, 0.76 -> 0.58 s; BWTEncode
+ * 17.2 -> 9.3 MB; Distance::NGram 12.6 -> 7.8 MB). The holes stay young
+ * allocation's. 1 by measurement against 2, 4 and every line (the
+ * complete collection's test) and against aging the survivors in place:
+ * one line copies too little to cost anything measurable (Graph::AStar,
+ * ParseMapping-Clever, LZWEncode, GameOfLife equal); 2 and 4 cost
+ * ParseMapping-Clever 0.2-0.9% instructions, every line 4% (it copied
+ * 22 MB more); aging in place held each such block out of allocation
+ * for a cycle (LZWEncode +6-8% peak) and, at every line, made the
+ * remembered set twice as busy (Graph::AStar +12%). Taking no recycled
+ * hole for a young object had the same gains but left the holes
+ * resident and unused (ParseDom-Pure +8.6%, LZWEncode +2%) and promoted
+ * Matmul's rows in whole matrices (+10%). Compress::BWTDecode-Pure reads
+ * 7.6 MB more at the peak under every one of these forms, outside the
+ * heap's count, its cause not found. */
+#ifndef MIXED_EVAC_LINES
+#define MIXED_EVAC_LINES 1
+#endif
+#define MIXED_SNAP_BYTES (LINES_PER_BLOCK / 8)
+_Static_assert(LINES_PER_BLOCK == 128, "a mixed block's snapshot is two 64-bit words");
+/* The young cycles' retention: gc_heap_return keeps resident what the
+ * last full collections' cycles used beyond the live bytes (retain_hist),
+ * which only a full collection writes; a program that runs none (above:
+ * LZWDecode once its holders die young) had a 4 MiB target at every
+ * young collection's return, gave back its per-run buffers' runs and
+ * faulted them in again (3,212 -> 127,658 page faults). Each young
+ * collection that returns memory now records its cycle's use beyond the
+ * heap (GcHeap.young_keep, the larger of it and the last value less
+ * 1/YOUNG_RETAIN_DECAY), and the return keeps that too (LZWDecode 1,677
+ * faults). */
+#ifndef YOUNG_RETAIN_DECAY
+#define YOUNG_RETAIN_DECAY 8
 #endif
 /* Block.kept under S+ during a young collection: the block holds a young
  * object named imprecisely (it stays in place), it is evacuated, or it

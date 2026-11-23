@@ -427,7 +427,7 @@ void gc_reclaim_young_large(void) {
                (h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
                ((h->flags & AVANT_FLAG_SURVIVED) &&
                 (gc_heap.stress_now ||
-                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)LARGE_AGE_BYTES))) {
+                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;
@@ -495,6 +495,11 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   }
   gc_heap.ctr.los.allocs++;
   gc_heap.ctr.los.alloc_bytes += (uint64_t)bytes;
+#ifdef AVANT_GC_TUNE
+  if (young) {
+    gc_tune_start_large((uint64_t)bytes);
+  }
+#endif
   {
     int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
     gc_heap.ctr.los.hist[bucket]++;
@@ -827,6 +832,14 @@ int gc_rooted(void *payload) {
  * as DROP says (1: a Buf's storage, a pointer from avant_buf_bytes; 2:
  * another runtime buffer). Takes the world lock; not a collecting call.
  * Hidden. */
+/* A test's hook: a fixture's C may define it to run code where the world
+ * lock is about to be taken in avant_gc_large_drop (STEP 0), as a
+ * contended lock's wait would (gc_lock waits natively, so another thread
+ * may register and collect meanwhile), and to see whether the drop then
+ * freed the buffer (STEP 1, DONE). Undefined in a program, it is a null
+ * address and costs one test of it a call. */
+extern void avant_gc_test_drop_hook(int step, int done) __attribute__((weak));
+
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop) {
   gc_alloc_sync();
   AvantHeader *h;
@@ -846,9 +859,15 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
    * thread may have collected (freed or moved the buffer). The flag is
    * read again under the lock, where no registration completes, before
    * the buffer is. */
+  if (avant_gc_test_drop_hook) {
+    avant_gc_test_drop_hook(0, 0);
+  }
   gc_lock(&gc_heap.world);
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
     pthread_mutex_unlock(&gc_heap.world);
+    if (avant_gc_test_drop_hook) {
+      avant_gc_test_drop_hook(1, 0);
+    }
     return 0;
   }
   if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
@@ -873,5 +892,8 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
     done = 1;
   }
   pthread_mutex_unlock(&gc_heap.world);
+  if (avant_gc_test_drop_hook) {
+    avant_gc_test_drop_hook(1, done);
+  }
   return done;
 }

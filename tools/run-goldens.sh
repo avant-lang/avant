@@ -200,6 +200,7 @@ flags_of() { # PATH -> the extra compile flags the suite uses
     examples/add.av) echo "--cc $root/examples/c/add.c" ;;
     examples/layout.av) echo "--cc $root/examples/c/layout.c" ;;
     examples/zlib.av) echo "--lib z" ;;
+    tests/fixtures/ffi/drop_wait.av) echo "--cc $root/tests/fixtures/ffi/drop_wait.c" ;;
     tests/fixtures/ffi/*) echo "--cc $root/tests/fixtures/ffi/ffi.c" ;;
   esac
 }

@@ -1,0 +1,135 @@
+import harness
+import backends
+import std.process
+
+// The young generation's policy. The budget's growth rule (runtime/avant_gc_collect.c, young_size):
+// the budget doubles at the second budget collection in a row where more
+// than YOUNG_GROW_PCT percent (70) of the young bytes survived. Growth at
+// more than half held the peak of programs whose survival stays between
+// half and two thirds while their live set grows (the budget, not their
+// data, at the cap).
+//
+// heap/grow_survival.av keeps a fixed share of 1,500,000 small nodes in a
+// chain. At its default share (45 percent; more than half of what each
+// collection sees survives, with the copies of the last collection's
+// survivors) the budget stays at its default, 4 MiB; at 95 percent it
+// grows. Both run with AVANT_GC_STATS=1 (yng_max), and the default share
+// runs plainly and under AVANT_GC_VERIFY=1 with its known stdout.
+fn test_gc_sizing(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/grow_survival.av", "${dir}/grow_survival", "${dir}/grow_survival.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "grow_survival.av: compiles")
+  want = "kept: 675000\nwalked: 675000\nsum: 4500001 check: 3375001\n"
+  want_high = "kept: 1425000\nwalked: 1425000\nsum: 4500001 check: 7124992\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "grow_survival", "grow_survival.g${e}", envs[e]))
+    e += 1
+  }
+  clean = "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  runs.push(run_job_env(dir, "grow_survival", "grow_survival.mid", clean))
+  runs.push(run_job_env(dir, "grow_survival", "grow_survival.high", "${clean} GROW_SURVIVAL_KEEP=95"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "grow_survival.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/grow_survival.g${e}.out"), want, "grow_survival.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/grow_survival.g${e}.err"), "", "grow_survival.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  mid = runs[envs.size]
+  high = runs[envs.size + 1]
+  c.eq_int(mid.code, 0, "grow_survival.av at 45 percent with AVANT_GC_STATS=1: exit 0")
+  c.eq_str(log_text("${dir}/grow_survival.mid.out"), want, "grow_survival.av at 45 percent with AVANT_GC_STATS=1: the known stdout")
+  c.eq_int(high.code, 0, "grow_survival.av at 95 percent: exit 0")
+  c.eq_str(log_text("${dir}/grow_survival.high.out"), want_high, "grow_survival.av at 95 percent: the known stdout")
+  m = stat_of(log_text("${dir}/grow_survival.mid.err"), "yng_max")
+  h = stat_of(log_text("${dir}/grow_survival.high.err"), "yng_max")
+  c.eq_int(m, 4194304, "grow_survival.av at 45 percent: the budget stays at 4 MiB (yng_max ${m})")
+  c.expect(h > 4194304, "grow_survival.av at 95 percent: the budget grows (yng_max ${h})")
+}
+
+// heap/holder_cycle.av: a per-run Work of four buffers, allocated in a
+// hole of a recycled block (the setup leaves the heap's blocks half full
+// of long-lived nodes) with a young collection inside its initialize at
+// most runs. Promoted where it lay at that first survival, each Work kept,
+// once dead, the buffers stored into it after that through the
+// remembered set, until they aged into mature space and a full
+// collection freed them: 121 full collections, 924 MB of buffers
+// promoted, 28 MB. A recycled block's survivors that fill at most one
+// line are evacuated by an aging young collection (MIXED_EVAC_LINES), so
+// the Work ages in a survivor block and dies young: no buffer is
+// promoted and the setup's collection is the only full one. It runs
+// plainly and under AVANT_GC_VERIFY=1 with its known stdout, and with
+// AVANT_GC_STATS=1 (full, los_promoted_bytes).
+fn test_holder_cycle(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/holder_cycle.av", "${dir}/holder_cycle", "${dir}/holder_cycle.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "holder_cycle.av: compiles")
+  want = "kept: 200000\nsum: 542100\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "holder_cycle", "holder_cycle.g${e}", envs[e]))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "holder_cycle", "holder_cycle.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "holder_cycle.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/holder_cycle.g${e}.out"), want, "holder_cycle.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/holder_cycle.g${e}.err"), "", "holder_cycle.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  c.eq_int(runs[envs.size].code, 0, "holder_cycle.av with AVANT_GC_STATS=1: exit 0")
+  st = log_text("${dir}/holder_cycle.stats.err")
+  f = stat_of(st, "full")
+  p = stat_of(st, "los_promoted_bytes")
+  c.expect(f >= 1 && f <= 2, "holder_cycle.av: no full collection after the setup's (full ${f})")
+  c.eq_int(p, 0, "holder_cycle.av: no buffer promoted (los_promoted_bytes ${p})")
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_sizing.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_gc_sizing(c, compiler, avant_test_root(), scratch_dir())
+    test_holder_cycle(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}
