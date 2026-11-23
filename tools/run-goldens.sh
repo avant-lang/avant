@@ -68,7 +68,11 @@
 # 120 s with four stress suites sharing the machine: 600 s keeps eleven
 # times the stress mode's longest run (GOLDEN_RUN_LIMIT_STRESS sets the stress
 # mode's limit alone: a run beside other heavy work, as wave-final.sh's
-# WAVE_BESIDE, takes more). The summary states the limit. A program that
+# WAVE_BESIDE, takes more). A program whose own run needs more is named in
+# tests/goldens/runs/limits.txt (`PATH stress|plain SECONDS reason`): its
+# limit in that mode is the larger of SECONDS and the mode's, so one slow
+# fixture does not raise every program's limit. The summary states the
+# limit and how many programs have their own. A program that
 # fails to compile is a difference. Every child runs with TMPDIR inside the
 # work directory, so nothing is written to /tmp; the LangArena harness, as in
 # its prod runs, writes its stitched sources and binaries to langarena/tmp/
@@ -118,6 +122,14 @@ has_set() { case ",$sets," in *",$1,"*) return 0 ;; esac; return 1; }
 COMPILER=$(realpath -m "${GOLDEN_COMPILER:-bin/avant-c-llvm}")
 ENVW=${GOLDEN_ENV:-}
 case " $ENVW " in *" AVANT_GC_STRESS="*) limit=${GOLDEN_RUN_LIMIT_STRESS:-${GOLDEN_RUN_LIMIT:-600}} ;; *) limit=${GOLDEN_RUN_LIMIT:-120} ;; esac
+stressed=plain; case " $ENVW " in *" AVANT_GC_STRESS="*) stressed=stress ;; esac
+# The run limit of one program: its own line in limits.txt for this mode,
+# when larger than the mode's.
+limit_of() {
+  l_own=$(awk -v p="$1" -v m="$stressed" '$1 == p && $2 == m { print $3 }' "$root/tests/goldens/runs/limits.txt" 2>/dev/null | head -n 1)
+  case "$l_own" in ''|*[!0-9]*) echo "$limit" ;; *) if [ "$l_own" -gt "$limit" ]; then echo "$l_own"; else echo "$limit"; fi ;; esac
+}
+own_limits=$(awk -v m="$stressed" '$2 == m && $3 ~ /^[0-9]+$/' "$root/tests/goldens/runs/limits.txt" 2>/dev/null | wc -l | tr -d ' ')
 MODE=${GOLDEN_MODE---debug}
 case "$MODE" in
   --debug) codegen=debug ;;
@@ -275,7 +287,7 @@ prog_job() {
   mkdir "$d/run"
   mv "$b" "$d/run/prog"
   # shellcheck disable=SC2086
-  (cd "$d/run" && exec env -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW timeout -k 10 "$limit" ./prog > "$d/out" 2> "$d/err" < /dev/null)
+  (cd "$d/run" && exec env -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW timeout -k 10 "$(limit_of "$p")" ./prog > "$d/out" 2> "$d/err" < /dev/null)
   rrc=$?
   r1=$(now)
   [ -n "$lock" ] && rmdir "$lock"
@@ -452,8 +464,8 @@ exec 3>&-
 
 t1=$(date +%s)
 if [ $bless -eq 1 ]; then
-  echo "$same blessed, $different failed, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s)" | tee "$out/summary.txt"
+  echo "$same blessed, $different failed, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s, $own_limits with their own)" | tee "$out/summary.txt"
 else
-  echo "$same same, $different different, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s)" | tee "$out/summary.txt"
+  echo "$same same, $different different, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s, $own_limits with their own)" | tee "$out/summary.txt"
 fi
 [ "$different" -eq 0 ]

@@ -28,6 +28,21 @@
 # (five runs of each of Matmul::T4/T8/T16 here spread under 0.02%: the
 # waiting threads block, nothing spins), so their ratios read alike.
 #
+# Hash seeds, with LA_SEEDS=N (1 to 12; default unset: seed 0 alone): each
+# program's count is taken once under each of the first N seeds of the fixed
+# list below (AVANT_HASH_SEED; the same list on both sides of a comparison),
+# and its INSTRUCTIONS is their mean, rounded. One seed can place a task's
+# keys well or badly in its tables (seed 0 alone read a +0.49% change of
+# Compress::LZWEncode that the other seeds did not), so a change to the hash
+# function, the hash tables or their probing is judged over the 12. OUT.seeds.tsv
+# beside OUT.tsv gets one line per program:
+#
+#   SLUG <TAB> MEAN <TAB> MIN <TAB> MAX <TAB> SPREAD % <TAB> COUNTS (comma-separated, in the list's order)
+#
+# A program whose output differs between seeds reads `seeds-differ` as its
+# status (a checksum must not depend on the hash seed). The list: 0, then
+# the low 32 bits of splitmix64 at 1 to 11.
+#
 # Peak memory, with LA_MEM_RUNS=N (default 0: none): each program is then
 # also run N times as the harness measures it (GNU time's %M of the task's
 # own process, the same environment), unbound (no NUMA binding: a binding's
@@ -47,6 +62,7 @@
 # (below, where it is read). Status 0, 1 when a program did not compile or
 # failed, 2 on usage.
 set -u
+LA_SEED_LIST="0 2298633409 479680206 3674312685 3795028682 2743714650 2918178816 1496452567 4019533366 3195035748 2321035210 595603613"
 
 if [ "${1:-}" = --one ]; then
   s=$2
@@ -56,9 +72,27 @@ if [ "${1:-}" = --one ]; then
   if ! (cd "$LAC_SRC" && env -u AVANT_ROOT timeout -k 10 300 "$LAC_ROOT/bin/avant-c-llvm" compile "$s.av" "$t" "$@" < /dev/null > "$t.compile.log" 2>&1); then
     printf '%s\tcompile-failed\t-\t-\t-\n' "$s"; exit 0
   fi
-  (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
-  rc=$?
-  n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
+  if [ -n "${LA_SEEDS:-}" ]; then
+    # One count per seed; the mean is the program's count, the counts in
+    # OUT.seeds.tsv. Every seed's output must be the first seed's.
+    k=0; counts=""; rc=0; first=""
+    for sd in $LA_SEED_LIST; do
+      [ "$k" -lt "$LA_SEEDS" ] || break
+      k=$((k + 1))
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED="$sd" perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out.$k" 2> "$t.err")
+      r=$?; [ $r -ne 0 ] && rc=$r
+      counts="$counts${counts:+,}$(grep 'instructions' "$t.perf" | cut -d, -f1)"
+      m=$(md5sum < "$t.out.$k" | cut -c1-12)
+      if [ -z "$first" ]; then first=$m; cp "$t.out.$k" "$t.out"; elif [ "$m" != "$first" ] && [ $rc -eq 0 ]; then rc=seeds-differ; fi
+      rm -f "$t.out.$k"
+    done
+    n=$(echo "$counts" | awk -F, '{ for (i = 1; i <= NF; i++) if ($i !~ /^[0-9]+$/) { print "-"; exit } ; s = 0; for (i = 1; i <= NF; i++) s += $i; printf "%.0f\n", s / NF }')
+    echo "$counts" > "$LAC_TMP/$s.seeds"
+  else
+    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
+    rc=$?
+    n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
+  fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$s" "${n:--}" "$(md5sum < "$t.out" | cut -c1-12)" "$rc" "$(head -n 1 "$t.out" | cut -c1-60)"
   # The memory runs of one program start together (LA_MEM_PARALLEL=0: one
   # after another): a peak is not a time, and each run writes a file of its own.
@@ -83,6 +117,8 @@ if [ "${1:-}" = --one ]; then
 fi
 
 [ $# -ge 3 ] || { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
+case "${LA_SEEDS:-}" in ''|[1-9]|1[0-2]) ;; *) echo "la-count.sh: LA_SEEDS is a number from 1 to 12, not '$LA_SEEDS'" >&2; exit 2 ;; esac
+export LA_SEED_LIST
 LAC_ROOT=$(realpath "$1") || exit 2
 LAC_DIR=$(realpath "$2") || exit 2
 out=$(realpath -m "$3"); shift 3
@@ -132,6 +168,15 @@ if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
       for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { x = v[i]; v[i] = v[j]; v[j] = x }
       m = (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2
       printf "%s\t%s\t%s\t%s\t%s\n", $1, m, v[1], v[n], $2 }' | LC_ALL=C sort > "${out%.tsv}.mem.tsv"
+fi
+if [ -n "${LA_SEEDS:-}" ]; then
+  for f in "$LAC_TMP"/*.seeds; do
+    [ -f "$f" ] || continue
+    printf '%s\t%s\n' "$(basename "$f" .seeds)" "$(cat "$f")"
+  done | awk -F'\t' '{ n = split($2, c, ","); s = 0; lo = ""; hi = ""; ok = 1
+      for (i = 1; i <= n; i++) { if (c[i] !~ /^[0-9]+$/) ok = 0; v = c[i] + 0; s += v; if (lo == "" || v < lo) lo = v; if (hi == "" || v > hi) hi = v }
+      if (!ok || n == 0) { printf "%s\t-\t-\t-\t-\t%s\n", $1, $2; next }
+      m = s / n; printf "%s\t%.0f\t%d\t%d\t%.4f\t%s\n", $1, m, lo, hi, (hi - lo) / m * 100, $2 }' | LC_ALL=C sort > "${out%.tsv}.seeds.tsv"
 fi
 rm -rf "$LAC_TMP"
 mv "$out.part" "$out"

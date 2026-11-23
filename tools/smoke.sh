@@ -124,7 +124,9 @@ elif run no-myc-llvm-path sh -c "PATH=/usr/bin:/bin:$inst; command -v myc-llvm";
 else
   pass no-myc-llvm
 fi
-if run old-backend-absent env AVANT_BACKEND=myc "$avant" run hello.av; then
+# The variable set by the shell, the compiler exec'd by its path: env(1)
+# would take an install path holding '=' for an assignment.
+if run old-backend-absent sh -c 'AVANT_BACKEND=myc exec "$0" "$@"' "$avant" run hello.av; then
   fail old-backend-absent "AVANT_BACKEND=myc was accepted"
 elif grep -q "AVANT_BACKEND must be unset, empty, or llvm" "$work/logs/old-backend-absent.log"; then
   pass old-backend-absent
