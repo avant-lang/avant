@@ -1,0 +1,100 @@
+// Rows of an array of arrays (and of strings) read in a loop at an index
+// the loop never changes are loaded once before the loop, so the inner
+// index's check can be proved there; a loop that replaces the row it
+// reads still reads the new one at once, and a reader's loop over a
+// string held in a field, which it replaces halfway, reads the new one.
+
+class Reader {
+  text: String
+  pos: Int
+  len: Int
+
+  fn initialize(text: String) {
+    self.text = text
+    self.pos = 0
+    self.len = text.size
+  }
+
+  fn digits: Int {
+    n = 0
+    while self.pos < self.len {
+      c = self.text[self.pos]
+      if c >= '0' && c <= '9' {
+        n += 1
+      }
+      self.pos += 1
+    }
+    n
+  }
+
+  // Swaps its text halfway: the loop reads the new text from then on.
+  fn swapped: Int {
+    n = 0
+    self.pos = 0
+    while self.pos < self.len {
+      if self.pos == 3 {
+        self.text = "9999999999"
+      }
+      c = self.text[self.pos]
+      if c >= '0' && c <= '9' {
+        n += 1
+      }
+      self.pos += 1
+    }
+    n
+  }
+}
+
+fn total(g: Array(Array(Int)), h: Int, w: Int): Int {
+  n = 0
+  for y in 0..h {
+    for x in 0..w {
+      n += g[y][x]
+    }
+  }
+  n
+}
+
+// Writes each row's elements through the row read again each time.
+fn scale(g: Array(Array(Int)), h: Int, w: Int) {
+  for y in 0..h {
+    for x in 0..w {
+      g[y][x] = g[y][x] * 2 + x
+    }
+  }
+}
+
+// Replaces row 1 while reading it: the reads after the swap see the new row.
+fn swap_rows(g: Array(Array(Int)), w: Int): Int {
+  n = 0
+  y = 1
+  for x in 0..w {
+    if x == 2 {
+      g[y] = [100, 200, 300, 400]
+    }
+    n += g[y][x]
+  }
+  n
+}
+
+fn words_len(ws: Array(String), k: Int): Int {
+  n = 0
+  for i in 0..ws[k].size {
+    n += ws[k][i]
+  }
+  n
+}
+
+fn main {
+  g = Array(Array(Int)).new(3, (i) { Array(Int).new(4, (j) { i * 10 + j }) })
+  puts(total(g, 3, 4))
+  scale(g, 3, 4)
+  puts(total(g, 3, 4))
+  puts(swap_rows(g, 4))
+  puts(total(g, 3, 4))
+  ws = ["alpha", "beta", "gamma"]
+  puts(words_len(ws, 2))
+  r = Reader.new("a1b22c333d")
+  puts(r.digits())
+  puts(r.swapped())
+}

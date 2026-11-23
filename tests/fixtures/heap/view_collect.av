@@ -1,0 +1,28 @@
+// A loop that reads a string's bytes and allocates on every iteration (a
+// call that may collect): the bytes' address is formed again after each
+// such call, so a string, or a view of one, that a collection moves is
+// read where it now is.
+
+fn count(s: String, keep: Array(String)): Int {
+  n = 0
+  for i in 0..s.size {
+    if s[i] == 'a' {
+      n += 1
+    }
+    keep.push("x${i}")
+  }
+  n
+}
+
+fn main {
+  b = Buf.new()
+  for i in 0..20000 {
+    b.push_str("abracadabra ")
+  }
+  s = b.to_s()
+  v = s[6..s.size - 6]
+  keep: Array(String) = []
+  puts(count(s, keep))
+  puts(count(v, keep))
+  puts(keep.size)
+}
