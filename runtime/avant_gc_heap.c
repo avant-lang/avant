@@ -703,10 +703,14 @@ void gc_heap_return(uint64_t live) {
       continue;
     }
     r = chunk_resident_free(c);
+    /* A chunk goes only when what stays resident is still the target:
+     * decommitted on the total alone, a cycle 37 KB over its target gave
+     * back a 3.2 MB chunk and faulted it in again (Compress::LZWDecode at
+     * the 1 MiB young start: 273,211 page faults, 1.77 s against 0.81). */
 #ifdef AVANT_GC_TUNE
     if (r == 0 || (gc_tune.ret ? total - r >= keep : total > keep)) {
 #else
-    if (r == 0 || total > keep) {
+    if (r == 0 || total - r >= keep) {
 #endif
       if (ch->kind == CHUNK_SMALL) {
         gc_heap.free_resident -= r;

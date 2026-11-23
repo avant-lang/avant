@@ -501,11 +501,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   }
   gc_heap.ctr.los.allocs++;
   gc_heap.ctr.los.alloc_bytes += (uint64_t)bytes;
-#ifdef AVANT_GC_TUNE
   if (young) {
-    gc_tune_start_large((uint64_t)bytes);
+    gc_young_start_large((uint64_t)bytes);
   }
-#endif
   {
     int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
     gc_heap.ctr.los.hist[bucket]++;

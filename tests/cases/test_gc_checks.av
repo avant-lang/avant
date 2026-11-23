@@ -240,7 +240,8 @@ fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
 // AVANT_GC_STRESS=1 reaches generated code's
 // allocations. heap/stress_inline.av makes 40,000 allocations, all
 // generated code's and nothing else (1,440,000 bytes exactly). With
-// every collector variable unset it runs no collection, and the inline
+// every collector variable unset it runs one collection (its bytes pass
+// the first young budget, 1 MiB, once), and the inline
 // build takes its allocations on the inline path (at least 39,000 of
 // the 40,000); under AVANT_GC_STRESS=1 every allocation is a stress
 // point: at least 40,000 collections, in the inline build and in the
@@ -288,7 +289,7 @@ fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/${what}.stress.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_STRESS=1: the known stdout")
     c.eq_int(stat_value(plain, "alloc"), 1440000, "${what}: 40,000 allocations of generated code and no other (1,440,000 bytes)")
     c.eq_int(stat_value(stress, "alloc"), 1440000, "${what} under AVANT_GC_STRESS=1: the same allocations")
-    c.eq_int(stat_value(plain, "collections"), 0, "${what}: no collection in the default environment")
+    c.eq_int(stat_value(plain, "collections"), 1, "${what}: one collection in the default environment")
     c.expect(stat_value(stress, "collections") >= 40000, "${what} under AVANT_GC_STRESS=1: a collection at every allocation (at least 40,000)")
   }
   c.expect(stat_value(log_text("${dir}/stress_inline.stress.err"), "inline_allocs") >= 39000, "stress_inline under AVANT_GC_STRESS=1: its allocations run the inline sequence, each after its collection")

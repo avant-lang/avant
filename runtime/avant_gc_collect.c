@@ -170,7 +170,7 @@ GcTune gc_tune;
 static void gc_tune_read(void) {
   uint64_t kb = 1ull << 30;
   gc_tune.dflt = env_u64("AVANT_GC_TUNE_DEFAULT_KB", YOUNG_BYTES_DEFAULT / 1024, 64, kb) * 1024ull;
-  gc_tune.start = env_u64("AVANT_GC_TUNE_START_KB", gc_tune.dflt / 1024, 64, kb) * 1024ull;
+  gc_tune.start = env_u64("AVANT_GC_TUNE_START_KB", YOUNG_BYTES_START / 1024, 64, kb) * 1024ull;
   gc_tune.cap = env_u64("AVANT_GC_TUNE_CAP_KB", YOUNG_BYTES_CAP / 1024, 64, kb) * 1024ull;
   if (gc_tune.cap < gc_tune.dflt) {
     gc_tune.cap = gc_tune.dflt;
@@ -185,7 +185,7 @@ static void gc_tune_read(void) {
   gc_tune.large_age = env_u64("AVANT_GC_TUNE_LARGE_AGE_KB", LARGE_AGE_BYTES / 1024, 0, kb) * 1024ull;
   gc_tune.byte_age = env_u64("AVANT_GC_TUNE_BYTE_AGE_KB", 0, 0, kb) * 1024ull;
   gc_tune.no_holes = env_u64("AVANT_GC_TUNE_NO_HOLES", 0, 0, 2);
-  gc_tune.ret = env_u64("AVANT_GC_TUNE_RETURN", 0, 0, 1);
+  gc_tune.ret = env_u64("AVANT_GC_TUNE_RETURN", 1, 0, 1);
   gc_tune.keep_full = env_u64("AVANT_GC_TUNE_KEEP_FULL", 2, 0, 3);
   gc_tune.plain_div = env_u64("AVANT_GC_TUNE_PLAIN_DIV", PLAIN_LARGE_DIV, 1, 1u << 20);
   gc_tune.full_pct = env_u64("AVANT_GC_TUNE_FULL_PCT", (HEAP_FACTOR - 1) * 100, 1, 10000);
@@ -197,66 +197,11 @@ static void gc_tune_read(void) {
   gc_tune.alloc_min = env_u64("AVANT_GC_TUNE_ALLOC_MIN_KB", ALLOC_FULL_MIN / 1024, 0, kb) * 1024ull;
   gc_tune.alloc_base = env_u64("AVANT_GC_TUNE_ALLOC_BASE", 0, 0, 1);
   gc_tune.alloc_grown = env_u64("AVANT_GC_TUNE_ALLOC_GROWN_PCT", ALLOC_FULL_GROWN_PCT, 0, 100);
-  gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", 0, 0, kb) * 1024ull;
-  gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 0, 0, 1);
+  gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", START_PROM_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 1, 0, 1);
   gc_tune.keep_large = env_u64("AVANT_GC_TUNE_KEEP_LARGE", FULL_KEEP_LARGE, 0, 1);
   gc_tune.alloc_after = env_u64("AVANT_GC_TUNE_ALLOC_AFTER", 1, 0, 1);
   gc_tune.alloc_quiet = env_u64("AVANT_GC_TUNE_ALLOC_QUIET_DIV", ALLOC_FULL_QUIET_DIV, 0, 1u << 20);
-}
-
-static void young_start_end(void) {
-  if (avant_young_bytes < gc_tune.dflt) {
-    avant_young_bytes = gc_tune.dflt;
-    gc_heap.ctr.size.grows++;
-  }
-}
-
-/* The start phase (a first budget below the default): a young large
- * object as large as the budget ends it (gc_los_alloc). */
-void gc_tune_start_large(uint64_t bytes) {
-  if (!gc_heap.set.young_fixed && bytes >= avant_young_bytes) {
-    young_start_end();
-  }
-}
-
-/* The start phase: a budget collection whose survivors pass an eighth of
- * the young bytes it saw raises the budget to max(2 * budget, 16 * surv),
- * the default at most, which ends the phase; the heap's floor raises it
- * too. No high-survival or tenure decision is made in the phase. */
-static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget) {
-  if (avant_young_bytes >= gc_tune.dflt) {
-    return 0;
-  }
-  /* START_PROM_KB: what the young collections promoted says the
-   * program's objects outlive two of them at this budget. */
-  if (gc_tune.start_prom &&
-      gc_heap.ctr.prom.copied + gc_heap.ctr.prom.large + gc_heap.ctr.sticky.inplace > gc_tune.start_prom) {
-    young_start_end();
-    return 0;
-  }
-  /* START_LARGE: young large objects that survive are not counted in the
-   * budget; once more of them stay young than the budget holds, the
-   * program's buffers outlive it. */
-  if (gc_tune.start_large && gc_heap.young_large > avant_young_bytes) {
-    young_start_end();
-    return 0;
-  }
-  if (budget && surv * 8 > used) {
-    uint64_t want = surv * 16;
-    if (want < avant_young_bytes * 2) {
-      want = avant_young_bytes * 2;
-    }
-    avant_young_bytes = want > gc_tune.dflt ? gc_tune.dflt : want;
-    gc_heap.ctr.size.grows++;
-  }
-  if (h > avant_young_bytes) {
-    avant_young_bytes = h > gc_tune.dflt ? gc_tune.dflt : h;
-  }
-  if (budget) {
-    gc_heap.young_high_prev = 0;
-    gc_tune.highs = 0;
-  }
-  return 1;
 }
 
 void gc_tune_stamp(const void *block_base, uint64_t v) {
@@ -278,6 +223,69 @@ uint64_t gc_tune_stamp_of(const void *block_base) {
   return bi < gc_tune.stamp_n ? gc_tune.stamp[bi] : 0;
 }
 #endif
+
+/* The start phase ends: the budget goes to its default. */
+static void young_start_end(void) {
+  if (avant_young_bytes < TUNE(dflt, YOUNG_BYTES_DEFAULT)) {
+    avant_young_bytes = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+    gc_heap.ctr.size.grows++;
+  }
+}
+
+/* The start phase (YOUNG_BYTES_START): a young large object as large as
+ * the budget ends it (gc_los_alloc). */
+void gc_young_start_large(uint64_t bytes) {
+  if (!gc_heap.set.young_fixed && bytes >= avant_young_bytes) {
+    young_start_end();
+  }
+}
+
+/* The start phase: a budget collection whose survivors pass an eighth of
+ * the young bytes it saw raises the budget to max(2 * budget, 16 * surv),
+ * the default at most, which ends the phase; the heap's floor raises it
+ * too. It ends too once the young collections promoted START_PROM_BYTES
+ * (the program's objects outlive two of them at this budget:
+ * Compress::LZWEncode hunted holes for +20% instructions at 1 MiB), and
+ * once the young large objects a collection leaves pass the budget (they
+ * are not counted in it, and the program's buffers outlive it:
+ * Compress::BWTEncode and LZWDecode promoted theirs by their byte age,
+ * +88% and +94% peak). No high-survival or tenure decision is made in
+ * the phase. */
+static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget) {
+  uint64_t dflt = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+  if (avant_young_bytes >= dflt) {
+    return 0;
+  }
+  if (TUNE(start_prom, START_PROM_BYTES) &&
+      gc_heap.ctr.prom.copied + gc_heap.ctr.prom.large + gc_heap.ctr.sticky.inplace > TUNE(start_prom, START_PROM_BYTES)) {
+    young_start_end();
+    return 0;
+  }
+  if (TUNE(start_large, 1) && gc_heap.young_large > avant_young_bytes) {
+    young_start_end();
+    return 0;
+  }
+  if (budget && surv * 8 > used) {
+    uint64_t want = surv * 16;
+    if (want < avant_young_bytes * 2) {
+      want = avant_young_bytes * 2;
+    }
+    avant_young_bytes = want > dflt ? dflt : want;
+    gc_heap.ctr.size.grows++;
+  }
+  if (h > avant_young_bytes) {
+    avant_young_bytes = h > dflt ? dflt : h;
+  }
+  if (budget) {
+    gc_heap.young_high_prev = 0;
+#ifdef AVANT_GC_TUNE
+    gc_tune.highs = 0;
+#else
+    gc_heap.young_grow_prev = 0;
+#endif
+  }
+  return 1;
+}
 
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
@@ -303,11 +311,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
   if (used == 0) {
     return;
   }
-#ifdef AVANT_GC_TUNE
   if (young_start_size(used, surv, h, budget)) {
     return;
   }
-#endif
   if (h > floor) {
     floor = h > TUNE(cap, YOUNG_BYTES_CAP) ? TUNE(cap, YOUNG_BYTES_CAP) : h;
   }
@@ -1010,12 +1016,10 @@ void gc_maybe_collect(void) {
   /* A hold (std.gc) defers what falls due to its end, as a region does
    * to its first collection point after it. */
   if (gc_thread.collecting || gc_thread.nogc || gc_thread.hold) {
-#ifdef AVANT_GC_TUNE
     /* A hold that spent the start phase's budget ends the phase. */
     if (gc_thread.hold && !gc_heap.set.young_fixed && avant_nursery_held >= avant_young_bytes) {
       young_start_end();
     }
-#endif
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -1122,7 +1126,7 @@ void gc_init_slow(void) {
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {
-    avant_young_bytes = TUNE(start, YOUNG_BYTES_DEFAULT);
+    avant_young_bytes = TUNE(start, YOUNG_BYTES_START);
   }
   /* The heap's address range: reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */

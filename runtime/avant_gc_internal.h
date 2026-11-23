@@ -159,6 +159,21 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #ifndef YOUNG_BYTES_DEFAULT
 #define YOUNG_BYTES_DEFAULT (4ull * 1024ull * 1024ull)
 #endif
+/* YOUNG_BYTES_START: the first young budget, below the default; the start
+ * phase ends when the program shows it needs the default
+ * (young_start_size, gc_young_start_large, a hold that spends it). A
+ * small program that allocates touched the whole default budget once it
+ * had allocated that much, and the budget was its memory floor: at 1 MiB
+ * fourteen of the LangArena programs read half their peak memory
+ * (Brainfuck::Recursion 6.4 -> 3.4 MB, Distance::Jaro 6.7 -> 3.4,
+ * Base64::Decode 7.8 -> 4.7). START_PROM_BYTES: the promotion that ends
+ * the phase. */
+#ifndef YOUNG_BYTES_START
+#define YOUNG_BYTES_START (1ull * 1024ull * 1024ull)
+#endif
+#ifndef START_PROM_BYTES
+#define START_PROM_BYTES (1ull * 1024ull * 1024ull)
+#endif
 /* S_LARGE_AGE: the young
  * collections a young large object lives through before it is promoted.
  * 2 keeps a reached one young at its first survival (SURVIVED) and
@@ -351,7 +366,6 @@ typedef struct GcTune {
 } GcTune;
 extern GcTune gc_tune;
 #define TUNE(f, c) (gc_tune.f)
-void gc_tune_start_large(uint64_t bytes);
 void gc_tune_stamp(const void *block_base, uint64_t v);
 uint64_t gc_tune_stamp_of(const void *block_base);
 #else
@@ -2158,6 +2172,7 @@ void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
 void gc_rem_keep_large_holders(void);
+void gc_young_start_large(uint64_t bytes);
 void gc_cards_settle(void);
 void gc_rem_merge_all(void);
 void gc_rem_thread_leave(void);

@@ -115,7 +115,9 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(stat_int(frag, "def_evac_blocks"), stat_int(frag, "def_freed_blocks"), "defrag_gain.av fragmented: every evacuated block is freed")
   tail = log_text("${dir}/defrag_gain.tail.err")
   c.eq_int(runs[envs.size + 2].code, 0, "defrag_gain.av tail: exit 0")
-  c.eq_int(stat_int(tail, "full"), 21, "defrag_gain.av tail: 21 full collections")
+  // The 20 forced ones: the list's build promotes 1 MiB at the first
+  // young budget, under the full trigger.
+  c.eq_int(stat_int(tail, "full"), 20, "defrag_gain.av tail: 20 full collections")
   c.eq_int(stat_int(tail, "def_evac_blocks"), 0, "defrag_gain.av tail: a heap of 146 blocks is not walked to gain one block")
 }
 
