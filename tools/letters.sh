@@ -103,15 +103,16 @@ if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
   echo "letters: the default seed $default_seed is missing: unpack the v0.49.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
-# A seed given relative to the checkout keeps its path under the checkout
-# even when bin/vX is a symbolic link to another checkout's seed: the
-# compiler links the runtime of the tree it is started from only when its
-# path lies under the working directory (compiler/pipeline.av, avant_root),
-# and B must link this tree's runtime, which may export functions the
-# seed's own runtime does not have yet.
+# A seed under the checkout keeps its path under the checkout even when
+# bin/vX is a symbolic link to another checkout's seed (symbolic links are
+# not resolved, given relative or absolute, as tools/gate.sh passes it):
+# the compiler links the runtime of the tree it is started from only when
+# its path lies under the working directory (compiler/pipeline.av,
+# avant_root), and B must link this tree's runtime, which may export
+# functions the seed's own runtime does not have yet.
 seed_arg=${LETTERS_SEED:-$default_seed}
 case $seed_arg in
-  /*) seed=$(realpath -m "$seed_arg") ;;
+  /*) seed=$(realpath -m -s "$seed_arg") ;;
   *) seed=$(realpath -m -s "$(pwd -P)/$seed_arg") ;;
 esac
 time_dir=${LETTERS_TIME_DIR:-}
