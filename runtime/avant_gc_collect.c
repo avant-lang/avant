@@ -198,6 +198,7 @@ static void gc_tune_read(void) {
   gc_tune.alloc_base = env_u64("AVANT_GC_TUNE_ALLOC_BASE", 0, 0, 1);
   gc_tune.alloc_grown = env_u64("AVANT_GC_TUNE_ALLOC_GROWN_PCT", ALLOC_FULL_GROWN_PCT, 0, 100);
   gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", START_PROM_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.start_prom_small = env_u64("AVANT_GC_TUNE_START_PROM_SMALL_KB", START_PROM_SMALL_BYTES / 1024, 0, kb) * 1024ull;
   gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 1, 0, 1);
   gc_tune.keep_large = env_u64("AVANT_GC_TUNE_KEEP_LARGE", FULL_KEEP_LARGE, 0, 1);
   gc_tune.ret_age = env_u64("AVANT_GC_TUNE_RET_AGE", LARGE_RETURN_AGE, 0, 200);
@@ -247,6 +248,7 @@ void gc_young_start_large(uint64_t bytes) {
  * the young bytes it saw raises the budget to max(2 * budget, 16 * surv),
  * the default at most, which ends the phase; the heap's floor raises it
  * too. It ends too once the young collections promoted START_PROM_BYTES
+ * (START_PROM_SMALL_BYTES of small objects)
  * (the program's objects outlive two of them at this budget:
  * Compress::LZWEncode hunted holes for +20% instructions at 1 MiB), and
  * once the young large objects a collection leaves pass the budget (they
@@ -261,6 +263,11 @@ static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget
   }
   if (TUNE(start_prom, START_PROM_BYTES) &&
       gc_heap.ctr.prom.copied + gc_heap.ctr.prom.large + gc_heap.ctr.sticky.inplace > TUNE(start_prom, START_PROM_BYTES)) {
+    young_start_end();
+    return 0;
+  }
+  if (TUNE(start_prom_small, START_PROM_SMALL_BYTES) &&
+      gc_heap.ctr.prom.copied + gc_heap.ctr.sticky.inplace > TUNE(start_prom_small, START_PROM_SMALL_BYTES)) {
     young_start_end();
     return 0;
   }

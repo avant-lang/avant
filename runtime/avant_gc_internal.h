@@ -174,6 +174,17 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #ifndef START_PROM_BYTES
 #define START_PROM_BYTES (1ull * 1024ull * 1024ull)
 #endif
+/* START_PROM_SMALL_BYTES: the small objects' promotion that ends it. At
+ * 1 MiB objects that outlive two collections and then die are promoted
+ * sooner, and with no full collection after the phase they stay: a
+ * churn of holders gaining children each round (tests/fixtures/heap/
+ * churn.av) promoted 1.1 MB of them and read 10.6 MB against 6.8 at the
+ * default start; ending at 128 KB of small objects, 7.3 MB. Of the
+ * LangArena programs it moves Compress::LZWEncode's phase (11 young
+ * collections fewer) and one of Json::ParseDom-Pure's collections. */
+#ifndef START_PROM_SMALL_BYTES
+#define START_PROM_SMALL_BYTES (128ull * 1024ull)
+#endif
 /* S_LARGE_AGE: the young
  * collections a young large object lives through before it is promoted.
  * 2 keeps a reached one young at its first survival (SURVIVED) and
@@ -384,6 +395,7 @@ typedef struct GcTune {
   uint64_t start_prom; /* AVANT_GC_TUNE_START_PROM_KB: the start phase ends once young collections promoted this many bytes (0 never) */
   uint64_t alloc_quiet; /* AVANT_GC_TUNE_ALLOC_QUIET_DIV: ALLOC_FULL_QUIET_DIV (0 any growth) */
   uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
+  uint64_t start_prom_small; /* AVANT_GC_TUNE_START_PROM_SMALL_KB: START_PROM_SMALL_BYTES (0 never) */
   uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
   uint64_t keep_large; /* AVANT_GC_TUNE_KEEP_LARGE: FULL_KEEP_LARGE (0 a full collection promotes young buffers too) */
   uint64_t ret_age;  /* AVANT_GC_TUNE_RET_AGE: LARGE_RETURN_AGE */
