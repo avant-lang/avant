@@ -1,0 +1,69 @@
+import harness
+import backends
+import std.process
+
+// The verifier's incremental checks (runtime/avant_gc_verify.c): after its
+// warm-up of whole checks, a check reads only the pages written since the
+// last one, and passes over what the last whole trace proved unreached.
+// heap/verify_dead_large.av leaves a dead, promoted pointer buffer of
+// 6,000 dead nodes in the heap through 400 young collections. The first
+// incremental check reads every page, so the buffer is on a page it
+// reads: a large object was once never passed over, its slots named the
+// nodes the trace had proved unreached, and every check fell back to the
+// whole one (154 of 154; the compiler's dump under a 1 MiB young
+// generation made a third of its checks whole that way). It runs under
+// AVANT_GC_VERIFY=1 with AVANT_GC_STATS=1: the known stdout, no report,
+// and no fallback where the checks were incremental. Without a nursery
+// (an outer AVANT_NURSERY=0) the count is not read.
+fn test_gc_verify_incr(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/verify_dead_large.av", "${dir}/verify_dead_large", "${dir}/verify_dead_large.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "verify_dead_large.av: compiles")
+  runs: Array(HJob) = []
+  runs.push(run_job_env(dir, "verify_dead_large", "verify_dead_large.v", "AVANT_GC_VERIFY=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "verify_dead_large.av under AVANT_GC_VERIFY=1: exit 0")
+  c.eq_str(log_text("${dir}/verify_dead_large.v.out"), "sum: 17997000\nrounds: 400\n", "verify_dead_large.av under AVANT_GC_VERIFY=1: the known stdout")
+  stats = log_text("${dir}/verify_dead_large.v.err")
+  c.expect(!stats.contains("avant gc verify:"), "verify_dead_large.av under AVANT_GC_VERIFY=1: no verifier report")
+  outer = gc_env_outer("AVANT_GC_VERIFY AVANT_GC_STATS")
+  incr = stat_of(stats, "verify_incr")
+  if outer.contains("AVANT_NURSERY") {
+    c.skip("verify_dead_large.av: no incremental check falls back", "outer ${outer}")
+  } else if incr <= 0 {
+    c.skip("verify_dead_large.av: no incremental check falls back", "no incremental check ran (verify_incr=${incr}: the kernel's soft-dirty record is not available)")
+  } else {
+    c.eq_int(stat_of(stats, "verify_fallback"), 0, "verify_dead_large.av: no incremental check falls back (verify_fallback=0 of verify_incr=${incr})")
+  }
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && p[..key.size + 1] == "${key}=" {
+      return p[key.size + 1..].strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_verify_incr.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_gc_verify_incr(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

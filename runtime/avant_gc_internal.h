@@ -2451,6 +2451,7 @@ void gc_verify_lost(void);
 void gc_verify_init(void);
 void gc_verify_begin(int full);
 void gc_verify_starts_note(const uint8_t *header);
+void gc_verify_large_born(AvantHeader *h);
 void gc_verify_starts_begin(void);
 void gc_verify_starts_resume(void);
 void gc_verify_starts_eager(int on);

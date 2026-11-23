@@ -1,0 +1,79 @@
+// A dead large pointer buffer under the verifier's incremental checks
+// (runtime/avant_gc_verify.c, vr_unreached). An array of 6,000 nodes, its
+// buffer a large object, is promoted with its nodes and then dies, and no
+// full collection runs after: the buffer and the nodes stay in the heap,
+// dead. The verifier's first
+// checks are whole (its warm-up), and they record the nodes as unreached.
+// Its incremental checks after them read every page at first, so the
+// dead buffer is on a page they read: they must pass over it as they
+// pass over a dead small object, or its slots name the nodes the whole
+// trace proved unreached and every later check falls back to the whole
+// one. tests/cases/test_gc_verify_incr.av runs it under AVANT_GC_VERIFY=1
+// with AVANT_GC_STATS=1 and reads the fallback count.
+lib gcy {
+  fun avant_gc_collect_young
+}
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+// The array of N nodes, promoted with its buffer (a young large object
+// is promoted once 8 MiB of young allocation passed since its birth, at
+// its second survival: three rounds of 4 MiB of strings, each ended by a
+// young collection); its sum, and nothing of it outlives the call.
+fn dead_buffer(n: Int): Int {
+  nodes: Array(Node) = []
+  i = 0
+  while i < n {
+    node = Node.new()
+    node.v = i
+    nodes.push(node)
+    i += 1
+  }
+  r = 0
+  while r < 3 {
+    j = 0
+    while j < 65536 {
+      s = "a string of the round ${r}: ${j}"
+      if s.size == 0 {
+        puts("never")
+      }
+      j += 1
+    }
+    gcy.avant_gc_collect_young()
+    r += 1
+  }
+  sum = 0
+  for x in nodes {
+    sum += x.v
+  }
+  sum
+}
+
+// ROUNDS young collections, each after a few young strings, one kept.
+fn churn(rounds: Int): Int {
+  kept: Array(String) = []
+  r = 0
+  while r < rounds {
+    j = 0
+    while j < 50 {
+      s = "round ${r} string ${j}"
+      if j == 0 {
+        kept.push(s)
+      }
+      j += 1
+    }
+    gcy.avant_gc_collect_young()
+    r += 1
+  }
+  kept.size
+}
+
+fn main {
+  sum = dead_buffer(6000)
+  rounds = churn(400)
+  puts("sum: ${sum}")
+  puts("rounds: ${rounds}")
+}

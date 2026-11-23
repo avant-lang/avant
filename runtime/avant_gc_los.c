@@ -586,6 +586,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     /* A large object born old. */
     gc_proof_grow(PROOF_MATURE);
   }
+  if (gc_heap.set.verify) {
+    gc_verify_large_born(h);
+  }
   gc_note_peak();
   return payload_of(h);
 }
