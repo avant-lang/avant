@@ -719,6 +719,38 @@ void gc_heap_return(uint64_t live) {
       decommit_chunk(c);
     }
   }
+  /* First the large-object pages free for LARGE_RETURN_AGE ticks, in any
+   * chunk (a busy chunk's long-free pages too). */
+  for (c = hw; TUNE(ret_age, LARGE_RETURN_AGE) && c-- > 0 && total > keep;) {
+    GcChunk *ch = &gc_heap.chunks[c];
+    uint32_t p = 0;
+    uint64_t before = total;
+    if (ch->kind != CHUNK_LARGE) {
+      continue;
+    }
+    while (p < PAGES_PER_CHUNK && total > keep) {
+      uint32_t q = p;
+      /* One madvise per run of such pages. */
+      while (q < PAGES_PER_CHUNK && total > keep &&
+             ((ch->dirty_pages[q >> 6] & ~ch->alloc[q >> 6]) >> (q & 63) & 1ULL) &&
+             (uint8_t)((uint8_t)now - ch->freed_at[q]) >= TUNE(ret_age, LARGE_RETURN_AGE)) {
+        ch->dirty_pages[q >> 6] &= ~(1ULL << (q & 63));
+        gc_heap.free_resident_other -= PAGE_SIZE;
+        total -= PAGE_SIZE;
+        q++;
+      }
+      if (q > p) {
+        gc_return_pages(chunk_base(c) + ((size_t)p << PAGE_SHIFT), (size_t)(q - p) << PAGE_SHIFT);
+        p = q;
+      } else {
+        p++;
+      }
+    }
+    /* An empty chunk's last dirty pages: the next call decommits it. */
+    if (total != before && ch->used == 0 && chunk_resident_free(c) == 0) {
+      gc_heap.clean_empty_chunks++;
+    }
+  }
   for (c = hw; c-- > 0 && total > keep;) {
     GcChunk *ch = &gc_heap.chunks[c];
     if (ch->kind == CHUNK_SMALL) {

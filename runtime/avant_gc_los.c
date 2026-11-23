@@ -54,6 +54,20 @@ static void bits_set(uint64_t *a, uint32_t from, uint32_t n, int on) {
 
 /* The first run of N free pages in A (a set bit is an allocated page),
  * or -1. */
+static int first_fit(const uint64_t *a, uint32_t n);
+
+/* The first run of N free pages of a chunk that are all resident
+ * (LARGE_RESIDENT_FIT): first fit over the pages that are allocated or
+ * clean taken as used. */
+static int resident_fit(const uint64_t *a, const uint64_t *d, uint32_t n) {
+  uint64_t m[PAGE_WORDS];
+  uint32_t i;
+  for (i = 0; i < PAGE_WORDS; i++) {
+    m[i] = a[i] | ~d[i];
+  }
+  return first_fit(m, n);
+}
+
 static int first_fit(const uint64_t *a, uint32_t n) {
   uint32_t p = 0;
   uint32_t run = 0;
@@ -128,7 +142,17 @@ static AvantHeader *take_run(size_t payload) {
     GcChunk *ch;
     uint8_t *run;
     uint32_t k;
-    for (i = 0; i < gc_heap.lchunks_n; i++) {
+    for (i = 0; TUNE(resident_fit, LARGE_RESIDENT_FIT) && i < gc_heap.lchunks_n; i++) {
+      ch = &gc_heap.chunks[gc_heap.lchunks[i]];
+      if (PAGES_PER_CHUNK - ch->used >= n) {
+        p = resident_fit(ch->alloc, ch->dirty_pages, (uint32_t)n);
+        if (p >= 0) {
+          c = gc_heap.lchunks[i];
+          break;
+        }
+      }
+    }
+    for (i = 0; p < 0 && i < gc_heap.lchunks_n; i++) {
       ch = &gc_heap.chunks[gc_heap.lchunks[i]];
       if (PAGES_PER_CHUNK - ch->used >= n) {
         p = first_fit(ch->alloc, (uint32_t)n);
@@ -223,6 +247,7 @@ static void give_run(AvantHeader *h) {
     for (k = 0; k < n; k++) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
+    memset(ch->freed_at + p, (uint8_t)gc_heap.return_clock, n);
     ch->idle = (uint32_t)gc_heap.return_clock;
     /* gc_heap_return's count: the run's pages are free and dirty
      * (take_run marks every page it hands out dirty). */
@@ -590,6 +615,7 @@ static void trim_run(AvantHeader *h, size_t new_size) {
     for (k = 0; k < n; k++) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
+    memset(ch->freed_at + p, (uint8_t)gc_heap.return_clock, n);
     ch->idle = (uint32_t)gc_heap.return_clock;
     /* gc_heap_return's count: the pages given back are free and
      * dirty. */

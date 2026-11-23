@@ -323,6 +323,25 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
  * and left it young (keep_large), and counted it in the live bytes its
  * trigger is made from, so its promotion is not mature growth again. */
 #define LARGE_STAMP_SEEN (1ull << 63)
+/* LARGE_RETURN_AGE: the return first gives back the large-object pages
+ * that stayed free for this many ticks of its clock, in any chunk; then
+ * the free memory of idle chunks, as before. A chunk where a run was
+ * freed since the last tick was passed over whole, so long-free pages
+ * beside a buffer freed and reused every cycle stayed resident
+ * (Template::Parse 31.7 -> 29.3 MB, Template::Regex 32.4 -> 30.0). 4
+ * ticks: memory a cycle takes back within them stays resident. 0 turns
+ * it off. */
+#ifndef LARGE_RETURN_AGE
+#define LARGE_RETURN_AGE 4
+#endif
+/* LARGE_RESIDENT_FIT: a large object goes first where its pages are all
+ * resident (free and dirty), then first fit as before: a buffer placed on
+ * fresh pages beside a resident hole it fit grew the peak by its size
+ * (Compress::BWTEncode-Common 17.9 -> 16.3 MB, BWTDecode-Pure 58.0 ->
+ * 56.2). */
+#ifndef LARGE_RESIDENT_FIT
+#define LARGE_RESIDENT_FIT 1
+#endif
 #ifndef ALLOC_FULL_QUIET_DIV
 #define ALLOC_FULL_QUIET_DIV 8
 #endif
@@ -367,6 +386,8 @@ typedef struct GcTune {
   uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
   uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
   uint64_t keep_large; /* AVANT_GC_TUNE_KEEP_LARGE: FULL_KEEP_LARGE (0 a full collection promotes young buffers too) */
+  uint64_t ret_age;  /* AVANT_GC_TUNE_RET_AGE: LARGE_RETURN_AGE */
+  uint64_t resident_fit; /* AVANT_GC_TUNE_RESIDENT_FIT: LARGE_RESIDENT_FIT */
   uint64_t keep_large_min; /* AVANT_GC_TUNE_KEEP_LARGE_MIN_KB: FULL_KEEP_LARGE_MIN */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
@@ -514,6 +535,9 @@ typedef struct GcChunk {
   uint32_t idle;
   uint64_t alloc[PAGE_WORDS];
   uint64_t dirty_pages[PAGE_WORDS];
+  /* A large-object chunk's pages: the return clock's low byte when each
+   * was last freed (gc_heap_return, LARGE_RETURN_AGE). */
+  uint8_t freed_at[PAGES_PER_CHUNK];
 } GcChunk;
 
 /* One space's state, indexed
