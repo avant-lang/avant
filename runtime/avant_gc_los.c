@@ -54,6 +54,20 @@ static void bits_set(uint64_t *a, uint32_t from, uint32_t n, int on) {
 
 /* The first run of N free pages in A (a set bit is an allocated page),
  * or -1. */
+static int first_fit(const uint64_t *a, uint32_t n);
+
+/* The first run of N free pages of a chunk that are all resident
+ * (LARGE_RESIDENT_FIT): first fit over the pages that are allocated or
+ * clean taken as used. */
+static int resident_fit(const uint64_t *a, const uint64_t *d, uint32_t n) {
+  uint64_t m[PAGE_WORDS];
+  uint32_t i;
+  for (i = 0; i < PAGE_WORDS; i++) {
+    m[i] = a[i] | ~d[i];
+  }
+  return first_fit(m, n);
+}
+
 static int first_fit(const uint64_t *a, uint32_t n) {
   uint32_t p = 0;
   uint32_t run = 0;
@@ -128,7 +142,17 @@ static AvantHeader *take_run(size_t payload) {
     GcChunk *ch;
     uint8_t *run;
     uint32_t k;
-    for (i = 0; i < gc_heap.lchunks_n; i++) {
+    for (i = 0; TUNE(resident_fit, LARGE_RESIDENT_FIT) && i < gc_heap.lchunks_n; i++) {
+      ch = &gc_heap.chunks[gc_heap.lchunks[i]];
+      if (PAGES_PER_CHUNK - ch->used >= n) {
+        p = resident_fit(ch->alloc, ch->dirty_pages, (uint32_t)n);
+        if (p >= 0) {
+          c = gc_heap.lchunks[i];
+          break;
+        }
+      }
+    }
+    for (i = 0; p < 0 && i < gc_heap.lchunks_n; i++) {
       ch = &gc_heap.chunks[gc_heap.lchunks[i]];
       if (PAGES_PER_CHUNK - ch->used >= n) {
         p = first_fit(ch->alloc, (uint32_t)n);
@@ -223,6 +247,7 @@ static void give_run(AvantHeader *h) {
     for (k = 0; k < n; k++) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
+    memset(ch->freed_at + p, (uint8_t)gc_heap.return_clock, n);
     ch->idle = (uint32_t)gc_heap.return_clock;
     /* gc_heap_return's count: the run's pages are free and dirty
      * (take_run marks every page it hands out dirty). */
@@ -389,7 +414,12 @@ static void promote_young_large(AvantHeader *h) {
     gc_heap.young_large_n--;
   }
   avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
-  gc_heap.mature_since_full += bytes;
+  /* One a full collection left young (LARGE_STAMP_SEEN) is in the
+   * live bytes that collection's trigger was made from: its promotion is
+   * not growth since then. */
+  if (!(((uint64_t *)h)[-1] & LARGE_STAMP_SEEN)) {
+    gc_heap.mature_since_full += bytes;
+  }
   if (h->type_id != AVANT_TYPE_BYTES) {
     gc_keep_add(payload_of(h));
   }
@@ -427,7 +457,8 @@ void gc_reclaim_young_large(void) {
                (h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
                ((h->flags & AVANT_FLAG_SURVIVED) &&
                 (gc_heap.stress_now ||
-                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
+                 gc_heap.young_clock - (((uint64_t *)h)[-1] & ~LARGE_STAMP_SEEN) >=
+                     (uint64_t)TUNE(large_age, LARGE_AGE_BYTES)))) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;
@@ -495,11 +526,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   }
   gc_heap.ctr.los.allocs++;
   gc_heap.ctr.los.alloc_bytes += (uint64_t)bytes;
-#ifdef AVANT_GC_TUNE
   if (young) {
-    gc_tune_start_large((uint64_t)bytes);
+    gc_young_start_large((uint64_t)bytes);
   }
-#endif
   {
     int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
     gc_heap.ctr.los.hist[bucket]++;
@@ -586,6 +615,7 @@ static void trim_run(AvantHeader *h, size_t new_size) {
     for (k = 0; k < n; k++) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
+    memset(ch->freed_at + p, (uint8_t)gc_heap.return_clock, n);
     ch->idle = (uint32_t)gc_heap.return_clock;
     /* gc_heap_return's count: the pages given back are free and
      * dirty. */

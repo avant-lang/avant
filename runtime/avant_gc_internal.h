@@ -159,6 +159,32 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #ifndef YOUNG_BYTES_DEFAULT
 #define YOUNG_BYTES_DEFAULT (4ull * 1024ull * 1024ull)
 #endif
+/* YOUNG_BYTES_START: the first young budget, below the default; the start
+ * phase ends when the program shows it needs the default
+ * (young_start_size, gc_young_start_large, a hold that spends it). A
+ * small program that allocates touched the whole default budget once it
+ * had allocated that much, and the budget was its memory floor: at 1 MiB
+ * fourteen of the LangArena programs read half their peak memory
+ * (Brainfuck::Recursion 6.4 -> 3.4 MB, Distance::Jaro 6.7 -> 3.4,
+ * Base64::Decode 7.8 -> 4.7). START_PROM_BYTES: the promotion that ends
+ * the phase. */
+#ifndef YOUNG_BYTES_START
+#define YOUNG_BYTES_START (1ull * 1024ull * 1024ull)
+#endif
+#ifndef START_PROM_BYTES
+#define START_PROM_BYTES (1ull * 1024ull * 1024ull)
+#endif
+/* START_PROM_SMALL_BYTES: the small objects' promotion that ends it. At
+ * 1 MiB objects that outlive two collections and then die are promoted
+ * sooner, and with no full collection after the phase they stay: a
+ * churn of holders gaining children each round (tests/fixtures/heap/
+ * churn.av) promoted 1.1 MB of them and read 10.6 MB against 6.8 at the
+ * default start; ending at 128 KB of small objects, 7.3 MB. Of the
+ * LangArena programs it moves Compress::LZWEncode's phase (11 young
+ * collections fewer) and one of Json::ParseDom-Pure's collections. */
+#ifndef START_PROM_SMALL_BYTES
+#define START_PROM_SMALL_BYTES (128ull * 1024ull)
+#endif
 /* S_LARGE_AGE: the young
  * collections a young large object lives through before it is promoted.
  * 2 keeps a reached one young at its first survival (SURVIVED) and
@@ -226,6 +252,110 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #endif
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
 #define HEAP_FACTOR 2
+/* The full collection due by allocation (gc_maybe_collect): at a young
+ * collection the budget asks for, once the bytes allocated since the last
+ * full collection (or complete one) pass max(ALLOC_FULL_MIN,
+ * ALLOC_FULL_PCT percent of the heap after it: mature blocks and large
+ * objects) in a program that has run a full collection, while the
+ * mature growth since it has passed
+ * ALLOC_FULL_GROWN_PCT percent of the full trigger and has stopped (it
+ * grew by at most the budget / ALLOC_FULL_QUIET_DIV since the last budget
+ * collection), a full collection runs in place of the young one, and
+ * leaves the young generation young (gc_collect, keep_full). The
+ * mature-growth trigger alone waits for growth a program that stopped
+ * promoting never makes: what it promoted since the last full collection,
+ * dead since, stayed to its exit (Compress::LZWEncode 12.1 -> 10.9 MB,
+ * BWTEncode-Pure 16.4 -> 14.7, BWTEncode-Common 19.2 -> 17.9). Each
+ * condition is measured:
+ * - without the growth test every program that allocates ran full
+ *   collections, and a full collection mid-run makes old what is live
+ *   then (Json::ParseMapping's per-run 8.5 MB buffer, 24 -> 49 MB;
+ *   Binarytrees::Arena's 25 MB arena, 30 -> 55 MB);
+ * - a full collection that promotes what it marks gave LZWEncode +4%
+ *   instructions and 12.1 MB: the per-run buffers it marks die old;
+ * - without the stop test a program still promoting ran it before its
+ *   growth trigger, and the young objects it left young were promoted by
+ *   copies after it (Calculator::Interpreter +216 KB, 5.4 MB more
+ *   promoted; Json::Generate +256 KB); at an eighth of the budget
+ *   Calculator::Interpreter does not run it;
+ * - before a program's first full collection, what young collections
+ *   promoted was live when it ran (Json::Generate: 4.15 MB live of 4.16 MB
+ *   promoted), and its first full collection cost 256 KB of resident
+ *   memory; after the first one only (at half the trigger), LZWEncode
+ *   keeps 12.1 -> 10.3 MB of
+ *   its 9.8, BWTEncode-Pure 16.4 -> 14.7 of 13.9, BWTEncode-Common
+ *   19.2 -> 17.7 of 15.0;
+ * - the growth test at half the trigger ran it once in the compiler's
+ *   own build, whose peak then rose 571 -> 616 MB (+0.7% instructions):
+ *   the young sizing's path moved it to its larger mode (395 or 494 MB of
+ *   heap, measured across young-budget settings too); at 60 and 65
+ *   percent it reads 553 MB, at 75 571 MB; 65 by measurement, LZWEncode
+ *   12.1 -> 10.9 MB (10.3 at half, 11.4 at 75);
+ * - 100 percent and a 16 MiB floor gave Graph::BFS / AStar +15-17% (a
+ *   steady 60 MB live set traced again for nothing); 200 percent with a
+ *   16 or a 32 MiB floor the same gains without it; 400 percent and
+ *   64 MiB half the LZWEncode gain. */
+#ifndef ALLOC_FULL_PCT
+#define ALLOC_FULL_PCT 200
+#endif
+#ifndef ALLOC_FULL_MIN
+#define ALLOC_FULL_MIN (32ull * 1024ull * 1024ull)
+#endif
+#ifndef ALLOC_FULL_GROWN_PCT
+#define ALLOC_FULL_GROWN_PCT 65
+#endif
+/* FULL_KEEP_LARGE: an ordinary full collection the growth trigger asks
+ * for leaves the young large objects without references
+ * (AVANT_TYPE_BYTES: buffers) young, with their age, and remembers their
+ * holders; the small young objects it promotes as before. 0 promotes the buffers with everything it marks.
+ * A full collection lands where the program is, and a buffer of a run in
+ * progress it promoted died old and stayed to the next full collection:
+ * at a 1 MiB young start Json::ParseMapping's one full collection fell
+ * inside its first run and kept that run's 8.5 MB buffer to the exit
+ * (24 -> 35 MB; left young, 22 MB). Buffers only: one without references
+ * names no old object, so the proof and the remembered set's other
+ * entries stay as they are. A kept buffer's later promotion is not
+ * mature growth (LARGE_STAMP_SEEN): counted, Template::Parse ran 31 full
+ * collections for 1 (+4% instructions). */
+#ifndef FULL_KEEP_LARGE
+#define FULL_KEEP_LARGE 1
+#endif
+/* FULL_KEEP_LARGE_MIN: the smallest buffer it leaves young. A smaller one
+ * that then dies young frees a run the next large objects seldom fit,
+ * and the program's peak grew by more than the buffer: Calculator::
+ * Interpreter and Compress::BWTEncode-Common +250 KB each with every
+ * buffer kept, their peak without the rule at 1 MiB (Json::ParseMapping's
+ * 8.5 MB buffer is kept either way). */
+#ifndef FULL_KEEP_LARGE_MIN
+#define FULL_KEEP_LARGE_MIN (1ull * 1024ull * 1024ull)
+#endif
+/* A young large object's birth stamp (the word before its header, on
+ * the young clock) with this bit set: a full collection found it live
+ * and left it young (keep_large), and counted it in the live bytes its
+ * trigger is made from, so its promotion is not mature growth again. */
+#define LARGE_STAMP_SEEN (1ull << 63)
+/* LARGE_RETURN_AGE: the return first gives back the large-object pages
+ * that stayed free for this many ticks of its clock, in any chunk; then
+ * the free memory of idle chunks, as before. A chunk where a run was
+ * freed since the last tick was passed over whole, so long-free pages
+ * beside a buffer freed and reused every cycle stayed resident
+ * (Template::Parse 31.7 -> 29.3 MB, Template::Regex 32.4 -> 30.0). 4
+ * ticks: memory a cycle takes back within them stays resident. 0 turns
+ * it off. */
+#ifndef LARGE_RETURN_AGE
+#define LARGE_RETURN_AGE 4
+#endif
+/* LARGE_RESIDENT_FIT: a large object goes first where its pages are all
+ * resident (free and dirty), then first fit as before: a buffer placed on
+ * fresh pages beside a resident hole it fit grew the peak by its size
+ * (Compress::BWTEncode-Common 17.9 -> 16.3 MB, BWTDecode-Pure 58.0 ->
+ * 56.2). */
+#ifndef LARGE_RESIDENT_FIT
+#define LARGE_RESIDENT_FIT 1
+#endif
+#ifndef ALLOC_FULL_QUIET_DIV
+#define ALLOC_FULL_QUIET_DIV 8
+#endif
 /* The policy's settings in a development build. A runtime compiled with
  * -DAVANT_GC_TUNE (CC="clang -DAVANT_GC_TUNE" sh runtime/build.sh) reads
  * the young sizing rule, the start budget, the ages, the hole rule and the
@@ -251,23 +381,34 @@ typedef struct GcTune {
   uint64_t byte_age;  /* AVANT_GC_TUNE_BYTE_AGE_KB: 0 none, else a survivor block younger ages again in place */
   uint64_t no_holes;  /* AVANT_GC_TUNE_NO_HOLES: 0, 1 small objects, 2 small and medium */
   uint64_t ret;       /* AVANT_GC_TUNE_RETURN: 1 a chunk is decommitted only when the total stays at the target */
-  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young */
+  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young, 2 one due by allocation (the release rule), 3 both, 0 none */
   uint64_t plain_div; /* AVANT_GC_TUNE_PLAIN_DIV: PLAIN_LARGE_DIV */
   uint64_t full_pct;  /* AVANT_GC_TUNE_FULL_PCT: (HEAP_FACTOR - 1) * 100 */
   uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place (with MIXED_EVAC=0) */
   uint64_t trace;     /* AVANT_GC_TUNE_TRACE: 1 a line a collection on stderr */
   uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 0 a young collection's return keeps no young cycle's use (YOUNG_RETAIN) */
   uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines (MIXED_EVAC_LINES; 0 none) */
+  uint64_t alloc_pct; /* AVANT_GC_TUNE_ALLOC_PCT: ALLOC_FULL_PCT (0 no full collection due by allocation) */
+  uint64_t alloc_min; /* AVANT_GC_TUNE_ALLOC_MIN_KB: ALLOC_FULL_MIN */
+  uint64_t alloc_base; /* AVANT_GC_TUNE_ALLOC_BASE: 0 the heap after the last full collection (mature blocks and large objects), 1 its live bytes */
+  uint64_t alloc_grown; /* AVANT_GC_TUNE_ALLOC_GROWN_PCT: ALLOC_FULL_GROWN_PCT (0 any growth) */
+  uint64_t start_prom; /* AVANT_GC_TUNE_START_PROM_KB: the start phase ends once young collections promoted this many bytes (0 never) */
+  uint64_t alloc_quiet; /* AVANT_GC_TUNE_ALLOC_QUIET_DIV: ALLOC_FULL_QUIET_DIV (0 any growth) */
+  uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
+  uint64_t start_prom_small; /* AVANT_GC_TUNE_START_PROM_SMALL_KB: START_PROM_SMALL_BYTES (0 never) */
+  uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
+  uint64_t keep_large; /* AVANT_GC_TUNE_KEEP_LARGE: FULL_KEEP_LARGE (0 a full collection promotes young buffers too) */
+  uint64_t ret_age;  /* AVANT_GC_TUNE_RET_AGE: LARGE_RETURN_AGE */
+  uint64_t resident_fit; /* AVANT_GC_TUNE_RESIDENT_FIT: LARGE_RESIDENT_FIT */
+  uint64_t keep_large_min; /* AVANT_GC_TUNE_KEEP_LARGE_MIN_KB: FULL_KEEP_LARGE_MIN */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
   uint64_t highs;     /* high-survival budget collections in a row */
-  int keep_full_now;
   uint64_t *stamp;    /* byte_age: per block, the young clock when it became a survivor block */
   uint64_t stamp_n;
 } GcTune;
 extern GcTune gc_tune;
 #define TUNE(f, c) (gc_tune.f)
-void gc_tune_start_large(uint64_t bytes);
 void gc_tune_stamp(const void *block_base, uint64_t v);
 uint64_t gc_tune_stamp_of(const void *block_base);
 #else
@@ -406,6 +547,9 @@ typedef struct GcChunk {
   uint32_t idle;
   uint64_t alloc[PAGE_WORDS];
   uint64_t dirty_pages[PAGE_WORDS];
+  /* A large-object chunk's pages: the return clock's low byte when each
+   * was last freed (gc_heap_return, LARGE_RETURN_AGE). */
+  uint8_t freed_at[PAGES_PER_CHUNK];
 } GcChunk;
 
 /* One space's state, indexed
@@ -1032,6 +1176,10 @@ typedef struct GcStickyCounters {
   uint64_t keeps;
   uint64_t keep_fell;
   uint64_t keep_bytes;
+  /* Ordinary full collections that left young buffers young
+   * (FULL_KEEP_LARGE), and those buffers' bytes. */
+  uint64_t large_keeps;
+  uint64_t large_keep_bytes;
   /* The sticky full collections, the bytes they marked (what is not
    * old) and the logged holders they scanned. */
   uint64_t stickies;
@@ -1715,6 +1863,17 @@ typedef struct GcHeap {
   uint8_t keep_young;
   uint8_t keep_yold;
   uint64_t keep_young_live;
+  /* keep_full: this trace that leaves the young generation young was
+   * due by allocation (or the development build's trigger): its mark
+   * goes on through a young object that names an old one, instead of
+   * going back to an ordinary trace, and the proof is broken after it
+   * (no path of old objects is known to reach every old object). */
+  uint8_t keep_full;
+  /* keep_large: this ordinary trace leaves young large buffers young
+   * (FULL_KEEP_LARGE); keep_large_k0: the keep list's length when it
+   * started (their holders follow). */
+  uint8_t keep_large;
+  uint32_t keep_large_k0;
   /* The sticky full collection (avant_gc_proof.c): this full collection
    * marks from the roots and the logged holders and stops at every old
    * object (gc_collect sets it, gc_mark_roots reads it). lines_f: the
@@ -1752,10 +1911,14 @@ typedef struct GcHeap {
   uint32_t *mixed_slot;
   uint32_t stress_lines_cap;
   uint32_t mixed_cap;
-  /* The live bytes the last collection measured, and the allocation
-   * count at the last full collection (avant_gc_heap_goal_collect). */
+  /* The live bytes the last collection measured; the allocation count
+   * at the last full or complete collection, and the bytes allocated from
+   * there that make a full collection due (ALLOC_FULL_PCT). */
   uint64_t live;
   uint64_t last_full_at;
+  uint64_t alloc_full_due;
+  /* mature_since_full at the last budget collection (ALLOC_FULL_QUIET_DIV). */
+  uint64_t alloc_mature_prev;
   GcSettings set;
 
   /* avant_gc_roots.c. The registered threads (GcThread.reg), the world
@@ -2054,6 +2217,8 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
+void gc_rem_keep_large_holders(void);
+void gc_young_start_large(uint64_t bytes);
 void gc_cards_settle(void);
 void gc_rem_merge_all(void);
 void gc_rem_thread_leave(void);

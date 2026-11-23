@@ -167,6 +167,30 @@ void gc_rem_keep_young_holders(void) {
   gc_heap.keep_n = 0;
 }
 
+/* A full collection that left young buffers young (FULL_KEEP_LARGE):
+ * each holder its mark met naming one (the keep list from
+ * keep_large_k0) joins the remembered set, a carded one with every card
+ * counted as marked until the next young collection settles them. The
+ * holders are marked (the mark met them by scanning them), so the scrub
+ * keeps each while it names a young object. */
+void gc_rem_keep_large_holders(void) {
+  uint32_t i;
+  for (i = gc_heap.keep_large_k0; i < gc_heap.keep_n; i++) {
+    void *obj = gc_heap.keep[i];
+    AvantHeader *h = avant_header(obj);
+    if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM | AVANT_FLAG_REMC)) {
+      continue;
+    }
+    if (gc_carded(h)) {
+      h->flags |= AVANT_FLAG_CARD_ALL;
+      rem_add_bit(obj, AVANT_FLAG_REMC);
+    } else {
+      rem_add_bit(obj, AVANT_FLAG_REM);
+    }
+  }
+  gc_heap.keep_n = gc_heap.keep_large_k0;
+}
+
 /* After a young collection: the cards of every carded
  * object it reached (the carded list: the large pointer buffers among
  * the noted objects, in the same order; this used to read every noted

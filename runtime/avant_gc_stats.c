@@ -216,6 +216,10 @@ static void print_sticky(StatsLine *l) {
     line_add(l, " full_kept_young=%llu full_kept_young_bytes=%llu full_kept_young_fell=%llu", u(c->keeps),
              u(c->keep_bytes), u(c->keep_fell));
   }
+  /* Only in a program whose full collection left a young buffer young. */
+  if (c->large_keeps) {
+    line_add(l, " full_kept_large=%llu full_kept_large_bytes=%llu", u(c->large_keeps), u(c->large_keep_bytes));
+  }
 }
 
 /* The proof's segment, only in a program that forced a collection
