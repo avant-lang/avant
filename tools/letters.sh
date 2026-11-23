@@ -41,6 +41,19 @@
 # runtime/build/avant_llvm.o as a link argument (COMPILER_LINK below);
 # a user program never does.
 #
+# Every compiler build runs in the verify mode (AVANT_VERIFY=1: the MIR
+# verifier at stage final and LLVM's verifier, compiler/llvm/driver.av).
+#
+# The compilers link with mold when it is installed (LETTERS_MOLD, else
+# `mold` on PATH; LETTERS_MOLD=none for GNU ld) and the compiler it linked
+# starts (`OUT version`); a compiler that does not start is linked again
+# with GNU ld, cc's default, which every later step then uses. The first
+# step says which linker. mold reads the 115 MB LLVM object in a fifth of
+# GNU ld's time; lld cannot link the runtime (it puts its thread-local
+# common symbols outside the TLS block). The compilers keep linking user
+# programs with cc's default. LETTERS_MOLD_CHECK=fail makes the start
+# check fail (to test the fallback).
+#
 # Environment:
 #   LETTERS_SEED      seed directory with avant (default bin/v0.49.0, the
 #                     release; a seed must emit the runtime call table, so
@@ -124,6 +137,34 @@ need_llvm() {
   exit 1
 }
 
+# The compilers' linker: CC (read by every compiler's link, the seed's
+# too) names bin/.letters-ld/cc, which runs cc (or the CC given) with
+# -fuse-ld=mold and the chosen mold first on its program path.
+mold=${LETTERS_MOLD:-$(command -v mold || echo none)}
+link_env=""
+link_said=""
+link_setup() {
+  [ -n "$link_said" ] && return 0
+  link_said=1
+  if [ "$mold" != none ] && "$mold" --version 2> /dev/null | grep -q '^mold '; then
+    d=$root/bin/.letters-ld
+    mkdir -p "$d"
+    ln -sf "$mold" "$d/ld.mold"
+    printf '#!/bin/sh\nexec %s -B%s -fuse-ld=mold "$@"\n' "${CC:-cc}" "$d" > "$d/cc"
+    chmod 755 "$d/cc"
+    link_env="CC=$d/cc"
+    echo "letters: the compilers link with mold ($("$mold" --version | cut -d ' ' -f 1-2))"
+  else
+    echo "letters: the compilers link with GNU ld (cc's default; no mold)"
+  fi
+}
+
+# starts OUT: the compiler just built runs.
+starts() {
+  [ "${LETTERS_MOLD_CHECK:-}" = fail ] && return 1
+  env -u AVANT_ROOT timeout -k 5 60 "$1" version > /dev/null 2>&1 < /dev/null
+}
+
 # build LETTER COMPILER OUT MODE [FLAG]
 # FLAG is --cpu=baseline for every compiler: the
 # avant binary stays on plain x86-64 whatever a program's artifact default
@@ -131,12 +172,19 @@ need_llvm() {
 # (older seeds predated --cpu and built plain x86-64 themselves).
 build() {
   need_llvm
+  link_setup
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
-  # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  # shellcheck disable=SC2086 # timer, the flag and link_env are words or empty
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  if [ -n "$link_env" ] && ! starts "$3"; then
+    echo "letters: $3 linked by mold does not start: linked again with GNU ld, which the later steps use"
+    link_env=""
+    # shellcheck disable=SC2086 # timer and the flag are words or empty
+    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  fi
   record "$3" "$1"
 }
 

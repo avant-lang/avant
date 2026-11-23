@@ -5406,6 +5406,7 @@ Run-time failures are [traps](#traps).
 | `AVANT_COMPILER` | the compiler that `run_golden` and `rejects` use in tests ([Golden files](#golden-files)); `avant test` passes a value you exported to the tests as it is, and its own path when there is none |
 | `AVANT_ROOT` | another place to find the runtime and the standard library, instead of beside the `avant` binary |
 | `AVANT_RE2C` | another `re2c` binary for regex literals |
+| `AVANT_VERIFY=1` | the verify mode: a compile also runs the compiler's verifier on the final MIR and LLVM's verifier on the generated IR, and refuses a program either rejects with its message (a compiler defect); `avant test` turns it on for what it compiles and runs |
 | `AVANT_HEAP_MAX_MB`, `AVANT_GC_STATS`, ... | the collector, read by your program ([Collector settings](#collector-settings)) |
 | `AVANT_COVERAGE*` | coverage ([Reports](#reports)) |
 

@@ -76,10 +76,8 @@ pub fn (lw: MirLower) symbol_of(fnn: Function): String {
     return "${base}${suffix}"
   }
   n = 0
-  for o in lw.lw_all {
-    if !o.generic && !fn_is_method(o) && o.name == fnn.name && o.mod_name == fnn.mod_name && lw.instance_suffix(o).size == 0 {
-      n += 1
-    }
+  if c = lw.fn_name_counts().get("${fnn.mod_name}\n${fnn.name}") {
+    n = c
   }
   if n <= 1 {
     return base
@@ -88,6 +86,48 @@ pub fn (lw: MirLower) symbol_of(fnn: Function): String {
     return "${base}${mir_params_text(sig.params)}"
   }
   base
+}
+
+// The plain functions that are not generic or instances, counted by
+// module and name ("module\nname"), once.
+pub fn (lw: MirLower) fn_name_counts: Hash(String, Int) {
+  if h = lw.lw_fn_names {
+    return h
+  }
+  h = Hash(String, Int).new()
+  for o in lw.lw_all {
+    if !o.generic && !fn_is_method(o) && o.inst_args.size == 0 {
+      key = "${o.mod_name}\n${o.name}"
+      n = 0
+      if c = h.get(key) {
+        n = c
+      }
+      h[key] = n + 1
+    }
+  }
+  lw.lw_fn_names = h
+  h
+}
+
+// The checked methods that are not generic or instances, counted by
+// owner, owner's module and name ("owner\nmodule\nname"), once.
+pub fn (lw: MirLower) method_name_counts: Hash(String, Int) {
+  if h = lw.lw_method_names {
+    return h
+  }
+  h = Hash(String, Int).new()
+  for o in lw.lw_syms.methods {
+    if !o.node.generic && o.node.inst_args.size == 0 {
+      key = "${o.owner}\n${o.node.owner_mod}\n${o.name}"
+      n = 0
+      if c = h.get(key) {
+        n = c
+      }
+      h[key] = n + 1
+    }
+  }
+  lw.lw_method_names = h
+  h
 }
 
 // The owner type of a method: a struct or class of any module (decl.av
@@ -117,13 +157,8 @@ pub fn (lw: MirLower) method_symbol(fnn: Function): String {
       return "${base}${suffix}"
     }
     n = 0
-    for o in lw.lw_syms.methods {
-      if !o.node.generic && o.owner == sig.owner && o.node.owner_mod == sig.node.owner_mod && o.name == sig.name {
-        onode = o.node
-        if lw.instance_suffix(onode).size == 0 {
-          n += 1
-        }
-      }
+    if c = lw.method_name_counts().get("${sig.owner}\n${sig.node.owner_mod}\n${sig.name}") {
+      n = c
     }
     if n > 1 {
       return "${base}${mir_params_text(sig.params)}"

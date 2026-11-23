@@ -555,8 +555,20 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   e.label = "alloca"
   // The frame record first: a slot local's address is in it.
+  e.slot_named = false
   if e.frame_words >= 0 {
     e.line("%gcf = alloca ${ll_gc_frame_type(e)}, align ${e.frame_align}")
+    // An optimized build names each slot's address once: the optimizer
+    // would merge the GEPs of every use anyway, after it paid to parse and
+    // fold them.
+    if e.shadows_on {
+      for i in 0..e.frame_at.size {
+        if e.frame_at[i] >= 0 {
+          e.line("%sl${i} = getelementptr inbounds i8, ptr %gcf, i64 ${e.frame_at[i]}")
+        }
+      }
+      e.slot_named = true
+    }
   }
   for i in 0..f.locals.size {
     if f.valid_local(i) {

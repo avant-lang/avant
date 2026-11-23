@@ -14,7 +14,7 @@
  * Status codes (the same in compiler/llvm/glue.av):
  *   0 ok, 1 target (no native target or target machine), 2 parse (the
  *   text or file is not valid IR), 3 verify (the module fails the
- *   verifier), 4 passes (the pipeline string is invalid or failed),
+ *   verifier, in the verify mode, AVANT_VERIFY=1), 4 passes (the pipeline string is invalid or failed),
  *   5 emit (the object could not be written).
  *
  * Nothing here aborts the compiler: every step uses an error-returning
@@ -288,7 +288,13 @@ static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t leve
     set_error("", "AVANT_CODE_SHIFT must be a number of bytes from 1 to 63 (or 0, unset: no shift)");
     return AVANT_LLVM_TARGET;
   }
-  if (LLVMVerifyModule(mod, LLVMReturnStatusAction, &msg)) {
+  /* LLVM's verifier runs in the verify mode only (AVANT_VERIFY=1, which
+   * the suite, the gate, tools/letters.sh and CI turn on): the module is
+   * the emitter's, from MIR the verifier checked, and every change to the
+   * compiler is verified over the whole corpus in that mode, so a user's
+   * compile does not prove it again. */
+  const char *vm = getenv("AVANT_VERIFY");
+  if (vm && strcmp(vm, "1") == 0 && LLVMVerifyModule(mod, LLVMReturnStatusAction, &msg)) {
     set_error("", msg);
     LLVMDisposeMessage(msg);
     return AVANT_LLVM_VERIFY;

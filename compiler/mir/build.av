@@ -22,9 +22,15 @@ pub class MirBuilder {
   pub cur_bb: Int = 0
   cur_loc: MLoc
   file_id: Int = 0
+  // The file table's index of each path (its first entry), and how many
+  // of module.files it has seen: entries added by another builder of the
+  // same module are taken in before a lookup.
+  file_at: Hash(String, Int)
+  file_seen: Int = 0
 
   fn initialize(m: MModule) {
     self.module = m
+    self.file_at = Hash(String, Int).new()
     self.types = m.types
     self.cur_loc = mir_loc(0, 0, 0)
     self.func = MFunc.new("", 0, self.cur_loc)
@@ -35,14 +41,22 @@ pub class MirBuilder {
   // The file-table index of path (added on first use); it becomes the
   // current file for at_loc and here.
   pub fn file(path: String): Int {
-    for i in 0..self.module.files.size {
-      if self.module.files[i] == path {
-        self.file_id = i
-        return i
+    while self.file_seen < self.module.files.size {
+      p = self.module.files[self.file_seen]
+      if k = self.file_at.get(p) {
+      } else {
+        self.file_at[p] = self.file_seen
       }
+      self.file_seen += 1
+    }
+    if k = self.file_at.get(path) {
+      self.file_id = k
+      return k
     }
     self.module.files.push(path)
     self.file_id = self.module.files.size - 1
+    self.file_at[path] = self.file_id
+    self.file_seen = self.module.files.size
     self.file_id
   }
 
