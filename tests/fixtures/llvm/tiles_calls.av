@@ -1,0 +1,262 @@
+// Loop nests whose inner body calls a pure function (a value of its
+// scalar arguments that reads no memory: mir_tile_pure in the compiler)
+// are tiled as if the call were an expression: each row's copy calls it
+// with its own arguments, in its own order. Every output must keep the
+// plain loop's bits (the same nests with a call in the store, `keep`,
+// are not tiled). A function that reads an array is not pure: its nest
+// stays as written. The inputs hold NaN, the infinities, both zeros and
+// subnormals; the sizes are empty, below a tile, and not multiples of
+// one. Outputs are compared by their 64 bits with every NaN as one (a
+// NaN's sign and payload, where two NaNs meet, are the machine's
+// choice).
+
+// The value as it is, through a branch: not a pure function to the
+// compiler (a pure call is tiled like an expression), so a nest that
+// stores through it is not tiled.
+fn keep(x: Float64): Float64 {
+  if x != x {
+    return x
+  }
+  x
+}
+
+// Spectralnorm's matrix entry: a checked Int sum of its arguments.
+fn ev(i: Int, j: Int): Float64 {
+  1.0 / ((i + j).to_f() * ((i + j).to_f() + 1.0) / 2.0 + i.to_f() + 1.0)
+}
+
+// A checked product and difference of the arguments.
+fn ew(i: Int, j: Int): Float64 {
+  p = i * j
+  q = i - j
+  p.to_f() * 0.25 - q.to_f() * 0.125
+}
+
+fn scale(x: Float64, k: Int): Float64 {
+  x * k.to_f() + 0.5
+}
+
+fn picked(xs: Array(Float64), j: Int): Float64 {
+  xs[j % xs.size]
+}
+
+// out[i] = sum over j of ev(i, j) * u[j]: depth 2, a call per step.
+fn mv(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += ev(i, j) * u[j]
+    }
+    out[i] = v
+  }
+}
+
+fn mv_ref(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += ev(i, j) * u[j]
+    }
+    out[i] = keep(v)
+  }
+}
+
+// The transposed entry, and a second pure call of the element.
+fn mvt(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += ev(j, i) * scale(u[j], i)
+    }
+    out[i] = v
+  }
+}
+
+fn mvt_ref(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += ev(j, i) * scale(u[j], i)
+    }
+    out[i] = keep(v)
+  }
+}
+
+// Depth 3: c[i][j] = sum over k of ew(i, k) * t[j][k].
+fn mm(ni: Int, nj: Int, nk: Int, t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ew(i, k) * tj[k]
+      }
+      ci[j] = s
+    }
+  }
+}
+
+fn mm_ref(ni: Int, nj: Int, nk: Int, t: Array(Array(Float64)), c: Array(Array(Float64))) {
+  for i in 0..ni {
+    ci = c[i]
+    for j in 0..nj {
+      tj = t[j]
+      s = 0.0
+      for k in 0..nk {
+        s += ew(i, k) * tj[k]
+      }
+      ci[j] = keep(s)
+    }
+  }
+}
+
+// A call that reads an array: not pure, not tiled.
+fn mvp(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += picked(u, i + j) * u[j]
+    }
+    out[i] = v
+  }
+}
+
+fn mvp_ref(ni: Int, nj: Int, u: Array(Float64), out: Array(Float64)) {
+  for i in 0..ni {
+    v = 0.0
+    for j in 0..nj {
+      v += picked(u, i + j) * u[j]
+    }
+    out[i] = keep(v)
+  }
+}
+
+class Gen {
+  pub state: UInt64 = 88172645463325252
+
+  fn next: UInt64 {
+    x = self.state
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    self.state = x
+    x
+  }
+
+  fn value: Float64 {
+    r = self.next()
+    pick = r % 64
+    if pick == 0 {
+      return Float64.from_bits((r & 9223372036854775808) | 9221120237041090560 | ((r >> 20) & 1048575))
+    }
+    if pick == 1 {
+      return 1.0 / 0.0
+    }
+    if pick == 2 {
+      return -1.0 / 0.0
+    }
+    if pick == 3 {
+      return -0.0
+    }
+    if pick == 4 {
+      return Float64.from_bits((r >> 12) & 4503599627370495)
+    }
+    m = ((r >> 11) % 2000001).to_i().to_f() - 1000000.0
+    m * 1.0e-3
+  }
+}
+
+fn bits(v: Float64, raw: Bool): UInt64 {
+  if !raw && v != v {
+    return 9221120237041090560
+  }
+  v.to_bits()
+}
+
+fn fold1(r: Array(Float64), raw: Bool): UInt64 {
+  h: UInt64 = 1469598103934665603
+  for v in r {
+    h = (h &* 1099511628211) ^ bits(v, raw)
+  }
+  h
+}
+
+fn fold(xs: Array(Array(Float64)), raw: Bool): UInt64 {
+  h: UInt64 = 1469598103934665603
+  for r in xs {
+    h = (h &* 1099511628211) ^ fold1(r, raw)
+  }
+  h
+}
+
+// kind 0 mv, 1 mvt, 2 mvp
+fn mv_case(seed: UInt64, kind: Int, ni: Int, nj: Int, plain: Bool): Array(UInt64) {
+  g = Gen.new()
+  g.state = seed
+  u = Array(Float64).new(nj, (j) { g.value() })
+  out = Array(Float64).new(ni, (i) { g.value() })
+  if kind == 0 {
+    if plain {
+      mv_ref(ni, nj, u, out)
+    } else {
+      mv(ni, nj, u, out)
+    }
+  } else if kind == 1 {
+    if plain {
+      mvt_ref(ni, nj, u, out)
+    } else {
+      mvt(ni, nj, u, out)
+    }
+  } else if nj > 0 {
+    if plain {
+      mvp_ref(ni, nj, u, out)
+    } else {
+      mvp(ni, nj, u, out)
+    }
+  }
+  [fold1(out, false), fold1(out, true)]
+}
+
+fn mm_case(seed: UInt64, ni: Int, nj: Int, nk: Int, plain: Bool): Array(UInt64) {
+  g = Gen.new()
+  g.state = seed
+  t = Array(Array(Float64)).new(nj, (j) { Array(Float64).new(nk, (k) { g.value() }) })
+  c = Array(Array(Float64)).new(ni, (i) { Array(Float64).new(nj, (j) { g.value() }) })
+  if plain {
+    mm_ref(ni, nj, nk, t, c)
+  } else {
+    mm(ni, nj, nk, t, c)
+  }
+  [fold(c, false), fold(c, true)]
+}
+
+fn main {
+  sizes = [0, 1, 2, 3, 4, 5, 7, 8, 9, 13, 17]
+  bad = 0
+  runs = 0
+  seed: UInt64 = 777
+  tally = (tag: String, x: Array(UInt64), y: Array(UInt64)) {
+    runs += 1
+    if x[0] != y[0] {
+      bad += 1
+      puts("${tag}: ${x[0]} != ${y[0]}")
+    }
+  }
+  for ni in sizes {
+    for nj in sizes {
+      for kind in [0, 1, 2] {
+        seed = seed &+ 7919
+        tally("mv${kind} ${ni} x ${nj}", mv_case(seed, kind, ni, nj, false), mv_case(seed, kind, ni, nj, true))
+      }
+      for nk in [0, 1, 5, 17] {
+        seed = seed &+ 104729
+        tally("mm ${ni} x ${nj} x ${nk}", mm_case(seed, ni, nj, nk, false), mm_case(seed, ni, nj, nk, true))
+      }
+    }
+  }
+  tally("mv 300", mv_case(5, 0, 300, 300, false), mv_case(5, 0, 300, 300, true))
+  tally("mvt 300", mv_case(6, 1, 300, 300, false), mv_case(6, 1, 300, 300, true))
+  tally("mm 64", mm_case(7, 64, 64, 64, false), mm_case(7, 64, 64, 64, true))
+  puts("${runs} cases, ${bad} differ")
+}

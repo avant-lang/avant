@@ -698,6 +698,7 @@ void avant_set_flag_threads(long n);
 #define AVANT_POOL_SIZE_MAX 1024
 avant_int avant_set_pool_size(avant_int n);
 avant_int avant_pool_size_fix(void);
+avant_int avant_tile_fit(avant_int bytes, avant_int level, avant_int unit);
 void *avant_spawn(void *fn, void *arg);
 /* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
  * captures' thaw and the captured channels' close), called with the

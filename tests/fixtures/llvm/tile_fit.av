@@ -1,0 +1,26 @@
+// The cache tile's block sizes as the runtime chooses them where a tiled
+// nest starts (runtime/avant_task.c, avant_tile_fit): items of 8000
+// bytes in this thread's share of L2 (level 2, a multiple of 2) and in
+// half its share of L3 (level 3, a multiple of 4), from one thread (no
+// pool has started). Run with AVANT_TILE_CACHE_UNKNOWN=1 the runtime
+// takes every reading of the caches as failed and uses its fixed sizes,
+// 256 KiB and 2 MiB, one CPU each: 262144 / 8000 is 32 columns, and
+// 2097152 / 2 / 8000 is 131, so 128 rows. Without it the sizes depend
+// on the machine, and the program prints only that each is a multiple
+// of its unit, at least the unit.
+
+import std.process
+
+lib tile_rt {
+  fun avant_tile_fit(bytes: Int, level: Int, unit: Int): Int
+}
+
+fn main {
+  cols = tile_rt.avant_tile_fit(8000, 2, 2)
+  rows = tile_rt.avant_tile_fit(8000, 3, 4)
+  if v = process.env("AVANT_TILE_CACHE_UNKNOWN"), v == "1" {
+    puts("${cols} ${rows}")
+    return
+  }
+  puts(cols >= 2 && cols % 2 == 0 && rows >= 4 && rows % 4 == 0)
+}
