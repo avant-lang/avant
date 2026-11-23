@@ -49,6 +49,8 @@
 #     whole-line shifts are linked as before, each sub-line shift compiled
 #     with AVANT_CODE_SHIFT set, every layout's binary runs, and
 #     shifts.txt lists them all;
+#   check-build-threads: the build puts the task's configuration beside
+#     its layouts, where rounds.py reads its threads (cfg_threads);
 #   check-build-subline-checked: a stub that ignores AVANT_CODE_SHIFT is
 #     caught (main not where the shift puts it), the build fails;
 #   check-build-subline-bad: a sub-line shift of 64 is refused;
@@ -69,7 +71,9 @@
 #     rebuilds the checkout's runtime objects byte for byte;
 #   mem-compare: tools/la-mem.py reads a lower average over the tasks (the
 #     twins left out), a program whose ranges part as moved, and one whose
-#     runs take two values as one to run again.
+#     runs take two values as one to run again;
+#   mem-aslr-on: with ASLR-on runs on both sides, a peak moved with ASLR
+#     off but not with it on reads as one to run again.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -304,12 +308,18 @@ rm -f "$out.s"; exit $rc
 STUB
 chmod +x "$lb/root/bin/avant-c-llvm"
 echo 'fn main {}' > "$lb/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lb/la/args/x_one"
+printf 'fn cfg_threads: Int { 16 }\n' > "$lb/la/avant/langarena/tmp/x_one.cfg.av"
 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
 ok=0
 for k in 0 64 16 32; do "$lb/d/layouts/$k/x_one" < /dev/null || ok=1; done
 m16=$(nm "$lb/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
 [ $rc -eq 0 ] && [ $ok -eq 0 ] && [ "$(cat "$lb/d/shifts.txt")" = "0 64 16 32" ] && [ -n "$m16" ] && [ $((0x$m16 % 64)) -eq 16 ]
 say check-build-subline $? "rc=$rc runs=$ok main@16=$m16 shifts=$(cat "$lb/d/shifts.txt" 2>/dev/null); $(tail -2 "$lb/log" | tr '\n' ';')"
+# The task's configuration lands beside its layouts, where rounds.py reads
+# its threads.
+t=$(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import rounds; print(rounds.threads_of(sys.argv[2], "x_one"))' "$root/tools" "$lb/d/layouts")
+[ "$t" = 16 ]
+say check-build-threads $? "threads=$t"
 STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
 [ $rc -eq 1 ] && grep -q 'at sub-line shift 16: main is at .*, not 16 bytes into its line' "$lb/log2"
 say check-build-subline-checked $? "rc=$rc $(tr '\n' ';' < "$lb/log2")"
@@ -391,4 +401,13 @@ o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head.tsv" 2>&1)
 echo "$o" | grep -q '^average peak over 3 tasks: .*: lower$' && echo "$o" | grep -q '^a_one.*moved$' \
   && echo "$o" | grep -q '^b_two.*repeat' && echo "$o" | grep -q '^to run again: b_two$'
 say mem-compare $? "$(echo "$o" | tr '\n' ';')"
+# With the runs taken with ASLR on (a sixth field), a peak that moved with
+# it off is moved only when those runs part too: a_one's do, d_four's (a
+# mapping that landed elsewhere) do not.
+printf 'a_one\t1000\t1000\t1000\t1000,1000,1000\t1000,1064,1000\nd_four\t8916\t8916\t8916\t8916,8916,8916\t9108,9112,9044\n' > "$lmm/base-on.tsv"
+printf 'a_one\t900\t900\t900\t900,900,900\t964,900,900\nd_four\t9180\t9180\t9180\t9180,9180,9180\t9052,9184,9024\n' > "$lmm/head-on.tsv"
+o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-on.tsv" "$lmm/head-on.tsv" 2>&1)
+echo "$o" | grep -q '^a_one.*moved$' && echo "$o" | grep -q '^d_four.*repeat (ASLR on does not confirm)$' \
+  && echo "$o" | grep -q '^with ASLR on: base 5054.0 KB, head 4976.0 KB' && echo "$o" | grep -q '^to run again: d_four$'
+say mem-aslr-on $? "$(echo "$o" | tr '\n' ';')"
 echo done
