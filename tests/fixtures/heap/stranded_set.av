@@ -1,0 +1,92 @@
+// A working set that young collections promote and that then dies, with
+// no promotion after it: the full trigger counts mature growth only, and
+// it stops short of the trigger, so before a full collection could fall
+// due by allocation (ALLOC_FULL_PCT in runtime/avant_gc_internal.h) the
+// dead set stayed in mature space to the exit. The setup's collection
+// leaves a long-lived list old; the working set lives across several
+// young collections (so they promote it) and is dropped; then the program
+// only makes short-lived garbage. Meanwhile the old list is reachable only
+// through a young holder at times, so the full collection due by
+// allocation, which leaves young objects young, must mark through a young
+// object that names an old one. tests/cases/test_gc_sizing.av reads its
+// collections with AVANT_GC_STATS=1 and runs it under AVANT_GC_VERIFY=1
+// with its known stdout.
+import std.gc
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+class Hold {
+  n: Node?
+}
+
+fn list(n: Int, base: Int): Node? {
+  head: Node? = nil
+  i = 0
+  while i < n {
+    x = Node.new()
+    x.v = base + i
+    x.next = head
+    head = x
+    i += 1
+  }
+  head
+}
+
+fn count(p0: Node?): Int {
+  k = 0
+  p = p0
+  while n = p {
+    k += 1
+    p = n.next
+  }
+  k
+}
+
+// Garbage: R short strings, their sizes summed.
+fn churn(r: Int, salt: Int): Int {
+  s = 0
+  j = 0
+  while j < r {
+    t = "garbage-${j}-${salt}"
+    s += t.size
+    j += 1
+  }
+  s
+}
+
+fn main {
+  anchor = list(100000, 0)
+  gc.collect()
+  // The working set: built in pieces between garbage, so young
+  // collections run while it grows and promote it.
+  work: Array(Node?) = []
+  junk = 0
+  k = 0
+  while k < 45 {
+    work.push(list(3000, k))
+    junk += churn(20000, k)
+    k += 1
+  }
+  total = 0
+  for w in work {
+    total += count(w)
+  }
+  work = []
+  // Only garbage from here; the old list now and then held by a young
+  // object alone.
+  r = 0
+  while r < 400 {
+    h = Hold.new()
+    h.n = anchor
+    anchor = nil
+    junk += churn(4000, r)
+    anchor = h.n
+    r += 1
+  }
+  puts("anchor: ${count(anchor)}")
+  puts("work: ${total}")
+  puts("junk: ${junk % 1000}")
+}

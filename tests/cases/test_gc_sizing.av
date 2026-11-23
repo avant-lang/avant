@@ -103,6 +103,52 @@ fn test_holder_cycle(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(p, 0, "holder_cycle.av: no buffer promoted (los_promoted_bytes ${p})")
 }
 
+// heap/stranded_set.av: a working set that young collections promote and
+// that then dies, after which the program makes only short-lived garbage:
+// its mature growth stops short of the full trigger. A full collection
+// falls due once the bytes allocated since the last one pass
+// max(ALLOC_FULL_MIN, ALLOC_FULL_PCT percent of the heap) while the mature
+// growth since it passed ALLOC_FULL_GROWN_PCT percent of the trigger and
+// stopped (runtime/avant_gc_internal.h),
+// and it leaves young objects young; at times the program's old list is
+// reachable only through a young holder, which that mark must follow.
+// Before, the setup's collection was the only full one and the dead set
+// stayed to the exit. It runs plainly, under AVANT_GC_VERIFY=1 and under
+// AVANT_GC_STRESS=1 (without the verifier: the two together take minutes
+// on its 300 MB of allocation) with its known stdout, and with
+// AVANT_GC_STATS=1 (full_heap_goal).
+fn test_stranded_set(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stranded_set.av", "${dir}/stranded_set", "${dir}/stranded_set.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "stranded_set.av: compiles")
+  want = "anchor: 100000\nwork: 135000\njunk: 50\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "stranded_set", "stranded_set.g${e}", envs[e]))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "stranded_set", "stranded_set.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "stranded_set.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/stranded_set.g${e}.out"), want, "stranded_set.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/stranded_set.g${e}.err"), "", "stranded_set.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  c.eq_int(runs[envs.size].code, 0, "stranded_set.av with AVANT_GC_STATS=1: exit 0")
+  st = log_text("${dir}/stranded_set.stats.err")
+  g = stat_of(st, "full_heap_goal")
+  c.expect(g >= 1, "stranded_set.av: a full collection falls due by allocation (full_heap_goal ${g})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_of(text: String, key: String): Int {
   parts = text.split(" ")
@@ -119,6 +165,7 @@ fn test_main(c: Checks) {
   if compiler = process.env("AVANT_COMPILER") {
     test_gc_sizing(c, compiler, avant_test_root(), scratch_dir())
     test_holder_cycle(c, compiler, avant_test_root(), scratch_dir())
+    test_stranded_set(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

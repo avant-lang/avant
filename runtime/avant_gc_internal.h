@@ -226,6 +226,61 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #endif
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
 #define HEAP_FACTOR 2
+/* The full collection due by allocation (gc_maybe_collect): at a young
+ * collection the budget asks for, once the bytes allocated since the last
+ * full collection (or complete one) pass max(ALLOC_FULL_MIN,
+ * ALLOC_FULL_PCT percent of the heap after it: mature blocks and large
+ * objects) in a program that has run a full collection, while the
+ * mature growth since it has passed
+ * ALLOC_FULL_GROWN_PCT percent of the full trigger and has stopped (it
+ * grew by at most the budget / ALLOC_FULL_QUIET_DIV since the last budget
+ * collection), a full collection runs in place of the young one, and
+ * leaves the young generation young (gc_collect, keep_full). The
+ * mature-growth trigger alone waits for growth a program that stopped
+ * promoting never makes: what it promoted since the last full collection,
+ * dead since, stayed to its exit (Compress::LZWEncode 12.1 -> 10.9 MB,
+ * BWTEncode-Pure 16.4 -> 14.7, BWTEncode-Common 19.2 -> 17.9). Each
+ * condition is measured:
+ * - without the growth test every program that allocates ran full
+ *   collections, and a full collection mid-run makes old what is live
+ *   then (Json::ParseMapping's per-run 8.5 MB buffer, 24 -> 49 MB;
+ *   Binarytrees::Arena's 25 MB arena, 30 -> 55 MB);
+ * - a full collection that promotes what it marks gave LZWEncode +4%
+ *   instructions and 12.1 MB: the per-run buffers it marks die old;
+ * - without the stop test a program still promoting ran it before its
+ *   growth trigger, and the young objects it left young were promoted by
+ *   copies after it (Calculator::Interpreter +216 KB, 5.4 MB more
+ *   promoted; Json::Generate +256 KB); at an eighth of the budget
+ *   Calculator::Interpreter does not run it;
+ * - before a program's first full collection, what young collections
+ *   promoted was live when it ran (Json::Generate: 4.15 MB live of 4.16 MB
+ *   promoted), and its first full collection cost 256 KB of resident
+ *   memory; after the first one only (at half the trigger), LZWEncode
+ *   keeps 12.1 -> 10.3 MB of
+ *   its 9.8, BWTEncode-Pure 16.4 -> 14.7 of 13.9, BWTEncode-Common
+ *   19.2 -> 17.7 of 15.0;
+ * - the growth test at half the trigger ran it once in the compiler's
+ *   own build, whose peak then rose 571 -> 616 MB (+0.7% instructions):
+ *   the young sizing's path moved it to its larger mode (395 or 494 MB of
+ *   heap, measured across young-budget settings too); at 60 and 65
+ *   percent it reads 553 MB, at 75 571 MB; 65 by measurement, LZWEncode
+ *   12.1 -> 10.9 MB (10.3 at half, 11.4 at 75);
+ * - 100 percent and a 16 MiB floor gave Graph::BFS / AStar +15-17% (a
+ *   steady 60 MB live set traced again for nothing); 200 percent with a
+ *   16 or a 32 MiB floor the same gains without it; 400 percent and
+ *   64 MiB half the LZWEncode gain. */
+#ifndef ALLOC_FULL_PCT
+#define ALLOC_FULL_PCT 200
+#endif
+#ifndef ALLOC_FULL_MIN
+#define ALLOC_FULL_MIN (32ull * 1024ull * 1024ull)
+#endif
+#ifndef ALLOC_FULL_GROWN_PCT
+#define ALLOC_FULL_GROWN_PCT 65
+#endif
+#ifndef ALLOC_FULL_QUIET_DIV
+#define ALLOC_FULL_QUIET_DIV 8
+#endif
 /* The policy's settings in a development build. A runtime compiled with
  * -DAVANT_GC_TUNE (CC="clang -DAVANT_GC_TUNE" sh runtime/build.sh) reads
  * the young sizing rule, the start budget, the ages, the hole rule and the
@@ -251,17 +306,24 @@ typedef struct GcTune {
   uint64_t byte_age;  /* AVANT_GC_TUNE_BYTE_AGE_KB: 0 none, else a survivor block younger ages again in place */
   uint64_t no_holes;  /* AVANT_GC_TUNE_NO_HOLES: 0, 1 small objects, 2 small and medium */
   uint64_t ret;       /* AVANT_GC_TUNE_RETURN: 1 a chunk is decommitted only when the total stays at the target */
-  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young */
+  uint64_t keep_full; /* AVANT_GC_TUNE_KEEP_FULL: 1 a triggered full collection leaves young objects young, 2 one due by allocation (the release rule), 3 both, 0 none */
   uint64_t plain_div; /* AVANT_GC_TUNE_PLAIN_DIV: PLAIN_LARGE_DIV */
   uint64_t full_pct;  /* AVANT_GC_TUNE_FULL_PCT: (HEAP_FACTOR - 1) * 100 */
   uint64_t mixed_age; /* AVANT_GC_TUNE_MIXED_AGE: N, young survivors filling at most N lines of a block with mature lines age in place (with MIXED_EVAC=0) */
   uint64_t trace;     /* AVANT_GC_TUNE_TRACE: 1 a line a collection on stderr */
   uint64_t retain_young; /* AVANT_GC_TUNE_RETAIN_YOUNG: 0 a young collection's return keeps no young cycle's use (YOUNG_RETAIN) */
   uint64_t mixed_evac; /* AVANT_GC_TUNE_MIXED_EVAC: N, a young collection evacuates a block with mature lines whose survivors fill at most N lines (MIXED_EVAC_LINES; 0 none) */
+  uint64_t alloc_pct; /* AVANT_GC_TUNE_ALLOC_PCT: ALLOC_FULL_PCT (0 no full collection due by allocation) */
+  uint64_t alloc_min; /* AVANT_GC_TUNE_ALLOC_MIN_KB: ALLOC_FULL_MIN */
+  uint64_t alloc_base; /* AVANT_GC_TUNE_ALLOC_BASE: 0 the heap after the last full collection (mature blocks and large objects), 1 its live bytes */
+  uint64_t alloc_grown; /* AVANT_GC_TUNE_ALLOC_GROWN_PCT: ALLOC_FULL_GROWN_PCT (0 any growth) */
+  uint64_t start_prom; /* AVANT_GC_TUNE_START_PROM_KB: the start phase ends once young collections promoted this many bytes (0 never) */
+  uint64_t alloc_quiet; /* AVANT_GC_TUNE_ALLOC_QUIET_DIV: ALLOC_FULL_QUIET_DIV (0 any growth) */
+  uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
+  uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
   uint64_t highs;     /* high-survival budget collections in a row */
-  int keep_full_now;
   uint64_t *stamp;    /* byte_age: per block, the young clock when it became a survivor block */
   uint64_t stamp_n;
 } GcTune;
@@ -1715,6 +1777,12 @@ typedef struct GcHeap {
   uint8_t keep_young;
   uint8_t keep_yold;
   uint64_t keep_young_live;
+  /* keep_full: this trace that leaves the young generation young was
+   * due by allocation (or the development build's trigger): its mark
+   * goes on through a young object that names an old one, instead of
+   * going back to an ordinary trace, and the proof is broken after it
+   * (no path of old objects is known to reach every old object). */
+  uint8_t keep_full;
   /* The sticky full collection (avant_gc_proof.c): this full collection
    * marks from the roots and the logged holders and stops at every old
    * object (gc_collect sets it, gc_mark_roots reads it). lines_f: the
@@ -1752,10 +1820,14 @@ typedef struct GcHeap {
   uint32_t *mixed_slot;
   uint32_t stress_lines_cap;
   uint32_t mixed_cap;
-  /* The live bytes the last collection measured, and the allocation
-   * count at the last full collection (avant_gc_heap_goal_collect). */
+  /* The live bytes the last collection measured; the allocation count
+   * at the last full or complete collection, and the bytes allocated from
+   * there that make a full collection due (ALLOC_FULL_PCT). */
   uint64_t live;
   uint64_t last_full_at;
+  uint64_t alloc_full_due;
+  /* mature_since_full at the last budget collection (ALLOC_FULL_QUIET_DIV). */
+  uint64_t alloc_mature_prev;
   GcSettings set;
 
   /* avant_gc_roots.c. The registered threads (GcThread.reg), the world

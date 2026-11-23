@@ -263,7 +263,7 @@ static inline __attribute__((always_inline)) void drain(const int bits, const in
       uint64_t d = gc_heap.refs[ph->type_id];
       unsigned k = (unsigned)(d & 0xffu);
       void *next = NULL;
-      if (keep && !TUNE(keep_full_now, 0) && (ph->flags & AVANT_FLAG_YOUNG) && young_names_old(p)) {
+      if (keep && !gc_heap.keep_full && (ph->flags & AVANT_FLAG_YOUNG) && young_names_old(p)) {
         /* An old object reached through a young one: the trace cannot
          * leave the young generation young (gc_mark_roots). */
         gc_heap.keep_yold = 1;

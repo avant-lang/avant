@@ -186,13 +186,21 @@ static void gc_tune_read(void) {
   gc_tune.byte_age = env_u64("AVANT_GC_TUNE_BYTE_AGE_KB", 0, 0, kb) * 1024ull;
   gc_tune.no_holes = env_u64("AVANT_GC_TUNE_NO_HOLES", 0, 0, 2);
   gc_tune.ret = env_u64("AVANT_GC_TUNE_RETURN", 0, 0, 1);
-  gc_tune.keep_full = env_u64("AVANT_GC_TUNE_KEEP_FULL", 0, 0, 1);
+  gc_tune.keep_full = env_u64("AVANT_GC_TUNE_KEEP_FULL", 2, 0, 3);
   gc_tune.plain_div = env_u64("AVANT_GC_TUNE_PLAIN_DIV", PLAIN_LARGE_DIV, 1, 1u << 20);
   gc_tune.full_pct = env_u64("AVANT_GC_TUNE_FULL_PCT", (HEAP_FACTOR - 1) * 100, 1, 10000);
   gc_tune.mixed_age = env_u64("AVANT_GC_TUNE_MIXED_AGE", 0, 0, LINES_PER_BLOCK);
   gc_tune.trace = env_u64("AVANT_GC_TUNE_TRACE", 0, 0, 1);
   gc_tune.retain_young = env_u64("AVANT_GC_TUNE_RETAIN_YOUNG", 1, 0, 1);
   gc_tune.mixed_evac = env_u64("AVANT_GC_TUNE_MIXED_EVAC", MIXED_EVAC_LINES, 0, LINES_PER_BLOCK);
+  gc_tune.alloc_pct = env_u64("AVANT_GC_TUNE_ALLOC_PCT", ALLOC_FULL_PCT, 0, 1u << 20);
+  gc_tune.alloc_min = env_u64("AVANT_GC_TUNE_ALLOC_MIN_KB", ALLOC_FULL_MIN / 1024, 0, kb) * 1024ull;
+  gc_tune.alloc_base = env_u64("AVANT_GC_TUNE_ALLOC_BASE", 0, 0, 1);
+  gc_tune.alloc_grown = env_u64("AVANT_GC_TUNE_ALLOC_GROWN_PCT", ALLOC_FULL_GROWN_PCT, 0, 100);
+  gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", 0, 0, kb) * 1024ull;
+  gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 0, 0, 1);
+  gc_tune.alloc_after = env_u64("AVANT_GC_TUNE_ALLOC_AFTER", 1, 0, 1);
+  gc_tune.alloc_quiet = env_u64("AVANT_GC_TUNE_ALLOC_QUIET_DIV", ALLOC_FULL_QUIET_DIV, 0, 1u << 20);
 }
 
 static void young_start_end(void) {
@@ -216,6 +224,20 @@ void gc_tune_start_large(uint64_t bytes) {
  * too. No high-survival or tenure decision is made in the phase. */
 static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget) {
   if (avant_young_bytes >= gc_tune.dflt) {
+    return 0;
+  }
+  /* START_PROM_KB: what the young collections promoted says the
+   * program's objects outlive two of them at this budget. */
+  if (gc_tune.start_prom &&
+      gc_heap.ctr.prom.copied + gc_heap.ctr.prom.large + gc_heap.ctr.sticky.inplace > gc_tune.start_prom) {
+    young_start_end();
+    return 0;
+  }
+  /* START_LARGE: young large objects that survive are not counted in the
+   * budget; once more of them stay young than the budget holds, the
+   * program's buffers outlive it. */
+  if (gc_tune.start_large && gc_heap.young_large > avant_young_bytes) {
+    young_start_end();
     return 0;
   }
   if (budget && surv * 8 > used) {
@@ -466,6 +488,22 @@ static void limit_progress_check(void) {
   }
 }
 
+/* The allowance of the full collection due by allocation
+ * (ALLOC_FULL_PCT) starts again at a full collection and at a complete
+ * one (a full collection the proof made young). */
+static void alloc_full_restart(void) {
+#ifdef AVANT_GC_TUNE
+  uint64_t h = gc_tune.alloc_base ? gc_heap.live : gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes;
+  uint64_t due = h / 100 * gc_tune.alloc_pct;
+  uint64_t floor = gc_tune.alloc_min;
+#else
+  uint64_t due = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / 100 * ALLOC_FULL_PCT;
+  uint64_t floor = ALLOC_FULL_MIN;
+#endif
+  gc_heap.last_full_at = avant_g_stats.allocated_bytes;
+  gc_heap.alloc_full_due = due < floor ? floor : due;
+}
+
 static int region_refuses(void);
 
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
@@ -597,14 +635,23 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.keep_young = (uint8_t)(why == GC_WHY_EXPLICIT && proof != PROOF_THREADS && proof != PROOF_NURSERY &&
                                      proof != PROOF_OFF && !gc_heap.set.young_fixed &&
                                      avant_nursery_held && avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live);
+      /* A full collection due by allocation leaves it young too, in a
+       * program of one thread: it runs where the program is, and what
+       * it would promote is what is live there (a run's working set,
+       * its buffers), which then dies old (ALLOC_FULL_PCT). Its mark
+       * goes on through a young object that names an old one
+       * (keep_full). */
 #ifdef AVANT_GC_TUNE
-      if (!gc_heap.keep_young && gc_tune.keep_full && why == GC_WHY_TRIGGER && proof != PROOF_THREADS &&
-          proof != PROOF_NURSERY && proof != PROOF_OFF && !gc_heap.set.young_fixed && avant_nursery_held &&
-          atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
-        gc_heap.keep_young = 1;
-        gc_tune.keep_full_now = 1;
-      }
+      if (!gc_heap.keep_young &&
+          (((gc_tune.keep_full & 1) && why == GC_WHY_TRIGGER) || ((gc_tune.keep_full & 2) && why == GC_WHY_HEAP_GOAL)) &&
+#else
+      if (!gc_heap.keep_young && why == GC_WHY_HEAP_GOAL &&
 #endif
+          proof != PROOF_THREADS && proof != PROOF_NURSERY && proof != PROOF_OFF && !gc_heap.set.young_fixed &&
+          avant_nursery_held && atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
+        gc_heap.keep_young = 1;
+        gc_heap.keep_full = 1;
+      }
     } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
       /* It holds, and the trace is the cheaper complete collection
        * (PROOF_YOUNG_PER_OLD's comment). */
@@ -625,6 +672,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
         gc_heap.ctr.proof.idle++;
         gc_heap.mature_since_full = 0;
         gc_heap.promoted_since_full = 0;
+        alloc_full_restart();
         avant_g_stats.collections--;
         gc_thread.collecting = 0;
         if (resume) {
@@ -839,7 +887,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
-    gc_heap.last_full_at = avant_g_stats.allocated_bytes;
     /* What this cycle used beyond its live bytes joins the retention
      * history (GcHeap.cycle_peak); the next cycle's peak starts here. */
     gc_heap.retain_hist[gc_heap.retain_at++ % RETAIN_CYCLES] =
@@ -853,12 +900,10 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* What the next proof starts from: the roots as they are now,
      * an empty log. After everything this collection moves or frees. */
     gc_proof_full_end();
-#ifdef AVANT_GC_TUNE
-    if (gc_tune.keep_full_now) {
+    if (gc_heap.keep_full) {
       gc_proof_break(PROOF_REF_LOST);
-      gc_tune.keep_full_now = 0;
+      gc_heap.keep_full = 0;
     }
-#endif
     gc_heap.sticky = 0;
     gc_heap.keep_young = 0;
     gc_heap.keep_young_live = 0;
@@ -904,6 +949,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
             (unsigned long long)(gc_heap.los_spare ? gc_heap.los_spare->size : 0));
   }
 #endif
+  if (full || complete) {
+    alloc_full_restart();
+  }
   if (gc_heap.ctr.yng.min == 0 || avant_young_bytes < gc_heap.ctr.yng.min) {
     gc_heap.ctr.yng.min = avant_young_bytes;
   }
@@ -976,6 +1024,27 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
+    /* A full collection due by allocation (ALLOC_FULL_PCT), in place of
+     * the young collection the budget asks for (the proof makes it that
+     * young collection when no old object can have died). GREW: the
+     * mature growth since the last budget collection (all of it after a
+     * full collection). */
+    uint64_t grew = gc_heap.mature_since_full >= gc_heap.alloc_mature_prev
+                        ? gc_heap.mature_since_full - gc_heap.alloc_mature_prev
+                        : gc_heap.mature_since_full;
+    gc_heap.alloc_mature_prev = gc_heap.mature_since_full;
+    if (avant_g_stats.allocated_bytes - gc_heap.last_full_at >= gc_heap.alloc_full_due &&
+        gc_heap.mature_since_full * 100 >= gc_heap.full_trigger * TUNE(alloc_grown, ALLOC_FULL_GROWN_PCT) &&
+        grew * TUNE(alloc_quiet, ALLOC_FULL_QUIET_DIV) <= avant_young_bytes &&
+#ifdef AVANT_GC_TUNE
+        gc_tune.alloc_pct && (!gc_tune.alloc_after || avant_g_stats.full_collections)
+#else
+        avant_g_stats.full_collections
+#endif
+    ) {
+      gc_collect(GC_FULL, 1, GC_WHY_HEAP_GOAL);
+      return;
+    }
     /* The tenured phase (gc_sticky_retire): the budget is retired
      * instead of collected, until a probe is due; a young large object
      * makes this one a probe. */
@@ -1026,6 +1095,8 @@ void gc_init_slow(void) {
    * so; every other entry starts as "no reference word"). */
   gc_type_refs_update(AVANT_TYPE_PTRS);
   gc_settings_read(&gc_heap.set);
+  /* No full collection is due by allocation before ALLOC_FULL_MIN. */
+  gc_heap.alloc_full_due = TUNE(alloc_min, ALLOC_FULL_MIN);
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {
