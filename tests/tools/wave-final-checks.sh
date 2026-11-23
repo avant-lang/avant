@@ -481,6 +481,11 @@ say neutral-count $? "$(line neutral: "$w/ncount.out/SUMMARY.txt")"
 # 16. WAVE_BESIDE (default 1): the goldens and the statistics run in a copy (a detached
 # worktree of HEAD with its own build of C') while the gate runs; their lines
 # join the summary, and the copy's C' must be the gate's byte for byte.
+# They read /tmp's litter in WORK's tmp1 (WAVE_TMP), as the checks above do:
+# under the default private /tmp a WORK that itself lies in /tmp (the
+# suite's scratch when TMPDIR is unset, as in the gate) is bound into the
+# namespace without the fake LangArena/ beside it, and the goldens' layout
+# check would read red.
 beside_fake() { # NAME LETTERS_BODY
   f=$(fake "$1")
   mkdir -p "$f/bin"; : > "$f/bin/re2c"
@@ -492,7 +497,7 @@ beside_fake() { # NAME LETTERS_BODY
   echo "$f"
 }
 f=$(beside_fake beside 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
-final_default "$f" "$w/beside.out" WAVE_ONLY=gate,goldens,stats
+final_default "$f" "$w/beside.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=gate,goldens,stats
 s=$w/beside.out/SUMMARY.txt
 has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && has "^build: C' built by the letters" "$s" \
   && has "^beside: the copy's B, C' and runtime are the gate's, byte for byte" "$s" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s" \
@@ -500,12 +505,12 @@ has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (
   && [ "$(grep -c '^goldens:' "$s")" = 1 ] && [ "$(grep -c '^gcstats:' "$s")" = 1 ] && [ "$(grep -c '^build:' "$s")" = 1 ]
 say beside-merged $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-700); worktrees: $(git -C "$f" worktree list 2>/dev/null | wc -l)"
 f=$(beside_fake besidediff 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x built in $(pwd)" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
-final "$f" "$w/besidediff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
+final "$f" "$w/besidediff.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=1
 s=$w/besidediff.out/SUMMARY.txt
 has "^beside: red (the copy's bin/avant-b bin/avant-c-llvm differ from the gate's" "$s" && has '^WAVE PARTIAL RED: beside' "$s"
 say beside-differs $? "$(line beside: "$s"); $(line WAVE "$s")"
 f=$(beside_fake besideoff 'for x in avant-b avant-c-llvm avant-d-llvm; do echo "stub $x" > bin/$x; chmod +x bin/$x; done; echo rt > runtime/build/avant_rt.o')
-final "$f" "$w/besideoff.out" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=0
+final "$f" "$w/besideoff.out" WAVE_TMP="$w/tmp1" WAVE_ONLY=gate,goldens,stats WAVE_BESIDE=0
 s=$w/besideoff.out/SUMMARY.txt
 has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && ! has '^beside:' "$s" && ! has '^build:' "$s" \
   && [ ! -e "$w/besideoff.out/beside" ] && ! grep -q 'run beside the gate' "$w/besideoff.out.log" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s"
