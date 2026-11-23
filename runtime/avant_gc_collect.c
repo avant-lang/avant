@@ -200,6 +200,7 @@ static void gc_tune_read(void) {
   gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", START_PROM_BYTES / 1024, 0, kb) * 1024ull;
   gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 1, 0, 1);
   gc_tune.keep_large = env_u64("AVANT_GC_TUNE_KEEP_LARGE", FULL_KEEP_LARGE, 0, 1);
+  gc_tune.keep_large_min = env_u64("AVANT_GC_TUNE_KEEP_LARGE_MIN_KB", FULL_KEEP_LARGE_MIN / 1024, 0, kb) * 1024ull;
   gc_tune.alloc_after = env_u64("AVANT_GC_TUNE_ALLOC_AFTER", 1, 0, 1);
   gc_tune.alloc_quiet = env_u64("AVANT_GC_TUNE_ALLOC_QUIET_DIV", ALLOC_FULL_QUIET_DIV, 0, 1u << 20);
 }

@@ -39,7 +39,7 @@ static inline void mark_object(void *start, AvantHeader *h, Block *b) {
     b = NULL;
   } else if (TUNE(keep_large, FULL_KEEP_LARGE) && gc_heap.keep_large &&
              (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) == (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE) &&
-             h->type_id == AVANT_TYPE_BYTES) {
+             h->type_id == AVANT_TYPE_BYTES && total >= TUNE(keep_large_min, FULL_KEEP_LARGE_MIN)) {
     /* A young buffer a root names, left young (keep_large). */
     gc_heap.keep_young_live += total;
     ((uint64_t *)h)[-1] |= LARGE_STAMP_SEEN;
@@ -173,7 +173,7 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v,
     }
     if (TUNE(keep_large, FULL_KEEP_LARGE) &&
         (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) == (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE) &&
-        h->type_id == AVANT_TYPE_BYTES && gc_heap.keep_large) {
+        h->type_id == AVANT_TYPE_BYTES && gc_heap.keep_large && total >= TUNE(keep_large_min, FULL_KEEP_LARGE_MIN)) {
       /* A young buffer an ordinary trace leaves young (keep_large): it
        * keeps its flags and its age, and HOLDER is remembered
        * (gc_rem_keep_large_holders). Nothing to scan. */

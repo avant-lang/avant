@@ -309,6 +309,15 @@ _Static_assert(SCALAR_LOS_MIN == AVANT_GC_BYTES_LARGE, "avant_gc.h's large Bytes
 #ifndef FULL_KEEP_LARGE
 #define FULL_KEEP_LARGE 1
 #endif
+/* FULL_KEEP_LARGE_MIN: the smallest buffer it leaves young. A smaller one
+ * that then dies young frees a run the next large objects seldom fit,
+ * and the program's peak grew by more than the buffer: Calculator::
+ * Interpreter and Compress::BWTEncode-Common +250 KB each with every
+ * buffer kept, their peak without the rule at 1 MiB (Json::ParseMapping's
+ * 8.5 MB buffer is kept either way). */
+#ifndef FULL_KEEP_LARGE_MIN
+#define FULL_KEEP_LARGE_MIN (1ull * 1024ull * 1024ull)
+#endif
 /* A young large object's birth stamp (the word before its header, on
  * the young clock) with this bit set: a full collection found it live
  * and left it young (keep_large), and counted it in the live bytes its
@@ -358,6 +367,7 @@ typedef struct GcTune {
   uint64_t alloc_after; /* AVANT_GC_TUNE_ALLOC_AFTER: 1 (the release rule) no full collection is due by allocation before the program's first full collection, 0 also before it */
   uint64_t start_large; /* AVANT_GC_TUNE_START_LARGE: 1 the start phase ends once the young large objects a collection leaves pass the budget */
   uint64_t keep_large; /* AVANT_GC_TUNE_KEEP_LARGE: FULL_KEEP_LARGE (0 a full collection promotes young buffers too) */
+  uint64_t keep_large_min; /* AVANT_GC_TUNE_KEEP_LARGE_MIN_KB: FULL_KEEP_LARGE_MIN */
   /* State. */
   uint64_t rate;      /* the smoothed survival, in millionths */
   uint64_t highs;     /* high-survival budget collections in a row */
