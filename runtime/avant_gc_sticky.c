@@ -2075,6 +2075,17 @@ void gc_sticky_retire(void) {
   /* The cursors go (the blocks stop being young), the inline
    * allocations counted, every late start bit set. */
   gc_alloc_stop_all();
+  /* The verifier's eager start bits (avant_gc_verify.c) describe one
+   * cycle, and a retirement ends one as a collection does: it compares
+   * them with the late ones before, and after it checks that every
+   * promoted object has its bit and clears them. A retired block's eager
+   * bits kept past this would outlive its objects: once the block is
+   * swept and young again, its next cycle would read them as young
+   * objects without a start bit. */
+  if (gc_heap.set.verify) {
+    gc_verify_starts_begin();
+    gc_verify_starts_resume();
+  }
   gc_lazy_build_all();
   gc_rem_merge_all();
   rem_empty();
@@ -2083,6 +2094,9 @@ void gc_sticky_retire(void) {
     retire_block(gc_heap.young_blocks[i], epoch, &bytes);
   }
   gc_heap.young_blocks_n = 0;
+  if (gc_heap.set.verify) {
+    gc_verify_starts_end();
+  }
   gc_lazy_drop();
   gc_heap.ctr.sticky.retires++;
   gc_heap.ctr.sticky.retired += bytes;
