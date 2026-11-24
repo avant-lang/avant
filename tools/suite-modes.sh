@@ -118,7 +118,9 @@ for n in $steps; do
 done
 # The depth check: the files the stress slices and the exclusive pass ran are
 # the files the plain pass ran, each once.
-names_of() { sed -n 's/.*<testsuite name="\(tests\/[^"]*\)".*/\1/p' "$out/junit-$1.xml" 2> /dev/null; }
+# (from the log's `ok FILE` and `FAIL FILE` lines: a file that records no check under a mode, as the
+# tools' shell tests do under a collector mode, has no suite in the JUnit file but still runs and reports)
+names_of() { sed -n 's/^\(ok\|FAIL\) \(tests\/[^: ]*\.av\).*/\2/p' "$out/suite-$1.log" 2> /dev/null; }
 case " $steps " in
   *" plain "*stress*|*stress*" plain "*)
     names_of plain | LC_ALL=C sort > "$out/files-plain.txt"
