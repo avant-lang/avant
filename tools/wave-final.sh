@@ -163,7 +163,7 @@
 # whatever is left). A step started through WAVE_RUNNER is first sent the
 # signal alone, for the runner to stop its own tree and free the lock (up to
 # 5 s), then treated the same. The waits are measured in elapsed time, not
-# in rounds, and the whole stop has a budget of 7 s from the signal, so that
+# in rounds, and the whole stop has a budget of 6 s from the signal, so that
 # it ends within the outer timeout's 10 s on a loaded machine too: what is
 # alive when the budget is spent is killed at once.
 # Exit status: 0 when every step is green, 1 otherwise, 2 on a usage error.
@@ -324,7 +324,7 @@ marked() {
 # when the machine was loaded: each round took several times its nominal
 # 0.1 s. Every wait below is bounded by elapsed time instead, read as
 # hundredths of a second from /proc/uptime with the shell's own `read` (no
-# process started), and the whole stop has a budget (t_budget, 7 s): once
+# process started), and the whole stop has a budget (t_budget, 6 s): once
 # it is spent, every process still alive is killed at once, without
 # freezing or a grace.
 now_cs() {
@@ -334,7 +334,7 @@ now_cs() {
     t_cs=${t_up:-0}
   else t_cs=$(( $(date +%s) * 100 )); fi
 }
-t_sig=0; t_budget=700
+t_sig=0; t_budget=600
 # stop_late: true once the stop has used its budget.
 stop_late() { now_cs; [ $((t_cs - t_sig)) -ge $t_budget ]; }
 # stop_wait_over T0 GRACE: true when GRACE hundredths of a second have
@@ -377,6 +377,14 @@ stop_tree() {
 }
 # Stop t_roots and their trees, with whatever carries the mark.
 stop_freeze() {
+  # The budget already spent (the beside run took it): no freezing, no TERM,
+  # no grace.
+  if stop_late; then
+    # shellcheck disable=SC2086
+    kill -KILL $(tree $t_roots $(marked)) 2>/dev/null
+    sleep 0.2
+    return 0
+  fi
   # Freeze the tree until a listing finds nothing new: a stopped process
   # neither forks nor dies, so none of the tree is reparented away from it.
   t_all=""
