@@ -37,8 +37,9 @@
 # the sha256 of this checkout's langarena/ harness, without tmp/ and .git,
 # or of the harness BASE_CACHE_LANGARENA names (a langarena/ directory,
 # such as the base's own copy when this checkout's tasks use a spelling
-# the base does not know), and of LangArena/run.js beside the checkout;
-# another harness is another part):
+# the base does not know), of LangArena/run.js beside the checkout, and of
+# the counting method tools/la-count.sh --method names; another harness, or
+# counts taken another way, is another part):
 #   avant/langarena/      the harness, copied; avant/langarena/tmp/ holds
 #                         the 50 programs stitched for the prod run (the
 #                         harness's own stitching: its prod pass with a
@@ -191,6 +192,8 @@ la_digest() {
     # (each path as langarena/PATH, whichever directory holds it)
     (cd "$lah" && find . -path ./tmp -prune -o -path ./.git -prune -o -type f -print | LC_ALL=C sort | xargs sha256sum | sed 's#  \./#  langarena/#')
     sha256sum < "$root/../LangArena/run.js"
+    # How la-count.sh takes a count: counts taken another way are another part.
+    sh "$here/la-count.sh" --method
   } | sha256sum | cut -c1-12
 }
 
