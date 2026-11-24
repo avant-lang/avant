@@ -204,13 +204,53 @@ pub fn drop_av_suffix(path: String): String {
   base
 }
 
+// The `runtime: PATH` line of the build's record beside the compiler
+// (EXE.versions.txt, tools/letters.sh): the runtime/ of the checkout it
+// was built in; "" without a record or without the line (a release
+// archive's versions.txt, a seed, a bare copy).
+pub fn record_runtime: String {
+  exe = self_exe_path()
+  if exe.size == 0 {
+    return ""
+  }
+  if text = file_read("${exe}.versions.txt") {
+    for line in text.split("\n") {
+      if line.size > 9 && line.starts_with("runtime: ") {
+        return str_slice(line, 9, line.size)
+      }
+    }
+  }
+  ""
+}
+
+// The root whose runtime/ the build's record names (record_runtime), or
+// "" when it names none: a kept or copied compiler links and compiles
+// against the runtime it was built with, never the one its path or the
+// working directory climbs to, and stops saying why when that runtime
+// is gone.
+pub fn record_runtime_root: String {
+  rt = record_runtime()
+  if rt.size == 0 {
+    return ""
+  }
+  if !file_exists("${rt}/build/avant_rt.o") {
+    diag_puts("${self_exe_path()}.versions.txt names the runtime ${rt}, which has no build/avant_rt.o; set AVANT_ROOT to the checkout whose runtime this compiler should link")
+    diag_exit(1)
+  }
+  path_dirname(rt)
+}
+
 // The checkout the compiler runs from, or "" when it is not in one (a
-// release install): AVANT_ROOT, else the parent of the compiler's bin/
-// when it holds runtime/build/avant_rt.o, else the current directory when
-// it does.
+// release install): AVANT_ROOT, else the one whose runtime the build's
+// record names, else the parent of the compiler's bin/ when it holds
+// runtime/build/avant_rt.o, else the current directory when it does.
 pub fn avant_checkout_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
+  }
+  rec = record_runtime_root()
+  if rec.size > 0 {
+    return rec
   }
   args = argv()
   if args.size > 0 {
@@ -230,14 +270,20 @@ pub fn avant_checkout_root: String {
 }
 
 // The root whose runtime/ the compiler links and compiles against:
-// AVANT_ROOT; else a checkout (the parent of the compiler's bin/, then the
-// current directory) when it holds runtime/build/avant_rt.o; else the
-// compiler's own install, the directory of its executable, when that holds
-// one (the release layout); else ".". A checkout wins so that a seed in
-// bin/vX/ links the runtime of the tree it builds.
+// AVANT_ROOT; else the one whose runtime the build's record names
+// (record_runtime_root); else a checkout (the parent of the compiler's
+// bin/, then the current directory) when it holds
+// runtime/build/avant_rt.o; else the compiler's own install, the
+// directory of its executable, when that holds one (the release layout);
+// else ".". A checkout wins so that a seed in bin/vX/ links the runtime
+// of the tree it builds.
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
+  }
+  rec = record_runtime_root()
+  if rec.size > 0 {
+    return rec
   }
   args = argv()
   if args.size > 0 {
