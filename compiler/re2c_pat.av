@@ -10,12 +10,17 @@ pub class Re2cPlan {
   // to print on stderr (they were printed on stdout, where `avant run`
   // put them ahead of the program's output).
   pub notes: Array(String)
+  // Each scanner's key (re2c_key) and pattern, by id - 1.
+  pub keys: Array(String)
+  pub pats: Array(String)
 
   fn initialize {
     h = Hash(String, Int).new()
     self.ids = h
     self.groups = []
     self.notes = []
+    self.keys = []
+    self.pats = []
     self.src = ""
     self.count = 0
   }
@@ -739,10 +744,20 @@ pub class Re2cCollect {
   bodies: Array(String)
   firsts: Array(Int)
   notes: Array(String)
+  keys: Array(String)
+  // Keys of patterns kept on PCRE2 whatever their form, with the reason
+  // (re2c warned about their scanner: compile_re2c).
+  skip: Hash(String, String)
+  skipped: Hash(String, Int)
 
   fn initialize {
     h = Hash(String, Int).new()
     self.ids = h
+    sk = Hash(String, String).new()
+    self.skip = sk
+    sd = Hash(String, Int).new()
+    self.skipped = sd
+    self.keys = []
     self.pats = []
     self.flags = []
     self.groups = []
@@ -757,6 +772,14 @@ pub class Re2cCollect {
     }
     key = re2c_key(pat, flags)
     if id = self.ids.get(key) {
+      return
+    }
+    if why = self.skip.get(key) {
+      if n = self.skipped.get(key) {
+        return
+      }
+      self.skipped[key] = 1
+      self.notes.push("re2c: pattern stays on PCRE2 (${why}): ${re2c_show(pat)}")
       return
     }
     ngroups = re2c_capture_groups(pat)
@@ -775,6 +798,7 @@ pub class Re2cCollect {
     self.groups.push(ngroups)
     self.bodies.push(body)
     self.firsts.push(tr.first)
+    self.keys.push(key)
     self.ids[key] = self.pats.size
   }
 
@@ -1016,8 +1040,15 @@ pub class Re2cCollect {
 }
 
 pub fn re2c_plan(program: Program): Re2cPlan {
+  re2c_plan(program, Hash(String, String).new())
+}
+
+// The plan without the patterns whose keys skip names (each noted with
+// its reason).
+pub fn re2c_plan(program: Program, skip: Hash(String, String)): Re2cPlan {
   plan = Re2cPlan.new()
   col = Re2cCollect.new()
+  col.skip = skip
   col.walk_fns(program.functions)
   for cls in program.classes {
     col.walk_fns(cls.methods)
@@ -1030,6 +1061,8 @@ pub fn re2c_plan(program: Program): Re2cPlan {
     return plan
   }
   plan.ids = col.ids
+  plan.keys = col.keys
+  plan.pats = col.pats
   plan.groups = col.groups
   plan.count = col.pats.size
   plan.src = col.source()
