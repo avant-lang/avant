@@ -1,0 +1,61 @@
+import std.gc
+
+// The collector's side arrays (the noted list, the work list, the
+// remembered set, the keep list, the proof's holders) give back the pages
+// past what recent collections used, and fault in again when a later
+// collection needs them: a build whose young collections note many
+// survivors and remember many old rows, then collections that use
+// little, then a second build and full collections over a wide array
+// (a deep work list) after the first one's pages were given back.
+
+fn build(n: Int, salt: Int): Array(Array(Int32)) {
+  rows = Array(Array(Int32)).new(n, (i) { Array(Int32).new(0) })
+  for i in 1..n {
+    rows[i].push((i - 1 + salt).to_i32())
+    rows[i - 1].push((i + salt).to_i32())
+  }
+  for v in 0..n {
+    for j in 0..(v % 7) {
+      u = (v * 31 + j * 17) % n
+      rows[v].push(u.to_i32())
+      rows[u].push(v.to_i32())
+    }
+  }
+  rows
+}
+
+fn sum(rows: Array(Array(Int32))): Int {
+  s = 0
+  for r in rows {
+    for x in r {
+      s = (s * 31 + x.to_i()) % 1000000007
+    }
+  }
+  s
+}
+
+fn churn(rounds: Int): Int {
+  t = 0
+  for k in 0..rounds {
+    xs: Array(Int) = []
+    for i in 0..2000 {
+      xs.push(i * k)
+    }
+    t += xs[k % 2000]
+  }
+  t
+}
+
+fn main {
+  a = build(40000, 0)
+  puts(sum(a))
+  puts(churn(150))
+  gc.collect()
+  puts(sum(a))
+  b = build(50000, 3)
+  gc.collect()
+  puts(sum(b))
+  puts(churn(150))
+  gc.collect()
+  puts(sum(a) + sum(b))
+}

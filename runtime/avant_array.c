@@ -343,8 +343,12 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
   AVANT_GC_ROOT(0, &a);
   /* A large buffer grows in place when the pages after it are free (the
    * elements stay where they are; the room added is zeroed unless the
-   * elements are scalars). */
-  if (a->buf && a->size > 0 && avant_gc_large_extend(a->buf, bytes, buf_type_id == AVANT_TYPE_BYTES)) {
+   * elements are scalars). Its header's flag is read here first: a small
+   * buffer's growth (a row of an array of arrays grown by push, millions
+   * of them) does not call into the collector to learn that it is not
+   * large. */
+  if (a->buf && a->size > 0 && (avant_header(a->buf)->flags & AVANT_FLAG_LARGE) &&
+      avant_gc_large_extend(a->buf, bytes, buf_type_id == AVANT_TYPE_BYTES)) {
     a->cap = ncap;
     return;
   }

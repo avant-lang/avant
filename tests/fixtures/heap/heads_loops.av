@@ -1,0 +1,164 @@
+// An array's size and buffer reference read once before an innermost
+// loop and again after each statement of the loop that may change them
+// (compiler/mir/heads.av): every loop here reads what it read when the
+// words were read at each use. A search over rows with a visited array
+// and a queue that grows; a loop over an array it pushes onto (it sees
+// the new elements); the same push through a module function and through
+// a function value; a pop, an insert, a concat and a reserve in the
+// loop; allocations that collect and move young buffers while a loop
+// reads them; a row replaced in the outer array while the loop reads the
+// row it started with; a read only on some paths.
+
+fn search(adj: Array(Array(Int32)), start: Int): Int {
+  visited = Array(Bool).new(adj.size)
+  queue: Array(Int32) = [start.to_i32()]
+  visited[start] = true
+  head = 0
+  seen = 0
+  while head < queue.size {
+    v = queue[head].to_i()
+    head += 1
+    for u in adj[v] {
+      if !visited[u.to_i()] {
+        visited[u.to_i()] = true
+        queue.push(u)
+        seen += 1
+      }
+    }
+  }
+  seen
+}
+
+fn grow_while_reading: Int {
+  xs: Array(Int) = [1, 2, 3]
+  n = 0
+  for x in xs {
+    if xs.size < 40 {
+      xs.push(x * 2)
+    }
+    n += x
+  }
+  n * 1000 + xs.size
+}
+
+fn add_to(xs: Array(Int), v: Int) {
+  xs.push(v)
+}
+
+fn grow_through_call: Int {
+  xs: Array(Int) = [5]
+  n = 0
+  for x in xs {
+    if xs.size < 30 {
+      add_to(xs, x + 1)
+    }
+    n += x
+  }
+  n
+}
+
+fn grow_through_value: Int {
+  xs: Array(Int) = [7]
+  f = (v: Int) { xs.push(v) }
+  n = 0
+  for x in xs {
+    if xs.size < 25 {
+      f(x + 3)
+    }
+    n += x
+  }
+  n
+}
+
+fn shrink_and_insert: Int {
+  xs: Array(Int) = []
+  for i in 0..50 {
+    xs.push(i)
+  }
+  n = 0
+  i = 0
+  while i < xs.size {
+    if xs[i] % 3 == 0 {
+      xs.pop()
+    } else if xs[i] % 7 == 1 && xs.size < 80 {
+      xs.insert(0, xs[i] + 100)
+      i += 1
+    } else if xs[i] % 11 == 2 && xs.size < 90 {
+      xs.concat([1, 2])
+    } else if xs[i] % 13 == 5 {
+      xs.reserve(xs.size * 4)
+    }
+    n += xs[i]
+    i += 1
+  }
+  n * 1000 + xs.size
+}
+
+fn collect_while_reading: Int {
+  total = 0
+  for round in 0..30 {
+    xs: Array(Int) = []
+    for i in 0..300 {
+      xs.push(i * round)
+    }
+    keep: Array(String) = []
+    s = 0
+    for x in xs {
+      // Each element allocates: young collections run and may move xs's
+      // young buffer while the loop reads it.
+      keep.push("${x}-${round}")
+      if keep.size > 64 {
+        keep = []
+      }
+      s += x
+    }
+    total += s + keep.size
+  }
+  total
+}
+
+fn replace_row: Int {
+  rows = Array(Array(Int)).new(3, (i) { [i, i + 1, i + 2] })
+  n = 0
+  for x in rows[0] {
+    rows[0] = [100, 200, 300, 400]
+    n += x
+  }
+  n * 1000 + rows[0].size
+}
+
+fn some_paths(flags: Array(Bool), ys: Array(Int)): Int {
+  n = 0
+  for f in flags {
+    if f {
+      n += ys[n % ys.size]
+      ys.push(n)
+    }
+  }
+  n * 1000 + ys.size
+}
+
+fn main {
+  n = 2000
+  adj = Array(Array(Int32)).new(n, (i) { Array(Int32).new(0) })
+  for i in 1..n {
+    adj[i].push((i - 1).to_i32())
+    adj[i - 1].push(i.to_i32())
+  }
+  for v in 0..n {
+    u = (v * 37 + 11) % n
+    if u != v {
+      adj[v].push(u.to_i32())
+      adj[u].push(v.to_i32())
+    }
+  }
+  puts(search(adj, 0))
+  puts(search(adj, n / 2))
+  puts(grow_while_reading())
+  puts(grow_through_call())
+  puts(grow_through_value())
+  puts(shrink_and_insert())
+  puts(collect_while_reading())
+  puts(replace_row())
+  puts(some_paths([true, false, true, true, false, true], [3, 4]))
+}
