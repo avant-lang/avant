@@ -1,0 +1,55 @@
+// An interpolation pushed into a Buf: written there piece by piece, with
+// the same text and the same order of effects as the String it spells.
+
+class Box {
+  b: Buf = Buf.new()
+  n: Int = 0
+
+  fn bump: Int {
+    self.n += 1
+    self.b.push_str("!")
+    self.n
+  }
+}
+
+fn main {
+  buf = Buf.new()
+  x = 42
+  y: Int32 = -7
+  u: UInt32 = 4000000000
+  w: UInt64 = 18000000000000000000u64
+  f = 3.25
+  s = "str"
+  ok = true
+  buf.push_str("a${x}b${y}c${u}d${w}e${f}f${s}g${ok}h${1.0 / 3.0}")
+  puts(buf.to_s())
+  // The values are taken before anything is pushed.
+  buf.push_str("${buf.size}|${buf.size}")
+  puts(buf.to_s())
+  bx = Box.new()
+  bx.b.push_str("n=${bx.n} bump=${bx.bump()} n=${bx.n} size=${bx.b.size}")
+  puts(bx.b.to_s())
+  z = Buf.new()
+  z.push_str("${x}")
+  z.push_str("lit\0nul${x}")
+  z.push_str("${s}")
+  z.push_str("${f}${-0.0}${1e300 * 10.0}")
+  puts(z.to_s().size)
+  puts(z.to_s())
+  i = 0
+  q = Buf.new()
+  q.push_str("${i}${switch i {
+    case 0 {
+      i = 5
+      "zero"
+    }
+    else { "other" }
+  }}${i}")
+  puts(q.to_s())
+  // Many pushes: the Buf grows while the pieces are written.
+  big = Buf.new()
+  for k in 0..2000 {
+    big.push_str("<${k}:${s}${k * 2}>")
+  }
+  puts(big.size)
+}
