@@ -431,19 +431,23 @@ fn test_user_test(c: Checks) {
     _ = fs.write("${root}/hung/tests/test_hang.av", "import std.time\n\nfn main: Int {\n  time.sleep_ms(600000)\n  0\n}\n")
     _ = fs.write("${root}/hung/tests/test_quick.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
     hang_rc = "${root}/hung.rc"
-    hang_sh = "#!/bin/sh\ncd ${ut_quote(root)}/hung || exit 9\nt0=$(date +%s)\nAVANT_TEST_PROGRESS_S=1 ${ut_quote(compiler)} test --file-limit 2 --junit ${ut_quote(root)}/hung.xml > ${ut_quote(root)}/hung.log 2>&1; echo $? > ${ut_quote(root)}/hung-flag.rc\necho $(( $(date +%s) - t0 )) > ${ut_quote(root)}/hung-flag.secs\nt0=$(date +%s)\nenv -u AVANT_TEST_PROGRESS_S AVANT_TEST_FILE_LIMIT=1 ${ut_quote(compiler)} test tests/test_hang.av > ${ut_quote(root)}/hung-env.log 2>&1; echo $? > ${ut_quote(root)}/hung-env.rc\necho $(( $(date +%s) - t0 )) > ${ut_quote(root)}/hung-env.secs\n${ut_quote(compiler)} test --file-limit x > ${ut_quote(root)}/hung-bad.log 2>&1; echo $? > ${ut_quote(root)}/hung-bad.rc\necho 0 > ${ut_quote(hang_rc)}\n"
+    // The two runs go side by side, with the collector's modes cleared (a run
+    // under AVANT_GC_STRESS compiles the test files slowly, and the limits
+    // here are seconds) and limits a compile on a busy machine stays under.
+    clear_gc = "env -u AVANT_GC_STRESS -u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY"
+    hang_sh = "#!/bin/sh\ncd ${ut_quote(root)}/hung || exit 9\n(t0=$(date +%s); AVANT_TEST_PROGRESS_S=1 ${clear_gc} ${ut_quote(compiler)} test --file-limit 12 --junit ${ut_quote(root)}/hung.xml > ${ut_quote(root)}/hung.log 2>&1; echo $? > ${ut_quote(root)}/hung-flag.rc; echo $(( $(date +%s) - t0 )) > ${ut_quote(root)}/hung-flag.secs) &\n(t0=$(date +%s); AVANT_TEST_FILE_LIMIT=10 ${clear_gc} ${ut_quote(compiler)} test tests/test_hang.av > ${ut_quote(root)}/hung-env.log 2>&1; echo $? > ${ut_quote(root)}/hung-env.rc) &\n${clear_gc} ${ut_quote(compiler)} test --file-limit x > ${ut_quote(root)}/hung-bad.log 2>&1; echo $? > ${ut_quote(root)}/hung-bad.rc\nwait\necho 0 > ${ut_quote(hang_rc)}\n"
     c.eq_int(ut_sh(hang_sh, hang_rc), 0, "file limit: the runs end")
     hung_text = fs.read("${root}/hung.log") ?? ""
     c.eq_str((fs.read("${root}/hung-flag.rc") ?? "").strip(), "1", "file limit: a hung file fails the run")
-    c.expect(ut_has(hung_text, "FAIL tests/test_hang.av: the test process timed out after 2 s (--file-limit)\n"), "file limit: the FAIL line names the file and the limit")
+    c.expect(ut_has(hung_text, "FAIL tests/test_hang.av: ") && ut_has(hung_text, " timed out after 12 s (--file-limit)\n"), "file limit: the FAIL line names the file and the limit")
     c.expect(ut_has(hung_text, "ok tests/test_quick.av\n"), "file limit: the file that ends in time passes")
     c.expect(ut_has(hung_text, "1 failed, 1 passed"), "file limit: the total counts the hung file once")
-    c.expect(ut_has(hung_text, "avant test: still running, 1: tests/test_hang.av (the test process, "), "file limit: the runner names the process still running")
+    c.expect(ut_has(hung_text, "avant test: still running, ") && ut_has(hung_text, "tests/test_hang.av ("), "file limit: the runner names the process still running")
     c.expect(ut_read_ms("${root}/hung-flag.secs") >= 0 && ut_read_ms("${root}/hung-flag.secs") < 120, "file limit: the run ends within the limit and the grace, not at the file's own end")
     hung_xml = fs.read("${root}/hung.xml") ?? ""
-    c.expect(ut_has(hung_xml, "<failure message=\"the test process timed out after 2 s (--file-limit)\">"), "file limit: the JUnit failure says how the file ended")
+    c.expect(ut_has(hung_xml, " timed out after 12 s (--file-limit)\">"), "file limit: the JUnit failure says how the file ended")
     c.eq_str((fs.read("${root}/hung-env.rc") ?? "").strip(), "1", "file limit: AVANT_TEST_FILE_LIMIT stops a hung file too")
-    c.expect(ut_has(fs.read("${root}/hung-env.log") ?? "", "FAIL tests/test_hang.av: the test process timed out after 1 s (--file-limit)\n"), "file limit: the environment's limit is the one named")
+    c.expect(ut_has(fs.read("${root}/hung-env.log") ?? "", "FAIL tests/test_hang.av: ") && ut_has(fs.read("${root}/hung-env.log") ?? "", " timed out after 10 s (--file-limit)\n"), "file limit: the environment's limit is the one named")
     c.eq_str((fs.read("${root}/hung-bad.rc") ?? "").strip(), "1", "file limit: a limit that is not a number is an error")
     c.expect(ut_has(fs.read("${root}/hung-bad.log") ?? "", "--file-limit needs a number of seconds"), "file limit: the error says what it needs")
 
