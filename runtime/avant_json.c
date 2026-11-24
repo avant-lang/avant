@@ -12,8 +12,9 @@
  * which never moves: the Avant Json value roots that buffer, interior
  * yyjson pointers stay valid,
  * and the collector reclaims the whole document when the last Json is
- * dropped. Accessors report a missing key or a wrong kind through the
- * thread-local status, in the zlib/base64 shape. */
+ * dropped. An accessor answers a missing key or a wrong kind in its
+ * result (below); a parse reports its failure through the thread-local
+ * status, in the zlib/base64 shape. */
 
 /* 0 ok, 1 invalid JSON / not an integer, 2 allocation failure,
  * 3 nested deeper than the parse's max_depth, 4 more values than its
