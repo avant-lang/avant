@@ -155,7 +155,7 @@ if [ "${1:-}" = --one ]; then
     fi
   done
   wait
-  # The exact method's file is `EXACT MAXRSS READS`; GNU time's ends in %M.
+  # The exact method's file is `EXACT MAXRSS READS ANON`; GNU time's ends in %M.
   i=0; mxr=""; mxo=""
   while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))

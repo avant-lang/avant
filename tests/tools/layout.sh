@@ -78,8 +78,9 @@
 #     by different methods (their first line; none is maxrss) unless
 #     --mixed, and names the method;
 #   peak-exact: tools/la-run.c's -p reads a program that touches 16 more pages
-#     64 KB higher, run after run (ru_maxrss moves by 0 or 256 KB there),
-#     with its exit status and at least one reading;
+#     64 KB higher in its anonymous peak, run after run (ru_maxrss moves by 0
+#     or 256 KB there; the whole peak moves with the page cache's state of
+#     the program's files too), with its exit status and at least one reading;
 #   run-path: tools/la-run.c starts a program from two directories of
 #     different lengths with the same argv[0] and auxiliary-vector name
 #     (/dev/fd/200), and as one more argv[0] with -n.
@@ -445,12 +446,12 @@ ok=$rc; d=""
 for k in 1 2 3; do
   "$lp/la-run" -R -p "$lp/a.$k" "$lp/touch" 1000 < /dev/null; ra=$?
   "$lp/la-run" -R -p "$lp/b.$k" "$lp/touch" 1016 < /dev/null; rb=$?
-  a=$(cut -d' ' -f1 "$lp/a.$k" 2>/dev/null); b=$(cut -d' ' -f1 "$lp/b.$k" 2>/dev/null); n=$(cut -d' ' -f3 "$lp/a.$k" 2>/dev/null)
+  a=$(cut -d' ' -f4 "$lp/a.$k" 2>/dev/null); b=$(cut -d' ' -f4 "$lp/b.$k" 2>/dev/null); n=$(cut -d' ' -f3 "$lp/a.$k" 2>/dev/null)
   d="$d $a/$b/$n"
   { [ $ra -eq 3 ] && [ $rb -eq 3 ] && [ "${n:-0}" -ge 1 ] && [ $((b - a)) -eq 64 ]; } || ok=1
 done
 [ $ok -eq 0 ]
-say peak-exact $? "rc=$rc exact/exact+16/readings:$d"
+say peak-exact $? "rc=$rc anon/anon+16/readings:$d"
 cat > "$lp/names.c" <<'NAMES'
 #include <stdio.h>
 #include <sys/auxv.h>

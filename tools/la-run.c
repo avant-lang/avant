@@ -12,12 +12,12 @@
  * are then the same wherever PROGRAM lies. From two paths of different
  * lengths a program's stack starts at different offsets and its argv copy
  * has another size, so its instruction count could move by a whole
- * collector pass with the path (a collector benchmark read 142.8 M and
- * 126.5 M instructions from two directories one byte apart).
+ * collector pass with the path (a collector benchmark's scenario read
+ * 145.6 M or 138.1 M instructions by the length of its directory's name).
  *
  * With -p OUT, PROGRAM runs as a child and OUT gets one line:
  *
- *   EXACT_KB <SP> MAXRSS_KB <SP> READS
+ *   EXACT_KB <SP> MAXRSS_KB <SP> READS <SP> ANON_KB
  *
  * MAXRSS_KB is the child's ru_maxrss, what GNU time's %M reads. The kernel
  * keeps a process's resident-page counters per CPU and folds each CPU's part
@@ -33,7 +33,13 @@
  * of them or at exit_group. A seccomp filter installed before PROGRAM starts
  * stops each of those calls (every thread's) until this program has read
  * /proc/TID/statm, whose resident field the kernel sums exactly over the
- * CPUs, and lets the call go on. READS is the number of such readings. A
+ * CPUs, and lets the call go on. READS is the number of such readings, and
+ * ANON_KB the largest of them less the file-backed and shared pages
+ * (statm's third field): a program's resident file pages also depend on
+ * the page cache (which pages of its binary and libraries are cached, in
+ * which folio sizes, and what the kernel reclaims from them while it runs),
+ * so two runs of one program can read a few pages apart in EXACT_KB, never
+ * in ANON_KB. A
  * process killed by a signal has no final reading: its EXACT_KB is the
  * largest before its last such call. In a threaded program another thread
  * may fault pages in between a reading and the call that stopped for it;
@@ -158,9 +164,10 @@ static int recv_fd(int sock) {
   return fd;
 }
 
-/* The resident size of TID's process in KB, from /proc/TID/statm; -1 when
- * it cannot be read (the task is gone). */
-static long resident_kb(pid_t tid, long page_kb) {
+/* The resident size of TID's process in KB, from /proc/TID/statm, and in
+ * *ANON its part not backed by a file or shared; -1 when it cannot be read
+ * (the task is gone). */
+static long resident_kb(pid_t tid, long page_kb, long *anon) {
   char path[64], buf[256];
   snprintf(path, sizeof path, "/proc/%d/statm", (int)tid);
   int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -169,8 +176,9 @@ static long resident_kb(pid_t tid, long page_kb) {
   close(fd);
   if (n <= 0) return -1;
   buf[n] = 0;
-  long size, res;
-  if (sscanf(buf, "%ld %ld", &size, &res) != 2) return -1;
+  long size, res, shared;
+  if (sscanf(buf, "%ld %ld %ld", &size, &res, &shared) != 3) return -1;
+  *anon = (res - shared) * page_kb;
   return res * page_kb;
 }
 
@@ -260,7 +268,7 @@ int main(int argc, char **argv) {
   struct seccomp_notif *req = calloc(1, sz.seccomp_notif < sizeof *req ? sizeof *req : sz.seccomp_notif);
   struct seccomp_notif_resp *resp = calloc(1, sz.seccomp_notif_resp < sizeof *resp ? sizeof *resp : sz.seccomp_notif_resp);
   if (!req || !resp) die("calloc");
-  long peak = 0, reads = 0;
+  long peak = 0, peak_anon = 0, reads = 0;
   for (;;) {
     struct pollfd p = { .fd = lfd, .events = POLLIN };
     int r = poll(&p, 1, -1);
@@ -271,8 +279,9 @@ int main(int argc, char **argv) {
         if (errno == EINTR || errno == ENOENT) continue;
         break;
       }
-      long kb = resident_kb((pid_t)req->pid, page_kb);
+      long anon = 0, kb = resident_kb((pid_t)req->pid, page_kb, &anon);
       if (kb > peak) peak = kb;
+      if (kb >= 0 && anon > peak_anon) peak_anon = anon;
       if (kb >= 0) reads++;
       memset(resp, 0, sz.seccomp_notif_resp);
       resp->id = req->id;
@@ -288,7 +297,7 @@ int main(int argc, char **argv) {
   while (wait4(child, &st, 0, &ru) < 0) if (errno != EINTR) die("wait4");
   FILE *f = fopen(out, "w");
   if (!f) die(out);
-  fprintf(f, "%ld %ld %ld\n", peak, ru.ru_maxrss, reads);
+  fprintf(f, "%ld %ld %ld %ld\n", peak, ru.ru_maxrss, reads, peak_anon);
   if (fclose(f) != 0) die(out);
   if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
   return WEXITSTATUS(st);
