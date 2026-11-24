@@ -73,7 +73,13 @@
 #     twins left out), a program whose ranges part as moved, and one whose
 #     runs take two values as one to run again;
 #   mem-aslr-on: with ASLR-on runs on both sides, a peak moved with ASLR
-#     off but not with it on reads as one to run again.
+#     off but not with it on reads as one to run again;
+#   mem-method: tools/la-mem.py refuses two files whose peaks were read
+#     by different methods (their first line; none is maxrss) unless
+#     --mixed, and names the method;
+#   peak-exact: tools/la-peak.c reads a program that touches 16 more pages
+#     64 KB higher, run after run (ru_maxrss moves by 0 or 256 KB there),
+#     with its exit status and at least one reading.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -410,4 +416,36 @@ o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-on.tsv" "$lmm/head-on.tsv" 2>&
 echo "$o" | grep -q '^a_one.*moved$' && echo "$o" | grep -q '^d_four.*repeat (ASLR on does not confirm)$' \
   && echo "$o" | grep -q '^with ASLR on: base 5054.0 KB, head 4976.0 KB' && echo "$o" | grep -q '^to run again: d_four$'
 say mem-aslr-on $? "$(echo "$o" | tr '\n' ';')"
+{ echo '# peak: exact'; cat "$lmm/head.tsv"; } > "$lmm/head-exact.tsv"
+{ echo '# peak: exact'; cat "$lmm/base.tsv"; } > "$lmm/base-exact.tsv"
+python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head-exact.tsv" > "$lmm/mixed.out" 2>&1; rc1=$?
+o2=$(python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head-exact.tsv" --mixed 2>&1); rc2=$?
+o3=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-exact.tsv" "$lmm/head-exact.tsv" 2>&1); rc3=$?
+[ $rc1 -eq 2 ] && grep -q 'maxrss and the head.s exact' "$lmm/mixed.out" && [ $rc2 -eq 0 ] && echo "$o2" | grep -q '^peaks read: base maxrss, head exact$' \
+  && [ $rc3 -eq 0 ] && echo "$o3" | grep -q '^peaks read: exact$' && echo "$o3" | grep -q '^average peak over 3 tasks: .*: lower$'
+say mem-method $? "rc=$rc1/$rc2/$rc3 $(tr '\n' ';' < "$lmm/mixed.out")"
+
+# 11. tools/la-peak.c: an exact peak, 4 KB per page touched.
+lp=$w/lp; mkdir -p "$lp"
+cat > "$lp/touch.c" <<'TOUCH'
+#include <stdlib.h>
+#include <sys/mman.h>
+int main(int argc, char **argv) {
+  long n = atol(argv[1]);
+  char *p = mmap(0, (size_t)n * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  for (long i = 0; i < n; i++) p[i * 4096] = 1;
+  return 3;
+}
+TOUCH
+cc -O2 -o "$lp/la-peak" "$root/tools/la-peak.c" && cc -O2 -o "$lp/touch" "$lp/touch.c"; rc=$?
+ok=$rc; d=""
+for k in 1 2 3; do
+  "$lp/la-peak" -R -o "$lp/a.$k" "$lp/touch" 1000 < /dev/null; ra=$?
+  "$lp/la-peak" -R -o "$lp/b.$k" "$lp/touch" 1016 < /dev/null; rb=$?
+  a=$(cut -d' ' -f1 "$lp/a.$k" 2>/dev/null); b=$(cut -d' ' -f1 "$lp/b.$k" 2>/dev/null); n=$(cut -d' ' -f3 "$lp/a.$k" 2>/dev/null)
+  d="$d $a/$b/$n"
+  { [ $ra -eq 3 ] && [ $rb -eq 3 ] && [ "${n:-0}" -ge 1 ] && [ $((b - a)) -eq 64 ]; } || ok=1
+done
+[ $ok -eq 0 ]
+say peak-exact $? "rc=$rc exact/exact+16/readings:$d"
 echo done

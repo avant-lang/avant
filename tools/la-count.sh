@@ -44,15 +44,24 @@
 # the low 32 bits of splitmix64 at 1 to 11.
 #
 # Peak memory, with LA_MEM_RUNS=N (default 0: none): each program is then
-# also run N times as the harness measures it (GNU time's %M of the task's
-# own process, the same environment), unbound (no NUMA binding: a binding's
-# placement hides changes of touched memory of a few megabytes) and with
+# also run N times, its peak read exactly by tools/la-peak.c (built here
+# with cc): the resident size read before every system call that can lower
+# it and at exit, in the same environment. LA_MEM_METHOD=maxrss reads it as
+# the harness does instead (GNU time's %M of the task's own process, the
+# kernel's ru_maxrss), which moves in steps of about 256 KB at equal work:
+# the kernel folds a process's per-CPU resident-page counts into the total
+# by batches of 64 pages, and its high-water mark reads the folded total.
+# With the exact method each run's ru_maxrss is kept beside it, in
+# OUT.maxrss.tsv, of the same shape as OUT.mem.tsv. The runs are unbound
+# (no NUMA binding: a binding's placement hides changes of touched memory
+# of a few megabytes) and with
 # address randomization off (`setarch -R`: with it on, a task's peak moves
 # between two values 64 KB or more apart at equal page faults, from where
 # its mappings land, so a few runs read a change that is not there).
 # The N runs of a program start together (LA_MEM_PARALLEL=0: one after
 # another; a peak is not a time, and a run's file is its own).
-# OUT.mem.tsv beside OUT.tsv gets one line per program:
+# OUT.mem.tsv beside OUT.tsv gets a first line naming its method
+# (`# peak: exact` or `# peak: maxrss`), then one line per program:
 #
 #   SLUG <TAB> MEDIAN KB <TAB> MIN KB <TAB> MAX KB <TAB> RUNS KB (comma-separated) <TAB> ON RUNS KB
 #
@@ -108,32 +117,48 @@ if [ "${1:-}" = --one ]; then
   while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))
     # Runs past the first N keep address randomization on.
-    if [ "$i" -le "$nm" ]; then nr="setarch -R"; else nr=; fi
-    if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
+    if [ "$LA_MEM_METHOD" = exact ]; then
+      if [ "$i" -le "$nm" ]; then nr=-R; else nr=; fi
+      set -- "$LAC_TMP/la-peak" $nr -o "$t.rss.$i" "$t"
     else
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
+      if [ "$i" -le "$nm" ]; then nr="setarch -R"; else nr=; fi
+      set -- $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t"
+    fi
+    if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 "$@" < /dev/null > /dev/null 2>&1)
+    else
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 "$@" < /dev/null > /dev/null 2>&1) &
     fi
   done
   wait
-  i=0
+  # The exact method's file is `EXACT MAXRSS READS`; GNU time's ends in %M.
+  i=0; mxr=""; mxo=""
   while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))
-    if [ "$i" -le "$nm" ]; then
-      runs="$runs${runs:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
+    if [ "$LA_MEM_METHOD" = exact ]; then
+      v=$(awk 'NR == 1 { print $1 }' "$t.rss.$i" 2>/dev/null); w=$(awk 'NR == 1 { print $2 }' "$t.rss.$i" 2>/dev/null)
     else
-      onr="$onr${onr:+,}$(tail -n 1 "$t.rss.$i" 2>/dev/null)"
+      v=$(tail -n 1 "$t.rss.$i" 2>/dev/null); w=
+    fi
+    if [ "$i" -le "$nm" ]; then
+      runs="$runs${runs:+,}$v"; mxr="$mxr${mxr:+,}$w"
+    else
+      onr="$onr${onr:+,}$v"; mxo="$mxo${mxo:+,}$w"
     fi
   done
   [ -n "$onr" ] && runs="$runs	$onr"
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
+  [ -n "$mxo" ] && mxr="$mxr	$mxo"
+  [ -n "$mxr" ] && echo "$mxr" > "$LAC_TMP/$s.maxrss"
   rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
 fi
 
 [ $# -ge 3 ] || { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
 case "${LA_SEEDS:-}" in ''|[1-9]|1[0-2]) ;; *) echo "la-count.sh: LA_SEEDS is a number from 1 to 12, not '$LA_SEEDS'" >&2; exit 2 ;; esac
-export LA_SEED_LIST
+LA_MEM_METHOD=${LA_MEM_METHOD:-exact}
+case "$LA_MEM_METHOD" in exact|maxrss) ;; *) echo "la-count.sh: LA_MEM_METHOD is exact or maxrss, not '$LA_MEM_METHOD'" >&2; exit 2 ;; esac
+export LA_SEED_LIST LA_MEM_METHOD
 LAC_ROOT=$(realpath "$1") || exit 2
 LAC_DIR=$(realpath "$2") || exit 2
 out=$(realpath -m "$3"); shift 3
@@ -145,6 +170,15 @@ LAC_TMP=$(mktemp -d "$(dirname "$out")/.la-count.XXXXXX") || exit 2
 export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP
 self=$(realpath "$0")
 if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u > "$LAC_TMP/slugs.txt"
+runner=${LA_RUNNER:-}
+if [ "${LA_MEM_RUNS:-0}" -gt 0 ] && [ "$LA_MEM_METHOD" = exact ]; then
+  set -- cc -O2 -o "$LAC_TMP/la-peak" "$(dirname "$self")/la-peak.c"
+  # shellcheck disable=SC2086
+  [ -n "$runner" ] && set -- $runner --step "${LA_STEP:-la-count} la-peak" --kind "${LA_KIND:-new}" -- "$@"
+  if ! "$@" < /dev/null; then
+    echo "la-count.sh: tools/la-peak.c did not build (LA_MEM_METHOD=maxrss reads GNU time's %M instead)" >&2; rm -rf "$LAC_TMP"; exit 2
+  fi
+fi
 # With LA_RUNNER (the runner's command words, such as `python3 -I PATH/ledger
 # run --shared --wave W`) the script is started outside the lock and each group
 # of programs is its own shared run, `LA_STEP group K/N` (default step
@@ -152,7 +186,6 @@ if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C
 # every program no longer holds the lock past the shared limit. LA_GROUP
 # programs a group (default 24 with memory runs, 64 without); without
 # LA_RUNNER one group, as the caller's single run.
-runner=${LA_RUNNER:-}
 ng=1
 if [ -n "$runner" ]; then
   per=${LA_GROUP:-$([ "${LA_MEM_RUNS:-0}" -gt 0 ] && echo 24 || echo 64)}
@@ -175,14 +208,20 @@ while [ "$gk" -lt "$ng" ]; do
   fi
 done
 LC_ALL=C sort "$out.part.unsorted" > "$out.part"; rm -f "$out.part.unsorted"
+# One mem file: its method's line, then a line per program, sorted.
+mem_file() { # EXT METHOD OUT
+  { echo "# peak: $2"
+    for f in "$LAC_TMP"/*."$1"; do
+      [ -f "$f" ] || continue
+      printf '%s\t%s\n' "$(basename "$f" ."$1")" "$(cat "$f")"
+    done | awk -F'\t' '{ n = split($2, r, ","); for (i = 1; i <= n; i++) v[i] = r[i] + 0
+        for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { x = v[i]; v[i] = v[j]; v[j] = x }
+        m = (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2
+        printf "%s\t%s\t%s\t%s\t%s%s\n", $1, m, v[1], v[n], $2, (NF > 2 ? "\t" $3 : "") }' | LC_ALL=C sort; } > "$3"
+}
 if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
-  for f in "$LAC_TMP"/*.mem; do
-    [ -f "$f" ] || continue
-    printf '%s\t%s\n' "$(basename "$f" .mem)" "$(cat "$f")"
-  done | awk -F'\t' '{ n = split($2, r, ","); for (i = 1; i <= n; i++) v[i] = r[i] + 0
-      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { x = v[i]; v[i] = v[j]; v[j] = x }
-      m = (n % 2) ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2
-      printf "%s\t%s\t%s\t%s\t%s%s\n", $1, m, v[1], v[n], $2, (NF > 2 ? "\t" $3 : "") }' | LC_ALL=C sort > "${out%.tsv}.mem.tsv"
+  mem_file mem "$LA_MEM_METHOD" "${out%.tsv}.mem.tsv"
+  [ "$LA_MEM_METHOD" = exact ] && mem_file maxrss maxrss "${out%.tsv}.maxrss.tsv"
 fi
 if [ -n "${LA_SEEDS:-}" ]; then
   for f in "$LAC_TMP"/*.seeds; do
