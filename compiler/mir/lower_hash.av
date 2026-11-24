@@ -1141,6 +1141,12 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
     return lw.call_to(ty1, "avant_buf_slice", ops1)
   }
 
+  if name == "push_str" && args.size == 1 && args[0].kind == ex_interp() {
+    if at = args[0].ty, at.is_string() {
+      return lw.buf_push_interp(e, recv, args[0])
+    }
+  }
+
   f = ""
   n = 0
   if name == "size" {
@@ -1196,6 +1202,77 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
   lw.call_to(ty, f, ops)
+}
+
+// `buf.push_str("text${x}...")`: the interpolation written straight into
+// the Buf, with no String built for it. The parts' values are taken left
+// to right as the String's would be, then the receiver (as for any Buf
+// member), and only then pushed in order: a text with avant_buf_push_str,
+// an Int (an Int32 or UInt32 widened) with avant_buf_push_fmt_i, a Float
+// with avant_buf_push_float, a String as itself, and any other value as
+// the String interpolation makes of it. Every conversion is pure, so
+// pushing after all the values are taken changes nothing a program sees.
+pub fn (lw: MirLower) buf_push_interp(e: Expr, recv: Expr, arg: Expr): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  vals: Array(MOperand) = []
+  kinds: Array(Int) = []
+  for i in 0..arg.parts.size {
+    part = arg.parts[i]
+    if text = part.text, text.size > 0 {
+      vals.push(lw.text_value(text))
+      kinds.push(0)
+    }
+    if inner = part.expr {
+      if it = inner.ty {
+        v = lw.lower_expr(inner)
+        if lw.failed() {
+          return zero
+        }
+        lw.at(inner.loc)
+        k = 0
+        if it.is_int() {
+          k = 1
+        } else if it.is_int32() || it.is_uint32() {
+          v = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
+          k = 1
+        } else if it.is_float() {
+          k = 2
+        } else {
+          v = lw.to_str(v, it)
+        }
+        if p = v.place {
+          if mir_part_has_switch(arg, i + 1) || mir_has_switch(recv) {
+            v = lw.tmp(b.func.locals[p.local].ty, b.rv_use(v))
+          }
+        }
+        vals.push(v)
+        kinds.push(k)
+      } else {
+        lw.refuse(inner.loc, "an untyped interpolation")
+        return zero
+      }
+    }
+  }
+  r = lw.lower_expr(recv)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  h = lw.hold(r, lw.ety(recv))
+  for i in 0..vals.size {
+    f = "avant_buf_push_str"
+    if kinds[i] == 1 {
+      f = "avant_buf_push_fmt_i"
+    } else if kinds[i] == 2 {
+      f = "avant_buf_push_float"
+    }
+    ops: Array(MOperand) = []
+    ops.push(b.copy_local(h))
+    ops.push(vals[i])
+    b.call(-1, f, ops)
+  }
+  zero
 }
 
 // The members of String and Bytes that make an Array or a Buf
