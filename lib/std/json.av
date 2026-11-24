@@ -439,6 +439,11 @@ fn builder_escape(buf: Buf, s: String) {
 
 pub class JsonBuilder {
   buf: Buf = Buf.new()
+  // The open containers, innermost last, each as its JsonKind's code
+  // (JsonKind.obj or JsonKind.arr, to_i), and how many values each holds
+  // so far. An Array(JsonKind) reads the same, but its push takes the
+  // collector's write-barrier test that an Int's push does not: +0.8%
+  // instructions on a builder loop.
   stack: Array(Int) = []
   counts: Array(Int) = []
   pending: Bool = false
@@ -456,7 +461,7 @@ pub class JsonBuilder {
       return
     }
     top = self.stack[self.stack.size - 1]
-    if top == 2 {
+    if top == JsonKind.arr.to_i() {
       if self.counts[self.counts.size - 1] > 0 {
         self.buf.push_str(",")
       }
@@ -469,7 +474,7 @@ pub class JsonBuilder {
   pub fn obj: JsonBuilder {
     self.before_value()
     self.buf.push_str("{")
-    self.stack.push(1)
+    self.stack.push(JsonKind.obj.to_i())
     self.counts.push(0)
     self
   }
@@ -477,7 +482,7 @@ pub class JsonBuilder {
   pub fn arr: JsonBuilder {
     self.before_value()
     self.buf.push_str("[")
-    self.stack.push(2)
+    self.stack.push(JsonKind.arr.to_i())
     self.counts.push(0)
     self
   }
@@ -490,7 +495,7 @@ pub class JsonBuilder {
     top = self.stack[self.stack.size - 1]
     self.stack.pop()
     self.counts.pop()
-    if top == 1 {
+    if top == JsonKind.obj.to_i() {
       self.buf.push_str("}")
     } else {
       self.buf.push_str("]")
@@ -499,7 +504,7 @@ pub class JsonBuilder {
   }
 
   pub fn key(name: String): JsonBuilder {
-    if self.stack.size == 0 || self.stack[self.stack.size - 1] != 1 {
+    if self.stack.size == 0 || self.stack[self.stack.size - 1] != JsonKind.obj.to_i() {
       panic("json.JsonBuilder.key: not inside an object")
       return self
     }
