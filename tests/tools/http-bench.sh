@@ -89,11 +89,12 @@ chmod +x "$w/bin/crystal"
 # The stub compiler of the Avant row: `compile SRC OUT ...` writes OUT.
 printf '#!/bin/sh\n[ "$1" = compile ] || exit 2\nprintf "#!/bin/sh\\n" > "$3"; chmod +x "$3"\n' > "$w/bin/avantc"
 chmod +x "$w/bin/avantc"
-hb() { # NAME [VAR=value...] -- ARGS...: run.sh from the copy, output in $w/NAME.log, its status in $rc
+hb() { # NAME [VAR=value...] -- ARGS...: run.sh from the copy, output in $w/NAME.log, its status in $rc;
+  # TMPDIR is the work directory, where run.sh makes its default build directory, so a run leaves nothing in /tmp
   n=$1; shift
   envs=""; while [ $# -gt 0 ] && [ "$1" != -- ]; do envs="$envs $1"; shift; done; shift
   # shellcheck disable=SC2086
-  (cd "$w/avant" && env -i PATH="$w/bin:$PATH" HOME="${HOME:-/}" HTTP_BENCH_PORT=$port HTTP_BENCH_WS_PORT=$wsport STUB_PORT=$port HTTP_BENCH_WARMUP=0 HTTP_BENCH_DURATION=1 $envs timeout -k 10 300 sh bench/http/run.sh "$@" < /dev/null > "$w/$n.log" 2>&1); rc=$?
+  (cd "$w/avant" && env -i PATH="$w/bin:$PATH" HOME="${HOME:-/}" TMPDIR="$w" HTTP_BENCH_PORT=$port HTTP_BENCH_WS_PORT=$wsport STUB_PORT=$port HTTP_BENCH_WARMUP=0 HTTP_BENCH_DURATION=1 $envs timeout -k 10 300 sh bench/http/run.sh "$@" < /dev/null > "$w/$n.log" 2>&1); rc=$?
 }
 
 # No build: the directory's server is used; a Crystal build is never started.
