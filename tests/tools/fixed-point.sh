@@ -78,6 +78,7 @@ bad=$(git -C "$f" log --first-parent --format=%H --grep='^merge lane 3$' master)
     && TMPDIR="$w" g bisect run sh "$w/fixed-point.sh" > "$w/bisect.log" 2>&1
   g bisect reset > /dev/null 2>&1
 ) < /dev/null
-grep -q "^$bad is the first bad commit" "$w/bisect.log"
-say fp-bisect $? "expected $bad; $(grep 'first bad' "$w/bisect.log" | head -n 1)"
+# git 2.56 quotes the term: "is the first 'bad' commit".
+grep -Eq "^$bad is the first '?bad'? commit" "$w/bisect.log"
+say fp-bisect $? "expected $bad; $(grep -E "first '?bad'?" "$w/bisect.log" | head -n 1)"
 echo done
