@@ -31,7 +31,7 @@ You need:
 
 Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 (the link and the compiler's LLVM glue) and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 with its clang, which builds the runtime (`tools/install-llvm.sh`). The archive runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before each release. LLVM 22 is used over 20.1.8 for compile speed (the compiler's release build 18% faster, its self-compile 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with programs as fast (LangArena geometric mean 0.993, same memory) and the archive 4.7% larger; LLVM 20, 21 and 23 also build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
-The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.49.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
+The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.50.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
 
 ```sh
 sh runtime/build.sh
