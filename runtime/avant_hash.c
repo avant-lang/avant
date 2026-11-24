@@ -2773,11 +2773,15 @@ void *avant_hash_find_bk_part(void *hp, void *buf, avant_int start, avant_int st
 
 /* The miss of an insert by a slice: the key built from the bytes (the
  * allocation may collect: the hash and the source are handles, and the
- * bytes are formed again after it), then entered as put_sk_slow enters
- * a key it did not find. */
+ * bytes are formed again after it), then entered. POS is where the
+ * failed lookup ended: a collection moves the table's buffers but never
+ * its entries' positions, so with no growth due the key is claimed
+ * there, as put_sk's insert does, without a second lookup; a growth
+ * enters it as put_sk_slow enters a key it did not find. */
 static __attribute__((noinline)) void *insert_part(AvantHash *h, const void *src, int is_buf, avant_int start,
-                                                   size_t n, uint32_t hv, int how) {
+                                                   size_t n, uint32_t hv, int32_t pos, int how) {
   size_t m;
+  void *v;
   AVANT_GC_SCOPE(2);
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &src);
@@ -2787,7 +2791,14 @@ static __attribute__((noinline)) void *insert_part(AvantHash *h, const void *src
   }
   key[n] = 0;
   avant_str_tag(key);
-  void *v = put_sk_slow(h, key, n, hv, NULL, 0);
+  if (needs_grow(h)) {
+    v = put_sk_slow(h, key, n, hv, NULL, 0);
+  } else {
+    int32_t e = claim(h, pos, occ_mark(key, n), hv);
+    store_str_key(h, e, key, hv);
+    v = val_at(h, h->vals, e);
+    zero_val(h, v);
+  }
   return how != PART_PLAIN ? slot_after(h, v) : v;
 }
 
@@ -2822,7 +2833,7 @@ static inline __attribute__((always_inline)) void *upsert_part(AvantHash *h, con
   if (found) {
     *found = 0;
   }
-  return insert_part(h, src, is_buf, start, n, hv, how);
+  return insert_part(h, src, is_buf, start, n, hv, pos, how);
 }
 
 void *avant_hash_upsert_sk_part(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
