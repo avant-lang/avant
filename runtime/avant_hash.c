@@ -2108,20 +2108,47 @@ void *avant_hash_take_xk(void *hp, const void *key, int32_t *found) {
   return take_at(h, e, found);
 }
 
-/* delete as a statement, whose value nobody reads. */
+/* delete as a statement, whose value nobody reads: the entry found and
+ * erased, with no copy of its value and no found flag. */
 void avant_hash_del_sk(void *hp, const char *key) {
-  int32_t found = 0;
-  (void)avant_hash_take_sk(hp, key, &found);
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  size_t n;
+  if (!h) {
+    return;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  key = avant_str_bytes(key, &n);
+  if (find_bytes(h, key, n, hash_bytes(key, n, h->seed), &e, &pos)) {
+    erase(h, e);
+  }
 }
 
 void avant_hash_del_ik(void *hp, avant_int key) {
-  int32_t found = 0;
-  (void)avant_hash_take_ik(hp, key, &found);
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    return;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  if (find_int(h, key, hash_int(key, h->seed), &e, &pos)) {
+    erase(h, e);
+  }
 }
 
 void avant_hash_del_xk(void *hp, const void *key) {
-  int32_t found = 0;
-  (void)avant_hash_take_xk(hp, key, &found);
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    return;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  if (find_struct(h, (const char *)key, xkey_hash(h, (const char *)key), &e, &pos)) {
+    erase(h, e);
+  }
 }
 
 /* ---- keys with their own hash and equality (the _uk entries) ----
