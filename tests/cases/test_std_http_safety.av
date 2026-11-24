@@ -113,6 +113,8 @@ fn queue_round(port: Int, out: sync.Channel(String), root: String, stamp: Int): 
   out.send(raw_client(port, root, stamp, "pile", ""))
   out.send(raw_client(port, root, stamp, "close_big", ""))
   out.send(raw_client(port, root, stamp, "half_close", ""))
+  out.send(raw_client(port, root, stamp, "end_queued", ""))
+  out.send(raw_client(port, root, stamp, "end_later", ""))
   out.send(raw_client(port, root, stamp, "flood", ""))
   0
 }
@@ -1648,7 +1650,11 @@ fn test_std_http_safety(c: Checks, root: String) {
   // per connection and sent when the socket is writable again: no byte
   // is lost, answers stay in order, Connection: close waits for the
   // queue, and a client that does not read is not served or read
-  // further, so the server's memory stays bounded.
+  // further, so the server's memory stays bounded. A client that shuts
+  // down its sending side while answers are still queued (more requests
+  // than one read takes, behind a large answer) or still to come from a
+  // task (Response.later, a request pipelined behind it) gets every
+  // answer whole, then the server's close.
   //
   // The 30-second timeout was armed once, when the connection was
   // accepted, so a busy keep-alive connection was closed like an idle
@@ -1675,6 +1681,17 @@ fn test_std_http_safety(c: Checks, root: String) {
     flood_hits = sync.Mutex(Int).new(0)
     server.get("/big", (req) {
       Response.bytes(big_bytes)
+    })
+    // Answered later, by a task, after the client has shut down its
+    // sending side (raw_client.py, mode end_later).
+    server.get("/later_big", (req) {
+      reply = req.reply()
+      _ = spawn {
+        sleep_ms(300)
+        _ = reply.send(Response.bytes(big_bytes))
+        0
+      }
+      Response.later()
     })
     server.get("/n", (req) {
       k = (req.query() ?? "0").to_i() ?? 0
@@ -1748,6 +1765,8 @@ fn test_std_http_safety(c: Checks, root: String) {
     want.push("pile=65 whole,in order")
     want.push("close_big=whole,then eof")
     want.push("half_close=2 whole,then eof")
+    want.push("end_queued=20001 whole,then eof")
+    want.push("end_later=200 big|200 pong,then eof")
     want.push("flood=held back")
     expect_lines(c, out, want, "an answer the socket takes in part is queued, not cut:")
     hit = flood_hits.with (n) { n }

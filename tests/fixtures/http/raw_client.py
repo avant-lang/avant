@@ -196,6 +196,45 @@ def half_close():
     return "2 whole,then eof" if rest == b"" else "2 whole,then %r" % rest
 
 
+def end_queued():
+    # More than the server reads at once (512 KiB) of pipelined requests,
+    # the first a large answer the socket takes only in part, then the
+    # client shuts down its sending side before reading anything: the
+    # server sees the end of the requests while answers are still
+    # queued. Every request is answered whole and in order, then the
+    # server closes.
+    s = small_rcvbuf()
+    pings = 20000
+    data = get("/big") + get("/ping") * pings
+    assert len(data) > 512 * 1024
+    s.sendall(data)
+    s.shutdown(socket.SHUT_WR)
+    time.sleep(0.2)
+    got = read_answers(s, 1 + pings)
+    if got[:1] != [(200, big_body())] or got[1:] != [(200, b"pong")] * pings:
+        return "cut:%d answers" % len(got)
+    rest = s.recv(16)
+    s.close()
+    return "%d whole,then eof" % len(got) if rest == b"" else "%d whole,then %r" % (len(got), rest)
+
+
+def end_later():
+    # A request answered later by a task (Response.later), then one
+    # pipelined behind it, then the client shuts down its sending side:
+    # the server sees the end of the requests while the first answer is
+    # still to come. The answer comes whole, then the one behind it, then
+    # the server closes.
+    s = small_rcvbuf()
+    s.sendall(get("/later_big") + get("/ping"))
+    s.shutdown(socket.SHUT_WR)
+    got, rest = read_answers_rest(s, 2)
+    shown = "|".join("%d %s" % (st, "big" if b == big_body() else b.decode("latin1")[:16]) for st, b in got)
+    if rest == b"":
+        rest = s.recv(16)
+    s.close()
+    return "%s,then eof" % shown if rest == b"" else "%s,then %r" % (shown, rest)
+
+
 def flood():
     # Memory: a client that sends requests for 64 KiB answers as
     # fast as it can and reads nothing. The server stops taking requests
@@ -1039,6 +1078,10 @@ try:
         result = close_big()
     elif mode == "half_close":
         result = half_close()
+    elif mode == "end_queued":
+        result = end_queued()
+    elif mode == "end_later":
+        result = end_later()
     elif mode == "flood":
         result = flood()
     elif mode == "idle":
