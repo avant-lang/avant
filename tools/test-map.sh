@@ -177,6 +177,11 @@ sed -i "s#^lib: .*#lib: $w/lib#" "$w/bin/avant-c-llvm.versions.txt"
 rm -f "$w/bin/avant-b" "$w/bin/avant-b.versions.txt"
 tm_run "${TESTMAP_STEP:-test map} build" sh -c 'cd "$1/avant" && exec env AVANT_COVERAGE=1 AVANT_COVERAGE_MAP="$1/cov.map" timeout -k 10 1800 ./bin/avant-c-llvm compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o < /dev/null > "$2" 2>&1' tm-build "$TM_WORK" "$log" \
   || { echo "test-map.sh: the instrumented compiler did not build ($log)" >&2; tail -n 15 "$log" >&2; rm -rf "$TM_WORK"; exit 1; }
+# Its versions.txt, as tools/letters.sh writes one beside each compiler: the
+# test files that compare a dump with a golden read its `lib:` line to make
+# the library's paths relative (test_threads_llvm.av failed every map
+# without it, its outputs naming the copy's absolute lib/ paths).
+sed "s#^built: .*#built: tools/test-map.sh (instrumented, by bin/avant-c-llvm)#" "$w/bin/avant-c-llvm.versions.txt" > "$w/bin/avant-b.versions.txt"
 : > "$TM_WORK/cov.map.hits"
 t1=$(date +%s.%N)
 echo "instrumented compiler: $(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }') s" >> "$m/MANIFEST"

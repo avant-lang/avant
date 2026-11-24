@@ -336,6 +336,21 @@ uint64_t gc_chunk_take(uint64_t n) {
     gc_heap_reserve();
   }
   hw = gc_heap.committed >> CHUNK_SHIFT;
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace && n > 1) {
+    /* The chunk map at a huge object's take: S small, L large-object, H
+     * huge, F free resident, f free not resident. */
+    char m[512];
+    uint64_t i, j = 0;
+    for (i = 0; i < hw && j < sizeof m - 1; i++) {
+      const GcChunk *ch = &gc_heap.chunks[i];
+      m[j++] = ch->kind == CHUNK_FREE ? (ch->dirty && !ch->decommitted ? 'F' : 'f')
+               : ch->kind == CHUNK_SMALL ? 'S' : ch->kind == CHUNK_LARGE ? 'L' : 'H';
+    }
+    m[j] = 0;
+    fprintf(stderr, "avant gc trace: take %llu chunks: %s\n", (unsigned long long)n, m);
+  }
+#endif
   if (gc_heap.free_chunks >= n) {
     for (c = 0; c < hw; c++) {
       if (gc_heap.chunks[c].kind != CHUNK_FREE) {
@@ -638,6 +653,11 @@ void gc_heap_return(uint64_t live) {
       keep = gc_heap.retain_hist[k];
     }
   }
+  /* What the young cycles used beyond the heap (YOUNG_RETAIN): a
+   * program that runs no full collection never writes retain_hist. */
+  if (TUNE(retain_young, 1) && gc_heap.young_keep > keep) {
+    keep = gc_heap.young_keep;
+  }
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
   uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;
@@ -662,6 +682,12 @@ void gc_heap_return(uint64_t live) {
       gc_die("avant gc verify: the count of the empty chunks with nothing resident differs from the chunk map's");
     }
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace) {
+    fprintf(stderr, "avant gc trace: return total=%llu keep=%llu clean_empty=%u\n", (unsigned long long)total,
+            (unsigned long long)keep, gc_heap.clean_empty_chunks);
+  }
+#endif
   if (total <= keep && gc_heap.clean_empty_chunks == 0) {
     return;
   }
@@ -677,12 +703,52 @@ void gc_heap_return(uint64_t live) {
       continue;
     }
     r = chunk_resident_free(c);
-    if (r == 0 || total > keep) {
+    /* A chunk goes only when what stays resident is still the target:
+     * decommitted on the total alone, a cycle 37 KB over its target gave
+     * back a 3.2 MB chunk and faulted it in again (Compress::LZWDecode at
+     * the 1 MiB young start: 273,211 page faults, 1.77 s against 0.81). */
+#ifdef AVANT_GC_TUNE
+    if (r == 0 || (gc_tune.ret ? total - r >= keep : total > keep)) {
+#else
+    if (r == 0 || total - r >= keep) {
+#endif
       if (ch->kind == CHUNK_SMALL) {
         gc_heap.free_resident -= r;
       }
       total -= r;
       decommit_chunk(c);
+    }
+  }
+  /* First the large-object pages free for LARGE_RETURN_AGE ticks, in any
+   * chunk (a busy chunk's long-free pages too). */
+  for (c = hw; TUNE(ret_age, LARGE_RETURN_AGE) && c-- > 0 && total > keep;) {
+    GcChunk *ch = &gc_heap.chunks[c];
+    uint32_t p = 0;
+    uint64_t before = total;
+    if (ch->kind != CHUNK_LARGE) {
+      continue;
+    }
+    while (p < PAGES_PER_CHUNK && total > keep) {
+      uint32_t q = p;
+      /* One madvise per run of such pages. */
+      while (q < PAGES_PER_CHUNK && total > keep &&
+             ((ch->dirty_pages[q >> 6] & ~ch->alloc[q >> 6]) >> (q & 63) & 1ULL) &&
+             (uint8_t)((uint8_t)now - ch->freed_at[q]) >= TUNE(ret_age, LARGE_RETURN_AGE)) {
+        ch->dirty_pages[q >> 6] &= ~(1ULL << (q & 63));
+        gc_heap.free_resident_other -= PAGE_SIZE;
+        total -= PAGE_SIZE;
+        q++;
+      }
+      if (q > p) {
+        gc_return_pages(chunk_base(c) + ((size_t)p << PAGE_SHIFT), (size_t)(q - p) << PAGE_SHIFT);
+        p = q;
+      } else {
+        p++;
+      }
+    }
+    /* An empty chunk's last dirty pages: the next call decommits it. */
+    if (total != before && ch->used == 0 && chunk_resident_free(c) == 0) {
+      gc_heap.clean_empty_chunks++;
     }
   }
   for (c = hw; c-- > 0 && total > keep;) {

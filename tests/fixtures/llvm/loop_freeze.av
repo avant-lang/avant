@@ -1,0 +1,105 @@
+// Element stores in loops of a program that spawns: each store tests
+// that no running task reads the array. Where the array is held by a
+// local the loop never changes and nothing in the loop may spawn (no
+// call that collects), loop versioning tests it once before the loop
+// and the loop's copy stores without the test; if it is frozen there,
+// the original loop runs and its first store traps, naming its site. The
+// argument picks the case:
+//   (none)   stores into arrays this task alone holds: the sums
+//   outside  the array is captured by a running task before the loop
+//   inside   the loop itself spawns a task that captures the array, at
+//            its fourth step: the next store traps
+//   other    a task holding the array spawns another that holds it
+//            too; the first ends, the second still runs: the loop's
+//            first store traps
+//   after    the tasks that held it have been joined: the stores run
+
+import std.sync
+import std.process
+
+fn fill(xs: Array(Float64), n: Int, v: Float64) {
+  for i in 0..n {
+    xs[i] = v * i.to_f()
+  }
+}
+
+fn fill_spawning(xs: Array(Float64), n: Int, gate: sync.Channel(Int), hs: Array(JoinHandle(Int))) {
+  for i in 0..n {
+    if i == 4 {
+      hs.push(spawn {
+        _ = gate.recv()
+        xs.size
+      })
+    }
+    xs[i] = i.to_f()
+    puts("stored ${i}")
+  }
+}
+
+fn sum(xs: Array(Float64)): Float64 {
+  s = 0.0
+  for i in 0..xs.size {
+    s += xs[i]
+  }
+  s
+}
+
+fn main {
+  args = process.args()
+  mode = ""
+  if args.size > 1 {
+    mode = args[args.size - 1]
+  }
+  n = 1000
+  xs = Array(Float64).new(n)
+  if mode == "outside" {
+    gate = sync.Channel(Int).new()
+    h = spawn {
+      _ = gate.recv()
+      xs.size
+    }
+    puts("before")
+    fill(xs, n, 2.0)
+    gate.send(1)
+    puts(h.join() ?? -1)
+    return
+  }
+  if mode == "inside" {
+    gate = sync.Channel(Int).new()
+    hs: Array(JoinHandle(Int)) = []
+    fill_spawning(xs, 8, gate, hs)
+    gate.send(1)
+    return
+  }
+  if mode == "other" {
+    gate = sync.Channel(Int).new()
+    ready = sync.Channel(Int).new()
+    h = spawn {
+      inner = spawn {
+        ready.send(1)
+        _ = gate.recv()
+        xs.size
+      }
+      7
+    }
+    _ = ready.recv()
+    puts("before")
+    fill(xs, n, 3.0)
+    gate.send(1)
+    puts(h.join() ?? -1)
+    return
+  }
+  if mode == "after" {
+    h = spawn { xs.size }
+    puts(h.join() ?? -1)
+    fill(xs, n, 4.0)
+    puts(sum(xs))
+    return
+  }
+  t = spawn { 5 }
+  for r in 0..3 {
+    fill(xs, n, r.to_f())
+  }
+  puts(sum(xs))
+  puts(t.join() ?? -1)
+}

@@ -1,0 +1,81 @@
+// A per-run work object allocated in a hole of a recycled block (a block
+// with mature lines; MIXED_EVAC_LINES in runtime/avant_gc_internal.h):
+// the setup leaves the heap's blocks half full of long-lived nodes, so
+// young allocation takes their holes; each run builds a Work whose four
+// buffers its initialize allocates one after another (a young collection
+// falls inside it at most runs), reads them and drops it. Promoted where
+// it lay at that first survival, each Work became old at once and, dead,
+// kept the buffers stored into it after that through the remembered set
+// until they aged into mature space: one full collection after another.
+// Evacuated when its block's survivors fill one line, the Work ages in a
+// survivor block and dies young. tests/cases/test_gc_sizing.av reads its
+// full collections and promoted buffers with AVANT_GC_STATS=1, and runs
+// it under AVANT_GC_VERIFY=1 with its known stdout.
+import std.gc
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+class Work {
+  a: Array(Int)
+  b: Array(Int)
+  c: Array(Int)
+  d: Array(Int)
+
+  fn initialize(n: Int, k: Int) {
+    self.a = Array(Int).new(n, k)
+    self.b = Array(Int).new(n, k + 1)
+    self.c = Array(Int).new(n, k + 2)
+    self.d = Array(Int).new(n, k + 3)
+  }
+}
+
+fn setup: Node? {
+  head: Node? = nil
+  i = 0
+  while i < 400000 {
+    n = Node.new()
+    n.v = i
+    if (i / 64) % 2 == 0 {
+      n.next = head
+      head = n
+    }
+    i += 1
+  }
+  gc.collect()
+  head
+}
+
+// One run: a Work of four buffers of N Ints (a young collection falls
+// inside its initialize at most runs), some small garbage, a sum.
+fn run(n: Int, r: Int): Int {
+  w = Work.new(n, r)
+  junk = 0
+  j = 0
+  while j < 300 {
+    s = "g-${j}-${r}"
+    junk += s.size
+    j += 1
+  }
+  w.a[r % n] + w.c[(r * 3) % n] + w.d[(r * 7) % n] + junk % 5
+}
+
+fn main {
+  keep = setup()
+  sum = 0
+  r = 0
+  while r < 600 {
+    sum += run(120000, r)
+    r += 1
+  }
+  count = 0
+  p = keep
+  while n = p {
+    count += 1
+    p = n.next
+  }
+  puts("kept: ${count}")
+  puts("sum: ${sum}")
+}

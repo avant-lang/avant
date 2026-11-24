@@ -9,7 +9,8 @@
 // and exactly its own operations in its own order, so every result keeps
 // its bits (no reassociation, no contraction): only which output
 // advances next changes. Two shapes are taken, on the fast copy of a
-// versioned loop L0 (induction i, step 1):
+// versioned loop L0, or on a loop L0 versioning did not copy (no check
+// at its own level) (induction i, step 1):
 //
 //   depth 2   L0 { pre0; L1 { body }; post0 }           tile of UI rows
 //   depth 3   L0 { pre0; L1 { pre1; L2 { body }; post1 }; post0 }
@@ -17,17 +18,21 @@
 //
 // where every inner loop is the fast copy of its own versioning (its
 // guard between the pre statements and its header), every pre, body and
-// post statement is an assignment of a pure value (no call, no trap: an
-// integer division, a shift or any other checked operation refuses the
-// nest), and the only memory writes are element stores in post1 (depth
+// post statement is an assignment of a pure value (no call but one of a
+// pure function, mir_tile_pure: a value of its scalar arguments, which
+// reads no memory and never collects; no trap: an integer division, a
+// shift or any other checked operation refuses the nest), and the only
+// memory writes are element stores in post1 (depth
 // 3) or post0 (depth 2), each to an array the outer level holds, at the
 // index of its own level's induction (one output per iteration). Three
 // forms that could trap are taken, each tested where the tile starts so
 // that in the tile it cannot: a bounds check among the pre statements
 // (versioning left it: `band[i - lo]`), tested there or, for L1's, in
 // the scan below; a checked Int sum, difference or product of values in
-// the i32 range (i, j, constants, and locals set outside the nest, which
-// the tile tests), which cannot overflow; and the freeze test of a store
+// the i32 range (i, j, constants, locals set outside the nest, which the
+// tile tests, and the inner loop's induction between two such values),
+// which cannot overflow, also as the arguments of a pure function whose
+// checked operations take them; and the freeze test of a store
 // in a program that spawns, tested once per array (nothing in the tile
 // can freeze one, and no other task reaches an array this one may store
 // into unless it is frozen already).
@@ -62,8 +67,8 @@
 //   sizes and of data pointers read array headers, which an element
 //   store never writes.
 // So no store of the tile is read by the tile: the reordered outputs see
-// the values the original saw. The tile calls nothing, so nothing
-// collects, no object moves and no array changes size while it runs; a
+// the values the original saw. The tile calls only pure functions, so
+// nothing collects, no object moves and no array changes size while it runs; a
 // locals the region defines is fresh in the tile (the original's are
 // untouched for the fallback) and none of them is read after the nest or
 // carried from one iteration of L0 to the next (liveness), so the state
@@ -72,7 +77,10 @@
 // The shape (UI x UJ) is chosen by the CPU level compiled for, measured
 // on matrix multiply: a two-level tile, 4 x 2 at v3 and v4 (four rows of
 // the first operand, two of the second's transpose), 4 x 4 at v2 and
-// below; a depth-2 nest takes UI rows.
+// below; a depth-2 nest takes UI rows. A depth-3 nest also has a cache
+// tile (tl_panel): a panel of rows computed a block of columns at a time,
+// its sizes chosen where the nest starts from the detected cache sizes
+// and the threads the program runs.
 
 import source
 import mir.types
@@ -399,7 +407,7 @@ fn tl_head_stmts(blk: MBlock, keep: Int): Array(MStmt) {
 // nothing in the tile can freeze an array, and no other task can reach
 // one it may store into unless the array is frozen already); the blocks
 // to blocks.
-fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch): Bool {
+fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch, preds: Array(Array(Int))): Bool {
   cur = q
   while out.blocks.size < 64 {
     out.blocks.push(cur)
@@ -408,6 +416,13 @@ fn tl_latch(f: MFunc, q: Int, hdr: Int, out: TlLatch): Bool {
     if t.kind == mtk_goto() && t.targets.size == 1 && t.targets[0] == hdr {
       out.stmts.concat(blk.stmts)
       return true
+    }
+    // A goto on to the next block of the latch (where loop versioning
+    // did a store's freeze test in its guard), entered only from here.
+    if t.kind == mtk_goto() && t.targets.size == 1 && t.targets[0] != cur && preds[t.targets[0]].size == 1 {
+      out.stmts.concat(blk.stmts)
+      cur = t.targets[0]
+      continue
     }
     if t.kind != mtk_branch() || t.targets.size != 2 || blk.stmts.size < 2 {
       return false
@@ -483,8 +498,9 @@ fn tl_nest(f: MFunc, rec: TlRec, recs: Array(TlRec)): TlNest? {
   nest.pre0 = f.blocks[b0].stmts
   nest.g1 = tl_chain(f, r1) ?? return nil
   hd1 = tl_header(f, r1.fast) ?? return nil
+  preds = mir_preds(f)
   l0 = TlLatch.new()
-  if !tl_latch(f, hd1.exit, rec.fast, l0) {
+  if !tl_latch(f, hd1.exit, rec.fast, l0, preds) {
     return nil
   }
   ti = tl_tail_of(l0.stmts, nest.ind_i)
@@ -522,7 +538,7 @@ fn tl_nest(f: MFunc, rec: TlRec, recs: Array(TlRec)): TlNest? {
     return nil
   }
   l1 = TlLatch.new()
-  if !tl_latch(f, hd2.exit, r1.fast, l1) {
+  if !tl_latch(f, hd2.exit, r1.fast, l1, preds) {
     return nil
   }
   tj = tl_tail_of(l1.stmts, nest.ind_j)
@@ -605,9 +621,24 @@ fn tl_operand_ok(o: MOperand?): Bool {
   true
 }
 
-// A pure assignment: no call, no trap (a checked operation, an integer
-// division or remainder), no address.
-fn tl_stmt_ok(f: MFunc, st: MStmt): Bool {
+// A pure assignment: no call but one of a pure function (pure), no
+// trap (a checked operation, an integer division or remainder), no
+// address.
+fn tl_stmt_ok(f: MFunc, st: MStmt, pure: Hash(String, Int)): Bool {
+  if st.kind == msk_call() {
+    if ind = st.indirect {
+      return false
+    }
+    if st.dest < 0 || (pure.get(st.callee) ?? 0) == 0 {
+      return false
+    }
+    for a in st.args {
+      if !tl_plain_operand(a) || a.kind == mok_global() || a.kind == mok_fn() || a.kind == mok_str() {
+        return false
+      }
+    }
+    return true
+  }
   if st.kind == msk_check_bounds() {
     // Only in the pre statements (tl_try): the tile tests it where it
     // starts or in its scan.
@@ -654,6 +685,121 @@ fn tl_stmt_ok(f: MFunc, st: MStmt): Bool {
     return false
   }
   tl_operand_ok(r.a) && tl_operand_ok(r.b)
+}
+
+// The pure functions of m, by symbol: a function of scalar parameters
+// and a scalar result whose blocks run straight to its return (gotos
+// forward only), each statement an assignment to a local of a value
+// computed from locals and constants only (no memory read, no call, no
+// allocation, so a call never collects), with no trap but a checked Int
+// sum, difference or product of two parameters or constants: such a
+// call is a value of its arguments, the same wherever and however often
+// it runs, and its checked operations cannot overflow when its
+// arguments lie in the i32 range. 1: no checked operation; 2: the
+// arguments must lie in the i32 range.
+pub fn mir_tile_pure(m: MModule): Hash(String, Int) {
+  out = Hash(String, Int).new()
+  for g in m.funcs {
+    k = tl_pure_kind(g)
+    if k > 0 {
+      out[g.symbol] = k
+    }
+  }
+  out
+}
+
+fn tl_scalar(ty: Int): Bool {
+  ty == mt_bool() || ty == mt_u8() || ty == mt_i8() || ty == mt_i16() || ty == mt_u16() || ty == mt_i32() || ty == mt_u32() || ty == mt_i64() || ty == mt_u64() || ty == mt_f64()
+}
+
+fn tl_pure_operand(g: MFunc, o: MOperand?): Bool {
+  if x = o {
+    if x.kind == mok_global() || x.kind == mok_fn() || x.kind == mok_str() || x.kind == mok_null() {
+      return false
+    }
+    if p = x.place {
+      return p.proj.size == 0
+    }
+  }
+  true
+}
+
+fn tl_pure_kind(g: MFunc): Int {
+  if g.external || g.blocks.size == 0 || g.blocks.size > 8 || !g.has_ret() || !tl_scalar(g.locals[0].ty) {
+    return 0
+  }
+  for l in 1..g.nparams + 1 {
+    if l >= g.locals.size || !tl_scalar(g.locals[l].ty) {
+      return 0
+    }
+  }
+  kind = 1
+  for blk in g.blocks {
+    for st in blk.stmts {
+      if st.kind != msk_assign() {
+        return 0
+      }
+      p = st.place ?? return 0
+      if p.proj.size != 0 {
+        return 0
+      }
+      if p.local >= 1 && p.local <= g.nparams {
+        return 0
+      }
+      r = st.rv ?? return 0
+      k = r.kind
+      if k != mrk_use() && k != mrk_binary() && k != mrk_cmp() && k != mrk_cast() && k != mrk_unary() && k != mrk_checked() {
+        return 0
+      }
+      if r.ops.size > 0 {
+        return 0
+      }
+      if rp = r.place {
+        return 0
+      }
+      if !tl_pure_operand(g, r.a) || !tl_pure_operand(g, r.b) {
+        return 0
+      }
+      if k == mrk_unary() && r.op != mop_neg() && r.op != mop_not() {
+        return 0
+      }
+      if k == mrk_binary() && (r.op == mop_div() || r.op == mop_rem()) && g.locals[p.local].ty != mt_f64() {
+        return 0
+      }
+      if k == mrk_binary() && (r.op == mop_shl() || r.op == mop_shr()) {
+        return 0
+      }
+      if k == mrk_checked() {
+        if (r.op != mop_add() && r.op != mop_sub() && r.op != mop_mul()) || g.locals[p.local].ty != mt_i64() {
+          return 0
+        }
+        ops: Array(MOperand?) = [r.a, r.b]
+        for oo in ops {
+          o = oo ?? return 0
+          if o.kind == mok_int() {
+            if o.ival.to_i() < 0 - 2147483647 || o.ival.to_i() > 2147483647 {
+              return 0
+            }
+          } else {
+            v = tl_local(o)
+            if v < 1 || v > g.nparams || !tl_int_type(g.locals[v].ty) {
+              return 0
+            }
+          }
+        }
+        kind = 2
+      }
+    }
+    t = blk.term ?? return 0
+    if t.kind == mtk_goto() {
+      if t.targets.size != 1 || t.targets[0] <= blk.id {
+        return 0
+      }
+    } else if t.kind != mtk_return() {
+      return 0
+    }
+  }
+  kind
 }
 
 // The places of a statement's operands that read memory (with a deref).
@@ -811,6 +957,18 @@ fn tl_c_place(f: MFunc, nm: TlNames, p: MPlace, x: Int, y: Int, def: Bool): MPla
 
 fn tl_c_stmt(f: MFunc, nm: TlNames, st: MStmt, x: Int, y: Int): MStmt {
   c = MStmt.new(st.kind, st.loc)
+  if st.kind == msk_call() {
+    // A pure function's call (mir_tile_pure): it reads no memory and
+    // never collects.
+    c.callee = st.callee
+    c.dest = tl_name(f, nm, st.dest, x, y, true)
+    for a in st.args {
+      c.args.push(tl_c_operand(f, nm, a, x, y))
+    }
+    c.collects = false
+    c.sig = st.sig
+    return c
+  }
   if r = st.rv {
     // A checked operation of the tile cannot overflow (tl_try): plain.
     kind = r.kind
@@ -1008,7 +1166,7 @@ fn tl_emit_distinct(f: MFunc, nm: TlNames, loc: MLoc, blk0: MBlock, stores: Arra
 
 // ---- one nest
 
-fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
+fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int, pure: Hash(String, Int)): Bool {
   uj = uj0
   if nest.depth == 2 {
     uj = 1
@@ -1016,7 +1174,7 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   n = f.locals.size
   all = tl_all(f, nest)
   for st in all {
-    if !tl_stmt_ok(f, st) {
+    if !tl_stmt_ok(f, st, pure) {
       return false
     }
   }
@@ -1097,28 +1255,22 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   // values in the i32 range (i and j there, constants, locals set
   // outside the nest that the tile tests), whose result an Int holds:
   // it cannot overflow, here or in the original.
+  // So are the arguments of a call of a pure function with a checked
+  // operation (mir_tile_pure), whose operands are its parameters.
   for st in all {
     if r = st.rv, r.kind == mrk_checked() {
       ops: Array(MOperand?) = [r.a, r.b]
       for oo in ops {
         o = oo ?? return false
-        if o.kind == mok_int() {
-          if o.ival.to_i() < 0 - 2147483647 || o.ival.to_i() > 2147483647 {
-            return false
-          }
-        } else {
-          v = tl_local(o)
-          if v < 0 || !tl_int_type(f.locals[v].ty) {
-            return false
-          }
-          if v != nest.ind_i && v != nest.ind_j {
-            if nm.inreg[v] {
-              return false
-            }
-            if !tl_listed(nest.ranged, v) {
-              nest.ranged.push(v)
-            }
-          }
+        if !tl_range_ok(f, nest, nm, o) {
+          return false
+        }
+      }
+    }
+    if st.kind == msk_call() && (pure.get(st.callee) ?? 0) == 2 {
+      for o in st.args {
+        if !tl_range_ok(f, nest, nm, o) {
+          return false
         }
       }
     }
@@ -1283,27 +1435,96 @@ fn tl_try(f: MFunc, nest: TlNest, ui: Int, uj0: Int): Bool {
   true
 }
 
+// An integer operand of a checked operation (or of a call whose checked
+// operations take its arguments) that lies in the i32 range: a constant
+// there, i or j, a local set outside the nest (tested where the tile
+// starts: nest.ranged), or the inner loop's induction when it starts at
+// such a value, only grows by one, and stops below a bound that is one
+// too (both tested where the tile starts).
+fn tl_range_ok(f: MFunc, nest: TlNest, nm: TlNames, o: MOperand): Bool {
+  if o.kind == mok_int() {
+    return o.ival.to_i() >= 0 - 2147483647 && o.ival.to_i() <= 2147483647
+  }
+  v = tl_local(o)
+  if v < 0 || !tl_int_type(f.locals[v].ty) {
+    return false
+  }
+  if v == nest.ind_i || v == nest.ind_j {
+    return true
+  }
+  if !nm.inreg[v] {
+    if !tl_listed(nest.ranged, v) {
+      nest.ranged.push(v)
+    }
+    return true
+  }
+  if v != nest.hdn.ind {
+    return false
+  }
+  // The inner induction: set once by its own level's pre statements,
+  // increased by one at the end of the inner body, nowhere else.
+  pre = nest.pre1
+  if nest.depth == 2 {
+    pre = nest.pre0
+  }
+  init: MOperand? = nil
+  count = 0
+  for st in tl_all(f, nest) {
+    if mir_stmt_def(st) == v {
+      count += 1
+    }
+  }
+  for st in pre {
+    if mir_stmt_def(st) == v {
+      if r = st.rv, r.kind == mrk_use(), st.kind == msk_assign() {
+        init = r.a
+      }
+    }
+  }
+  if count != 2 || tl_incr_tail_list(nest.bn, v) == 0 {
+    return false
+  }
+  io = init ?? return false
+  start = tl_outside(f, nest, nm, io) ?? return false
+  bound = tl_outside(f, nest, nm, nest.hdn.bound) ?? return false
+  ends: Array(MOperand) = [start, bound]
+  for e in ends {
+    if e.kind == mok_int() {
+      if e.ival.to_i() < 0 - 2147483647 || e.ival.to_i() > 2147483647 {
+        return false
+      }
+    } else {
+      w = tl_local(e)
+      if w < 0 || !tl_int_type(f.locals[w].ty) {
+        return false
+      }
+      if !tl_listed(nest.ranged, w) {
+        nest.ranged.push(w)
+      }
+    }
+  }
+  true
+}
+
+fn tl_incr_tail_list(xs: Array(MStmt), v: Int): Int {
+  blk = MBlock.new(0)
+  blk.stmts = xs
+  tl_incr_tail(blk, v)
+}
+
 // ---- the tile
 
-fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int) {
-  h0 = nest.h0
-  fail = h0
-  hb = f.blocks[h0]
-  loc = hb.stmts[0].loc
-  preds = mir_preds(f)
-  ity = f.locals[nest.ind_i].ty
-  // JH0: UI rows left?
-  jh0 = tl_new_block(f)
-  blk = jh0
+// The tests where a tile of UI rows starts at i (every one failing to
+// fail): the rows' i, the ranged locals, the outer level's pre
+// statements and the inner versionings' guards for each row, the
+// distinctness of what the tile stores into and reads, the freeze of
+// every array it stores into, and at depth 3 the scan of L1's columns.
+// The stores' data pointers go to wdata. Returns the block to continue
+// in.
+fn tl_checks(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, blk0: MBlock, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, fail: Int): MBlock {
+  blk = blk0
   wo: Array(Int) = [0]
-  blk = tl_wide(f, loc, blk, tl_copy(nest.ind_i), fail, wo)
-  i64 = wo[0]
-  blk = tl_wide(f, loc, blk, nest.hd0.bound, fail, wo)
-  x64 = wo[0]
-  last = tl_new_local(f, mt_i64())
-  blk.stmts.push(tl_assign(loc, last, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_int(ui - 1, mt_i64()))))
-  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(last), tl_copy(x64), fail)
-  // The rows' i.
+  ity = f.locals[nest.ind_i].ty
   nm.ix = [nest.ind_i]
   for x in 1..ui {
     v = tl_new_local(f, ity)
@@ -1313,7 +1534,7 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
   for v in nest.ranged {
     blk = tl_wide(f, loc, blk, tl_copy(v), fail, wo)
   }
-  if nest.depth == 3 {
+  if nest.depth == 3 && nm.jname < 0 {
     nm.jname = tl_new_local(f, f.locals[nest.ind_j].ty)
   }
   nm.jy = [nm.jname]
@@ -1353,94 +1574,403 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
     }
   }
   if nest.depth == 2 {
+    return blk
+  }
+  jty = f.locals[nest.ind_j].ty
+  j = nm.jname
+  // j and L1's bound within the i32 range, so j + UJ - 1 is exact.
+  blk = tl_wide(f, loc, blk, tl_copy(j), fail, wo)
+  xb = tl_c_operand(f, nm, nest.hd1.bound, 0, 0)
+  blk = tl_wide(f, loc, blk, xb, fail, wo)
+  // The scan: for every column, each row's L1 pre statements, the
+  // inner loop's guard and the distinctness of what they load.
+  sj = tl_new_local(f, jty)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(j)
+  blk.stmts.push(tl_assign(loc, sj, ru))
+  sh = tl_new_block(f)
+  blk.term = tl_goto(loc, sh.id)
+  sb = tl_new_block(f)
+  sdone = tl_new_block(f)
+  sc = tl_new_local(f, mt_bool())
+  sh.stmts.push(tl_assign(loc, sc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(sj), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
+  st = MTerm.new(mtk_branch(), loc)
+  st.cond = tl_copy(sc)
+  st.targets.push(sb.id)
+  st.targets.push(sdone.id)
+  sh.term = st
+  nm.jy = [sj]
+  sblk = tl_emit_tested(f, nm, sb, nest.pre1, ui, fail)
+  for x in 0..ui {
+    sblk = tl_emit_chain(f, nm, sblk, nest.g2, x, 0, fail)
+  }
+  sblk = tl_emit_distinct(f, nm, loc, sblk, stores, wdata, loads, 1, ui, fail)
+  tl_step(f, loc, sblk, sj, 1)
+  sblk.term = tl_goto(loc, sh.id)
+  nm.jy = [nm.jname]
+  sdone
+}
+
+// The columns of a tile of UI rows from j (nm.jname) up to bound (an
+// operand of j's type), UJ at a time and then one at a time, entered
+// from blk; returns the block entered when they are done.
+fn tl_columns(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, blk: MBlock, ui: Int, uj: Int, bound: MOperand, fail: Int): MBlock {
+  jty = f.locals[nest.ind_j].ty
+  j = nm.jname
+  // JH1: UJ columns left?
+  jh1 = tl_new_block(f)
+  blk.term = tl_goto(loc, jh1.id)
+  wj: Array(Int) = [0]
+  jb = tl_wide(f, loc, jh1, tl_copy(j), fail, wj)
+  j64 = wj[0]
+  jb = tl_wide(f, loc, jb, bound, fail, wj)
+  xj64 = wj[0]
+  jl = tl_new_local(f, mt_i64())
+  jb.stmts.push(tl_assign(loc, jl, tl_rv2(mrk_binary(), mop_add(), tl_copy(j64), tl_int(uj - 1, mt_i64()))))
+  jc = tl_new_local(f, mt_bool())
+  jb.stmts.push(tl_assign(loc, jc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jl), tl_copy(xj64))))
+  tb = tl_new_block(f)
+  rh1 = tl_new_block(f)
+  jt = MTerm.new(mtk_branch(), loc)
+  jt.cond = tl_copy(jc)
+  jt.targets.push(tb.id)
+  jt.targets.push(rh1.id)
+  jb.term = jt
+  // The tile of UI x UJ outputs.
+  nm.jy = [j]
+  for y in 1..uj {
+    v = tl_new_local(f, jty)
+    tb.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(j), tl_int(y, jty))))
+    nm.jy.push(v)
+  }
+  tl_emit(f, nm, tb, nest.pre1, ui, uj, false)
+  tout = tl_emit_inner(f, nm, nest, tb, ui, uj)
+  tl_emit(f, nm, tout, nest.post1, ui, uj, true)
+  tl_step(f, loc, tout, j, uj)
+  tout.term = tl_goto(loc, jh1.id)
+  // The columns left, one at a time, for the UI rows.
+  nm.jy = [j]
+  rc = tl_new_local(f, mt_bool())
+  rh1.stmts.push(tl_assign(loc, rc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(j), bound)))
+  rb = tl_new_block(f)
+  done = tl_new_block(f)
+  rt = MTerm.new(mtk_branch(), loc)
+  rt.cond = tl_copy(rc)
+  rt.targets.push(rb.id)
+  rt.targets.push(done.id)
+  rh1.term = rt
+  tl_emit(f, nm, rb, nest.pre1, ui, 1, false)
+  rout = tl_emit_inner(f, nm, nest, rb, ui, 1)
+  tl_emit(f, nm, rout, nest.post1, ui, 1, true)
+  tl_step(f, loc, rout, j, 1)
+  rout.term = tl_goto(loc, rh1.id)
+  done
+}
+
+// The bytes one inner iteration reads from the element loads whose
+// array depends on j and not on i (want_j), or on i and not on j.
+fn tl_inner_bytes(f: MFunc, nest: TlNest, nm: TlNames, want_j: Bool): Int {
+  n = 0
+  for st in nest.bn {
+    places: Array(MPlace) = []
+    tl_loads(st, places)
+    d = mir_stmt_def(st)
+    for p in places {
+      if p.proj[1].kind == mpk_index() && d >= 0 && p.local < nm.vi.size {
+        vi = nm.vi[p.local]
+        vj = nm.vj[p.local]
+        if (want_j && vj && !vi) || (!want_j && vi && !vj) {
+          ty = f.locals[d].ty
+          if ty == mt_u8() || ty == mt_i8() || ty == mt_bool() {
+            n += 1
+          } else if ty == mt_i16() || ty == mt_u16() {
+            n += 2
+          } else if ty == mt_i32() || ty == mt_u32() {
+            n += 4
+          } else {
+            n += 8
+          }
+        }
+      }
+    }
+  }
+  n
+}
+
+// The value of o as the nest's entry can read it: o itself when it is
+// a constant or a local the region does not define, else the operand a
+// local the region defines once, as a plain copy, copies (a loop's
+// bound held in a local: `_e = copy _n`); nil when there is none.
+fn tl_outside(f: MFunc, nest: TlNest, nm: TlNames, o: MOperand): MOperand? {
+  cur = o
+  for step in 0..8 {
+    if cur.kind == mok_int() {
+      return cur
+    }
+    v = tl_local(cur)
+    if v < 0 {
+      return nil
+    }
+    if !nm.inreg[v] {
+      return cur
+    }
+    found: MOperand? = nil
+    count = 0
+    for st in tl_all(f, nest) {
+      if mir_stmt_def(st) == v {
+        count += 1
+        if r = st.rv, r.kind == mrk_use(), a = r.a, st.kind == msk_assign() {
+          found = a
+        }
+      }
+    }
+    if count != 1 {
+      return nil
+    }
+    cur = found ?? return nil
+  }
+  nil
+}
+
+// min(a, b) of two i64 locals, in a new local (out[0]); returns the
+// block to continue in.
+fn tl_min64(f: MFunc, loc: MLoc, blk: MBlock, a: Int, b: Int, out: Array(Int)): MBlock {
+  m = tl_new_local(f, mt_i64())
+  c = tl_new_local(f, mt_bool())
+  blk.stmts.push(tl_assign(loc, c, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(a), tl_copy(b))))
+  ba = tl_new_block(f)
+  bb = tl_new_block(f)
+  nx = tl_new_block(f)
+  t = MTerm.new(mtk_branch(), loc)
+  t.cond = tl_copy(c)
+  t.targets.push(ba.id)
+  t.targets.push(bb.id)
+  blk.term = t
+  ra = MRvalue.new(mrk_use())
+  ra.a = tl_copy(a)
+  ba.stmts.push(tl_assign(loc, m, ra))
+  ba.term = tl_goto(loc, nx.id)
+  rb = MRvalue.new(mrk_use())
+  rb.a = tl_copy(b)
+  bb.stmts.push(tl_assign(loc, m, rb))
+  bb.term = tl_goto(loc, nx.id)
+  out[0] = m
+  nx
+}
+
+fn tl_call_fit(f: MFunc, loc: MLoc, blk: MBlock, bytes: Int, k64: Int, level: Int, unit: Int): Int {
+  b = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, b, tl_rv2(mrk_binary(), mop_mul(), tl_copy(k64), tl_int(bytes, mt_i64()))))
+  out = tl_new_local(f, mt_i64())
+  call = MStmt.new(msk_call(), loc)
+  call.dest = out
+  call.callee = "avant_tile_fit"
+  call.args.push(tl_copy(b))
+  call.args.push(tl_int(level, mt_i64()))
+  call.args.push(tl_int(unit, mt_i64()))
+  call.collects = false
+  blk.stmts.push(call)
+  out
+}
+
+// The cache tile (depth 3): a panel of R rows (a multiple of UI) is
+// computed a block of B columns (a multiple of UJ) at a time, every tile
+// of the panel's rows over one block before the next block, so that the
+// block's rows of the second operand stay in the worker's share of L2
+// while the panel's rows are read again, and the panel stays in its
+// share of L3. The runtime chooses B and R where the nest starts
+// (avant_tile_fit: the cache sizes it detected and the threads the
+// program runs). Every output is still computed by one tile, its sum in
+// its own order, and written once: only which outputs come next changes.
+// All the panel's tiles are tested first (tl_checks for each, failing
+// to the panel's first row in the tile of rows, which tests again and
+// falls back as before); nothing the tile stores is read by these tests
+// (tl_try), so the tests the panel repeats before each block pass too.
+// Returns the entry block, or -1 when the nest has nothing to block.
+fn tl_panel(f: MFunc, nest: TlNest, nm: TlNames, loc: MLoc, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int, jh0: Int): Int {
+  if nest.depth != 3 {
+    return -1
+  }
+  jbytes = tl_inner_bytes(f, nest, nm, true)
+  ibytes = tl_inner_bytes(f, nest, nm, false)
+  if jbytes == 0 {
+    return -1
+  }
+  xbo = tl_outside(f, nest, nm, nest.hd1.bound) ?? return -1
+  ko = tl_outside(f, nest, nm, nest.hdn.bound) ?? return -1
+  ity = f.locals[nest.ind_i].ty
+  jty = f.locals[nest.ind_j].ty
+  i = nest.ind_i
+  j = nm.jname
+  wo: Array(Int) = [0]
+  // PP: the block sizes, once per entry.
+  pp = tl_new_block(f)
+  blk = tl_wide(f, loc, pp, ko, jh0, wo)
+  k64 = wo[0]
+  cols = tl_call_fit(f, loc, blk, jbytes, k64, 2, uj)
+  if ibytes == 0 {
+    ibytes = 1
+  }
+  rows = tl_call_fit(f, loc, blk, ibytes, k64, 3, ui)
+  // PH: a panel of R rows left, and more columns than one block?
+  ph = tl_new_block(f)
+  blk.term = tl_goto(loc, ph.id)
+  blk = tl_wide(f, loc, ph, tl_copy(i), jh0, wo)
+  i64 = wo[0]
+  blk = tl_wide(f, loc, blk, nest.hd0.bound, jh0, wo)
+  x64 = wo[0]
+  blk = tl_wide(f, loc, blk, xbo, jh0, wo)
+  xb64 = wo[0]
+  // The panel: R rows, or the whole tiles of rows left when fewer.
+  rl = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rl, tl_rv2(mrk_binary(), mop_sub(), tl_copy(x64), tl_copy(i64))))
+  blk = tl_cmp_test(f, loc, blk, mop_ge(), tl_copy(rl), tl_int(ui, mt_i64()), jh0)
+  rr = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rr, tl_rv2(mrk_binary(), mop_rem(), tl_copy(rl), tl_int(ui, mt_i64()))))
+  rf = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, rf, tl_rv2(mrk_binary(), mop_sub(), tl_copy(rl), tl_copy(rr))))
+  pm: Array(Int) = [0]
+  blk = tl_min64(f, loc, blk, rows, rf, pm)
+  e64 = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, e64, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_copy(pm[0]))))
+  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(cols), tl_copy(xb64), jh0)
+  i0 = tl_new_local(f, ity)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i)
+  blk.stmts.push(tl_assign(loc, i0, ru))
+  iend = tl_new_local(f, ity)
+  blk.stmts.push(tl_assign(loc, iend, tl_cast(tl_copy(e64), ity)))
+  // RST: a test failed: the panel's first row, in the tile of rows.
+  rst = tl_new_block(f)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i0)
+  rst.stmts.push(tl_assign(loc, i, ru))
+  rst.term = tl_goto(loc, jh0)
+  // CH: every tile of the panel tested.
+  ch = tl_new_block(f)
+  blk.term = tl_goto(loc, ch.id)
+  cc = tl_new_local(f, mt_bool())
+  ch.stmts.push(tl_assign(loc, cc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(i), tl_copy(iend))))
+  cb = tl_new_block(f)
+  ce = tl_new_block(f)
+  ct = MTerm.new(mtk_branch(), loc)
+  ct.cond = tl_copy(cc)
+  ct.targets.push(cb.id)
+  ct.targets.push(ce.id)
+  ch.term = ct
+  cout = tl_checks(f, nest, nm, loc, cb, stores, loads, ui, rst.id)
+  tl_step(f, loc, cout, i, ui)
+  cout.term = tl_goto(loc, ch.id)
+  // CE: the first block starts at j's start (pre0 sets it, the same for
+  // every row).
+  jb = tl_new_local(f, jty)
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(j)
+  ce.stmts.push(tl_assign(loc, jb, ru))
+  je = tl_new_local(f, jty)
+  // BH: a block left?
+  bh = tl_new_block(f)
+  ce.term = tl_goto(loc, bh.id)
+  jb64 = tl_new_local(f, mt_i64())
+  bh.stmts.push(tl_assign(loc, jb64, tl_cast(tl_copy(jb), mt_i64())))
+  bc = tl_new_local(f, mt_bool())
+  bh.stmts.push(tl_assign(loc, bc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jb64), tl_copy(xb64))))
+  bb = tl_new_block(f)
+  be = tl_new_block(f)
+  bt = MTerm.new(mtk_branch(), loc)
+  bt.cond = tl_copy(bc)
+  bt.targets.push(bb.id)
+  bt.targets.push(be.id)
+  bh.term = bt
+  // BB: the block's end, min(jb + B, bound), in i64.
+  t64 = tl_new_local(f, mt_i64())
+  bb.stmts.push(tl_assign(loc, t64, tl_rv2(mrk_binary(), mop_add(), tl_copy(jb64), tl_copy(cols))))
+  em: Array(Int) = [0]
+  bi = tl_min64(f, loc, bb, t64, xb64, em)
+  bi.stmts.push(tl_assign(loc, je, tl_cast(tl_copy(em[0]), jty)))
+  // BI: the panel's tiles over the block.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(i0)
+  bi.stmts.push(tl_assign(loc, i, ru))
+  ih = tl_new_block(f)
+  bi.term = tl_goto(loc, ih.id)
+  ic = tl_new_local(f, mt_bool())
+  ih.stmts.push(tl_assign(loc, ic, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(i), tl_copy(iend))))
+  ib = tl_new_block(f)
+  ie = tl_new_block(f)
+  it = MTerm.new(mtk_branch(), loc)
+  it.cond = tl_copy(ic)
+  it.targets.push(ib.id)
+  it.targets.push(ie.id)
+  ih.term = it
+  // IB: the rows' i, the outer pre statements and guards (as tested),
+  // then the block's columns.
+  iblk = ib
+  nm.ix = [i]
+  for x in 1..ui {
+    v = tl_new_local(f, ity)
+    iblk.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(i), tl_int(x, ity))))
+    nm.ix.push(v)
+  }
+  nm.jy = [j]
+  iblk = tl_emit_tested(f, nm, iblk, nest.pre0, ui, rst.id)
+  for x in 0..ui {
+    iblk = tl_emit_chain(f, nm, iblk, nest.g1, x, 0, rst.id)
+  }
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(jb)
+  iblk.stmts.push(tl_assign(loc, j, ru))
+  idone = tl_columns(f, nest, nm, loc, iblk, ui, uj, tl_copy(je), rst.id)
+  tl_step(f, loc, idone, i, ui)
+  idone.term = tl_goto(loc, ih.id)
+  // IE: the next block.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(je)
+  ie.stmts.push(tl_assign(loc, jb, ru))
+  ie.term = tl_goto(loc, bh.id)
+  // BE: the next panel.
+  ru = MRvalue.new(mrk_use())
+  ru.a = tl_copy(iend)
+  be.stmts.push(tl_assign(loc, i, ru))
+  be.term = tl_goto(loc, ph.id)
+  pp.id
+}
+
+fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: Array(TlLoad), ui: Int, uj: Int) {
+  h0 = nest.h0
+  fail = h0
+  hb = f.blocks[h0]
+  loc = hb.stmts[0].loc
+  preds = mir_preds(f)
+  // JH0: UI rows left?
+  jh0 = tl_new_block(f)
+  blk = jh0
+  wo: Array(Int) = [0]
+  blk = tl_wide(f, loc, blk, tl_copy(nest.ind_i), fail, wo)
+  i64 = wo[0]
+  blk = tl_wide(f, loc, blk, nest.hd0.bound, fail, wo)
+  x64 = wo[0]
+  last = tl_new_local(f, mt_i64())
+  blk.stmts.push(tl_assign(loc, last, tl_rv2(mrk_binary(), mop_add(), tl_copy(i64), tl_int(ui - 1, mt_i64()))))
+  blk = tl_cmp_test(f, loc, blk, mop_lt(), tl_copy(last), tl_copy(x64), fail)
+  blk = tl_checks(f, nest, nm, loc, blk, stores, loads, ui, fail)
+  if nest.depth == 2 {
     out = tl_emit_inner(f, nm, nest, blk, ui, 1)
     tl_emit(f, nm, out, nest.post0, ui, 1, true)
     tl_step(f, loc, out, nest.ind_i, ui)
     out.term = tl_goto(loc, jh0.id)
   } else {
-    jty = f.locals[nest.ind_j].ty
-    j = nm.jname
-    // j and L1's bound within the i32 range, so j + UJ - 1 is exact.
-    blk = tl_wide(f, loc, blk, tl_copy(j), fail, wo)
-    xb = tl_c_operand(f, nm, nest.hd1.bound, 0, 0)
-    blk = tl_wide(f, loc, blk, xb, fail, wo)
-    // The scan: for every column, each row's L1 pre statements, the
-    // inner loop's guard and the distinctness of what they load.
-    sj = tl_new_local(f, jty)
-    ru = MRvalue.new(mrk_use())
-    ru.a = tl_copy(j)
-    blk.stmts.push(tl_assign(loc, sj, ru))
-    sh = tl_new_block(f)
-    blk.term = tl_goto(loc, sh.id)
-    sb = tl_new_block(f)
-    sdone = tl_new_block(f)
-    sc = tl_new_local(f, mt_bool())
-    sh.stmts.push(tl_assign(loc, sc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(sj), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
-    st = MTerm.new(mtk_branch(), loc)
-    st.cond = tl_copy(sc)
-    st.targets.push(sb.id)
-    st.targets.push(sdone.id)
-    sh.term = st
-    nm.jy = [sj]
-    sblk = tl_emit_tested(f, nm, sb, nest.pre1, ui, fail)
-    for x in 0..ui {
-      sblk = tl_emit_chain(f, nm, sblk, nest.g2, x, 0, fail)
-    }
-    sblk = tl_emit_distinct(f, nm, loc, sblk, stores, wdata, loads, 1, ui, fail)
-    tl_step(f, loc, sblk, sj, 1)
-    sblk.term = tl_goto(loc, sh.id)
-    // JH1: UJ columns left?
-    jh1 = tl_new_block(f)
-    sdone.term = tl_goto(loc, jh1.id)
-    wj: Array(Int) = [0]
-    jb = tl_wide(f, loc, jh1, tl_copy(j), fail, wj)
-    j64 = wj[0]
-    jb = tl_wide(f, loc, jb, tl_c_operand(f, nm, nest.hd1.bound, 0, 0), fail, wj)
-    xj64 = wj[0]
-    jl = tl_new_local(f, mt_i64())
-    jb.stmts.push(tl_assign(loc, jl, tl_rv2(mrk_binary(), mop_add(), tl_copy(j64), tl_int(uj - 1, mt_i64()))))
-    jc = tl_new_local(f, mt_bool())
-    jb.stmts.push(tl_assign(loc, jc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(jl), tl_copy(xj64))))
-    tb = tl_new_block(f)
-    rh1 = tl_new_block(f)
-    jt = MTerm.new(mtk_branch(), loc)
-    jt.cond = tl_copy(jc)
-    jt.targets.push(tb.id)
-    jt.targets.push(rh1.id)
-    jb.term = jt
-    // The tile of UI x UJ outputs.
-    nm.jy = [j]
-    for y in 1..uj {
-      v = tl_new_local(f, jty)
-      tb.stmts.push(tl_assign(loc, v, tl_rv2(mrk_binary(), mop_add(), tl_copy(j), tl_int(y, jty))))
-      nm.jy.push(v)
-    }
-    tl_emit(f, nm, tb, nest.pre1, ui, uj, false)
-    tout = tl_emit_inner(f, nm, nest, tb, ui, uj)
-    tl_emit(f, nm, tout, nest.post1, ui, uj, true)
-    tl_step(f, loc, tout, j, uj)
-    tout.term = tl_goto(loc, jh1.id)
-    // The columns left, one at a time, for the UI rows.
-    nm.jy = [j]
-    rc = tl_new_local(f, mt_bool())
-    rh1.stmts.push(tl_assign(loc, rc, tl_rv2(mrk_cmp(), mop_lt(), tl_copy(j), tl_c_operand(f, nm, nest.hd1.bound, 0, 0))))
-    rb = tl_new_block(f)
-    done = tl_new_block(f)
-    rt = MTerm.new(mtk_branch(), loc)
-    rt.cond = tl_copy(rc)
-    rt.targets.push(rb.id)
-    rt.targets.push(done.id)
-    rh1.term = rt
-    tl_emit(f, nm, rb, nest.pre1, ui, 1, false)
-    rout = tl_emit_inner(f, nm, nest, rb, ui, 1)
-    tl_emit(f, nm, rout, nest.post1, ui, 1, true)
-    tl_step(f, loc, rout, j, 1)
-    rout.term = tl_goto(loc, rh1.id)
+    done = tl_columns(f, nest, nm, loc, blk, ui, uj, tl_c_operand(f, nm, nest.hd1.bound, 0, 0), fail)
     tl_emit(f, nm, done, nest.post0, ui, 1, true)
     tl_step(f, loc, done, nest.ind_i, ui)
     done.term = tl_goto(loc, jh0.id)
   }
-  // The nest's entry edges (from outside L0) now enter JH0; the
+  entry = jh0.id
+  pe = tl_panel(f, nest, nm, loc, stores, loads, ui, uj, jh0.id)
+  if pe >= 0 {
+    entry = pe
+  }
+  // The nest's entry edges (from outside L0) now enter the tile; the
   // original's latch still enters its header.
   inner = mir_bools(f.blocks.size, false)
   for b in nest.blocks {
@@ -1453,7 +1983,7 @@ fn tl_build(f: MFunc, nest: TlNest, nm: TlNames, stores: Array(TlStore), loads: 
       if t = f.blocks[p].term {
         for x in 0..t.targets.size {
           if t.targets[x] == h0 {
-            t.targets[x] = jh0.id
+            t.targets[x] = entry
           }
         }
       }
@@ -1468,16 +1998,20 @@ fn tl_step(f: MFunc, loc: MLoc, blk: MBlock, v: Int, by: Int) {
 
 // ---- the pass
 
-// Tiles the nests at the fast copies of recs (outermost first), in a
+// Tiles the nests at the fast copies of recs and at the loops versioning
+// left alone whose inner loops it versioned (outermost first), in a
 // function loop versioning just versioned: a nest inside the original
 // (slow) copy of a versioned loop is left alone (it runs only when a
 // guard failed), and so is a nest inside one already tiled.
 // headers and bodies are f's loops (loops.av mir_lv_loops) as versioning
 // left them.
-pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int) {
-  if recs.size < 2 {
-    return
+// Returns whether a cache tile now calls avant_tile_fit (the caller
+// declares it in the module).
+pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: Array(Array(Bool)), cpu: Int, pure: Hash(String, Int)): Bool {
+  if recs.size < 1 {
+    return false
   }
+  made = false
   shape = mir_tile_shape(cpu)
   n0 = f.blocks.size
   cold = mir_bools(n0, false)
@@ -1493,10 +2027,52 @@ pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: 
       }
     }
   }
-  for r in recs {
+  // The candidates for L0, outermost first: the fast copy of every
+  // versioning, and every other loop (one whose own level had no check
+  // to remove: its inner loops' versionings are what the tile needs;
+  // a check left at its own level refuses the nest).
+  cands: Array(TlRec) = []
+  sizes: Array(Int) = []
+  for li in 0..headers.size {
+    h = headers[li]
+    if h < n0 && !cold[h] {
+      slow = false
+      for r in recs {
+        if r.slow == h {
+          slow = true
+        }
+      }
+      if !slow {
+        rec = TlRec.new(-1, h, -1)
+        for r in recs {
+          if r.fast == h {
+            rec = r
+          }
+        }
+        sz = 0
+        for b in 0..n0 {
+          if bodies[li][b] {
+            sz += 1
+          }
+        }
+        k = cands.size
+        cands.push(rec)
+        sizes.push(sz)
+        while k > 0 && sizes[k - 1] < sz {
+          cands[k] = cands[k - 1]
+          sizes[k] = sizes[k - 1]
+          cands[k - 1] = rec
+          sizes[k - 1] = sz
+          k -= 1
+        }
+      }
+    }
+  }
+  for r in cands {
     if r.fast < n0 && !cold[r.fast] {
       if nest = tl_nest(f, r, recs) {
-        if tl_try(f, nest, shape[0], shape[1]) {
+        if tl_try(f, nest, shape[0], shape[1], pure) {
+          made = true
           for li in 0..headers.size {
             if headers[li] == r.fast {
               bd = bodies[li]
@@ -1511,4 +2087,14 @@ pub fn mir_tile_func(f: MFunc, recs: Array(TlRec), headers: Array(Int), bodies: 
       }
     }
   }
+  if made {
+    for blk in f.blocks {
+      for st in blk.stmts {
+        if st.kind == msk_call() && st.callee == "avant_tile_fit" {
+          return true
+        }
+      }
+    }
+  }
+  false
 }

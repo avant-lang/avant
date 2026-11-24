@@ -4,7 +4,8 @@
 #
 #   bash .github/install-toolchain.sh
 #
-# gcc 15.2 (it builds the runtime), binutils, libclang 20 (the bind helper)
+# gcc 15.2 (it builds the runtime), binutils, mold (tools/letters.sh links
+# the compilers with it), libclang 20 (the bind helper)
 # and the static libraries tools/build-llvm.sh merges are pinned to the
 # server's versions. They come from the runner's archive while it carries
 # them, else from Ubuntu's archive as it was at SNAPSHOT
@@ -50,6 +51,7 @@ readonly PACKAGES=(
   libstdc++-15-dev=15.2.0-16ubuntu1
   binutils=2.46-3ubuntu2
   binutils-x86-64-linux-gnu=2.46-3ubuntu2
+  mold=2.40.4+dfsg-2.1ubuntu1
   llvm-20=1:20.1.8-2ubuntu8
   libllvm20=1:20.1.8-2ubuntu8
   libclang-20-dev=1:20.1.8-2ubuntu8
@@ -75,7 +77,7 @@ readonly NO_VARIANT=/etc/apt/apt.conf.d/99zz-avant-no-variant
 # add no code to what the build writes, so they are not listed.
 build_files() {
   local t f p
-  for t in cc gcc g++ c++ cpp as ld ld.bfd ar ranlib nm objcopy strip llvm-config-20; do
+  for t in cc gcc g++ c++ cpp as ld ld.bfd mold ar ranlib nm objcopy strip llvm-config-20; do
     p=$(command -v "$t" 2> /dev/null) && readlink -f "$p"
   done
   for t in cc1 cc1plus collect2 lto-wrapper lto1; do
@@ -172,4 +174,5 @@ dpkg-query -W -f '${Package}\t${Version}\t${Architecture}\t${Architecture-Varian
 echo "  variant: none (plain amd64; apt: $NO_VARIANT); cc's default -march=$march"
 echo "  cc: $(cc --version | head -n 1)"
 echo "  ld: $(ld --version | head -n 1)"
+echo "  mold: $(mold --version)"
 echo "  glibc: $(getconf GNU_LIBC_VERSION)"

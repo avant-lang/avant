@@ -85,6 +85,13 @@
 #     run apart: the stub programs' counts differ a little from run to run);
 #   la-count-mem-parallel: with LA_MEM_RUNS=3 each program's peak line holds
 #     three runs, started together or, with LA_MEM_PARALLEL=0, one after another;
+#   la-count-seeds: with LA_SEEDS=3 each program is counted under three hash
+#     seeds (the stub programs' work depends on the seed), its count the
+#     mean, OUT.seeds.tsv the counts with their mean, min and max; 13 seeds
+#     are refused;
+#   check-hash-seeds: a range that changes runtime/avant_hash.c counts both
+#     sides under the 12 seeds and the cell reads `RATIO (12 seeds: LO-HI)`;
+#     another runtime change keeps seed 0;
 #   check-base-harness: a base that refuses the caller's tasks, with
 #     CC_BASE_LANGARENA naming the base's own harness: the base's side is
 #     read from it, so the first commit's programs are counted against the
@@ -142,7 +149,9 @@ __emit-ll)
 compile)
   me=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd -P)
   if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
-  printf '#!/bin/sh\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
+  # the program's work depends on the hash seed (a loop of seed % 7 steps),
+  # its output does not
+  printf '#!/bin/sh\nk=$(( ${AVANT_HASH_SEED:-0} %% 7 * 200 )); while [ $k -gt 0 ]; do k=$((k - 1)); done\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
   chmod +x "$2" ;;
 test)
   f=0 p=0
@@ -296,7 +305,7 @@ perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
   skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
-    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups la-count-mem-parallel
+    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups la-count-mem-parallel la-count-seeds check-hash-seeds
   echo done; exit 0
 fi
 
@@ -495,4 +504,29 @@ say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w
 awk -F'\t' '{ n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 2) }' "$w/lc-mem.mem.tsv" \
   && awk -F'\t' '{ n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 2) }' "$w/lc-mem0.mem.tsv"
 say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';'); $(cat "$w/lc-mem0.mem.tsv" 2>/dev/null | tr '\n' ';')"
+
+# 17. Hash seeds: LA_SEEDS=3 counts each program under the list's first
+# three seeds, its count their mean, OUT.seeds.tsv the counts with their
+# mean, min and max; LA_SEEDS=13 is refused.
+(cd "$r" && LA_SEEDS=3 sh tools/la-count.sh . "$lap" "$w/lc-seeds.tsv" < /dev/null > /dev/null 2>&1); rc=$?
+(cd "$r" && LA_SEEDS=13 sh tools/la-count.sh . "$lap" "$w/lc-seeds13.tsv" < /dev/null > /dev/null 2>&1); rc13=$?
+[ $rc = 0 ] && [ $rc13 = 2 ] && awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; next }
+  { k = split($6, c, ","); s = 0; lo = c[1]; hi = c[1]; for (i = 1; i <= k; i++) { s += c[i]; if (c[i] < lo) lo = c[i]; if (c[i] > hi) hi = c[i] }
+    if (k != 3 || n[$1] != sprintf("%.0f", s / k) || $2 != n[$1] || $3 != lo || $4 != hi || lo >= hi) bad = 1 }
+  END { exit bad + (NR != 4) }' "$w/lc-seeds.tsv" "$w/lc-seeds.seeds.tsv"
+say la-count-seeds $? "rc=$rc rc13=$rc13; $(tr '\n' ';' < "$w/lc-seeds.tsv" 2>/dev/null); $(tr '\n' ';' < "$w/lc-seeds.seeds.tsv" 2>/dev/null)"
+
+# 18. change-check turns the seeds on for a range that changes a hash file
+# (runtime/avant_hash.c), both sides counted under the 12, the cell with the
+# per-seed range; another range keeps seed 0.
+echo 'hash v1' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash table file'
+echo 'hash v2' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash probing'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18" < /dev/null > "$w/cc18.log" 2>&1)
+echo 'r3' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'another runtime file'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18b" < /dev/null > "$w/cc18b.log" 2>&1)
+grep -q '^hash seeds: the counts under 12 seeds of tools/la-count.sh, both sides (the range changes runtime/avant_hash.c' "$w/cc18/cache.txt" \
+  && grep 'the hash probing' "$w/cc18/table.md" | grep -q ' [0-9][.][0-9]* (12 seeds: [0-9.]*-[0-9.]*)' \
+  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc18/01-"*/ins.seeds.tsv | sort -u)" = 12 ] \
+  && grep -q '^hash seeds: seed 0 alone' "$w/cc18b/cache.txt" && ! grep -q 'seeds:' "$w/cc18b/table.md"
+say check-hash-seeds $? "$(grep 'hash seeds' "$w/cc18/cache.txt" "$w/cc18b/cache.txt" 2>/dev/null | tr '\n' ';'); $(grep 'the hash probing' "$w/cc18/table.md" | cut -c1-400)"
 echo done

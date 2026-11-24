@@ -1,0 +1,88 @@
+import harness
+import std.fs
+import std.process
+
+// The verify mode (AVANT_VERIFY=1, compiler/llvm/driver.av) runs the two
+// verifiers an ordinary compile skips, and each one really runs: the MIR
+// verifier at stage final refuses `example_no_barrier` (the example with
+// a barrier removed, V13) through `avant __mir-build`, and LLVM's
+// verifier refuses tests/fixtures/llvm/verify_dominance.ll (IR that
+// parses, with a use its definition does not dominate) through
+// `avant __llvm-obj`. With AVANT_VERIFY=0 neither is asked: both inputs
+// compile to an object, which is what an ordinary compile of a correct
+// compiler's output skips proving. (`avant test` itself runs every test
+// in the verify mode, so the mode is set here explicitly both ways.)
+
+fn log_text(path: String): String {
+  if t = fs.read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+// /usr/bin/env AVANT_VERIFY=V COMPILER ARGS...
+fn verify_job(v: String, compiler: String, args: Array(String), log: String): HJob {
+  a: Array(String) = []
+  a.push("AVANT_VERIFY=${v}")
+  a.push(compiler)
+  a.concat(args)
+  HJob.new("/usr/bin/env", a, log)
+}
+
+fn mir_args(out: String): Array(String) {
+  a: Array(String) = []
+  a.push("__mir-build")
+  a.push("example_no_barrier")
+  a.push(out)
+  a.push("--debug")
+  a.push("--object")
+  a
+}
+
+fn ll_args(root: String, out: String): Array(String) {
+  a: Array(String) = []
+  a.push("__llvm-obj")
+  a.push("${root}/tests/fixtures/llvm/verify_dominance.ll")
+  a.push(out)
+  a.push("--release")
+  a
+}
+
+fn test_verify_mode(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(verify_job("1", compiler, mir_args("${dir}/mir-on.o"), "${dir}/mir-on.log"))
+  jobs.push(verify_job("0", compiler, mir_args("${dir}/mir-off.o"), "${dir}/mir-off.log"))
+  jobs.push(verify_job("1", compiler, ll_args(root, "${dir}/ll-on.o"), "${dir}/ll-on.log"))
+  jobs.push(verify_job("0", compiler, ll_args(root, "${dir}/ll-off.o"), "${dir}/ll-off.log"))
+  run_jobs(jobs)
+
+  c.eq_int(jobs[0].code, 1, "verify mode: the MIR verifier at stage final refuses example_no_barrier")
+  c.expect(log_text(jobs[0].log).contains("error[V13]: av.main/tag: bb1[1]: reference store through (*_2).0 without its barrier"), "verify mode: the V13 diagnostic")
+  c.expect(!fs.exists("${dir}/mir-on.o"), "verify mode: no object for the refused MIR")
+  c.eq_int(jobs[1].code, 0, "without the verify mode: example_no_barrier is not verified at stage final")
+  c.expect(fs.exists("${dir}/mir-off.o"), "without the verify mode: its object is written")
+
+  c.eq_int(jobs[2].code, 1, "verify mode: LLVM's verifier refuses verify_dominance.ll")
+  c.expect(log_text(jobs[2].log).contains("Instruction does not dominate all uses"), "verify mode: LLVM's verifier message")
+  c.eq_int(jobs[3].code, 0, "without the verify mode: LLVM's verifier is not asked")
+  c.expect(fs.exists("${dir}/ll-off.o"), "without the verify mode: the object is written")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_verify_mode.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_verify_mode(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

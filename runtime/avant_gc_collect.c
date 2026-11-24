@@ -59,6 +59,22 @@ uint64_t avant_nursery_held;
 #ifndef YOUNG_HEAP_DIV
 #define YOUNG_HEAP_DIV 12
 #endif
+/* The survival that grows the budget: more than YOUNG_GROW_PCT percent
+ * of a collection's young bytes, at two budget collections in a row
+ * (young_size). 70 by measurement on the 64 LangArena programs (50, the
+ * half the rule used before, 60, 65, 70, 75, 80 and 90): at 50 the
+ * budget doubled to the cap in programs whose survival stays between
+ * half and two thirds while their live set grows, and the budget then
+ * held their peak (Graph::BFS / DFS / AStar 152 / 142 / 157 MB at 50,
+ * 135 / 127 / 139 MB at 70; Calculator::Interpreter 61 -> 44 MB, its
+ * budget 32 -> 16 MiB); 60 and 65 still grew it for the Graph rows
+ * (157 / 150 / 156 MB); from 75 Etc::GameOfLife, whose grids survive at
+ * about three quarters, stopped growing it and copied more (+2.4%
+ * instructions, 45 -> 47 MB). The half stays the high-survival test of
+ * the tenured phase and of dense blocks (young_high_prev). */
+#ifndef YOUNG_GROW_PCT
+#define YOUNG_GROW_PCT 70
+#endif
 
 /* The settings' one parsing rule (the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
@@ -114,6 +130,10 @@ static const char *const retired_knobs[] = {
     "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
     "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE"};
 
+#ifdef AVANT_GC_TUNE
+static void gc_tune_read(void);
+#endif
+
 static void gc_settings_read(GcSettings *s) {
   size_t i;
   /* Sizes in MiB stay below 2^44 so the byte count fits (1 << 20 GiB). */
@@ -130,6 +150,9 @@ static void gc_settings_read(GcSettings *s) {
   s->stress = env_bool("AVANT_GC_STRESS", 0);
   s->walk = s->stats | s->verify | s->stress;
   s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
+#ifdef AVANT_GC_TUNE
+  gc_tune_read();
+#endif
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
     if (v && v[0]) {
@@ -139,10 +162,145 @@ static void gc_settings_read(GcSettings *s) {
   }
 }
 
+#ifdef AVANT_GC_TUNE
+GcTune gc_tune;
+
+/* The development build's policy settings (GcTune, avant_gc_internal.h),
+ * each defaulting to the release build's constant. */
+static void gc_tune_read(void) {
+  uint64_t kb = 1ull << 30;
+  gc_tune.dflt = env_u64("AVANT_GC_TUNE_DEFAULT_KB", YOUNG_BYTES_DEFAULT / 1024, 64, kb) * 1024ull;
+  gc_tune.start = env_u64("AVANT_GC_TUNE_START_KB", YOUNG_BYTES_START / 1024, 64, kb) * 1024ull;
+  gc_tune.cap = env_u64("AVANT_GC_TUNE_CAP_KB", YOUNG_BYTES_CAP / 1024, 64, kb) * 1024ull;
+  if (gc_tune.cap < gc_tune.dflt) {
+    gc_tune.cap = gc_tune.dflt;
+  }
+  gc_tune.heap_div = env_u64("AVANT_GC_TUNE_HEAP_DIV", YOUNG_HEAP_DIV, 1, 1u << 20);
+  gc_tune.high_pct = env_u64("AVANT_GC_TUNE_HIGH_PCT", YOUNG_GROW_PCT, 0, 100);
+  gc_tune.low_pct = env_u64("AVANT_GC_TUNE_LOW_PCT", 10, 0, 100);
+  gc_tune.streak = env_u64("AVANT_GC_TUNE_STREAK", 2, 1, 64);
+  gc_tune.grow_pct = env_u64("AVANT_GC_TUNE_GROW_PCT", 200, 101, 1600);
+  gc_tune.shrink_pct = env_u64("AVANT_GC_TUNE_SHRINK_PCT", 50, 1, 99);
+  gc_tune.smooth = env_u64("AVANT_GC_TUNE_SMOOTH", 0, 0, 64);
+  gc_tune.large_age = env_u64("AVANT_GC_TUNE_LARGE_AGE_KB", LARGE_AGE_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.byte_age = env_u64("AVANT_GC_TUNE_BYTE_AGE_KB", 0, 0, kb) * 1024ull;
+  gc_tune.no_holes = env_u64("AVANT_GC_TUNE_NO_HOLES", 0, 0, 2);
+  gc_tune.ret = env_u64("AVANT_GC_TUNE_RETURN", 1, 0, 1);
+  gc_tune.keep_full = env_u64("AVANT_GC_TUNE_KEEP_FULL", 2, 0, 3);
+  gc_tune.plain_div = env_u64("AVANT_GC_TUNE_PLAIN_DIV", PLAIN_LARGE_DIV, 1, 1u << 20);
+  gc_tune.full_pct = env_u64("AVANT_GC_TUNE_FULL_PCT", (HEAP_FACTOR - 1) * 100, 1, 10000);
+  gc_tune.mixed_age = env_u64("AVANT_GC_TUNE_MIXED_AGE", 0, 0, LINES_PER_BLOCK);
+  gc_tune.trace = env_u64("AVANT_GC_TUNE_TRACE", 0, 0, 1);
+  gc_tune.retain_young = env_u64("AVANT_GC_TUNE_RETAIN_YOUNG", 1, 0, 1);
+  gc_tune.mixed_evac = env_u64("AVANT_GC_TUNE_MIXED_EVAC", MIXED_EVAC_LINES, 0, LINES_PER_BLOCK);
+  gc_tune.alloc_pct = env_u64("AVANT_GC_TUNE_ALLOC_PCT", ALLOC_FULL_PCT, 0, 1u << 20);
+  gc_tune.alloc_min = env_u64("AVANT_GC_TUNE_ALLOC_MIN_KB", ALLOC_FULL_MIN / 1024, 0, kb) * 1024ull;
+  gc_tune.alloc_base = env_u64("AVANT_GC_TUNE_ALLOC_BASE", 0, 0, 1);
+  gc_tune.alloc_grown = env_u64("AVANT_GC_TUNE_ALLOC_GROWN_PCT", ALLOC_FULL_GROWN_PCT, 0, 100);
+  gc_tune.start_prom = env_u64("AVANT_GC_TUNE_START_PROM_KB", START_PROM_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.start_prom_small = env_u64("AVANT_GC_TUNE_START_PROM_SMALL_KB", START_PROM_SMALL_BYTES / 1024, 0, kb) * 1024ull;
+  gc_tune.start_large = env_u64("AVANT_GC_TUNE_START_LARGE", 1, 0, 1);
+  gc_tune.keep_large = env_u64("AVANT_GC_TUNE_KEEP_LARGE", FULL_KEEP_LARGE, 0, 1);
+  gc_tune.ret_age = env_u64("AVANT_GC_TUNE_RET_AGE", LARGE_RETURN_AGE, 0, 200);
+  gc_tune.resident_fit = env_u64("AVANT_GC_TUNE_RESIDENT_FIT", LARGE_RESIDENT_FIT, 0, 1);
+  gc_tune.keep_large_min = env_u64("AVANT_GC_TUNE_KEEP_LARGE_MIN_KB", FULL_KEEP_LARGE_MIN / 1024, 0, kb) * 1024ull;
+  gc_tune.alloc_after = env_u64("AVANT_GC_TUNE_ALLOC_AFTER", 1, 0, 1);
+  gc_tune.alloc_quiet = env_u64("AVANT_GC_TUNE_ALLOC_QUIET_DIV", ALLOC_FULL_QUIET_DIV, 0, 1u << 20);
+}
+
+void gc_tune_stamp(const void *block_base, uint64_t v) {
+  uint64_t bi = (uint64_t)((uintptr_t)block_base - (uintptr_t)gc_heap.base) >> BLOCK_SHIFT;
+  if (bi >= gc_tune.stamp_n) {
+    uint64_t n = (gc_heap.committed >> BLOCK_SHIFT) + 64;
+    if (n <= bi) {
+      n = bi + 64;
+    }
+    gc_tune.stamp = gc_xrealloc(gc_tune.stamp, (size_t)n * sizeof(uint64_t));
+    memset(gc_tune.stamp + gc_tune.stamp_n, 0, (size_t)(n - gc_tune.stamp_n) * sizeof(uint64_t));
+    gc_tune.stamp_n = n;
+  }
+  gc_tune.stamp[bi] = v;
+}
+
+uint64_t gc_tune_stamp_of(const void *block_base) {
+  uint64_t bi = (uint64_t)((uintptr_t)block_base - (uintptr_t)gc_heap.base) >> BLOCK_SHIFT;
+  return bi < gc_tune.stamp_n ? gc_tune.stamp[bi] : 0;
+}
+#endif
+
+/* The start phase ends: the budget goes to its default. */
+static void young_start_end(void) {
+  if (avant_young_bytes < TUNE(dflt, YOUNG_BYTES_DEFAULT)) {
+    avant_young_bytes = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+    gc_heap.ctr.size.grows++;
+  }
+}
+
+/* The start phase (YOUNG_BYTES_START): a young large object as large as
+ * the budget ends it (gc_los_alloc). */
+void gc_young_start_large(uint64_t bytes) {
+  if (!gc_heap.set.young_fixed && bytes >= avant_young_bytes) {
+    young_start_end();
+  }
+}
+
+/* The start phase: a budget collection whose survivors pass an eighth of
+ * the young bytes it saw raises the budget to max(2 * budget, 16 * surv),
+ * the default at most, which ends the phase; the heap's floor raises it
+ * too. It ends too once the young collections promoted START_PROM_BYTES
+ * (START_PROM_SMALL_BYTES of small objects)
+ * (the program's objects outlive two of them at this budget:
+ * Compress::LZWEncode hunted holes for +20% instructions at 1 MiB), and
+ * once the young large objects a collection leaves pass the budget (they
+ * are not counted in it, and the program's buffers outlive it:
+ * Compress::BWTEncode and LZWDecode promoted theirs by their byte age,
+ * +88% and +94% peak). No high-survival or tenure decision is made in
+ * the phase. */
+static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget) {
+  uint64_t dflt = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+  if (avant_young_bytes >= dflt) {
+    return 0;
+  }
+  if (TUNE(start_prom, START_PROM_BYTES) &&
+      gc_heap.ctr.prom.copied + gc_heap.ctr.prom.large + gc_heap.ctr.sticky.inplace > TUNE(start_prom, START_PROM_BYTES)) {
+    young_start_end();
+    return 0;
+  }
+  if (TUNE(start_prom_small, START_PROM_SMALL_BYTES) &&
+      gc_heap.ctr.prom.copied + gc_heap.ctr.sticky.inplace > TUNE(start_prom_small, START_PROM_SMALL_BYTES)) {
+    young_start_end();
+    return 0;
+  }
+  if (TUNE(start_large, 1) && gc_heap.young_large > avant_young_bytes) {
+    young_start_end();
+    return 0;
+  }
+  if (budget && surv * 8 > used) {
+    uint64_t want = surv * 16;
+    if (want < avant_young_bytes * 2) {
+      want = avant_young_bytes * 2;
+    }
+    avant_young_bytes = want > dflt ? dflt : want;
+    gc_heap.ctr.size.grows++;
+  }
+  if (h > avant_young_bytes) {
+    avant_young_bytes = h > dflt ? dflt : h;
+  }
+  if (budget) {
+    gc_heap.young_high_prev = 0;
+#ifdef AVANT_GC_TUNE
+    gc_tune.highs = 0;
+#else
+    gc_heap.young_grow_prev = 0;
+#endif
+  }
+  return 1;
+}
+
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
- * than half the young bytes survived, and halves back toward its floor
+ * than YOUNG_GROW_PCT percent of the young bytes survived, and halves back toward its floor
  * when less than a tenth survived. The floor is the larger of
  * YOUNG_BYTES_DEFAULT and the heap in use (mature blocks and large
  * objects) / YOUNG_HEAP_DIV; the budget is raised to it at once.
@@ -154,18 +312,59 @@ static void gc_settings_read(GcSettings *s) {
  * (44.6 s against 42.3) and raises the compiler's peak_heap (245 ->
  * 318 MB). */
 static void young_size(uint64_t used, uint64_t surv, int budget) {
-  uint64_t floor = YOUNG_BYTES_DEFAULT;
-  uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / YOUNG_HEAP_DIV;
+  uint64_t floor = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+  uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / TUNE(heap_div, YOUNG_HEAP_DIV);
   int high;
+#ifndef AVANT_GC_TUNE
+  int grow;
+#endif
   if (used == 0) {
     return;
   }
+  if (young_start_size(used, surv, h, budget)) {
+    return;
+  }
   if (h > floor) {
-    floor = h > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP : h;
+    floor = h > TUNE(cap, YOUNG_BYTES_CAP) ? TUNE(cap, YOUNG_BYTES_CAP) : h;
   }
   high = surv * 2 > used;
-  if (high) {
-    if (gc_heap.young_high_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
+#ifdef AVANT_GC_TUNE
+  {
+    /* The family: survival (smoothed over collections with weight
+     * 1/smooth) above high_pct for streak budget collections in a row
+     * grows the budget by grow_pct, below low_pct shrinks it by
+     * shrink_pct. */
+    uint64_t r = (uint64_t)((double)surv * 1e6 / (double)used);
+    int th, tl;
+    uint64_t highs;
+    if (gc_tune.smooth > 1) {
+      gc_tune.rate = gc_tune.rate ? (gc_tune.rate * (gc_tune.smooth - 1) + r) / gc_tune.smooth : r;
+      th = gc_tune.rate > gc_tune.high_pct * 10000;
+      tl = gc_tune.rate < gc_tune.low_pct * 10000;
+    } else {
+      th = surv * 100 > used * gc_tune.high_pct;
+      tl = surv * 100 < used * gc_tune.low_pct;
+    }
+    highs = th ? gc_tune.highs + 1 : 0;
+    if (th) {
+      if (highs >= gc_tune.streak && avant_young_bytes < gc_tune.cap) {
+        uint64_t g = avant_young_bytes * gc_tune.grow_pct / 100;
+        avant_young_bytes = g > gc_tune.cap ? gc_tune.cap : g;
+        gc_heap.ctr.size.grows++;
+      }
+    } else if (tl && avant_young_bytes > floor) {
+      uint64_t k = avant_young_bytes * gc_tune.shrink_pct / 100;
+      avant_young_bytes = k < floor ? floor : k;
+      gc_heap.ctr.size.shrinks++;
+    }
+    if (budget) {
+      gc_tune.highs = highs;
+    }
+  }
+#else
+  grow = surv * 100 > used * YOUNG_GROW_PCT;
+  if (grow) {
+    if (gc_heap.young_grow_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
       avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
                                                                  : avant_young_bytes * 2;
       gc_heap.ctr.size.grows++;
@@ -174,6 +373,7 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
     avant_young_bytes = avant_young_bytes / 2 < floor ? floor : avant_young_bytes / 2;
     gc_heap.ctr.size.shrinks++;
   }
+#endif
   if (avant_young_bytes < floor) {
     avant_young_bytes = floor;
   }
@@ -209,6 +409,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
    * instructions). */
   if (budget) {
     gc_heap.young_high_prev = (uint8_t)high;
+#ifndef AVANT_GC_TUNE
+    gc_heap.young_grow_prev = (uint8_t)grow;
+#endif
   }
 }
 
@@ -300,6 +503,22 @@ static void limit_progress_check(void) {
   if (++gc_heap.limit_strikes >= 2) {
     gc_die("heap limit");
   }
+}
+
+/* The allowance of the full collection due by allocation
+ * (ALLOC_FULL_PCT) starts again at a full collection and at a complete
+ * one (a full collection the proof made young). */
+static void alloc_full_restart(void) {
+#ifdef AVANT_GC_TUNE
+  uint64_t h = gc_tune.alloc_base ? gc_heap.live : gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes;
+  uint64_t due = h / 100 * gc_tune.alloc_pct;
+  uint64_t floor = gc_tune.alloc_min;
+#else
+  uint64_t due = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / 100 * ALLOC_FULL_PCT;
+  uint64_t floor = ALLOC_FULL_MIN;
+#endif
+  gc_heap.last_full_at = avant_g_stats.allocated_bytes;
+  gc_heap.alloc_full_due = due < floor ? floor : due;
 }
 
 static int region_refuses(void);
@@ -433,6 +652,23 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.keep_young = (uint8_t)(why == GC_WHY_EXPLICIT && proof != PROOF_THREADS && proof != PROOF_NURSERY &&
                                      proof != PROOF_OFF && !gc_heap.set.young_fixed &&
                                      avant_nursery_held && avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live);
+      /* A full collection due by allocation leaves it young too, in a
+       * program of one thread: it runs where the program is, and what
+       * it would promote is what is live there (a run's working set,
+       * its buffers), which then dies old (ALLOC_FULL_PCT). Its mark
+       * goes on through a young object that names an old one
+       * (keep_full). */
+#ifdef AVANT_GC_TUNE
+      if (!gc_heap.keep_young &&
+          (((gc_tune.keep_full & 1) && why == GC_WHY_TRIGGER) || ((gc_tune.keep_full & 2) && why == GC_WHY_HEAP_GOAL)) &&
+#else
+      if (!gc_heap.keep_young && why == GC_WHY_HEAP_GOAL &&
+#endif
+          proof != PROOF_THREADS && proof != PROOF_NURSERY && proof != PROOF_OFF && !gc_heap.set.young_fixed &&
+          avant_nursery_held && atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
+        gc_heap.keep_young = 1;
+        gc_heap.keep_full = 1;
+      }
     } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
       /* It holds, and the trace is the cheaper complete collection
        * (PROOF_YOUNG_PER_OLD's comment). */
@@ -453,6 +689,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
         gc_heap.ctr.proof.idle++;
         gc_heap.mature_since_full = 0;
         gc_heap.promoted_since_full = 0;
+        alloc_full_restart();
         avant_g_stats.collections--;
         gc_thread.collecting = 0;
         if (resume) {
@@ -612,7 +849,25 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_clear_side_marks();
       /* The line marks: the epoch advances (no walk zeroing them). */
       gc_line_epoch_advance();
+      /* A trace the growth trigger asked for leaves the young buffers
+       * young (FULL_KEEP_LARGE): it lands where the program is, and a
+       * run's working buffer it would promote dies old and stays to the
+       * next full collection. (One the program asks for makes what it
+       * marks old, as it always did.) */
+      gc_heap.keep_large = (uint8_t)(TUNE(keep_large, FULL_KEEP_LARGE) && why == GC_WHY_TRIGGER && !gc_heap.keep_young &&
+                                     !gc_heap.set.young_fixed && !gc_heap.set.nursery_off && gc_heap.young_large_n);
+      gc_heap.keep_large_k0 = gc_heap.keep_n;
       gc_mark_roots();
+      if (gc_heap.keep_large) {
+        /* Their holders join the remembered set before anything moves
+         * (defragmentation rewrites the set's entries; the scrub then
+         * drops what names no young object). */
+        gc_rem_keep_large_holders();
+        if (gc_heap.keep_young_live) {
+          gc_heap.ctr.sticky.large_keeps++;
+          gc_heap.ctr.sticky.large_keep_bytes += gc_heap.keep_young_live;
+        }
+      }
     }
     /* Late start bits: when the mark's loop set none (gc_mark_roots), the
      * runs of every block it left a live line in are built now
@@ -656,9 +911,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_sweep_large();
     gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_heap.keep_young ? gc_keep_young_or_live : gc_keep_if_live);
     /* A full collection promotes every object it marks (the mark clears
-     * YOUNG), so no object is young after it: gc_sticky_full_end empties
-     * the young budget (avant_nursery_held). (E's nursery survivors used
-     * to be summed here.) */
+     * YOUNG) but the young buffers it leaves young (FULL_KEEP_LARGE,
+     * which the young budget does not count, as after a young
+     * collection), so no block object is young after it:
+     * gc_sticky_full_end empties the young budget (avant_nursery_held).
+     * (E's nursery survivors used to be summed here.) */
     gc_sticky_full_end();
     if (gc_heap.keep_young) {
       avant_nursery_held = keep_held;
@@ -667,7 +924,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
-    gc_heap.last_full_at = avant_g_stats.allocated_bytes;
     /* What this cycle used beyond its live bytes joins the retention
      * history (GcHeap.cycle_peak); the next cycle's peak starts here. */
     gc_heap.retain_hist[gc_heap.retain_at++ % RETAIN_CYCLES] =
@@ -681,17 +937,58 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* What the next proof starts from: the roots as they are now,
      * an empty log. After everything this collection moves or frees. */
     gc_proof_full_end();
+    if (gc_heap.keep_full) {
+      gc_proof_break(PROOF_REF_LOST);
+      gc_heap.keep_full = 0;
+    }
     gc_heap.sticky = 0;
     gc_heap.keep_young = 0;
     gc_heap.keep_young_live = 0;
+    gc_heap.keep_large = 0;
   }
 
   if (full) {
     /* The full trigger: max(4 MiB, (F - 1) * scanned live + plain large
      * live / PLAIN_LARGE_DIV), F = 2, uncapped (avant_gc_internal.h). */
     uint64_t plain = gc_heap.plain_large_live < gc_heap.live ? gc_heap.plain_large_live : gc_heap.live;
+#ifdef AVANT_GC_TUNE
+    uint64_t next = gc_tune.full_pct * (gc_heap.live - plain) / 100 + plain / gc_tune.plain_div;
+#else
     uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * (gc_heap.live - plain) + plain / PLAIN_LARGE_DIV;
+#endif
     gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
+  }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace) {
+    /* AVANT_GC_TUNE_TRACE=1: one line a collection on stderr. */
+    static uint64_t t0;
+    uint64_t t = now_ns();
+    if (!t0) {
+      t0 = t;
+    }
+    unsigned long long vm = 0, rss = 0;
+    {
+      FILE *f = fopen("/proc/self/statm", "r");
+      if (f) {
+        if (fscanf(f, "%llu %llu", &vm, &rss) != 2) {
+          rss = 0;
+        }
+        fclose(f);
+      }
+    }
+    fprintf(stderr, "avant gc trace: ms=%llu %s why=%d budget=%llu mature_since=%llu trigger=%llu live=%llu mature=%llu large=%llu young_large=%llu held=%llu free_res=%llu free_other=%llu clock=%llu rss=%llu spare=%llu\n",
+            (unsigned long long)((t - t0) / 1000000), full ? "full" : "young", (int)why,
+            (unsigned long long)avant_young_bytes, (unsigned long long)gc_heap.mature_since_full,
+            (unsigned long long)gc_heap.full_trigger, (unsigned long long)gc_heap.live,
+            (unsigned long long)gc_heap.space[SPACE_MATURE].bytes, (unsigned long long)gc_heap.large_bytes,
+            (unsigned long long)gc_heap.young_large, (unsigned long long)avant_nursery_held,
+            (unsigned long long)gc_heap.free_resident, (unsigned long long)gc_heap.free_resident_other,
+            (unsigned long long)gc_heap.return_clock, rss * 4096ull,
+            (unsigned long long)(gc_heap.los_spare ? gc_heap.los_spare->size : 0));
+  }
+#endif
+  if (full || complete) {
+    alloc_full_restart();
   }
   if (gc_heap.ctr.yng.min == 0 || avant_young_bytes < gc_heap.ctr.yng.min) {
     gc_heap.ctr.yng.min = avant_young_bytes;
@@ -729,6 +1026,10 @@ void gc_maybe_collect(void) {
   /* A hold (std.gc) defers what falls due to its end, as a region does
    * to its first collection point after it. */
   if (gc_thread.collecting || gc_thread.nogc || gc_thread.hold) {
+    /* A hold that spent the start phase's budget ends the phase. */
+    if (gc_thread.hold && !gc_heap.set.young_fixed && avant_nursery_held >= avant_young_bytes) {
+      young_start_end();
+    }
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -759,6 +1060,27 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
+    /* A full collection due by allocation (ALLOC_FULL_PCT), in place of
+     * the young collection the budget asks for (the proof makes it that
+     * young collection when no old object can have died). GREW: the
+     * mature growth since the last budget collection (all of it after a
+     * full collection). */
+    uint64_t grew = gc_heap.mature_since_full >= gc_heap.alloc_mature_prev
+                        ? gc_heap.mature_since_full - gc_heap.alloc_mature_prev
+                        : gc_heap.mature_since_full;
+    gc_heap.alloc_mature_prev = gc_heap.mature_since_full;
+    if (avant_g_stats.allocated_bytes - gc_heap.last_full_at >= gc_heap.alloc_full_due &&
+        gc_heap.mature_since_full * 100 >= gc_heap.full_trigger * TUNE(alloc_grown, ALLOC_FULL_GROWN_PCT) &&
+        grew * TUNE(alloc_quiet, ALLOC_FULL_QUIET_DIV) <= avant_young_bytes &&
+#ifdef AVANT_GC_TUNE
+        gc_tune.alloc_pct && (!gc_tune.alloc_after || avant_g_stats.full_collections)
+#else
+        avant_g_stats.full_collections
+#endif
+    ) {
+      gc_collect(GC_FULL, 1, GC_WHY_HEAP_GOAL);
+      return;
+    }
     /* The tenured phase (gc_sticky_retire): the budget is retired
      * instead of collected, until a probe is due; a young large object
      * makes this one a probe. */
@@ -809,10 +1131,12 @@ void gc_init_slow(void) {
    * so; every other entry starts as "no reference word"). */
   gc_type_refs_update(AVANT_TYPE_PTRS);
   gc_settings_read(&gc_heap.set);
+  /* No full collection is due by allocation before ALLOC_FULL_MIN. */
+  gc_heap.alloc_full_due = TUNE(alloc_min, ALLOC_FULL_MIN);
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {
-    avant_young_bytes = YOUNG_BYTES_DEFAULT;
+    avant_young_bytes = TUNE(start, YOUNG_BYTES_START);
   }
   /* The heap's address range: reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */

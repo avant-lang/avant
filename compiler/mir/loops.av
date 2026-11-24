@@ -318,8 +318,8 @@ fn lv_rpo(f: MFunc): Array(Int) {
 // The loop forest of a function: headers and bodies (one flag per block),
 // outermost first (headers in reverse postorder).
 pub class LvLoops {
-  headers: Array(Int) = []
-  bodies: Array(Array(Bool)) = []
+  pub headers: Array(Int) = []
+  pub bodies: Array(Array(Bool)) = []
   depth: Array(Int) = []
 }
 
@@ -1293,6 +1293,76 @@ fn lv_widened(f: MFunc, st: MStmt): MOperand? {
 
 // Builds the guard and the check-free copy, and sends the loop's entry
 // edges to the guard. Returns the copy's header.
+// The freeze test that ends block b (in a program that spawns or holds
+// constant arrays, before an element store: `_w = copy (*_h).2; _f = lt
+// copy _w, const 0; branch copy _f, TRAP, next`, TRAP calling
+// avant_trap_frozen): the holder _h, or -1.
+fn lv_freeze_test(f: MFunc, b: Int): Int {
+  blk = f.blocks[b]
+  n = blk.stmts.size
+  t = blk.term ?? return -1
+  if t.kind != mtk_branch() || t.targets.size != 2 || n < 2 {
+    return -1
+  }
+  f_st = blk.stmts[n - 1]
+  w_st = blk.stmts[n - 2]
+  fl = mir_stmt_def(f_st)
+  wl = mir_stmt_def(w_st)
+  if fl < 0 || wl < 0 || lv_opt_local(t.cond) != fl {
+    return -1
+  }
+  h = -1
+  if r = w_st.rv, r.kind == mrk_use(), a = r.a, p = a.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 2 {
+    h = p.local
+  }
+  if r = f_st.rv, b2 = r.b, r.kind == mrk_cmp() && r.op == mop_lt() && lv_opt_local(r.a) == wl && b2.kind == mok_int() && b2.ival.to_i() == 0 {
+  } else {
+    return -1
+  }
+  tb = f.blocks[t.targets[0]]
+  if tb.stmts.size == 1 && tb.stmts[0].kind == msk_call() && tb.stmts[0].callee == "avant_trap_frozen" {
+    return h
+  }
+  -1
+}
+
+// The freeze tests of element stores the copy can do without: each on
+// an array held by a local the loop never writes, in a loop with no call
+// that may collect (a spawn or a .parallel, which freeze arrays, collect;
+// no other task can freeze an array this one stores into, since another
+// task reaches only an array already frozen). The guard tests each such
+// array once; if it is frozen there, the original loop runs and its
+// first store traps as before. Returns the blocks, by holder in hs.
+fn lv_freezes(lp: LvLoop, hs: Array(Int)): Array(Int) {
+  f = lp.f
+  out: Array(Int) = []
+  for b in 0..lp.body.size {
+    if lp.body[b] {
+      for st in f.blocks[b].stmts {
+        if st.kind == msk_call() && st.collects {
+          return out
+        }
+      }
+    }
+  }
+  for b in 0..lp.body.size {
+    if lp.body[b] {
+      h = lv_freeze_test(f, b)
+      nx = -1
+      if t = f.blocks[b].term, h >= 0 {
+        nx = t.targets[1]
+      }
+      if h >= 0 && lp.invariant(h) && nx >= 0 && nx < lp.body.size && lp.body[nx] {
+        out.push(b)
+        if !lv_listed(hs, h) {
+          hs.push(h)
+        }
+      }
+    }
+  }
+  out
+}
+
 fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   f = lp.f
   n0 = f.blocks.size
@@ -1387,6 +1457,33 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
     blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_lt(), a, lv_copy_local(sizes[terms.up_h[ix]]))))
     blk = lv_test(f, loc, blk, g, hdr)
   }
+  // The freeze tests the copy does without (lv_freezes), each array
+  // tested once here, after its null test.
+  fhs: Array(Int) = []
+  fbs = lv_freezes(lp, fhs)
+  for h in fhs {
+    nn = lv_new_local(f, mt_bool())
+    blk.stmts.push(lv_assign(loc, nn, lv_rv2(mrk_cmp(), mop_ne(), lv_copy_local(h), MOperand.new(mok_null(), f.locals[h].ty))))
+    blk = lv_test(f, loc, blk, nn, hdr)
+    w = lv_new_local(f, mt_i32())
+    wp = MPlace.new(h)
+    wp.proj.push(MProj.new(mpk_deref(), 0))
+    wp.proj.push(MProj.new(mpk_field(), 2))
+    wo = MOperand.new(mok_copy(), -1)
+    wo.place = wp
+    wr = MRvalue.new(mrk_use())
+    wr.a = wo
+    blk.stmts.push(lv_assign(loc, w, wr))
+    g = lv_new_local(f, mt_bool())
+    wz = MOperand.new(mok_int(), mt_i32())
+    wz.ival = 0.to_i()
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(w), wz)))
+    blk = lv_test(f, loc, blk, g, hdr)
+  }
+  fskip = mir_bools(n0, false)
+  for b in fbs {
+    fskip[b] = true
+  }
   last = blk
   // The copy.
   map: Array(Int) = []
@@ -1404,13 +1501,22 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       src = f.blocks[b]
       dst = f.blocks[map[b]]
       j = 0
-      while j < src.stmts.size {
+      keep_to = src.stmts.size
+      if fskip[b] {
+        keep_to = src.stmts.size - 2
+      }
+      while j < keep_to {
         if !lp.removed[b][j] {
           dst.stmts.push(lv_stmt_copy(src.stmts[j]))
         }
         j += 1
       }
-      if t = src.term {
+      if fskip[b] {
+        // The freeze test, done by the guard: on to the store.
+        if t = src.term {
+          dst.term = lv_goto(t.loc, map[t.targets[1]])
+        }
+      } else if t = src.term {
         c = MTerm.new(t.kind, t.loc)
         c.cond = t.cond
         for x in t.targets {
@@ -1553,20 +1659,27 @@ fn lv_func(m: MModule, f: MFunc, keep: Array(Bool), recs: Array(TlRec)) {
 // preheader computes it once and the loop copies the value. The same for
 // the view test, `avant_str_view_test(_s)`: a string object never changes
 // kind. The address of the bytes, `avant_str_data(_s, _t)`, changes when
-// the object moves, which happens only in a collection: it is formed once
-// only for a loop with no call that may collect, in a program with one
-// thread. None of these is left to LLVM: the emitter inlines them as
+// the object moves, which happens only in a collection: in a program with
+// one thread it is formed once before the loop, and formed again right
+// after each call in the loop that may collect (so it is never held
+// across one). None of these is left to LLVM: the emitter inlines them as
 // loads LLVM may only hoist where they surely run. None has another
 // effect, traps (null has size 0 and is no view) or collects, so
 // computing one where the loop might not run is harmless.
 // Loops are taken innermost first, so a size moves out of every loop the
 // string is invariant in.
-fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
+// again holds the locals of addresses formed again after calls (a later
+// round leaves those calls where they are).
+fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool, coll: Array(Bool), again: Array(Int)): Bool {
   addr = lv_addr_taken(f)
   def_in = mir_bools(f.locals.size, false)
   // A loop with no call that may collect, in a program with one thread:
   // no object moves while it runs.
   quiet = !shared
+  // The address is formed again right after each collecting call, which
+  // a call that returns an element's slot cannot have: the store through
+  // the slot must follow it at once (V13).
+  reformable = !shared
   b = 0
   while b < f.blocks.size {
     if body[b] {
@@ -1577,8 +1690,11 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
         if d >= 0 {
           def_in[d] = true
         }
-        if blk.stmts[j].kind == msk_call() && blk.stmts[j].collects {
+        if mir_lv_call_collects(m, blk.stmts[j], coll) {
           quiet = false
+          if d >= 0 && m.types.is_addr(f.locals[d].ty) {
+            reformable = false
+          }
         }
         j += 1
       }
@@ -1588,6 +1704,7 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
   strs: Array(Int) = []
   kinds: Array(String) = []
   held: Array(Int) = []
+  reform: Array(MStmt) = []
   pre = MBlock.new(f.blocks.size)
   loc = f.loc
   if t0 = f.blocks[hdr].term {
@@ -1600,7 +1717,7 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && quiet
+        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && !lv_has(again, st.dest) && (quiet || reformable)
         if data || (st.kind == msk_call() && (st.callee == "avant_str_size" || st.callee == "avant_str_view_test") && st.args.size == 1 && st.dest >= 0) {
           v = lv_local(st.args[0])
           if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
@@ -1636,6 +1753,10 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
                 tc.collects = false
                 pre.stmts.push(tc)
                 call.args.push(lv_copy_local(vt))
+                if !quiet {
+                  reform.push(call)
+                  again.push(h)
+                }
               }
               pre.stmts.push(call)
             }
@@ -1650,6 +1771,9 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
   }
   if strs.size == 0 {
     return false
+  }
+  if reform.size > 0 {
+    lv_reform_after_calls(m, f, body, n0, reform, coll)
   }
   preds = mir_preds(f)
   f.blocks.push(pre)
@@ -1671,7 +1795,89 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
   true
 }
 
-fn lv_hoist_sizes(f: MFunc, shared: Bool) {
+// After each call in the loop that may collect, the addresses of bytes
+// formed before the loop (each a preheader call of reform) are formed
+// again from the string, which the collection may have moved.
+fn lv_reform_after_calls(m: MModule, f: MFunc, body: Array(Bool), n0: Int, reform: Array(MStmt), coll: Array(Bool)) {
+  for bx in 0..n0 {
+    if body[bx] {
+      blk = f.blocks[bx]
+      out: Array(MStmt) = []
+      for st in blk.stmts {
+        out.push(st)
+        if mir_lv_call_collects(m, st, coll) {
+          for c in reform {
+            again = MStmt.new(msk_call(), st.loc)
+            again.dest = c.dest
+            again.callee = c.callee
+            again.args.concat(c.args)
+            again.collects = false
+            out.push(again)
+          }
+        }
+      }
+      blk.stmts = out
+    }
+  }
+}
+
+// Whether a call may collect: a call marked so, unless it is to a
+// function of the module that, with everything it calls, never does
+// (coll, mir_lv_collects).
+pub fn mir_lv_call_collects(m: MModule, st: MStmt, coll: Array(Bool)): Bool {
+  if st.kind != msk_call() || !st.collects {
+    return false
+  }
+  if fo = st.indirect {
+    return true
+  }
+  if i = m.func_index.get(st.callee) {
+    return coll[i]
+  }
+  true
+}
+
+// coll[i] when m.funcs[i] may collect: it makes a call marked as one that
+// may, to a runtime helper, indirectly, or to a function that may (least
+// fixpoint).
+pub fn mir_lv_collects(m: MModule): Array(Bool) {
+  coll = mir_bools(m.funcs.size, false)
+  changed = true
+  while changed {
+    changed = false
+    for i in 0..m.funcs.size {
+      if !coll[i] {
+        f = m.funcs[i]
+        if f.external {
+          coll[i] = true
+          changed = true
+        } else {
+          for blk in f.blocks {
+            for st in blk.stmts {
+              if !coll[i] && mir_lv_call_collects(m, st, coll) {
+                coll[i] = true
+                changed = true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  coll
+}
+
+fn lv_has(xs: Array(Int), x: Int): Bool {
+  for y in xs {
+    if y == x {
+      return true
+    }
+  }
+  false
+}
+
+fn lv_hoist_sizes(m: MModule, f: MFunc, shared: Bool, coll: Array(Bool)) {
+  again: Array(Int) = []
   rounds = 0
   progress = true
   while progress && rounds < 256 {
@@ -1679,7 +1885,7 @@ fn lv_hoist_sizes(f: MFunc, shared: Bool) {
     lps = mir_lv_loops(f)
     li = lps.headers.size - 1
     while li >= 0 && !progress {
-      if lps.headers[li] != 0 && lv_hoist_one(f, lps.bodies[li], lps.headers[li], shared) {
+      if lps.headers[li] != 0 && lv_hoist_one(m, f, lps.bodies[li], lps.headers[li], shared, coll, again) {
         progress = true
       }
       li -= 1
@@ -1688,19 +1894,39 @@ fn lv_hoist_sizes(f: MFunc, shared: Bool) {
   }
 }
 
+// A runtime function's call-table row, declared in the module on first
+// use (a cache tile's avant_tile_fit).
+fn lv_declare(m: MModule, name: String) {
+  if e = m.ext(name) {
+    return
+  }
+  if r = m.rt.find(name) {
+    sg = m.rt.sig_of(r, m.types)
+    if sg >= 0 {
+      x = MExtern.new(name, sg, r.cls)
+      m.extern_index[name] = m.externs.size
+      m.externs.push(x)
+    }
+  }
+}
+
 // The pass (after verify(lowered), before the leaf pass): every
 // function whose kind is unset.
 pub fn mir_loop_pass(m: MModule) {
   keep = mir_lv_summary(m)
+  pure = mir_tile_pure(m)
+  coll = mir_lv_collects(m)
   for f in m.funcs {
     if f.kind == mfk_unset() && f.blocks.size > 1 {
       recs: Array(TlRec) = []
       lv_func(m, f, keep, recs)
-      if recs.size >= 2 {
+      if recs.size >= 1 {
         lps = mir_lv_loops(f)
-        mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu)
+        if mir_tile_func(f, recs, lps.headers, lps.bodies, m.cpu, pure) {
+          lv_declare(m, "avant_tile_fit")
+        }
       }
-      lv_hoist_sizes(f, m.shared)
+      lv_hoist_sizes(m, f, m.shared, coll)
     }
   }
 }

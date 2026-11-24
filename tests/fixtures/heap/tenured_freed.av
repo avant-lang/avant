@@ -1,0 +1,88 @@
+// A retired budget that dies (runtime/avant_gc_sticky.c, gc_sticky_retire):
+// a chain built where nearly everything survives puts the collector in
+// the tenured phase, whose retirements promote every young object where
+// it lies with no collection. The chain then dies, the complete
+// collection frees its blocks, and the young allocator takes them again
+// for objects of another size, which a young collection then sees. Under
+// AVANT_GC_VERIFY=1 the start bits of a retired block must describe the
+// retirement's objects only until they are swept: the verifier's eager
+// copy of them (avant_gc_verify.c, gc_verify_starts_begin) once outlived
+// the retirement and read, in the reused blocks, objects that were long
+// gone. tests/cases/test_gc_tenured.av runs it plainly, under the verifier
+// and with AVANT_GC_STATS=1 (the phase ran: retirements).
+import std.gc
+
+lib gcy {
+  fun avant_gc_collect_young
+}
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+// The chain of N nodes, then its checked length: nothing of it outlives
+// the call.
+fn chain(n: Int): Int {
+  head = Node.new()
+  head.v = 0
+  i = 1
+  while i < n {
+    node = Node.new()
+    node.v = i
+    node.next = head
+    head = node
+    i += 1
+  }
+  bad = 0
+  cur: Node? = head
+  want = n - 1
+  while c = cur {
+    if c.v != want {
+      bad += 1
+    }
+    want -= 1
+    cur = c.next
+  }
+  if want != -1 {
+    bad += 1
+  }
+  bad
+}
+
+// Strings longer than a node, most of them dead at once, every 64th kept
+// in KEPT until the young collection that follows.
+fn churn(rounds: Int, kept: Array(String)): Int {
+  sum = 0
+  i = 0
+  while i < rounds {
+    s = "churned string number ${i} of the reused blocks"
+    sum += s.size
+    if i % 64 == 0 {
+      kept.push(s)
+    }
+    i += 1
+  }
+  sum
+}
+
+fn main {
+  n = 1500000
+  bad = chain(n)
+  gc.collect()
+  kept: Array(String) = []
+  churned = churn(400000, kept)
+  gcy.avant_gc_collect_young()
+  k = 0
+  while k < kept.size {
+    if kept[k] != "churned string number ${k * 64} of the reused blocks" {
+      bad += 1
+    }
+    k += 1
+  }
+  gc.collect()
+  puts("nodes: ${n}")
+  puts("kept: ${kept.size}")
+  puts("churned: ${churned}")
+  puts("bad: ${bad}")
+}

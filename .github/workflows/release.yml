@@ -36,8 +36,11 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.48.0
-  AVANT_SEED_SHA256: 2cc56c672fa88e812b5f677407aea050813a39f63e98a15123b7b64ec57ad1fb
+  # The verify mode (the MIR verifier at stage final and LLVM's
+  # verifier) for every compile CI makes.
+  AVANT_VERIFY: "1"
+  AVANT_SEED_VERSION: v0.49.0
+  AVANT_SEED_SHA256: bba22d1f8a9c0e28235ba4122e1fc8da82803b486a9e1242c4ae314b9378c3e3
 
 "on":
   push:
@@ -128,7 +131,10 @@ jobs:
       - name: Build the bundled re2c
         # The static re2c a release ships (tools/build-re2c.sh), beside
         # bin/avant-b so the suite uses it.
-        run: sh tools/build-re2c.sh bin/re2c
+        # It is also the runner's speed reference: .github/runner-speed.sh
+        # prints the CPU model and count and the re2c make's seconds, by
+        # which tools/ci-steps.py reads every step's time.
+        run: sh .github/runner-speed.sh bin/re2c
 
       - name: Download ${{ env.AVANT_SEED_VERSION }} compiler
         run: |
@@ -136,8 +142,13 @@ jobs:
           curl -fsSL -o /tmp/avant-seed.tar.gz \
             "https://github.com/avant-lang/avant/releases/download/${AVANT_SEED_VERSION}/avant-linux-x86_64.tar.gz"
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
+          # Unpacked inside the checkout, as a developer's bin/vX: a seed
+          # started from under the working directory links this tree's
+          # runtime, which may export functions its own runtime lacks.
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
-          test -x /tmp/avant-linux-x86_64/avant
+          mkdir -p bin
+          mv /tmp/avant-linux-x86_64 "bin/${AVANT_SEED_VERSION}"
+          test -x "bin/${AVANT_SEED_VERSION}/avant"
 
       # tools/letters.sh holds the letters' one incantation: b is
       # the seed's build of compiler/main.av (bin/avant-b), c-release is
@@ -146,7 +157,7 @@ jobs:
       - name: Seed → B → the shipped compiler
         run: |
           set -euo pipefail
-          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-release
+          LETTERS_SEED="bin/${AVANT_SEED_VERSION}" sh tools/letters.sh b c-release
           ./bin/avant-c-release run examples/hello.av
 
       - name: Native suite on the shipped compiler

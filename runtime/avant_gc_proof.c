@@ -247,13 +247,16 @@ static void proof_save_root(void *word, void *ctx) {
  * threads or no young generation. */
 void gc_proof_full_end(void) {
   GcProof *p = &gc_heap.proof;
+  /* Young objects this trace marked and left young (the young
+   * generation, or its buffers: keep_large). */
+  int kept = gc_heap.keep_young || (TUNE(keep_large, FULL_KEEP_LARGE) && gc_heap.keep_large && gc_heap.keep_young_live);
   p->roots_n = 0;
   p->broken = PROOF_INTACT;
   p->grown = PROOF_INTACT;
   /* A young object a trace that left the young generation young marked
    * keeps its side mark, and may become old later: the next full
    * collection cannot take the marks for the old objects. */
-  p->no_sticky = gc_heap.keep_young;
+  p->no_sticky = (uint8_t)kept;
   gc_proof_lines_save();
   /* The old objects' bytes: a trace that left the young generation young
    * marked young objects too (gc_heap.keep_young_live). */
@@ -276,13 +279,13 @@ void gc_proof_full_end(void) {
   if (gc_heap.set.verify) {
     gc_verify_proof_rebase();
   }
-  /* After a trace that left the young generation young the remembered
-   * set is not empty: an old holder that names a young object stays
-   * remembered, and the inline barrier test skips a remembered holder,
-   * so its first store since this collection would not reach the slow
+  /* After a trace that left the young generation (or its buffers,
+   * keep_large) young the remembered set is not empty: an old holder
+   * that names a young object stays remembered, and the inline barrier
+   * test skips a remembered holder, so its first store since this collection would not reach the slow
    * call. Each is logged now instead, as that first store would log it
    * (after the oracle took its copy, which the log must match). */
-  if (gc_heap.keep_young && avant_gc_proof_logging) {
+  if (kept && avant_gc_proof_logging) {
     uint32_t i;
     for (i = 0; i < gc_heap.rem_n; i++) {
       void *obj = gc_heap.remset[i];

@@ -52,6 +52,7 @@ lib harness_rt {
   fun avant_fs_cwd: String
   fun avant_fs_copy(src: String, dst: String): Int
   fun avant_job_start(path: String, args: Array(String), out: String): Int
+  fun avant_job_start_env(path: String, args: Array(String), env: Array(String), out: String): Int
   fun avant_job_wait: Int
   fun avant_job_status: Int
   fun avant_test_fail
@@ -80,7 +81,7 @@ pub class HJob {
 pub fn run_jobs(jobs: Array(HJob)) {
   running = 0
   for j in jobs {
-    j.pid = harness_rt.avant_job_start(j.path, j.args, j.log)
+    j.pid = start_job(j)
     if j.pid > 0 {
       running += 1
     } else {
@@ -100,6 +101,58 @@ pub fn run_jobs(jobs: Array(HJob)) {
     }
     running -= 1
   }
+}
+
+// A job through /usr/bin/env whose program names a path is started
+// directly with the same environment changes (NAME=VALUE sets, `-u NAME`
+// unsets): env takes any word holding '=' before the program for an
+// assignment, so a program under a TMPDIR such as .../AVANT_NURSERY=0/...
+// would not run (env would print the environment and exit 0). A bare
+// program name, looked up on PATH, still goes through env.
+// NAME=VALUE: a name of letters, digits and '_' before the first '='.
+fn is_assignment(a: String): Bool {
+  i = 0
+  while i < a.size {
+    c = a[i]
+    if c == 61 {
+      return i > 0
+    }
+    if !((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95) {
+      return false
+    }
+    i += 1
+  }
+  false
+}
+
+fn start_job(j: HJob): Int {
+  if j.path != "/usr/bin/env" {
+    return harness_rt.avant_job_start(j.path, j.args, j.log)
+  }
+  env: Array(String) = []
+  i = 0
+  while i < j.args.size {
+    a = j.args[i]
+    if a == "-u" && i + 1 < j.args.size {
+      env.push(j.args[i + 1])
+      i += 2
+    } else if is_assignment(a) {
+      env.push(a)
+      i += 1
+    } else {
+      break
+    }
+  }
+  if i >= j.args.size || !j.args[i].contains("/") {
+    return harness_rt.avant_job_start(j.path, j.args, j.log)
+  }
+  rest: Array(String) = []
+  k = i + 1
+  while k < j.args.size {
+    rest.push(j.args[k])
+    k += 1
+  }
+  harness_rt.avant_job_start_env(j.args[i], rest, env, j.log)
 }
 
 // The process's private scratch directory: created on first use,
@@ -487,7 +540,36 @@ pub fn cwd_here: String {
 // Runs the program with its stdout and stderr both written to the file
 // out, in the order it wrote them (through sh's redirection, which is
 // what the file then holds): the exit status, or the failure to start sh.
+// Whether env(1)'s arguments are only assignments, `-u NAME` and `-C DIR`
+// before a program that names a path: run_out then does their work in the
+// shell and execs the program directly.
+fn env_prefix_direct(args: Array(String)): Bool {
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if (a == "-u" || a == "-C") && i + 1 < args.size {
+      i += 2
+    } else if is_assignment(a) {
+      i += 1
+    } else {
+      return a.size > 0 && a[0] != 45 && a.contains("/")
+    }
+  }
+  false
+}
+
 pub fn run_out(program: String, args: Array(String), out: String): Int | ProcessError {
+  if program == "/usr/bin/env" && env_prefix_direct(args) {
+    // env's assignments and `-u NAME` made by the shell itself, and the
+    // program exec'd directly: env(1) would take a program path holding
+    // '=' (a TMPDIR such as .../AVANT_NURSERY=0/...) for an assignment.
+    script = "out=$1; shift; while [ $# -gt 0 ]; do case $1 in -u) unset \"$2\"; shift 2 ;; -C) cd \"$2\" || exit 127; shift 2 ;; [A-Za-z_]*=*) if expr \"x$1\" : 'x[A-Za-z_][A-Za-z0-9_]*=' > /dev/null; then export \"$1\"; shift; else break; fi ;; *) break ;; esac; done; exec \"$@\" > \"$out\" 2>&1"
+    env_args = ["-c", script, "sh", out]
+    for a in args {
+      env_args.push(a)
+    }
+    return process.run("/bin/sh", env_args)
+  }
   sh_args = ["-c", "out=$1; shift; exec \"$@\" > \"$out\" 2>&1", "sh", out, program]
   for a in args {
     sh_args.push(a)

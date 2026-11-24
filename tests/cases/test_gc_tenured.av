@@ -18,11 +18,21 @@ import std.process
 // retirements and at least one probe. The gate's passes run it under the
 // stress mode, AVANT_YOUNG_MB=1 and AVANT_NURSERY=0 as well, where the
 // phase never starts: the statistics check is skipped there.
+//
+// heap/tenured_freed.av lets a retired chain die: the complete collection
+// frees its blocks and the young allocator takes them again for objects
+// of another size before a young collection. Under the verifier the start
+// bits of the retirement's objects must not outlive their sweep (the
+// verifier once kept its own copy of them past the retirement and
+// stopped the program at the next young collection in a reused block).
 fn test_gc_tenured(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/tenured.av", "${dir}/tenured", "${dir}/tenured.log"))
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/tenured_freed.av", "${dir}/tenured_freed", "${dir}/tenured_freed.log"))
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "tenured.av: compiles")
+  c.eq_int(jobs[1].code, 0, "tenured_freed.av: compiles")
+  freed_want = "nodes: 1500000\nkept: 6250\nchurned: 19488890\nbad: 0\n"
   want = "nodes: 1500000\npicked: 366\nchurned: 16888890\nbad: 0\n"
   envs = ["", "AVANT_GC_VERIFY=1"]
   runs: Array(HJob) = []
@@ -32,6 +42,12 @@ fn test_gc_tenured(c: Checks, compiler: String, root: String, dir: String) {
     e += 1
   }
   runs.push(run_job_env(dir, "tenured", "tenured.stats", "AVANT_GC_STATS=1"))
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "tenured_freed", "tenured_freed.g${e}", envs[e]))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "tenured_freed", "tenured_freed.stats", "AVANT_GC_STATS=1"))
   run_waves(runs)
   e = 0
   while e < envs.size {
@@ -44,6 +60,21 @@ fn test_gc_tenured(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/tenured.g${e}.err"), "", "tenured.av ${what}: no stderr (no verifier report)")
     e += 1
   }
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    fr = runs[envs.size + 1 + e]
+    c.eq_int(fr.code, 0, "tenured_freed.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/tenured_freed.g${e}.out"), freed_want, "tenured_freed.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/tenured_freed.g${e}.err"), "", "tenured_freed.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  fst = runs[2 * envs.size + 1]
+  c.eq_int(fst.code, 0, "tenured_freed.av with AVANT_GC_STATS=1: exit 0")
+  c.eq_str(log_text("${dir}/tenured_freed.stats.out"), freed_want, "tenured_freed.av with AVANT_GC_STATS=1: the known stdout")
   st = runs[envs.size]
   c.eq_int(st.code, 0, "tenured.av with AVANT_GC_STATS=1: exit 0")
   c.eq_str(log_text("${dir}/tenured.stats.out"), want, "tenured.av with AVANT_GC_STATS=1: the known stdout")
@@ -51,9 +82,12 @@ fn test_gc_tenured(c: Checks, compiler: String, root: String, dir: String) {
   stats = log_text("${dir}/tenured.stats.err")
   if outer.size > 0 {
     c.skip("tenured.av: the phase retired young budgets and probed", "outer ${outer}")
+    c.skip("tenured_freed.av: the chain was retired before it died", "outer ${outer}")
   } else {
     c.expect(stat_of(stats, "young_retires") > 0, "tenured.av: the phase retired young budgets (young_retires > 0)")
     c.expect(stat_of(stats, "young_probes") > 0, "tenured.av: the phase probed (young_probes > 0)")
+    fstats = log_text("${dir}/tenured_freed.stats.err")
+    c.expect(stat_of(fstats, "young_retires") > 0, "tenured_freed.av: the chain was retired before it died (young_retires > 0)")
   }
 }
 

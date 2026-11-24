@@ -27,7 +27,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.48.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.49.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -119,6 +119,9 @@
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, compiler build and
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
+# A suite pass's limit is tools/suite-limit.sh's for its environment: 900 s,
+# or the larger own limit of a test file in that environment
+# (tests/limits.txt); the pass's summary line names it.
 # The runtime, B, C', and D' are built by tools/letters.sh (the one copy
 # of the letters' incantation, with those timeouts inside). The suites run
 # with no AVANT_BACKEND.
@@ -136,6 +139,10 @@
 # fixed-point.txt; identity.txt (C' against D'); reuse.txt when
 # GATE_REUSE_C is set; summary.txt (everything printed at the end).
 set -u
+# Every compile the gate makes runs in the verify mode (the MIR
+# verifier at stage final and LLVM's verifier: compiler/llvm/driver.av).
+AVANT_VERIFY=1
+export AVANT_VERIFY
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
@@ -261,9 +268,12 @@ rm -f "$out/kept-c" "$out/reuse.txt"
 # with the /tmp and repository snapshots around it (no litter).
 suite_pass() {
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
+  # shellcheck disable=SC2086 # $3 holds VAR=value words
+  lim=$(sh tools/suite-limit.sh $3 2> "$out/limit-$1.txt") || { fail "suite limit for $1: $(cat "$out/limit-$1.txt")"; return; }
+  echo "$lim" > "$out/limit-$1.txt"
   snap "$out/before-$1"
   # shellcheck disable=SC2086 # $3 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || fail "suite on $1 failed (rc=$rc)"
@@ -383,9 +393,12 @@ gc_pass() {
   t=$(cat "$out/tmpdir-$1")
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
   : > "$out/fails-$1.txt"
+  # shellcheck disable=SC2086 # $2 holds VAR=value words
+  lim=$(sh tools/suite-limit.sh $2 2> "$out/limit-$1.txt") || { echo "suite limit for $1: $(cat "$out/limit-$1.txt")" >> "$out/fails-$1.txt"; return; }
+  echo "$lim" > "$out/limit-$1.txt"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
   # shellcheck disable=SC2086 # $2 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"
@@ -497,7 +510,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     jf=$(grep -o 'failures="[0-9]*"' "$out/junit-$L.xml" 2>/dev/null | head -1)
     tag=$L
     case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
-    echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
+    echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo") limit=$(cat "$out/limit-$L.txt" 2>/dev/null)"
   done
   # The longest suite pass by its own wall time: with the GC passes
   # overlapped, the one that bounds their wall (a pass's CPU time can be

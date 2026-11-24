@@ -49,6 +49,9 @@ mkdir -p "$fake/tools" "$fake/compiler" "$fake/runtime" "$fake/bin" "$w/seed"
 : > "$fake/compiler/main.av"
 : > "$fake/runtime/build.sh"
 cp "$gate" "$fake/tools/gate.sh"
+# Each suite pass reads its time limit from it (no tests/limits.txt here:
+# the default).
+cp "$root/tools/suite-limit.sh" "$fake/tools/suite-limit.sh"
 printf '#!/bin/sh\necho stub > /dev/null\n' > "$w/seed/avant"
 chmod +x "$w/seed/avant"
 cat > "$fake/tools/letters.sh" <<'STUB'

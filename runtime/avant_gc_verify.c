@@ -1304,25 +1304,49 @@ static uint64_t yholders_check_hot(void) {
   return found;
 }
 
-/* Was START, a block object that is not young, unreached by the last
- * whole T (and not visited since)? The last whole trace proved it
- * unreached; nothing has named it since, or M would have found the slot
- * or root that does (vi_m_slot: a first such name is a slot written since,
- * or a root, and both are examined). So an incremental check passes over
- * it as a source and in the young blocks' line check: an object that is
- * unreached gives no report in the whole check either. Large objects are
- * never passed over (their runs are reused for objects allocated mature,
- * which the last trace cannot know). */
+/* Was START, an object that is not young, unreached by the last whole T
+ * (and not visited since)? The last whole trace proved it unreached;
+ * nothing has named it since, or M would have found the slot or root
+ * that does (vi_m_slot: a first such name is a slot written since, or a
+ * root, and both are examined). So an incremental check passes over it
+ * as a source and in the young blocks' line check: an object that is
+ * unreached gives no report in the whole check either. A large object's
+ * run may be reused for a new object, which the last trace cannot know:
+ * every large object born since it is marked reached at its birth
+ * (gc_verify_large_born), so a large object is unreached only when it
+ * was there, dead, at the last whole trace. Large objects were once never
+ * passed over: then a dead pointer buffer on a hot page (every page is
+ * hot after a fallback) named objects the trace had proved unreached,
+ * every check fell back to the whole one again, and the compiler's dump
+ * under a 1 MiB young generation made a third of its checks whole until
+ * a full collection freed the buffer. */
 static int vr_unreached(void *start) {
   AvantHeader *h = avant_header(start);
   uintptr_t off;
   uint64_t g;
-  if (!vr_valid || (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_PROMOTED_NOW)) || !heap_offset(h, &off) ||
-      gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL) {
+  uint8_t kind;
+  if (!vr_valid || (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_PROMOTED_NOW)) || !heap_offset(h, &off)) {
+    return 0;
+  }
+  kind = gc_heap.chunks[off >> CHUNK_SHIFT].kind;
+  if (kind != CHUNK_SMALL && kind != CHUNK_LARGE && kind != CHUNK_HUGE) {
     return 0;
   }
   g = (uint64_t)off >> 3;
   return !((vb_reach[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+/* A large object is born (gc_los_alloc): it counts as reached by the last
+ * whole T (vr_unreached), since that trace cannot have seen it. */
+void gc_verify_large_born(AvantHeader *h) {
+  uintptr_t off;
+  uint64_t g;
+  if (!vr_valid || !vb_side || !heap_offset(h, &off)) {
+    return;
+  }
+  vb_ensure();
+  g = (uint64_t)off >> 3;
+  vb_reach[g >> 6] |= 1ULL << (g & 63);
 }
 
 /* An object of a hot page that is not young becomes a source. */

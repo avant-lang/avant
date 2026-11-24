@@ -432,6 +432,17 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
       mir_bits_mark(before_term, b * nw, n, reads)
     }
   }
+  // each block's predecessors, one entry per edge
+  preds: Array(Array(Int)) = []
+  for b in 0..nb {
+    none: Array(Int) = []
+    preds.push(none)
+  }
+  for p in 0..nb {
+    for i in lv.succ_at[p]..lv.succ_at[p + 1] {
+      preds[lv.succ[i]].push(p)
+    }
+  }
   live = mir_zero_words(nw)
   stale = mir_zero_words(nw)
   touched: Array(Int) = []
@@ -442,13 +453,9 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
     if b > 0 {
       lin = mir_live_in_bits(lv, b)
       dead_from = mir_zero_words(nw)
-      for p in 0..nb {
-        for i in lv.succ_at[p]..lv.succ_at[p + 1] {
-          if lv.succ[i] == b {
-            for w in 0..nw {
-              dead_from[w] = dead_from[w] | (before_term[p * nw + w] & ~lin[w] & cand[w] & stale_in[b * nw + w])
-            }
-          }
+      for p in preds[b] {
+        for w in 0..nw {
+          dead_from[w] = dead_from[w] | (before_term[p * nw + w] & ~lin[w] & cand[w] & stale_in[b * nw + w])
         }
       }
       loc = f.loc
@@ -457,9 +464,15 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
       } else if t = blk.term {
         loc = t.loc
       }
-      for k in 0..n {
-        if mir_bit(dead_from, 0, k) {
-          head.push(mir_clear_stmt(k, loc))
+      for w in 0..nw {
+        x = dead_from[w]
+        if x != 0 {
+          for kb in 0..64 {
+            k = w * 64 + kb
+            if k < n && ((x >> kb.to_u64()) & 1) != 0 {
+              head.push(mir_clear_stmt(k, loc))
+            }
+          }
         }
       }
     }

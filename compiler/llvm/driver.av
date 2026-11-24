@@ -1,5 +1,6 @@
 // The back end's driver: a final-stage MIR module to a linked program.
-// It refuses a module the verifier rejects (the rule's diagnostic),
+// In the verify mode (llvm_verify_mode) it refuses a module the
+// verifier rejects at stage final (the rule's diagnostic),
 // emits the .ll in memory (emit.av), compiles it with the in-process
 // LLVM in the job's codegen mode (glue.av) to an object in the
 // compiler's private scratch directory (pipeline.av tmp_new_dir, under
@@ -38,6 +39,20 @@ pub class LlvmJob {
   }
 }
 
+// The verify mode: AVANT_VERIFY=1 runs the MIR verifier at stage final
+// before emission, and LLVM's verifier on the emitted module
+// (runtime/avant_llvm.c). The suite (`avant test` sets it for what it
+// compiles and runs), the gate, tools/letters.sh and CI turn it on; a
+// user's compile skips both, since every change to the compiler passes
+// them over the whole corpus there. Stage lowered's checks run on every
+// compile (mir/lower.av), and `__emit-ll` verifies at stage final always.
+pub fn llvm_verify_mode: Bool {
+  if v = env_get("AVANT_VERIFY"), v == "1" {
+    return true
+  }
+  false
+}
+
 // The verifier at stage final: "" or every error in the compiler's
 // diagnostic form (error[V<n>] ... --> file:line:col), one after another.
 pub fn llvm_verify(m: MModule): String {
@@ -61,14 +76,16 @@ pub fn llvm_verify(m: MModule): String {
   buf.to_s()
 }
 
-// Verify, emit, and compile to obj_path. With job.keep_ll set, the
+// Verify (in the verify mode), emit, and compile to obj_path. With job.keep_ll set, the
 // pre-optimization .ll is also written there (for the goldens and the
 // self-hosting fixed point). An LLVM failure after the verifier passed
 // is an emitter bug, reported as an internal error.
 pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
-  bad = llvm_verify(m)
-  if bad.size > 0 {
-    return bad
+  if llvm_verify_mode() {
+    bad = llvm_verify(m)
+    if bad.size > 0 {
+      return bad
+    }
   }
   t0 = now_us()
   text = ll_emit_module(m, job.inline_fast, job.codegen == "release")

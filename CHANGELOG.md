@@ -1,5 +1,24 @@
 # Avant Language changelog
 
+## 0.50.0 - 2026-11-23
+
+### Changed
+
+* Loop nests whose inner body calls a pure function are tiled too, every result bit-identical; a tiled matrix multiply computes a panel of rows a block of columns at a time where a thread has its L2 cache to itself, with fixed sizes when the caches cannot be read. In a program that spawns, a loop that stores into an array tests the array's freeze once before the loop.
+* Each function's blocks are laid out by LLVM's ext-TSP model, so an interpreter's dispatch mispredicts far less often.
+* A `String` key's hash no longer clusters keys that differ in a few bytes under some per-process secrets, where a program could run many times slower in one run out of a few hundred.
+* A literal regex whose matches start with one byte skips to that byte; an array of arrays read row by row loads each row once; three or more neighbouring indexes of one array, `Buf` or string are checked by one test.
+* Less memory: the young generation grows only past 70% survival and starts at 1 MiB in a small program; a short-lived object placed among old ones no longer becomes old at once; a full collection falls due by allocation once promotion stops and leaves the program's large young buffers young; the large-object space returns long-free pages first and reuses resident pages first.
+* `AVANT_VERIFY=1` runs the compiler's final MIR verifier and LLVM's verifier; ordinary compiles skip them (`avant test` turns it on).
+* Faster compiles: the checker and the lowering look names up in indexes, and optimized builds hand LLVM a smaller program; the compiler's own builds link with mold when it is installed.
+* The README's benchmark tables are this release's, at five code layouts that move the runtime's code with the program's and align innermost loops to 16 bytes at the three addresses within a line.
+* The compiler is built from v0.49.0.
+
+### Fixed
+
+* `avant test` starts each test program directly with its environment: a test under a `TMPDIR` whose path holds `=` runs (before, it did not run and was reported as passing), and a test process that exits 0 without reaching its program's end fails.
+* The collector's verifier (`AVANT_GC_VERIFY=1`) no longer stops a program after a tenured phase's retired blocks are freed and reused, and no longer checks the whole heap again after every dead large buffer.
+
 ## 0.49.0 - 2026-11-22
 
 ### Changed

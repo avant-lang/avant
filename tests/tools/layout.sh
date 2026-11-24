@@ -23,6 +23,14 @@
 #     later in the others, each of which runs;
 #   cc-passthrough: a compile (-c) and a link without LAYOUT_DIR pass
 #     through untouched; cc-bad-shift: a shift not a multiple of 64 fails;
+#   rounds-identical-skipped, rounds-identical-timed: with two sides, a
+#     task whose binaries are byte-identical on both at every layout is not
+#     timed and is named (output, session.txt, identical.tsv, rounds.md);
+#     --time-identical times it;
+#   rounds-reuse-within, rounds-reuse-drift, rounds-reuse-refused:
+#     --reuse-base takes a record's base runs when its drift row is within
+#     the record's spread, times the whole base when it drifted, and refuses
+#     a record of another RUN_JS;
 #   rounds-layouts: rounds.py --layouts runs round r at the
 #     ((r - 1) mod K)-th shift, names it in each raw file and lists every
 #     layout's binary;
@@ -41,6 +49,8 @@
 #     whole-line shifts are linked as before, each sub-line shift compiled
 #     with AVANT_CODE_SHIFT set, every layout's binary runs, and
 #     shifts.txt lists them all;
+#   check-build-threads: the build puts the task's configuration beside
+#     its layouts, where rounds.py reads its threads (cfg_threads);
 #   check-build-subline-checked: a stub that ignores AVANT_CODE_SHIFT is
 #     caught (main not where the shift puts it), the build fails;
 #   check-build-subline-bad: a sub-line shift of 64 is refused;
@@ -61,7 +71,9 @@
 #     rebuilds the checkout's runtime objects byte for byte;
 #   mem-compare: tools/la-mem.py reads a lower average over the tasks (the
 #     twins left out), a program whose ranges part as moved, and one whose
-#     runs take two values as one to run again.
+#     runs take two values as one to run again;
+#   mem-aslr-on: with ASLR-on runs on both sides, a peak moved with ASLR
+#     off but not with it on reads as one to run again.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -148,6 +160,74 @@ python3 -I "$root/tools/rounds.py" langarena --rounds 3 --run-js "$r/run.js" --o
   && grep -q '  x@0--fake_one$' "$r/s/binaries.sha256" && grep -q '^Layouts: round r ran' "$r/s/rounds.md" && grep -q '^layouts: shifts 0 64' "$r/s/session.txt"
 say rounds-layouts $? "rc=$rc $(tail -2 "$r/log" | tr '\n' ';')"
 
+# 4b. Two sides: a task byte-identical on both at every layout is not timed,
+# and is named; one that differs at one layout is timed; --time-identical
+# times both.
+ri=$w/ri
+for sd in a b; do
+  mkdir -p "$ri/$sd/0" "$ri/$sd/64"
+  for l in 0 64; do
+    printf '#!/bin/sh\necho 111\n' > "$ri/$sd/$l/fake_one"
+    printf '#!/bin/sh\n# %s\necho 222\n' "$([ $sd = b ] && [ $l = 64 ] && echo moved || echo same)" > "$ri/$sd/$l/fake_two"
+  done
+done
+chmod +x "$ri"/*/*/fake_*
+printf '[\n  {\n    "name": "Fake::One",\n    "checksum": 111,\n  },\n  {\n    "name": "Fake::Two",\n    "checksum": 222,\n  },\n]\n' > "$ri/run.js"
+rl() { # OUT FLAGS...
+  o=$1; shift
+  python3 -I "$root/tools/rounds.py" langarena --rounds 2 --run-js "$ri/run.js" --out "$ri/$o" --side a="$ri/a" --side b="$ri/b" --layouts 0,64 --allow-governor \
+    --cpu-tolerance 1 --max-involuntary 100000 --max-outside 100 "$@" < /dev/null > "$ri/$o.log" 2>&1
+}
+rl s; rc=$?
+[ $rc -eq 0 ] && grep -q '^identical on every side, not timed: Fake::One$' "$ri/s.log" && [ ! -e "$ri/s/raw/round-1/a--fake_one.run" ] \
+  && [ -e "$ri/s/raw/round-1/a--fake_two.run" ] && [ -e "$ri/s/raw/round-2/b--fake_two.run" ] && grep -q '^Fake::One	no	' "$ri/s/identical.tsv" \
+  && grep -q '^| Fake::One | identical |' "$ri/s/rounds.md" && grep -q '^Not timed: 1 task whose binaries are byte-identical' "$ri/s/rounds.md" \
+  && grep -q 'identical: 1 task byte-identical on every side, not timed: Fake::One' "$ri/s/session.txt" && ! grep -q '^Fake::Two' "$ri/s/identical.tsv"
+say rounds-identical-skipped $? "rc=$rc $(tail -3 "$ri/s.log" | tr '\n' ';')"
+rl t --time-identical; rc=$?
+[ $rc -eq 0 ] && [ -e "$ri/t/raw/round-1/a--fake_one.run" ] && grep -q '^Fake::One	yes	' "$ri/t/identical.tsv" && ! grep -q 'identical |' "$ri/t/rounds.md"
+say rounds-identical-timed $? "rc=$rc $(tail -3 "$ri/t.log" | tr '\n' ';')"
+
+# 4c. --reuse-base: a record of two sides, then sessions that reuse its
+# base. The record's spread is widened by hand (0.001 to 0.5 s) so the
+# drift rows' verdict does not depend on this machine's noise: with the
+# base's drift program as before it is within, and the other task is timed
+# on the head alone, its base runs the record's; with the drift program
+# made 1 s slower (the same bytes, a delay file it reads) it is a drift,
+# and the whole base is timed again. Another RUN_JS refuses the reuse.
+rb=$w/rb
+for sd in base head; do
+  mkdir -p "$rb/$sd/0"
+  printf '#!/bin/sh\nsleep "$(cat %s/delay)"\necho 111 # %s\n' "$rb" "$sd" > "$rb/$sd/0/fake_one"
+  printf '#!/bin/sh\necho 222 # %s\n' "$sd" > "$rb/$sd/0/fake_two"
+done
+chmod +x "$rb"/*/0/fake_*; echo 0 > "$rb/delay"
+printf '[\n  {\n    "name": "Fake::One",\n    "checksum": 111,\n  },\n  {\n    "name": "Fake::Two",\n    "checksum": 222,\n  },\n]\n' > "$rb/run.js"
+rr() { # OUT FLAGS...
+  o=$1; shift
+  python3 -I "$root/tools/rounds.py" langarena --rounds 3 --run-js "$rb/run.js" --out "$rb/$o" --side base="$rb/base" --side head="$rb/head" --layouts 0 --allow-governor \
+    --cpu-tolerance 1 --max-involuntary 100000 --max-outside 100 "$@" < /dev/null > "$rb/$o.log" 2>&1
+}
+rr rec; rc0=$?
+for k in 1 2 3; do
+  f=$rb/rec/raw/round-$k/base--fake_one.run
+  [ $k = 1 ] && sed -i 's/^wall_ns\t.*/wall_ns\t1000000/' "$f"; [ $k = 3 ] && sed -i 's/^wall_ns\t.*/wall_ns\t500000000/' "$f"
+done
+rr ok --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc0 -eq 0 ] && [ $rc -eq 0 ] && grep -q '^Fake::One	.*	within$' "$rb/ok/drift.tsv" && grep -q '^reused	' "$rb/ok/raw/round-2/base--fake_two.run" \
+  && grep -q 'base reuse: from .* for 1 tasks, drift rows Fake::One' "$rb/ok/session.txt" && [ -e "$rb/ok/raw/round-2/head--fake_two.run" ] \
+  && [ -e "$rb/ok/raw/round-2/base--fake_one.run" ] && ! grep -q '^reused' "$rb/ok/raw/round-2/base--fake_one.run" && grep -q '^Base reuse' "$rb/ok/rounds.md"
+say rounds-reuse-within $? "rc=$rc0/$rc $(tail -3 "$rb/ok.log" | tr '\n' ';')"
+echo 1 > "$rb/delay"
+rr drift --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc -eq 0 ] && grep -q '	DRIFT$' "$rb/drift/drift.tsv" && [ -e "$rb/drift/raw/round-2/base--fake_two.run" ] && ! grep -q '^reused' "$rb/drift/raw/round-2/base--fake_two.run" \
+  && grep -q 'whole base is timed again' "$rb/drift/session.txt"
+say rounds-reuse-drift $? "rc=$rc $(tail -3 "$rb/drift.log" | tr '\n' ';')"
+echo 0 > "$rb/delay"; printf '\n' >> "$rb/run.js"
+rr other --reuse-base "$rb/rec" --drift Fake::One; rc=$?
+[ $rc -eq 0 ] && grep -q 'base reuse: refused (another RUN_JS): the whole base is timed' "$rb/other/session.txt" && [ ! -e "$rb/other/drift.tsv" ]
+say rounds-reuse-refused $? "rc=$rc $(tail -3 "$rb/other.log" | tr '\n' ';')"
+
 # 5. layout-spread.py on fabricated sessions.
 sp=$w/sp; mkdir -p "$sp"
 run() { # ROUND SIDE TASK WALL
@@ -228,12 +308,18 @@ rm -f "$out.s"; exit $rc
 STUB
 chmod +x "$lb/root/bin/avant-c-llvm"
 echo 'fn main {}' > "$lb/la/avant/langarena/tmp/x_one.av"; printf -- '--release\n' > "$lb/la/args/x_one"
+printf 'fn cfg_threads: Int { 16 }\n' > "$lb/la/avant/langarena/tmp/x_one.cfg.av"
 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0 64" LAYOUT_CHECK_SUBLINE="16 32" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d" x_one < /dev/null > "$lb/log" 2>&1; rc=$?
 ok=0
 for k in 0 64 16 32; do "$lb/d/layouts/$k/x_one" < /dev/null || ok=1; done
 m16=$(nm "$lb/d/layouts/16/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
 [ $rc -eq 0 ] && [ $ok -eq 0 ] && [ "$(cat "$lb/d/shifts.txt")" = "0 64 16 32" ] && [ -n "$m16" ] && [ $((0x$m16 % 64)) -eq 16 ]
 say check-build-subline $? "rc=$rc runs=$ok main@16=$m16 shifts=$(cat "$lb/d/shifts.txt" 2>/dev/null); $(tail -2 "$lb/log" | tr '\n' ';')"
+# The task's configuration lands beside its layouts, where rounds.py reads
+# its threads.
+t=$(python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import rounds; print(rounds.threads_of(sys.argv[2], "x_one"))' "$root/tools" "$lb/d/layouts")
+[ "$t" = 16 ]
+say check-build-threads $? "threads=$t"
 STUB_IGNORE_SHIFT=1 LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh "$lb/root/tools/layout-check.sh" build "$lb/la" "$lb/d2" x_one < /dev/null > "$lb/log2" 2>&1; rc=$?
 [ $rc -eq 1 ] && grep -q 'at sub-line shift 16: main is at .*, not 16 bytes into its line' "$lb/log2"
 say check-build-subline-checked $? "rc=$rc $(tr '\n' ';' < "$lb/log2")"
@@ -315,4 +401,13 @@ o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base.tsv" "$lmm/head.tsv" 2>&1)
 echo "$o" | grep -q '^average peak over 3 tasks: .*: lower$' && echo "$o" | grep -q '^a_one.*moved$' \
   && echo "$o" | grep -q '^b_two.*repeat' && echo "$o" | grep -q '^to run again: b_two$'
 say mem-compare $? "$(echo "$o" | tr '\n' ';')"
+# With the runs taken with ASLR on (a sixth field), a peak that moved with
+# it off is moved only when those runs part too: a_one's do, d_four's (a
+# mapping that landed elsewhere) do not.
+printf 'a_one\t1000\t1000\t1000\t1000,1000,1000\t1000,1064,1000\nd_four\t8916\t8916\t8916\t8916,8916,8916\t9108,9112,9044\n' > "$lmm/base-on.tsv"
+printf 'a_one\t900\t900\t900\t900,900,900\t964,900,900\nd_four\t9180\t9180\t9180\t9180,9180,9180\t9052,9184,9024\n' > "$lmm/head-on.tsv"
+o=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-on.tsv" "$lmm/head-on.tsv" 2>&1)
+echo "$o" | grep -q '^a_one.*moved$' && echo "$o" | grep -q '^d_four.*repeat (ASLR on does not confirm)$' \
+  && echo "$o" | grep -q '^with ASLR on: base 5054.0 KB, head 4976.0 KB' && echo "$o" | grep -q '^to run again: d_four$'
+say mem-aslr-on $? "$(echo "$o" | tr '\n' ';')"
 echo done

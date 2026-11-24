@@ -41,8 +41,21 @@
 # runtime/build/avant_llvm.o as a link argument (COMPILER_LINK below);
 # a user program never does.
 #
+# Every compiler build runs in the verify mode (AVANT_VERIFY=1: the MIR
+# verifier at stage final and LLVM's verifier, compiler/llvm/driver.av).
+#
+# The compilers link with mold when it is installed (LETTERS_MOLD, else
+# `mold` on PATH; LETTERS_MOLD=none for GNU ld) and the compiler it linked
+# starts (`OUT version`); a compiler that does not start is linked again
+# with GNU ld, cc's default, which every later step then uses. The first
+# step says which linker. mold reads the 115 MB LLVM object in a fifth of
+# GNU ld's time; lld cannot link the runtime (it puts its thread-local
+# common symbols outside the TLS block). The compilers keep linking user
+# programs with cc's default. LETTERS_MOLD_CHECK=fail makes the start
+# check fail (to test the fallback).
+#
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.48.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.49.0, the
 #                     release; a seed must emit the runtime call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -78,19 +91,30 @@ fi
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
-# The default seed (a release since v0.37.0): bin/v0.48.0, the release
+# The default seed (a release since v0.37.0): bin/v0.49.0, the release
 # archive unpacked (CI pins the same asset). The v0.36.0 release predates the runtime call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and the
 # scan is retired, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed.
-default_seed=bin/v0.48.0
+default_seed=bin/v0.49.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.48.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.49.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
-seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
+# A seed under the checkout keeps its path under the checkout even when
+# bin/vX is a symbolic link to another checkout's seed (symbolic links are
+# not resolved, given relative or absolute, as tools/gate.sh passes it):
+# the compiler links the runtime of the tree it is started from only when
+# its path lies under the working directory (compiler/pipeline.av,
+# avant_root), and B must link this tree's runtime, which may export
+# functions the seed's own runtime does not have yet.
+seed_arg=${LETTERS_SEED:-$default_seed}
+case $seed_arg in
+  /*) seed=$(realpath -m -s "$seed_arg") ;;
+  *) seed=$(realpath -m -s "$(pwd -P)/$seed_arg") ;;
+esac
 time_dir=${LETTERS_TIME_DIR:-}
 
 if [ "${1:-}" = --print-seed ]; then
@@ -114,6 +138,34 @@ need_llvm() {
   exit 1
 }
 
+# The compilers' linker: CC (read by every compiler's link, the seed's
+# too) names bin/.letters-ld/cc, which runs cc (or the CC given) with
+# -fuse-ld=mold and the chosen mold first on its program path.
+mold=${LETTERS_MOLD:-$(command -v mold || echo none)}
+link_env=""
+link_said=""
+link_setup() {
+  [ -n "$link_said" ] && return 0
+  link_said=1
+  if [ "$mold" != none ] && "$mold" --version 2> /dev/null | grep -q '^mold '; then
+    d=$root/bin/.letters-ld
+    mkdir -p "$d"
+    ln -sf "$mold" "$d/ld.mold"
+    printf '#!/bin/sh\nexec %s -B%s -fuse-ld=mold "$@"\n' "${CC:-cc}" "$d" > "$d/cc"
+    chmod 755 "$d/cc"
+    link_env="CC=$d/cc"
+    echo "letters: the compilers link with mold ($("$mold" --version | cut -d ' ' -f 1-2))"
+  else
+    echo "letters: the compilers link with GNU ld (cc's default; no mold)"
+  fi
+}
+
+# starts OUT: the compiler just built runs.
+starts() {
+  [ "${LETTERS_MOLD_CHECK:-}" = fail ] && return 1
+  env -u AVANT_ROOT timeout -k 5 60 "$1" version > /dev/null 2>&1 < /dev/null
+}
+
 # build LETTER COMPILER OUT MODE [FLAG]
 # FLAG is --cpu=baseline for every compiler: the
 # avant binary stays on plain x86-64 whatever a program's artifact default
@@ -121,12 +173,19 @@ need_llvm() {
 # (older seeds predated --cpu and built plain x86-64 themselves).
 build() {
   need_llvm
+  link_setup
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
-  # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  # shellcheck disable=SC2086 # timer, the flag and link_env are words or empty
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  if [ -n "$link_env" ] && ! starts "$3"; then
+    echo "letters: $3 linked by mold does not start: linked again with GNU ld, which the later steps use"
+    link_env=""
+    # shellcheck disable=SC2086 # timer and the flag are words or empty
+    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  fi
   record "$3" "$1"
 }
 

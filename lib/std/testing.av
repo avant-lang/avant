@@ -23,6 +23,7 @@ lib avant_testing_status {
 lib avant_testing_fs {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_process_run_split_env(path: String, args: Array(String), env: Array(String), out: String, err: String): Int
 }
 
 // The length of the character XML 1.0 can carry that starts at byte i
@@ -88,10 +89,19 @@ fn testing_read(path: String): String {
 }
 
 // Runs bin with args, stdout and stderr to their own files, and returns
-// its status: no sh script. /usr/bin/env -u keeps the runner's listing
-// and selection variables away from the program it starts.
+// its status: no sh script. The runner's listing, selection and results
+// variables are unset for the program it starts. A bin that names a path
+// is started directly (env(1) would take a path holding '=' for an
+// assignment and run nothing); a bare name is looked up on PATH by
+// /usr/bin/env.
 fn testing_run(bin: String, args: Array(String), out_path: String, err_path: String): Int {
+  if bin.contains("/") {
+    unset = ["AVANT_TEST_LIST", "AVANT_TEST_ONLY", "AVANT_TEST_NAMES", "AVANT_TEST_FILTER", "AVANT_TEST_MATCHES", "AVANT_TEST_RESULTS"]
+    return avant_testing_fs.avant_process_run_split_env(bin, args, unset, out_path, err_path)
+  }
   wrapped: Array(String) = []
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_RESULTS")
   wrapped.push("-u")
   wrapped.push("AVANT_TEST_LIST")
   wrapped.push("-u")

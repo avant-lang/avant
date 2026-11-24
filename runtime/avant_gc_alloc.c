@@ -1014,6 +1014,11 @@ static int young_hole(size_t total) {
       return 1;
     }
   }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.no_holes && !gc_heap.set.heap_max) {
+    return 0;
+  }
+#endif
   b = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
   if (b) {
     young_take(b);
@@ -1029,7 +1034,12 @@ static AvantHeader *young_overflow(size_t total) {
   Block *o = gc_thread.overflow;
   uint8_t *h;
   if (!o || o->bump + total > o->limit) {
+#ifdef AVANT_GC_TUNE
+    o = gc_tune.no_holes >= 2 && !gc_heap.set.heap_max ? NULL
+                                                       : young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
+#else
     o = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
+#endif
     if (!o) {
       o = gc_new_block(SPACE_MATURE);
       if (!o) {

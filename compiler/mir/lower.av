@@ -30,6 +30,8 @@ import mir.verify_core
 import mir.verify
 import mir.gc
 import mir.loops
+import mir.rows
+import mir.runs
 import mir.take
 import mir.upsert
 import receiver_writes
@@ -239,6 +241,11 @@ pub class MirLower {
   pub lw_pend_elems: Array(Int)
   pub lw_ret_ty: Ty? = nil
   pub lw_all: Array(Function)
+  // How many plain functions of a module, and how many methods of an
+  // owner, share a name, not counting generic instances (symbol_of,
+  // method_symbol): counted once, when the first symbol is made.
+  pub lw_fn_names: Hash(String, Int)? = nil
+  pub lw_method_names: Hash(String, Int)? = nil
   pub lw_cl: MirClosures
   pub lw_ffi: MirFfi
   pub lw_task: MirTasks
@@ -880,7 +887,9 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   mir_take_pass(lw.lw_m)
   mir_upsert_pass(lw.lw_m)
   lw.lw_m.cpu = cpu
+  mir_rows_pass(lw.lw_m)
   mir_loop_pass(lw.lw_m)
+  mir_runs_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
   mir_caller_sites(lw.lw_m)
   MirLowered.new(lw.lw_m, "")
