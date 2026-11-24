@@ -448,6 +448,101 @@ fn test_json_value_large(c: Checks) {
   c.eq_int(ok, n, "large array: every element in order")
 }
 
+fn no_walk(w: json.JsonMembers?): Bool {
+  if _ = w {
+    return false
+  }
+  true
+}
+
+fn no_member(m: json.JsonMember?): Bool {
+  if _ = m {
+    return false
+  }
+  true
+}
+
+// Json.members: each member's name and value in the document's order, a
+// repeated name given each time, nil for any value but an object; one
+// step per member, so a large object's walk reads each member once.
+fn test_json_member_walk(c: Checks) {
+  doc = Json.parse("{\"b\": 1, \"a\": {\"c\": [1, 2], \"d\": {}}, \"b\": 2, \"z\": \"s\", \"e\": {}}") ?? return c.expect(false, "member walk: parse")
+  seen = ""
+  if ms = doc.members() {
+    for m in ms {
+      seen = seen + "${m.name}=${m.value.text()};"
+    }
+  } else {
+    c.expect(false, "member walk: an object has members")
+  }
+  c.eq_str(seen, "b=1;a={\"c\":[1,2],\"d\":{}};b=2;z=\"s\";e={};", "member walk: the document's order, a repeated name each time")
+  inner = ""
+  if ms = doc.members("a") {
+    for m in ms {
+      inner = inner + "${m.name}:${m.value.len()};"
+      if sub = m.value.members() {
+        for x in sub {
+          inner = inner + "!"
+        }
+      }
+    }
+  }
+  c.eq_str(inner, "c:2;d:0;", "member walk: a nested object, an empty one walked as empty")
+  empty = 0
+  if ms = doc.members("e") {
+    for m in ms {
+      empty += 1
+    }
+  } else {
+    empty = -1
+  }
+  c.eq_int(empty, 0, "member walk: an empty object has no member")
+  if bare = Json.parse("{}"), ms = bare.members() {
+    c.expect(no_member(ms.next()), "member walk: the empty document's walk ends at once")
+  } else {
+    c.expect(false, "member walk: {} is an object")
+  }
+  c.expect(no_walk(doc.members("b")), "member walk: nil for a number")
+  c.expect(no_walk(doc.members("z")), "member walk: nil for a string")
+  c.expect(no_walk(doc.members("missing")), "member walk: nil for a missing member")
+  if arr = Json.parse("[{\"x\": 1}]") {
+    c.expect(no_walk(arr.members()), "member walk: nil for an array")
+  }
+  if ms = doc.members() {
+    n = 0
+    while m = ms.next() {
+      n += 1
+    }
+    c.expect(no_member(ms.next()), "member walk: nil again after the last")
+    c.eq_int(n, 5, "member walk: five members")
+  }
+  // 60,000 members, each [i, {"x": i}], and a repeated name at the end:
+  // a walk by key_at(i) and at(i) read 1.8 billion members here.
+  n = 60000
+  t = Buf.new()
+  t.push_str("{")
+  for i in 0..n {
+    t.push_str("\"k${i}\":[${i},{\"x\":${i}}],")
+  }
+  t.push_str("\"k5\":0}")
+  big = Json.parse(t.to_s()) ?? return c.expect(false, "large member walk: parse")
+  good = 0
+  count = 0
+  last = ""
+  if ms = big.members() {
+    for m in ms {
+      if count < n && m.name == "k${count}", first = m.value.first(), (first.int() ?? -1) == count, x = m.value.at(1), (x.int("x") ?? -1) == count {
+        good += 1
+      }
+      last = "${m.name}=${m.value.text()}"
+      count += 1
+    }
+  }
+  c.eq_int(count, n + 1, "large member walk: every member, the repeated name too")
+  c.eq_int(good, n, "large member walk: every name and value in order")
+  c.eq_str(last, "k5=0", "large member walk: the repeated name last, with its own value")
+}
+
 // JsonValue's object members: a Hash by name, in the document's order;
 // a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
@@ -592,6 +687,7 @@ fn main: Int {
   test_std_json(c)
   test_json_kinds(c)
   test_json_members(c)
+  test_json_member_walk(c)
   test_json_value_large(c)
   test_json_value_written(c)
   test_json_limits(c)

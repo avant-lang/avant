@@ -198,6 +198,30 @@ pub struct Json {
     JsonIter.new(child_node, self.pool, jsonc.avant_json_len(child_node))
   }
 
+  // The members of this value, when it is an object: each name with its
+  // value, in the document's order, one step per member (key_at(i) and
+  // at(i) each walk from the first member, so a loop over them reads
+  // n*n/2). A name given twice is given twice, where get reads its first.
+  // nil for any other value, as arr is.
+  pub fn members: JsonMembers? {
+    n = jsonc.avant_json_obj_size(self.node)
+    if n < 0 {
+      return nil
+    }
+    JsonMembers.new(self.node, self.pool, n)
+  }
+
+  // The members of the member `key`, when it is there and is an object;
+  // nil otherwise.
+  pub fn members(key: String): JsonMembers? {
+    child_node = jsonc.avant_json_get(self.node, key) ?? return nil
+    n = jsonc.avant_json_obj_size(child_node)
+    if n < 0 {
+      return nil
+    }
+    JsonMembers.new(child_node, self.pool, n)
+  }
+
   pub fn key_at(index: Int): String? {
     key = jsonc.avant_json_key_at(self.node, index)
     if jsonc.avant_json_take_status() != 0 {
@@ -357,6 +381,52 @@ pub class JsonIter {
     node = step ?? return nil
     self.cur = node
     Json { node: node, pool: self.pool }
+  }
+}
+
+// One member of an object, as Json.members gives it.
+pub struct JsonMember {
+  pub name: String
+  pub value: Json
+}
+
+// An object's members in the document's order. The name node of the
+// next member is held (the node after a name is its value, the node
+// after that value the next name); the count of members left keeps the
+// walk from stepping past the object's last value.
+pub class JsonMembers {
+  cur: Ptr(Void)
+  left: Int = 0
+  pool: Bytes
+
+  fn initialize(obj: Ptr(Void), pool: Bytes, n: Int) {
+    self.cur = obj
+    self.pool = pool
+    self.left = n
+    if n > 0 {
+      if first = jsonc.avant_json_first_key(obj) {
+        self.cur = first
+      } else {
+        self.left = 0
+      }
+    }
+  }
+
+  pub fn next: JsonMember? {
+    if self.left <= 0 {
+      return nil
+    }
+    kn = self.cur
+    vn = jsonc.avant_json_next(kn) ?? return nil
+    self.left -= 1
+    if self.left > 0 {
+      if nk = jsonc.avant_json_next(vn) {
+        self.cur = nk
+      } else {
+        self.left = 0
+      }
+    }
+    JsonMember { name: jsonc.avant_json_as_str(kn), value: Json { node: vn, pool: self.pool } }
   }
 }
 

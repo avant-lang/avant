@@ -861,7 +861,7 @@ fn main {
 - **`for i, x in xs`** gives the position, then the element, over an `Array`, `Bytes`, a `Buf` or `s.bytes`. The position is the loop's own, as the variable is: it cannot be assigned, and a `continue` moves it. A range has one variable.
 - **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a nonzero integer literal or a module [constant](#constants) (`by chunk`, `by -chunk`), fixed when the loop is compiled. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. **A step down, `by -k`, visits the same values in reverse**: `for i in 0..n by -1` is `n - 1` down to `0`, and `for i in 0..10 by -3` is `9, 6, 3, 0` (the values of `by 3`, last first); the walk always ends at the range's start, never computes a value below it, and an empty range visits nothing.
 - **Bytes:** `for b in bytes`, `for b in buf` and `for b in s.bytes` give each byte as an `Int` (`s.bytes` walks the string's own bytes, with no copy). A bare `for c in s` is refused with the two walks it may mean: the bytes (`s.bytes`) or the characters (`s.chars()`).
-- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
+- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()` and `members()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
 - **`for w in s.fields()`** scans the string and gives each field as `fields()` would, without building the array.
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
 
@@ -4482,6 +4482,13 @@ fn main {
       puts(langs.len())                  // => 2
       puts(first.str() ?? "?")           // => avant
     }
+    names: Array(String) = []
+    if ms = doc.members() {
+      for m in ms {
+        names.push(m.name)
+      }
+    }
+    puts(names.join(","))                // => name,langs,age
   }
 
   out = json.Json.object()
@@ -4559,9 +4566,11 @@ fn main {
 | `json.Json.parse(text, max_depth = 256, max_bytes: Int? = nil, max_entries: Int? = nil)` | `text: String`; the limits (below) | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none); a limit passed is a `JsonError` naming it; a limit below 1 traps | |
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
-| `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
+| `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | it walks from the first member: to read every member, `members` |
 | `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { for e in it { ... } }` |
 | `arr(key)`, then `next` on it | `key: String` | `JsonIter?`: the elements of the member `key` | `nil` when there is no such member or it is not an array | `it = doc.arr("numbers") ?? return bad_request()` |
+| `members`, then `next` on it | — | `JsonMembers?`: the members of an object in the document's order, each a `JsonMember` with `name` (`String`) and `value` (`Json`) | `nil` for any value but an object; `next` is `nil` after the last | `if ms = doc.members() { for m in ms { puts("${m.name}: ${m.value.text()}") } }`; one step per member, so a walk over an object of n members reads n, where a loop over `key_at(i)` and `at(i)` reads n²/2 (each starts from the first member); a name given twice is given twice (`get` reads its first) |
+| `members(key)`, then `next` on it | `key: String` | `JsonMembers?`: the members of the member `key` | `nil` when there is no such member or it is not an object | |
 | `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
