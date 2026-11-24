@@ -519,6 +519,10 @@ lk shared gate env GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOU
   timeout -k 10 3600 sh tools/gate.sh < /dev/null > "$out/gate.out" 2>&1
 rc=$?; t1=$(now); echo "wall $(own "$t0" "$t1")" > "$out/gate-wall.txt"
 if [ $rc -eq 0 ] && grep -q '^GATE PASS' "$out/gate.out"; then step "gate: pass, $(cat "$out/gate-wall.txt")"; else step "gate: red (rc=$rc; $(tail -1 "$out/gate.out"))"; fi
+# The start order of the suite against this run's times (report only): a
+# file of 30 s or more that [test] first does not hold starts at its
+# alphabetical place and can end the pass late.
+if [ -s "$out/gate/junit-c-llvm.xml" ]; then step "$(sh tools/test-order.sh --check "$out/gate/junit-c-llvm.xml" 30 2>&1 | head -n 1)"; fi
 else
   skipped gate gate
   # The steps that remain run C' (and the statistics' fixtures, the smoke
