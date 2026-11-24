@@ -69,7 +69,11 @@
 # the kernel folds a process's per-CPU resident-page counts into the total
 # by batches of 64 pages, and its high-water mark reads the folded total.
 # With the exact method each run's ru_maxrss is kept beside it, in
-# OUT.maxrss.tsv, of the same shape as OUT.mem.tsv. The runs are unbound
+# OUT.maxrss.tsv, and its anonymous peak (la-run's ANON_KB: without the
+# file-backed pages, which follow the page cache's state of the program's
+# files, so they move a few pages from run to run when the machine reclaims
+# cached files) in OUT.anon.tsv, both of the same shape as OUT.mem.tsv
+# (methods `maxrss` and `exact-anon`). The runs are unbound
 # (no NUMA binding: a binding's placement hides changes of touched memory
 # of a few megabytes) and with
 # address randomization off (`setarch -R`: with it on, a task's peak moves
@@ -158,24 +162,27 @@ if [ "${1:-}" = --one ]; then
   done
   wait
   # The exact method's file is `EXACT MAXRSS READS ANON`; GNU time's ends in %M.
-  i=0; mxr=""; mxo=""
+  i=0; mxr=""; mxo=""; anr=""; ano=""
   while [ "$i" -lt $((nm + non)) ]; do
     i=$((i + 1))
     if [ "$LA_MEM_METHOD" = exact ]; then
-      v=$(awk 'NR == 1 { print $1 }' "$t.rss.$i" 2>/dev/null); w=$(awk 'NR == 1 { print $2 }' "$t.rss.$i" 2>/dev/null)
+      set -- $(head -n 1 "$t.rss.$i" 2>/dev/null)
+      v=${1:-}; w=${2:-}; a=${4:-}
     else
-      v=$(tail -n 1 "$t.rss.$i" 2>/dev/null); w=
+      v=$(tail -n 1 "$t.rss.$i" 2>/dev/null); w=; a=
     fi
     if [ "$i" -le "$nm" ]; then
-      runs="$runs${runs:+,}$v"; mxr="$mxr${mxr:+,}$w"
+      runs="$runs${runs:+,}$v"; mxr="$mxr${mxr:+,}$w"; anr="$anr${anr:+,}$a"
     else
-      onr="$onr${onr:+,}$v"; mxo="$mxo${mxo:+,}$w"
+      onr="$onr${onr:+,}$v"; mxo="$mxo${mxo:+,}$w"; ano="$ano${ano:+,}$a"
     fi
   done
   [ -n "$onr" ] && runs="$runs	$onr"
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
   [ -n "$mxo" ] && mxr="$mxr	$mxo"
   [ -n "$mxr" ] && echo "$mxr" > "$LAC_TMP/$s.maxrss"
+  [ -n "$ano" ] && anr="$anr	$ano"
+  [ -n "$anr" ] && echo "$anr" > "$LAC_TMP/$s.anon"
   rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
 fi
@@ -245,7 +252,10 @@ mem_file() { # EXT METHOD OUT
 }
 if [ "${LA_MEM_RUNS:-0}" -gt 0 ]; then
   mem_file mem "$LA_MEM_METHOD" "${out%.tsv}.mem.tsv"
-  [ "$LA_MEM_METHOD" = exact ] && mem_file maxrss maxrss "${out%.tsv}.maxrss.tsv"
+  if [ "$LA_MEM_METHOD" = exact ]; then
+    mem_file maxrss maxrss "${out%.tsv}.maxrss.tsv"
+    mem_file anon exact-anon "${out%.tsv}.anon.tsv"
+  fi
 fi
 if [ -n "${LA_SEEDS:-}" ]; then
   for f in "$LAC_TMP"/*.seeds; do

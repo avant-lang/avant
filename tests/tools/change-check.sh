@@ -86,7 +86,8 @@
 #     run apart: the stub programs' counts differ a little from run to run);
 #   la-count-mem-parallel: with LA_MEM_RUNS=3 each program's peak line holds
 #     three runs, started together and read exactly (the file's first line
-#     `# peak: exact`, their ru_maxrss in OUT.maxrss.tsv) or, with
+#     `# peak: exact`, their ru_maxrss in OUT.maxrss.tsv, their anonymous
+#     peaks in OUT.anon.tsv) or, with
 #     LA_MEM_PARALLEL=0 and LA_MEM_METHOD=maxrss, one after another and read
 #     as GNU time's %M;
 #   la-count-seeds: with LA_SEEDS=3 each program is counted under three hash
@@ -506,7 +507,7 @@ say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w
 (cd "$r" && LA_MEM_RUNS=3 sh tools/la-count.sh . "$lap" "$w/lc-mem.tsv" < /dev/null > /dev/null 2>&1)
 (cd "$r" && LA_MEM_RUNS=3 LA_MEM_PARALLEL=0 LA_MEM_METHOD=maxrss sh tools/la-count.sh . "$lap" "$w/lc-mem0.tsv" < /dev/null > /dev/null 2>&1)
 memok() { awk -F'\t' -v m="$2" 'NR == 1 { if ($0 != "# peak: " m) bad = 1; next } { n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 3) }' "$1"; }
-memok "$w/lc-mem.mem.tsv" exact && memok "$w/lc-mem.maxrss.tsv" maxrss && memok "$w/lc-mem0.mem.tsv" maxrss && [ ! -e "$w/lc-mem0.maxrss.tsv" ]
+memok "$w/lc-mem.mem.tsv" exact && memok "$w/lc-mem.maxrss.tsv" maxrss && memok "$w/lc-mem.anon.tsv" exact-anon && memok "$w/lc-mem0.mem.tsv" maxrss && [ ! -e "$w/lc-mem0.maxrss.tsv" ] && [ ! -e "$w/lc-mem0.anon.tsv" ]
 say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';'); $(cat "$w/lc-mem0.mem.tsv" 2>/dev/null | tr '\n' ';')"
 
 # 17. Hash seeds: LA_SEEDS=3 counts each program under the list's first
