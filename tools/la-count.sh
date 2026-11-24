@@ -94,7 +94,9 @@
 # (below, where it is read). Status 0, 1 when a program did not compile or
 # failed, 2 on usage.
 set -u
-[ "${1:-}" = --method ] && { echo "la-run argv0=slug execfn=/dev/fd alarm aslr-off"; exit 0; }
+# The method's name carries la-run.c's digest: its own start is counted
+# with every program, so another la-run is another level.
+[ "${1:-}" = --method ] && { echo "la-run $(sha256sum < "$(dirname "$0")/la-run.c" | cut -c1-12) argv0=slug execfn=/dev/fd alarm aslr-off"; exit 0; }
 LA_SEED_LIST="0 2298633409 479680206 3674312685 3795028682 2743714650 2918178816 1496452567 4019533366 3195035748 2321035210 595603613"
 
 if [ "${1:-}" = --one ]; then

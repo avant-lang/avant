@@ -198,13 +198,15 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: la-run [-R] [-t SECONDS] [-n NAME] [-p OUT] PROGRAM [ARG...]\n");
     return 125;
   }
-  const char *prog = argv[i];
+  const char *prog = argv[i], *path_of = prog;
+  /* No copy of a path given with a slash: what this program does before
+   * the exec is counted with PROGRAM, and should not grow with the path. */
   static char path_buf[4096];
   int pfd = -1;
   if (strchr(prog, '/')) {
-    snprintf(path_buf, sizeof path_buf, "%s", prog);
     pfd = open(prog, O_PATH | O_CLOEXEC);
   } else {
+    path_of = path_buf;
     /* A bare name is looked up on PATH, as execvp does. */
     const char *path = getenv("PATH");
     for (const char *d = path ? path : "/usr/bin:/bin"; pfd < 0 && *d;) {
@@ -228,7 +230,7 @@ int main(int argc, char **argv) {
   argv[i] = (char *)name;
   if (!out) {
     if (norand && personality(ADDR_NO_RANDOMIZE) == -1) die("personality");
-    run(RUN_FD, path_buf, argv + i);
+    run(RUN_FD, path_of, argv + i);
     fprintf(stderr, "la-run: %s: %s\n", prog, strerror(errno));
     return 127;
   }
@@ -248,7 +250,7 @@ int main(int argc, char **argv) {
     send_fd(sv[1], lfd);
     close(lfd);
     close(sv[1]);
-    run(RUN_FD, path_buf, argv + i);
+    run(RUN_FD, path_of, argv + i);
     fprintf(stderr, "la-run: %s: %s\n", prog, strerror(errno));
     _exit(127);
   }
