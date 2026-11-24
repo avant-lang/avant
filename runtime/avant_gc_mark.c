@@ -54,6 +54,9 @@ static inline void mark_object(void *start, AvantHeader *h, Block *b) {
     gc_work_push(start);
   } else {
     gc_heap.work[gc_heap.work_n++] = start;
+    if (gc_heap.work_n > gc_heap.work_hw) {
+      gc_heap.work_hw = gc_heap.work_n;
+    }
   }
 }
 
@@ -92,6 +95,7 @@ typedef struct MarkCtx {
   void **work;
   uint32_t n;
   uint32_t cap;
+  uint32_t hw; /* the deepest n (gc_heap.work_hw) */
 } MarkCtx;
 
 static inline __attribute__((always_inline)) void mark_open(MarkCtx *c) {
@@ -104,11 +108,13 @@ static inline __attribute__((always_inline)) void mark_open(MarkCtx *c) {
   c->work = gc_heap.work;
   c->n = gc_heap.work_n;
   c->cap = gc_heap.work_cap;
+  c->hw = gc_heap.work_hw;
 }
 
 static inline __attribute__((always_inline)) void mark_close(MarkCtx *c) {
   gc_heap.live += c->live;
   gc_heap.work_n = c->n;
+  gc_heap.work_hw = c->hw > gc_heap.work_hw ? c->hw : gc_heap.work_hw;
 }
 
 /* The lines after the first two of an object that covers more than two
@@ -231,6 +237,9 @@ static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v)
     c->n = gc_heap.work_n;
   } else {
     c->work[c->n++] = v;
+  }
+  if (c->n > c->hw) {
+    c->hw = c->n;
   }
 }
 

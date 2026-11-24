@@ -1439,6 +1439,19 @@ typedef struct GcProof {
  * allocation path's thread-locals and counters, avant_g_stats), as
  * does g_avant_shared, which the
  * runtime's other units read. Per-thread state is GcThread. */
+/* A side array of the collector (a list it grows with realloc and never
+ * shrinks: the noted list, the work list, the remembered set, the keep
+ * list, the proof's holders): what the last two collections used of it
+ * and how much of it may be resident (gc_side_settle, avant_gc_heap.c). */
+typedef struct GcSide {
+  uint64_t peak;     /* bytes used since the last settle */
+  uint64_t prev;     /* what the collection before used */
+  uint64_t touched;  /* bytes from its start that may be resident */
+  void *seen;        /* the array and its capacity at the last settle */
+  uint64_t seen_cap;
+} GcSide;
+enum { GC_SIDE_NOTED, GC_SIDE_WORK, GC_SIDE_REM, GC_SIDE_KEEP, GC_SIDE_HOLDERS, GC_SIDES };
+
 typedef struct GcHeap {
   /* avant_gc_heap.c. The reservation: base is 4 MiB
    * aligned; reserved bytes from it are reserved, the first committed
@@ -1513,6 +1526,11 @@ typedef struct GcHeap {
   void **work;
   uint32_t work_n;
   uint32_t work_cap;
+  /* The work list's deepest point since the last settle (a full mark's;
+   * a young trace's is at most its noted list's). */
+  uint32_t work_hw;
+  /* The side arrays' use (GcSide). */
+  GcSide side[GC_SIDES];
   /* The type maps (avant_type_map), by type id. */
   TypeMap types[MAX_TYPES];
   uint8_t type_set[MAX_TYPES];
@@ -2160,6 +2178,8 @@ void gc_chunk_give(uint64_t c);
 void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
 void gc_heap_return(uint64_t live);
+void gc_side_use(int which, uint64_t bytes);
+void gc_side_settle(int full);
 void gc_mature_normalize(void);
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
 void gc_type_refs_update(uint32_t id);

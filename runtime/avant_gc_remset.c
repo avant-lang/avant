@@ -164,6 +164,7 @@ void gc_rem_keep_young_holders(void) {
       rem_add(obj);
     }
   }
+  gc_side_use(GC_SIDE_KEEP, (uint64_t)gc_heap.keep_n * sizeof(void *));
   gc_heap.keep_n = 0;
 }
 

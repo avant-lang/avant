@@ -231,6 +231,7 @@ void gc_proof_full_begin(void) {
   for (i = 0; i < p->holders_n; i++) {
     avant_header(p->holders[i])->flags &= (uint16_t)~AVANT_FLAG_LOGGED;
   }
+  gc_side_use(GC_SIDE_HOLDERS, (uint64_t)p->holders_n * sizeof(void *));
   p->holders_n = 0;
   p->log_n = 0;
 }
