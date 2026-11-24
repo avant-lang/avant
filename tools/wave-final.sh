@@ -160,9 +160,12 @@
 # only after its foreground command ends: so each step runs in the
 # background, the script waits for it, and the trap stops its whole tree
 # (frozen with SIGSTOP while it is listed, then TERM; KILL after 5 s for
-# whatever is left, within the outer timeout's 10 s). A step started
-# through WAVE_RUNNER is first sent the signal alone, for the runner to
-# stop its own tree and free the lock (up to 5 s), then treated the same.
+# whatever is left). A step started through WAVE_RUNNER is first sent the
+# signal alone, for the runner to stop its own tree and free the lock (up to
+# 5 s), then treated the same. The waits are measured in elapsed time, not
+# in rounds, and the whole stop has a budget of 7 s from the signal, so that
+# it ends within the outer timeout's 10 s on a loaded machine too: what is
+# alive when the budget is spent is killed at once.
 # Exit status: 0 when every step is green, 1 otherwise, 2 on a usage error.
 set -u
 
@@ -268,10 +271,15 @@ own() {
   if [ -n "$lk_start" ]; then echo "$(wall "$lk_start" "$2") s (waited $(wall "$1" "$lk_start") s for the lock)"
   else echo "$(wall "$1" "$2") s"; fi
 }
-# PID and every descendant, parents first.
+# The PIDs given and every descendant of them, one per line: one listing of
+# every process's parent (a `ps` for each process of the tree took seconds
+# on a loaded machine); a `ps` that fails leaves the PIDs given alone.
 tree() {
-  echo "$1"
-  for t_child in $(ps -o pid= --ppid "$1" 2>/dev/null); do tree "$t_child"; done
+  ps -e -o pid= -o ppid= 2>/dev/null | awk -v roots="$*" '
+    BEGIN { n = split(roots, r, " "); for (i = 1; i <= n; i++) want[r[i]] = 1 }
+    { p[NR] = $1; q[NR] = $2 }
+    END { do { more = 0; for (i = 1; i <= NR; i++) if (!(p[i] in want) && (q[i] in want)) { want[p[i]] = 1; more = 1 } } while (more)
+          for (k in want) print k }'
 }
 # False only when PID is known gone: no /proc entry, or a zombie (a dead
 # child not yet reaped). Read from /proc with the shell's own `read`, no
@@ -310,7 +318,29 @@ marked() {
     [ -O "/proc/$m_p" ] && alive "$m_p" && echo "$m_p"
   done | LC_ALL=C sort -nu | tr '\n' ' '
 }
-stop_left=""; t_grace=50
+# The stop's own clock. The outer `timeout -k 10` kills this script 10 s
+# after its TERM, and a stop that counted its waits in loop rounds (a round
+# is a `sleep 0.1` plus the processes started to look) overran that bound
+# when the machine was loaded: each round took several times its nominal
+# 0.1 s. Every wait below is bounded by elapsed time instead, read as
+# hundredths of a second from /proc/uptime with the shell's own `read` (no
+# process started), and the whole stop has a budget (t_budget, 7 s): once
+# it is spent, every process still alive is killed at once, without
+# freezing or a grace.
+now_cs() {
+  if { read -r t_up _ < /proc/uptime; } 2>/dev/null && [ -n "$t_up" ]; then
+    t_up=${t_up%.*}${t_up#*.}
+    while [ "${t_up#0}" != "$t_up" ]; do t_up=${t_up#0}; done
+    t_cs=${t_up:-0}
+  else t_cs=$(( $(date +%s) * 100 )); fi
+}
+t_sig=0; t_budget=700
+# stop_late: true once the stop has used its budget.
+stop_late() { now_cs; [ $((t_cs - t_sig)) -ge $t_budget ]; }
+# stop_wait_over T0 GRACE: true when GRACE hundredths of a second have
+# passed since T0, or the stop's budget is spent.
+stop_wait_over() { now_cs; [ $((t_cs - $1)) -ge "$2" ] || [ $((t_cs - t_sig)) -ge $t_budget ]; }
+stop_left=""; t_grace=500
 stop_step() {
   if [ -n "$cur" ]; then stop_tree; fi
   # The sweep: whatever still carries the run's mark, the step's tree or
@@ -322,7 +352,7 @@ stop_step() {
     t_m=$(marked)
     [ -z "$t_m" ] && break
     [ $t_k -ge 2 ] && break
-    t_roots=$t_m; t_grace=10; stop_freeze; t_grace=50
+    t_roots=$t_m; t_grace=100; stop_freeze; t_grace=500
     t_k=$((t_k + 1))
   done
   stop_left=$t_m
@@ -337,8 +367,8 @@ stop_tree() {
     # the mark.
     t_list=$(tree "$cur" | tr '\n' ' ')
     kill -TERM "$cur" 2>/dev/null
-    t_i=0
-    while alive "$cur" && [ $t_i -lt 50 ]; do sleep 0.1; t_i=$((t_i + 1)); done
+    now_cs; t_w0=$t_cs
+    while alive "$cur" && ! stop_wait_over "$t_w0" 500; do sleep 0.1; done
     t_roots=""
     for t_p in $t_list $(marked); do alive "$t_p" && t_roots="$t_roots $t_p"; done
     if [ -z "$t_roots" ]; then return 0; fi
@@ -351,20 +381,22 @@ stop_freeze() {
   # neither forks nor dies, so none of the tree is reparented away from it.
   t_all=""
   while :; do
-    t_now=$(for t_r in $t_roots $(marked); do tree "$t_r"; done | LC_ALL=C sort -nu | tr '\n' ' ')
+    t_now=$(tree $t_roots $(marked) | LC_ALL=C sort -nu | tr '\n' ' ')
     # shellcheck disable=SC2086
     kill -STOP $t_now 2>/dev/null
     [ "$t_now" = "$t_all" ] && break
     t_all=$t_now
+    # A listing that keeps finding more past the budget: stop looking.
+    stop_late && break
   done
   # shellcheck disable=SC2086
   kill -TERM $t_all 2>/dev/null; kill -CONT $t_all 2>/dev/null
-  t_i=0
+  now_cs; t_w0=$t_cs
   while :; do
     t_left=""
     for t_p in $t_all; do alive "$t_p" && t_left="$t_left $t_p"; done
     [ -z "$t_left" ] && break
-    if [ $t_i -ge "$t_grace" ]; then
+    if stop_wait_over "$t_w0" "$t_grace"; then
       # What is left, and anything it started meanwhile.
       for t_p in $t_left; do
         # shellcheck disable=SC2086
@@ -373,17 +405,22 @@ stop_freeze() {
       sleep 0.2
       break
     fi
-    sleep 0.1; t_i=$((t_i + 1))
+    sleep 0.1
   done
 }
 on_signal() { # NAME NUMBER
   trap '' TERM INT HUP
+  now_cs; t_sig=$t_cs
   if [ -n "$beside_pid" ]; then
-    # The beside run stops its own tree on the same signal; wait for it.
-    kill -TERM "$beside_pid" 2>/dev/null; wait "$beside_pid" 2>/dev/null; beside_pid=""
+    # The beside run stops its own tree on the same signal; give it up to
+    # 4 s of the budget (what is left of it is swept below, with the step).
+    kill -TERM "$beside_pid" 2>/dev/null
+    while alive "$beside_pid" && ! stop_wait_over "$t_sig" 400; do sleep 0.1; done
+    alive "$beside_pid" || { wait "$beside_pid" 2>/dev/null; beside_pid=""; }
   fi
-  [ -n "$beside_tree" ] && { git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; }
   stop_step
+  if [ -n "$beside_pid" ]; then wait "$beside_pid" 2>/dev/null; beside_pid=""; fi
+  [ -n "$beside_tree" ] && { git worktree remove --force "$beside_tree/avant" > /dev/null 2>&1; rm -rf "$beside_tree"; }
   if [ -z "$stop_left" ]; then
     echo "stopped: SIG$1 during ${curname:-no step}; every process of the step stopped" >> "$out/SUMMARY.txt"
   else
