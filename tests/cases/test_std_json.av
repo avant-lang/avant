@@ -402,6 +402,52 @@ fn test_json_value_written(c: Checks) {
   c.eq_str(h.to_s(), "{\"z\":\"x\",\"a\":null}", "a hand-built object written in the order of its members")
 }
 
+// to_value of a large object and a large array of containers, as an
+// untrusted request body may be: each member and element is read once,
+// in one pass (each used to be found again from the first, n*n/2 steps:
+// 60,000 members took seconds). The members keep the document's order,
+// a repeated name its first value and place, and nested values theirs.
+fn test_json_value_large(c: Checks) {
+  n = 60000
+  t = Buf.new()
+  t.push_str("{")
+  for i in 0..n {
+    t.push_str("\"k${i}\":[${i},{\"x\":${i}}],")
+  }
+  t.push_str("\"k5\":0}")
+  doc = Json.parse(t.to_s()) ?? return c.expect(false, "large object: parse")
+  v = doc.to_value()
+  c.eq_int(v.members.size, n, "large object: one member per name")
+  names = v.members.keys()
+  c.eq_str("${names[0]} ${names[n - 1]}", "k0 k${n - 1}", "large object: the document's order")
+  good = 0
+  for i in 0..n {
+    if m = v.get("k${i}"), m.arr.size == 2, m.arr[0].int_val == i, x = m.arr[1].get("x"), x.int_val == i {
+      good += 1
+    }
+  }
+  c.eq_int(good, n, "large object: every member's value, nested ones included")
+  a = Buf.new()
+  a.push_str("[")
+  for i in 0..n {
+    if i > 0 {
+      a.push_str(",")
+    }
+    a.push_str("{\"i\":${i}}")
+  }
+  a.push_str("]")
+  arr = Json.parse(a.to_s()) ?? return c.expect(false, "large array: parse")
+  av = arr.to_value()
+  c.eq_int(av.arr.size, n, "large array: every element")
+  ok = 0
+  for i in 0..av.arr.size {
+    if e = av.arr[i].get("i"), e.int_val == i {
+      ok += 1
+    }
+  }
+  c.eq_int(ok, n, "large array: every element in order")
+}
+
 // JsonValue's object members: a Hash by name, in the document's order;
 // a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
@@ -546,6 +592,7 @@ fn main: Int {
   test_std_json(c)
   test_json_kinds(c)
   test_json_members(c)
+  test_json_value_large(c)
   test_json_value_written(c)
   test_json_limits(c)
   test_builder_values(c)

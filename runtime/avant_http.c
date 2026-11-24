@@ -3421,7 +3421,9 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
       return;
     }
   }
-  if (conn->peer_ended && !conn_out_pending(conn)) {
+  /* A request behind may wait for a task's answer: reply_deliver closes
+   * then. */
+  if (conn->peer_ended && !conn_out_pending(conn) && !conn->reply) {
     us_socket_shutdown(0, s);
     us_socket_close(0, s, 0, NULL);
   }
@@ -3430,7 +3432,11 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
 /* Loop thread only: writes the answer a task sent for the connection's
  * reply (or the server's 503), when it is there, and takes up what
  * waited behind it: the requests in the buffer, the close a request
- * without keep-alive, the server's close or the peer's FIN asked for. */
+ * without keep-alive, the server's close or the peer's FIN asked for.
+ * After the peer's FIN the requests already in the buffer are answered
+ * too, as they are behind a queued answer (srv_on_end), and the socket
+ * closes when the last has gone; the last answer says Connection: close
+ * when nothing is behind it. */
 static void reply_deliver(Conn *conn, struct us_socket_t *s) {
   HttpReply *r = conn->reply;
   const char *conn_header = NULL;
@@ -3455,7 +3461,7 @@ static void reply_deliver(Conn *conn, struct us_socket_t *s) {
   }
   pthread_mutex_unlock(&g_reply_mu);
   conn->reply = NULL;
-  keep = r->keep_alive && !conn->srv->closing && !conn->answered && !conn->peer_ended;
+  keep = r->keep_alive && !conn->srv->closing && !conn->answered && (!conn->peer_ended || conn->len > 0);
   if (!keep) {
     conn_header = "close";
   } else if (r->minor_version == 0) {
@@ -3481,9 +3487,15 @@ static void reply_deliver(Conn *conn, struct us_socket_t *s) {
     return;
   }
   if (!conn_out_pending(conn)) {
-    conn_poll(s, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    /* After the peer's FIN there is nothing more to read (its end of
+     * file would be read again and again). */
+    conn_poll(s, conn->peer_ended ? 0 : LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     if (conn->len > 0) {
       conn_process(conn, s);
+    }
+    if (conn->peer_ended && !us_socket_is_closed(0, s) && !conn_out_pending(conn) && !conn->reply) {
+      us_socket_shutdown(0, s);
+      us_socket_close(0, s, 0, NULL);
     }
   }
 }
@@ -3907,8 +3919,9 @@ static struct us_socket_t *srv_on_end(struct us_socket_t *s) {
   }
   if (!node->conn.ws && node->conn.reply) {
     /* The same for an answer still to come from a task: it is written,
-     * then the connection closes (reply_deliver); the socket is not
-     * polled meanwhile (its end of file would be read again and again). */
+     * then the requests behind it are answered, then the connection
+     * closes (reply_deliver); the socket is not polled meanwhile (its end
+     * of file would be read again and again). */
     node->conn.peer_ended = 1;
     conn_poll(s, 0);
     return s;

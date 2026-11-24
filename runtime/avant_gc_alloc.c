@@ -28,42 +28,12 @@
  * clears the path (gc_fast_publish, gc_fast_refresh below); its state is
  * the thread's GcThread.fast_ok; the limit it holds is avant_gc_limit_mt. */
 /* These five and avant_gc_top (avant_gc.h), the thread-locals generated
- * code reads in its hot loops, are placed last in the program's
- * thread-local block, so they sit within 64 bytes below the thread
- * pointer (one cache line) whatever thread-locals the program's other
- * objects add. Generated code reads them at a fixed offset from the
- * thread pointer (%fs:-N), and the offset matters: on the measuring
- * machine (Zen 1), the collector benchmark's allocation loop took 60%
- * more cycles at equal instructions once those offsets passed 1 KiB
- * (the cursor at -0x3f0 ran at full speed, at -0x410 slow), whatever the
- * variables' addresses and pages: 552 bytes of thread-locals in a unit
- * linked after the collector had moved the cursor from -0x268 to -0x490.
- * A thread-local block lays its variables
- * out in link order and ends at the thread pointer, so the variables
- * linked last are the nearest. They are thread-local common symbols
- * (.tls_common), which the linker places after every object's .tbss
- * (the linker script's "*(.tcommon)"): no object linked later can come
- * between them and the thread pointer. avant_gc_internal.h declares
- * them local-exec for the runtime's own accesses, as a definition in
- * the unit gave before. tests/cases/test_tls_place.av checks the offsets
- * in a built program. */
-/* GNU as spells a thread-local common symbol `.tls_common`; clang's
- * integrated assembler has no such directive and makes the same symbol
- * from `.comm` followed by `.type NAME, @tls_object` (the order matters
- * to both: GNU as refuses to retype a common symbol, and clang's `.comm`
- * resets an earlier type). */
-#if defined(__clang__)
-#define AVANT_TLS_COMMON(name) ".comm " #name ", 8, 8\n\t.type " #name ", @tls_object\n\t"
-#else
-#define AVANT_TLS_COMMON(name) ".tls_common " #name ", 8, 8\n\t"
-#endif
-__asm__(AVANT_TLS_COMMON(avant_gc_bump)
-        AVANT_TLS_COMMON(avant_gc_limit)
-        AVANT_TLS_COMMON(avant_gc_limit_mt)
-        AVANT_TLS_COMMON(avant_gc_top)
-        AVANT_TLS_COMMON(avant_gc_base)
-        AVANT_TLS_COMMON(avant_gc_starts));
-#undef AVANT_TLS_COMMON
+ * code reads in its hot loops, are defined in avant_tls.c, whose object
+ * the compiler links after every other one so that they sit within 64
+ * bytes below the thread pointer whatever thread-locals the program's
+ * other objects add (that file says why the offset matters).
+ * avant_gc_internal.h declares them local-exec for the runtime's own
+ * accesses. */
 
 uint64_t avant_since_gc;
 

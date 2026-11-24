@@ -672,6 +672,19 @@ fn test_std_regex(c: Checks) {
     tr_src = fs.read("tests/fixtures/strings/regex_translate.av") ?? ""
     c.expect(tr_src.size > 0, "regex_translate.av read")
     regex_child(c, compiler, stamp, "regex-translate", tr_src, "re2c: pattern stays on PCRE2 (anchor): ^ab", "", "1050 cases, 0 differ\n")
+
+    // The scanner generator runs with its warnings: a pattern whose scanner
+    // re2c warns about stays on PCRE2 with re2c's message on stderr, and
+    // the program's other literal patterns are generated again without it
+    // and stay on re2c. x* matches the empty string, which shadows every
+    // scanner's end-of-input rule (an error re2c gives only with its
+    // warnings on); a+ is an ordinary scanner.
+    warned = "import std.regex\nfn main {\n  if re = regex.Regex.compile(\"x*\") {\n    if m = re.find(\"abxx\") {\n      puts(\"\${m.start} \${m.end}\")\n    }\n    puts(re.count(\"axxb\"))\n    re.close()\n  }\n  if re = regex.Regex.compile(\"a+\") {\n    if m = re.find(\"xxaa\") {\n      puts(\"\${m.start} \${m.end}\")\n    }\n    re.close()\n  }\n}\n"
+    regex_child(c, compiler, stamp, "regex-warned", warned, "re2c: pattern stays on PCRE2 (re2c error: unreachable end-of-input rule", "", "0 0\n4\n2 4\n")
+    if wl = fs.read("${scratch()}/regex-${stamp}-regex-warned.log") {
+      c.expect(wl.contains("[-Werror-deprecated-eof-rule]): x*"), "regex-warned: the note names x*")
+      c.expect(!wl.contains("): a+"), "regex-warned: a+ stays on re2c")
+    }
   }
 }
 

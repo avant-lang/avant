@@ -578,18 +578,6 @@ void *avant_array_pop_slot(void *arr, uint64_t elem_size) {
   return (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
 }
 
-static int cmp_i32(const void *a, const void *b) {
-  int32_t x = *(const int32_t *)a;
-  int32_t y = *(const int32_t *)b;
-  if (x < y) {
-    return -1;
-  }
-  if (x > y) {
-    return 1;
-  }
-  return 0;
-}
-
 /* Signed order as an unsigned key. XOR with the sign bit, which is what
  * Julia's uint_map does for a signed integer. */
 static uint32_t i32_order(int32_t x) {
@@ -781,6 +769,154 @@ static int sort_i32_radix(int32_t *a, int32_t n, uint32_t umin, uint32_t span) {
 }
 
 /*
+ * The stable sort of the types whose keys are not sorted by sort_i32's
+ * radix and counting sorts (an Int beyond Int32, UInt64, Float64, String),
+ * and sort_i32's fallback: a merge sort with the element order in line,
+ * stable by construction, whatever the C library's qsort is (glibc's is a
+ * merge sort only while it can allocate its buffer, then a heap sort, and
+ * other C libraries' are not stable at all; Float64's -0.0 and 0.0
+ * compare equal, so the order they keep is visible). Runs of up to 24
+ * elements are sorted by insertion, then merged top-down through a
+ * buffer of half the array; two halves already in order are not merged.
+ * Without that buffer (an allocation that fails), the halves are merged
+ * in place by rotations (O(n log^2 n)), stable too.
+ * LESS(x, y) is the strict order: an element moves before an earlier one
+ * only when it is less, so equal elements keep their order.
+ */
+#define STABLE_SORT_RUN 24
+#define DEFINE_STABLE_SORT(NAME, T, LESS)                                                       \
+  static void NAME##_insertion(T *a, int32_t n) {                                               \
+    int32_t i;                                                                                  \
+    for (i = 1; i < n; i++) {                                                                   \
+      T x = a[i];                                                                               \
+      int32_t j = i;                                                                            \
+      while (j > 0 && LESS(x, a[j - 1])) {                                                      \
+        a[j] = a[j - 1];                                                                        \
+        j--;                                                                                    \
+      }                                                                                         \
+      a[j] = x;                                                                                 \
+    }                                                                                           \
+  }                                                                                             \
+  static void NAME##_reverse(T *a, int32_t n) {                                                 \
+    int32_t i = 0;                                                                              \
+    int32_t j = n - 1;                                                                          \
+    while (i < j) {                                                                             \
+      T t = a[i];                                                                               \
+      a[i] = a[j];                                                                              \
+      a[j] = t;                                                                                 \
+      i++;                                                                                      \
+      j--;                                                                                      \
+    }                                                                                           \
+  }                                                                                             \
+  /* a[0..m) and a[m..n), each in order, merged in place: the longer run's                    \
+   * middle element splits both runs, the two inner parts trade places by                     \
+   * rotation, and each side is merged again. */                                               \
+  static void NAME##_merge_in_place(T *a, int32_t m, int32_t n) {                               \
+    int32_t c1;                                                                                 \
+    int32_t c2;                                                                                 \
+    if (m == 0 || m == n) {                                                                     \
+      return;                                                                                   \
+    }                                                                                           \
+    if (n == 2) {                                                                               \
+      if (LESS(a[1], a[0])) {                                                                   \
+        NAME##_reverse(a, 2);                                                                   \
+      }                                                                                         \
+      return;                                                                                   \
+    }                                                                                           \
+    if (m > n - m) {                                                                            \
+      int32_t lo = m;                                                                           \
+      int32_t hi = n;                                                                           \
+      c1 = m / 2;                                                                               \
+      while (lo < hi) { /* the first of a[m..n) not less than a[c1] */                          \
+        int32_t mid = lo + (hi - lo) / 2;                                                       \
+        if (LESS(a[mid], a[c1])) {                                                              \
+          lo = mid + 1;                                                                         \
+        } else {                                                                                \
+          hi = mid;                                                                             \
+        }                                                                                       \
+      }                                                                                         \
+      c2 = lo;                                                                                  \
+    } else {                                                                                    \
+      int32_t lo = 0;                                                                           \
+      int32_t hi = m;                                                                           \
+      c2 = m + (n - m) / 2;                                                                     \
+      while (lo < hi) { /* the first of a[0..m) that a[c2] is less than */                      \
+        int32_t mid = lo + (hi - lo) / 2;                                                       \
+        if (LESS(a[c2], a[mid])) {                                                              \
+          hi = mid;                                                                             \
+        } else {                                                                                \
+          lo = mid + 1;                                                                         \
+        }                                                                                       \
+      }                                                                                         \
+      c1 = lo;                                                                                  \
+    }                                                                                           \
+    NAME##_reverse(a + c1, m - c1);                                                             \
+    NAME##_reverse(a + m, c2 - m);                                                              \
+    NAME##_reverse(a + c1, c2 - c1);                                                            \
+    NAME##_merge_in_place(a, c1, c1 + (c2 - m));                                                \
+    NAME##_merge_in_place(a + c1 + (c2 - m), m - c1, n - c1 - (c2 - m));                        \
+  }                                                                                             \
+  static void NAME##_merge(T *a, int32_t n, T *buf) {                                           \
+    int32_t m;                                                                                  \
+    if (n <= STABLE_SORT_RUN) {                                                                 \
+      NAME##_insertion(a, n);                                                                   \
+      return;                                                                                   \
+    }                                                                                           \
+    m = n / 2;                                                                                  \
+    NAME##_merge(a, m, buf);                                                                    \
+    NAME##_merge(a + m, n - m, buf);                                                            \
+    if (!LESS(a[m], a[m - 1])) {                                                                \
+      return;                                                                                   \
+    }                                                                                           \
+    if (!buf) {                                                                                 \
+      NAME##_merge_in_place(a, m, n);                                                           \
+      return;                                                                                   \
+    }                                                                                           \
+    {                                                                                           \
+      int32_t i = 0;                                                                            \
+      int32_t j = m;                                                                            \
+      int32_t k = 0;                                                                            \
+      memcpy(buf, a, (size_t)m * sizeof(T));                                                    \
+      while (i < m && j < n) {                                                                  \
+        if (LESS(a[j], buf[i])) {                                                               \
+          a[k++] = a[j++];                                                                      \
+        } else {                                                                                \
+          a[k++] = buf[i++];                                                                    \
+        }                                                                                       \
+      }                                                                                         \
+      while (i < m) {                                                                           \
+        a[k++] = buf[i++];                                                                      \
+      }                                                                                         \
+    }                                                                                           \
+  }                                                                                             \
+  static void NAME(T *a, int32_t n) {                                                           \
+    int32_t i;                                                                                  \
+    T *buf;                                                                                     \
+    for (i = 1; i < n && !LESS(a[i], a[i - 1]); i++) {                                          \
+    }                                                                                           \
+    if (i >= n) {                                                                               \
+      return;                                                                                   \
+    }                                                                                           \
+    buf = n > STABLE_SORT_RUN ? (T *)malloc((size_t)(n / 2) * sizeof(T)) : NULL;                \
+    NAME##_merge(a, n, buf);                                                                    \
+    free(buf);                                                                                  \
+  }
+
+#define LESS_PLAIN(x, y) ((x) < (y))
+/* Float64's order: the numbers by value (-0.0 and 0.0 equal), then every
+ * NaN, NaNs equal to each other. */
+#define LESS_F64(x, y) ((y) != (y) ? (x) == (x) : (x) < (y))
+#define LESS_STR(x, y) (str_cmp_raw((x), (y)) < 0)
+
+static int str_cmp_raw(const char *a, const char *b);
+
+DEFINE_STABLE_SORT(stable_sort_i32, int32_t, LESS_PLAIN)
+DEFINE_STABLE_SORT(stable_sort_i64, int64_t, LESS_PLAIN)
+DEFINE_STABLE_SORT(stable_sort_u64, uint64_t, LESS_PLAIN)
+DEFINE_STABLE_SORT(stable_sort_f64, double, LESS_F64)
+DEFINE_STABLE_SORT(stable_sort_str, char *, LESS_STR)
+
+/*
  * Array.sort is Int-only. The profile of Sort::Self was glibc qsort: a
  * mergesort whose comparator is an indirect call. The copy was not the
  * time. This is the library sort, not the Avant quicksort (Sort::Quick).
@@ -826,7 +962,7 @@ static void sort_i32(int32_t *a, int32_t n) {
     }
   }
   if (!sort_i32_radix(a, n, umin, span)) {
-    qsort(a, (size_t)n, sizeof(int32_t), cmp_i32);
+    stable_sort_i32(a, n);
   }
 }
 
@@ -839,35 +975,6 @@ void avant_array_sort_i32(void *arr) {
     return;
   }
   sort_i32((int32_t *)a->buf, a->size);
-}
-
-static int cmp_i64(const void *a, const void *b) {
-  int64_t x = *(const int64_t *)a;
-  int64_t y = *(const int64_t *)b;
-  return x < y ? -1 : (x > y ? 1 : 0);
-}
-
-static int cmp_u64(const void *a, const void *b) {
-  uint64_t x = *(const uint64_t *)a;
-  uint64_t y = *(const uint64_t *)b;
-  return x < y ? -1 : (x > y ? 1 : 0);
-}
-
-static int cmp_f64(const void *a, const void *b) {
-  double x = *(const double *)a;
-  double y = *(const double *)b;
-  int xn = x != x;
-  int yn = y != y;
-  if (xn && yn) {
-    return 0;
-  }
-  if (xn) {
-    return 1;
-  }
-  if (yn) {
-    return -1;
-  }
-  return x < y ? -1 : (x > y ? 1 : 0);
 }
 
 static int str_cmp_raw(const char *a, const char *b) {
@@ -883,17 +990,14 @@ static int str_cmp_raw(const char *a, const char *b) {
   return na < nb ? -1 : (na > nb ? 1 : 0);
 }
 
-static int cmp_str(const void *a, const void *b) {
-  return str_cmp_raw(*(const char *const *)a, *(const char *const *)b);
-}
-
 /* An Array(Int) (Int is 64-bit): when every element
  * fits 32 bits, which is the common case, the elements are narrowed in
  * place into the buffer's first half (element i's four bytes overlap only
  * elements at or before i, already read), sorted by sort_i32's radix and
  * counting sorts, and widened back from the last (element i's eight bytes
  * overlap only narrowed elements at or after i, already widened);
- * otherwise qsort. The same order, with no memory beyond sort_i32's. */
+ * otherwise the stable merge sort. The same order, with no memory beyond
+ * sort_i32's. */
 void avant_array_sort_i64(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int64_t *w;
@@ -910,7 +1014,7 @@ void avant_array_sort_i64(void *arr) {
   n = a->size;
   for (i = 0; i < n; i++) {
     if (w[i] < INT32_MIN || w[i] > INT32_MAX) {
-      qsort(a->buf, (size_t)n, sizeof(int64_t), cmp_i64);
+      stable_sort_i64(w, n);
       return;
     }
   }
@@ -952,7 +1056,7 @@ void avant_array_sort_u64(void *arr) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
   }
   if (a && a->buf && a->size > 1) {
-    qsort(a->buf, (size_t)a->size, sizeof(uint64_t), cmp_u64);
+    stable_sort_u64((uint64_t *)a->buf, a->size);
   }
 }
 
@@ -962,7 +1066,7 @@ void avant_array_sort_f64(void *arr) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
   }
   if (a && a->buf && a->size > 1) {
-    qsort(a->buf, (size_t)a->size, sizeof(double), cmp_f64);
+    stable_sort_f64((double *)a->buf, a->size);
   }
 }
 
@@ -974,7 +1078,7 @@ void avant_array_sort_str(void *arr) {
   if (a && a->buf && a->size > 1) {
     /* The strings change places in their buffer (RC5). */
     avant_gc_overwrite(a->buf);
-    qsort(a->buf, (size_t)a->size, sizeof(char *), cmp_str);
+    stable_sort_str((char **)a->buf, a->size);
   }
 }
 

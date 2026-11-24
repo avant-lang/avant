@@ -5,7 +5,7 @@ import std.process
 // The thread-locals generated code reads in its hot loops (the
 // allocation cursor and limits, the start bits' base, the frame chain's
 // top) sit within 64 bytes below the thread pointer in every program,
-// whatever thread-locals its other objects add (runtime/avant_gc_alloc.c
+// whatever thread-locals its other objects add (runtime/avant_tls.c
 // says why the offset matters). Two programs are built, one plain and
 // one with std.regex, whose object adds thread-locals linked after the
 // collector; each hot variable's offset from the thread pointer is read
@@ -13,8 +13,8 @@ import std.process
 // segment minus the segment's size rounded up to its alignment) and must
 // be in -64..-8 in both, and move between them by less than the
 // segment's alignment (its rounding is all that may differ). A thread-local placed between them
-// and the thread pointer, or the hot ones defined in .tbss again, moves
-// them and fails this test.
+// and the thread pointer (avant_tls.o linked before another object with
+// thread-locals) moves them and fails this test.
 fn test_tls_place(c: Checks) {
   c.suite("tests/cases/test_tls_place.av")
   compiler = process.env("AVANT_COMPILER") ?? ""
@@ -72,6 +72,78 @@ fn test_tls_place(c: Checks) {
   c.expect(sizes.size == 2 && sizes[1] > sizes[0], "tls place: the regex program has more thread-locals (the check is not vacuous)")
 }
 
+// The same placement with each linker installed (GNU ld, mold, lld: `cc
+// -fuse-ld=NAME`, through a CC wrapper the compiler links with): the
+// program runs, and each hot thread-local lies inside the thread-local
+// segment within 64 bytes of the thread pointer. lld once put them in
+// .bss, outside the segment, with no error, and the program wrote over
+// whatever lay past the thread pointer from its first frame on. Then the
+// refusal: the runtime's avant_tls.o with its .tbss made plain .bss (a
+// link that puts the six outside the block, as lld did) gives a program
+// that stops before main with the runtime's message and status 1.
+fn test_tls_linkers(c: Checks) {
+  compiler = process.env("AVANT_COMPILER") ?? ""
+  if compiler.size == 0 {
+    return
+  }
+  dir = scratch_dir()
+  write_av(dir, "hello", "fn main: Int {\n  puts(\"linked\")\n  0\n}\n")
+  _ = fs.write("${dir}/probe.c", "int main(void) { return 0; }\n")
+  for ld in ["bfd", "mold", "lld"] {
+    probe_log = "${dir}/probe-${ld}.log"
+    probe = run_out("/bin/sh", ["-c", "cc -fuse-ld=${ld} -o \"$1/probe-${ld}\" \"$1/probe.c\"", "sh", dir], probe_log) ?? -1
+    if probe != 0 {
+      // Not installed here: nothing to check for this linker.
+      continue
+    }
+    wrap = "${dir}/cc-${ld}"
+    _ = fs.write(wrap, "#!/bin/sh\nexec cc -fuse-ld=${ld} \"$@\"\n")
+    chmod_x(wrap)
+    bin = "${dir}/hello-${ld}"
+    code = run_out("/usr/bin/env", ["CC=${wrap}", compiler, "compile", "${dir}/hello.av", bin, "--debug"], "${dir}/hello-${ld}.clog") ?? -1
+    c.eq_int(code, 0, "tls linkers: ${ld} links the program")
+    out_log = "${dir}/hello-${ld}.out"
+    status = run_out(bin, [], out_log) ?? -1
+    c.eq_int(status, 0, "tls linkers: the program ${ld} linked runs")
+    c.eq_str(fs.read(out_log) ?? "", "linked\n", "tls linkers: the program ${ld} linked prints its line")
+    script = "b=$1; set -- $(readelf -lW \"$b\" | awk '$1 == \"TLS\" {print $6, $NF}'); mem=$(($1)); al=$(($2)); end=$(( (mem + al - 1) / al * al )); readelf -sW \"$b\" | awk '$4 == \"TLS\" {print $8, $2}' | while read n v; do case $n in avant_gc_bump|avant_gc_limit|avant_gc_limit_mt|avant_gc_top|avant_gc_base|avant_gc_starts) echo \"$n $(( 0x$v - end ))\";; esac; done"
+    tls_log = "${dir}/hello-${ld}.tls"
+    _ = run_out("/bin/sh", ["-c", script, "sh", bin], tls_log) ?? -1
+    seen = 0
+    inside = 0
+    for line in (fs.read(tls_log) ?? "").split("\n") {
+      ws = line.split(" ")
+      if ws.size != 2 {
+        continue
+      }
+      seen += 1
+      off = ws[1].to_i() ?? 0
+      if off >= -64 && off <= -8 {
+        inside += 1
+      }
+    }
+    c.eq_int(seen, 6, "tls linkers: ${ld}: every hot thread-local is a thread-local of the program")
+    c.eq_int(inside, 6, "tls linkers: ${ld}: every hot thread-local within 64 bytes below the thread pointer")
+  }
+  // The refusal, with GNU ld: the six moved out of the block.
+  root = avant_test_root()
+  bad = "${dir}/bad_tls.o"
+  oc = run_out("/usr/bin/objcopy", ["--rename-section", ".tbss=.bss,alloc,data", "${root}/runtime/build/avant_tls.o", bad], "${dir}/objcopy.log") ?? -1
+  c.eq_int(oc, 0, "tls refusal: a copy of avant_tls.o whose thread-locals are plain .bss")
+  swap = "${dir}/cc-swap"
+  _ = fs.write(swap, "#!/bin/sh\nfor a in \"$@\"; do shift; case \"$a\" in */avant_tls.o) set -- \"$@\" ${bad} ;; *) set -- \"$@\" \"$a\" ;; esac; done\nexec cc \"$@\"\n")
+  chmod_x(swap)
+  bin = "${dir}/hello-bad"
+  code = run_out("/usr/bin/env", ["CC=${swap}", compiler, "compile", "${dir}/hello.av", bin, "--debug"], "${dir}/hello-bad.clog") ?? -1
+  c.eq_int(code, 0, "tls refusal: the program links")
+  out_log = "${dir}/hello-bad.out"
+  status = run_out(bin, [], out_log) ?? -1
+  c.eq_int(status, 1, "tls refusal: the program stops with status 1")
+  text = fs.read(out_log) ?? ""
+  c.expect(text.contains("avant runtime: ") && text.contains("avant_gc_starts outside the program's thread-local block"), "tls refusal: the runtime names the misplaced thread-local")
+  c.expect(!text.contains("linked"), "tls refusal: main never runs")
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -79,5 +151,6 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_tls_place(c)
+  test_tls_linkers(c)
   c.finish()
 }

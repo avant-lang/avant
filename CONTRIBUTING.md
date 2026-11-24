@@ -40,7 +40,7 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, wherever it is copied (if that library is gone, it says so instead of reading another), and any other (a release, a bare copy) the nearest `lib/` in its directory or one above. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names and links and compiles against the `runtime/` it names (its `lib:` and `runtime:` lines), wherever it is copied (if one is gone, it says so instead of reading another), and any other (a release, a bare copy) the nearest `lib/` in its directory or one above, and the runtime of the checkout around it or of its own install. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
 
 ## The gate and the suite
 

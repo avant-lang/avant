@@ -596,6 +596,17 @@ fn test_user_test(c: Checks) {
     _ = fs.write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${ldir}/gone/lib\n")
     c.eq_int(run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/gone.log") ?? -1, 1, "copied compiler: a copy whose recorded library is gone fails")
     c.expect(ut_has(fs.read("${ldir}/gone.log") ?? "", "cannot find std.base64: ${lexe}.versions.txt names the library ${ldir}/gone/lib, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read"), "copied compiler: and says which record named which library")
+    // The same for the runtime it links and compiles against (`runtime:`):
+    // a copy run from another checkout links the one its record names,
+    // and stops, saying so, when that runtime is gone.
+    _ = fs.write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${lroot}/lib\nruntime: ${lroot}/runtime\n")
+    c.eq_int(run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "compile", "${ldir}/b64.av", "${ldir}/b64-own", "--debug"], "${ldir}/rt-own.log") ?? -1, 0, "copied compiler: a copy whose record names the checkout's runtime/ links with it")
+    _ = run_out("${ldir}/b64-own", [], "${ldir}/rt-own.out")
+    c.eq_str(fs.read("${ldir}/rt-own.out") ?? "", "aGk=\n", "copied compiler: and the program it links runs")
+    _ = fs.write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${lroot}/lib\nruntime: ${ldir}/gone/runtime\n")
+    c.eq_int(run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "compile", "${ldir}/b64.av", "${ldir}/b64-gone", "--debug"], "${ldir}/rt-gone.log") ?? -1, 1, "copied compiler: a copy whose recorded runtime is gone fails")
+    c.expect(ut_has(fs.read("${ldir}/rt-gone.log") ?? "", "${lexe}.versions.txt names the runtime ${ldir}/gone/runtime, which has no build/avant_rt.o; set AVANT_ROOT to the checkout whose runtime this compiler should link"), "copied compiler: and says which record named which runtime")
+    c.expect(!fs.exists("${ldir}/b64-gone"), "copied compiler: and links nothing")
     rm_f(lexe)
 
     // `avant test FILE --name PATTERN` runs only the
