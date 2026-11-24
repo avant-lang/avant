@@ -102,9 +102,15 @@ if [ "${1:-}" = --one ]; then
   t=$LAC_TMP/$s
   set --
   while IFS= read -r a; do set -- "$@" "$a"; done < "$LAC_DIR/args/$s"
-  if ! (cd "$LAC_SRC" && env -u AVANT_ROOT timeout -k 10 300 "$LAC_ROOT/bin/avant-c-llvm" compile "$s.av" "$t" "$@" < /dev/null > "$t.compile.log" 2>&1); then
-    printf '%s\tcompile-failed\t-\t-\t-\n' "$s"; exit 0
+  if ! (cd "$LAC_SRC" && env -u AVANT_ROOT timeout -k 10 300 "$LAC_ROOT/bin/avant-c-llvm" compile "$s.av" "$t.linked" "$@" < /dev/null > "$t.compile.log" 2>&1); then
+    printf '%s\tcompile-failed\t-\t-\t-\n' "$s"; rm -f "$t.linked"; exit 0
   fi
+  # The program runs from a copy written by cat: the page cache keeps a file
+  # the linker wrote in other folio sizes than one written by write(2), the
+  # kernel maps a file's pages a folio at a time, and the same bytes then
+  # read up to about 100 KB apart in resident file pages from one compile to
+  # the next (Hash::CRC32: 4,476 KB as linked, 4,444 KB from every copy).
+  cat "$t.linked" > "$t" && chmod +x "$t" && rm -f "$t.linked"
   if [ -n "${LA_SEEDS:-}" ]; then
     # One count per seed; the mean is the program's count, the counts in
     # OUT.seeds.tsv. Every seed's output must be the first seed's.
