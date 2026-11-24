@@ -11,8 +11,9 @@
 // that calls and stores nothing included (four loads an element of
 // Graph::BFS's search, twice C's loads). This pass reads each such word
 // once before the loop into a local, makes the loop's reads copies of
-// that local, and reads the word again right after each statement of the
-// loop that may change it, so a path that changes nothing reads nothing:
+// that local, and reads the word again after each statement of the loop
+// that may change it (where it is next read, or at the end of that
+// block), so a path that changes nothing reads nothing:
 //
 // - the size, after a statement that may change an existing Array's size
 //   or buffer: a call outside the runtime helpers that keep every size
@@ -39,9 +40,10 @@
 // have met first. Programs with threads are left alone (another thread
 // collects at this one's safepoints, which the loop's calls do not
 // list). Only innermost loops that hold a call and are not a few
-// iterations long are taken (hd_func and hd_hoist_one say why); a word
-// read again after a statement is never taken out a second time (its
-// local is marked).
+// iterations long are taken, and only a word some iteration can run
+// without reading again (hd_func and hd_hoist_one say why); a word read
+// again after a statement is never taken out a second time (its local is
+// marked).
 
 import source
 import mir.types
@@ -81,6 +83,28 @@ fn hd_word(a: Int, k: Int): MOperand {
   o = MOperand.new(mok_copy(), -1)
   o.place = p
   o
+}
+
+// What one function's loops share, computed once (the pass runs over
+// every function of every program, the compiler's own included): the
+// locals whose address is taken, the blocks' predecessors (a loop's
+// preheader changes only its own header's), a mark per local stamped
+// with the loop being looked at (its locals defined in the body), and,
+// when first asked, each local's count of definitions and the constant
+// a single definition gives it.
+class HdCtx {
+  addr: Array(Bool)
+  preds: Array(Array(Int))
+  mark: Array(Int) = []
+  stamp: Int = 0
+  ndef: Array(Int) = []
+  cval: Array(Int) = []
+  consts: Bool = false
+
+  fn initialize(f: MFunc) {
+    self.addr = hd_addr_taken(f)
+    self.preds = mir_preds(f)
+  }
 }
 
 fn hd_grow(made: Array(Bool), f: MFunc) {
@@ -242,12 +266,12 @@ fn hd_changes(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Boo
 // 0..4`): a loop of a few iterations, which LLVM unrolls, gains less from
 // one read an iteration than its preheader costs on every entry
 // (Maze::BFS's four neighbours: +14% instructions).
-fn hd_short(f: MFunc, hb: MBlock): Bool {
+fn hd_short(f: MFunc, hb: MBlock, cx: HdCtx): Bool {
   for st in hb.stmts {
     if r = st.rv, r.kind == mrk_cmp() {
       for o in [r.a, r.b] {
         if x = o {
-          c = hd_const_of(f, x)
+          c = hd_const_of(f, x, cx)
           if c >= 0 && c <= 16 {
             return true
           }
@@ -260,7 +284,7 @@ fn hd_short(f: MFunc, hb: MBlock): Bool {
 
 // The value of an operand that is a constant, or a local whose only
 // definition in the function is a constant (a range's end); else -1.
-fn hd_const_of(f: MFunc, o: MOperand): Int {
+fn hd_const_of(f: MFunc, o: MOperand, cx: HdCtx): Int {
   if o.kind == mok_int() {
     return o.ival
   }
@@ -271,22 +295,28 @@ fn hd_const_of(f: MFunc, o: MOperand): Int {
   if p.local < 0 || p.proj.size != 0 {
     return -1
   }
-  v = -1
-  n = 0
-  for blk in f.blocks {
-    for st in blk.stmts {
-      if mir_stmt_def(st) == p.local {
-        n += 1
-        if r = st.rv, r.kind == mrk_use() {
-          if a = r.a, a.kind == mok_int() {
-            v = a.ival
+  if !cx.consts {
+    cx.consts = true
+    for i in 0..f.locals.size {
+      cx.ndef.push(0)
+      cx.cval.push(-1)
+    }
+    for blk in f.blocks {
+      for st in blk.stmts {
+        d = mir_stmt_def(st)
+        if d >= 0 && d < cx.ndef.size {
+          cx.ndef[d] += 1
+          if r = st.rv, r.kind == mrk_use() {
+            if a = r.a, a.kind == mok_int() {
+              cx.cval[d] = a.ival
+            }
           }
         }
       }
     }
   }
-  if n == 1 {
-    return v
+  if p.local < cx.ndef.size && cx.ndef[p.local] == 1 {
+    return cx.cval[p.local]
   }
   -1
 }
@@ -371,40 +401,57 @@ fn hd_guarded(f: MFunc, body: Array(Bool), hdr: Int, n0: Int, a: Int, clob: Arra
   true
 }
 
-// Takes the header words of one loop out; returns whether one moved.
-// made: the locals this pass made (their reads are not taken again).
-fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(Bool), coll: Array(Bool), made: Array(Bool)): Bool {
-  ts = m.types
-  n0 = f.blocks.size
-  def_in = mir_bools(f.locals.size, false)
-  addr = hd_addr_taken(f)
-  // Per statement: whether it may change a size or buffer word (chg), and
-  // whether it may move a buffer (mov: a collecting call).
-  chg: Array(Array(Bool)) = []
-  mov: Array(Array(Bool)) = []
-  any: Array(Array(Bool)) = []
+// Whether some path from the loop's header back to it crosses only
+// blocks with no statement that changes the word (chg; with buf, the
+// buffer reference, also mov: a collecting call).
+fn hd_clean_path(f: MFunc, body: Array(Bool), hdr: Int, n0: Int, preds: Array(Array(Int)), buf: Bool, chg: Array(Array(Bool)), mov: Array(Array(Bool))): Bool {
+  clean = mir_bools(n0, false)
   for b in 0..n0 {
-    c1: Array(Bool) = []
-    c2: Array(Bool) = []
-    c3: Array(Bool) = []
     if body[b] {
-      blk = f.blocks[b]
-      for j in 0..blk.stmts.size {
-        st = blk.stmts[j]
-        d = mir_stmt_def(st)
-        if d >= 0 {
-          def_in[d] = true
+      c = true
+      for j in 0..chg[b].size {
+        if chg[b][j] || (buf && mov[b][j]) {
+          c = false
         }
-        x = hd_changes(m, f, blk, j, keep)
-        y = mir_lv_call_collects(m, st, coll)
-        c1.push(x)
-        c2.push(y)
-        c3.push(x || y)
+      }
+      clean[b] = c
+    }
+  }
+  if !clean[hdr] {
+    return false
+  }
+  seen = mir_bools(n0, false)
+  work: Array(Int) = [hdr]
+  seen[hdr] = true
+  while work.size > 0 {
+    b = work.pop() ?? hdr
+    if t = f.blocks[b].term {
+      for x in t.targets {
+        if x == hdr {
+          return true
+        }
+        if x < n0 && body[x] && clean[x] && !seen[x] {
+          seen[x] = true
+          work.push(x)
+        }
       }
     }
-    chg.push(c1)
-    mov.push(c2)
-    any.push(c3)
+  }
+  false
+}
+
+// Takes the header words of one loop out; returns whether one moved.
+// made: the locals this pass made (their reads are not taken again).
+fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(Bool), coll: Array(Bool), made: Array(Bool), cx: HdCtx): Bool {
+  ts = m.types
+  // The blocks the loop forest knew (a preheader made for another loop
+  // lies after them, in no loop).
+  n0 = body.size
+  blist: Array(Int) = []
+  for b in 0..n0 {
+    if body[b] {
+      blist.push(b)
+    }
   }
   // Only a loop with a call: in one without, LLVM takes the words out
   // itself where it can (its stores are elements'), and holding them
@@ -415,29 +462,40 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
   // (avant_str_size, avant_str_view_test, avant_str_data, avant_buf_size)
   // are no calls either. And not a loop of a few iterations (hd_short).
   calls = false
-  for b in 0..n0 {
-    if body[b] {
-      for st in f.blocks[b].stmts {
-        if st.kind == msk_call() && !hd_no_call(st.callee) {
-          calls = true
-        }
+  for b in blist {
+    for st in f.blocks[b].stmts {
+      if st.kind == msk_call() && !hd_no_call(st.callee) {
+        calls = true
       }
     }
   }
-  if !calls || hd_short(f, f.blocks[hdr]) {
+  if !calls || hd_short(f, f.blocks[hdr], cx) {
     return false
+  }
+  // The locals the body defines: stamped with this loop.
+  cx.stamp += 1
+  while cx.mark.size < f.locals.size {
+    cx.mark.push(0)
+  }
+  for b in blist {
+    for st in f.blocks[b].stmts {
+      d = mir_stmt_def(st)
+      if d >= 0 {
+        cx.mark[d] = cx.stamp
+      }
+    }
   }
   // The words the loop reads: (array, word) pairs.
   arrs: Array(Int) = []
   words: Array(Int) = []
   out = [0, 0]
-  for b in 0..n0 {
-    if body[b] {
+  for b in blist {
+    if true {
       for st in f.blocks[b].stmts {
         if hd_match(ts, f, st, out) {
           d = mir_stmt_def(st)
           a = out[0]
-          if !made[d] && !def_in[a] && !addr[a] {
+          if !made[d] && cx.mark[a] != cx.stamp && !(a < cx.addr.size && cx.addr[a]) {
             seen = false
             for q in 0..arrs.size {
               if arrs[q] == a && words[q] == out[1] {
@@ -456,28 +514,71 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
   if arrs.size == 0 {
     return false
   }
-  preds = mir_preds(f)
+  preds = cx.preds
+  // Per statement: whether it may change a size or buffer word (chg), and
+  // whether it may move a buffer (mov: a collecting call).
+  chg: Array(Array(Bool)) = []
+  mov: Array(Array(Bool)) = []
+  any: Array(Array(Bool)) = []
+  for b in 0..n0 {
+    c1: Array(Bool) = []
+    c2: Array(Bool) = []
+    c3: Array(Bool) = []
+    if body[b] {
+      blk = f.blocks[b]
+      for j in 0..blk.stmts.size {
+        x = hd_changes(m, f, blk, j, keep)
+        y = mir_lv_call_collects(m, blk.stmts[j], coll)
+        c1.push(x)
+        c2.push(y)
+        c3.push(x || y)
+      }
+    }
+    chg.push(c1)
+    mov.push(c2)
+    any.push(c3)
+  }
   // Which arrays the header block reads through (read unguarded), and
   // which others qualify (hd_guarded).
-  in_hdr = mir_bools(f.locals.size, false)
-  for st in f.blocks[hdr].stmts {
-    for a in arrs {
-      if hd_derefs(st, a) {
-        in_hdr[a] = true
+  // Per pair: whether the header block reads through its array (read
+  // unguarded), and whether the array qualifies (hd_guarded, once an
+  // array).
+  in_hdr = mir_bools(arrs.size, false)
+  ok = mir_bools(arrs.size, false)
+  for q in 0..arrs.size {
+    for st in f.blocks[hdr].stmts {
+      if hd_derefs(st, arrs[q]) {
+        in_hdr[q] = true
       }
     }
   }
-  ok = mir_bools(f.locals.size, false)
-  checked = mir_bools(f.locals.size, false)
-  for a in arrs {
-    if !checked[a] {
-      checked[a] = true
-      ok[a] = in_hdr[a] || hd_guarded(f, body, hdr, n0, a, any, preds)
+  for q in 0..arrs.size {
+    prev = -1
+    for r in 0..q {
+      if arrs[r] == arrs[q] {
+        prev = r
+      }
+    }
+    if prev >= 0 {
+      ok[q] = ok[prev]
+    } else {
+      ok[q] = in_hdr[q] || hd_guarded(f, body, hdr, n0, arrs[q], any, preds)
+    }
+  }
+  // Only a word some iteration can run without reading again: a path
+  // from the header back to it that crosses no block that changes the
+  // word (for the buffer reference, no collecting call either). A loop
+  // whose every iteration calls (most of the compiler's own) would read
+  // the word again once an iteration, as it read it before, for a
+  // preheader more.
+  for q in 0..arrs.size {
+    if ok[q] && !hd_clean_path(f, body, hdr, n0, preds, words[q] == 0, chg, mov) {
+      ok[q] = false
     }
   }
   moving = false
-  for a in arrs {
-    if ok[a] {
+  for q in 0..arrs.size {
+    if ok[q] {
       moving = true
     }
   }
@@ -497,12 +598,12 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
     a = arrs[q]
     k = words[q]
     h = -1
-    if ok[a] {
+    if ok[q] {
       lay = ts.layouts[ts.get(f.locals[a].ty).layout]
       h = hd_new_local(f, lay.fields[k])
       hd_grow(made, f)
       made[h] = true
-      if in_hdr[a] {
+      if in_hdr[q] {
         cur.stmts.push(hd_assign(loc, h, hd_use(hd_word(a, k))))
       } else {
         // _h = zero; if _a != null { _h = (*_a).k }
@@ -534,44 +635,50 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
     held.push(h)
   }
   // The loop's reads become copies, and each word is read again after
-  // each statement that may change it.
-  for b in 0..n0 {
-    if body[b] {
+  // each statement that may change it, where it is next needed: before
+  // the block's next read of it, or at the block's end when none follows
+  // (a loop body that calls three functions between two reads reads the
+  // word once, not three times; the compiler's own loops made 2.6% more
+  // IR read again after every call). Between the change and that read
+  // nothing changes the word, so the value is the one it had there. A
+  // call that returns an element's slot is followed at once by the store
+  // through the slot (the barrier rule, V13), which no read again comes
+  // between, as no read of a word does.
+  for b in blist {
+    if true {
       blk = f.blocks[b]
       outs: Array(MStmt) = []
-      // The reads again after a call that returns an element's slot wait
-      // for the store through that slot, which must follow the call at
-      // once (the barrier rule, V13); that store changes no header word.
-      wait: Array(MStmt) = []
+      pend = mir_bools(arrs.size, false)
       for j in 0..blk.stmts.size {
         st = blk.stmts[j]
         if hd_match(ts, f, st, out) {
           d = mir_stmt_def(st)
           for q in 0..arrs.size {
             if held[q] >= 0 && arrs[q] == out[0] && words[q] == out[1] && !made[d] {
+              if pend[q] {
+                outs.push(hd_assign(st.loc, held[q], hd_use(hd_word(arrs[q], words[q]))))
+                pend[q] = false
+              }
               st = hd_assign(st.loc, d, hd_use(hd_copy_local(held[q])))
             }
           }
         }
         outs.push(st)
-        if wait.size > 0 {
-          outs.concat(wait)
-          wait = []
-        }
-        again: Array(MStmt) = []
         for q in 0..arrs.size {
           if held[q] >= 0 && (chg[b][j] || (words[q] == 0 && mov[b][j])) {
-            again.push(hd_assign(st.loc, held[q], hd_use(hd_word(arrs[q], words[q]))))
+            pend[q] = true
           }
         }
-        d = mir_stmt_def(st)
-        if st.kind == msk_call() && d >= 0 && ts.is_addr(f.locals[d].ty) && j + 1 < blk.stmts.size {
-          wait.concat(again)
-        } else {
-          outs.concat(again)
+      }
+      for q in 0..arrs.size {
+        if pend[q] {
+          ploc = loc
+          if t = blk.term {
+            ploc = t.loc
+          }
+          outs.push(hd_assign(ploc, held[q], hd_use(hd_word(arrs[q], words[q]))))
         }
       }
-      outs.concat(wait)
       blk.stmts = outs
     }
   }
@@ -594,31 +701,28 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
 
 fn hd_func(m: MModule, f: MFunc, keep: Array(Bool), coll: Array(Bool)) {
   made = mir_bools(f.locals.size, false)
-  rounds = 0
-  progress = true
-  while progress && rounds < 256 {
-    progress = false
-    lps = mir_lv_loops(f)
-    li = lps.headers.size - 1
-    while li >= 0 && !progress {
-      // Innermost loops only: a word held in a register across an inner
-      // loop competes with that loop's own values, and LLVM then spills
-      // it (a store and a load where the loop had one load):
-      // Graph::AStar's neighbour loop around its heap's sift-up read
-      // 6% more instructions with its row's words held, 5% fewer with
-      // the sift-up's own words alone.
-      inner = false
-      for h2 in lps.headers {
-        if h2 != lps.headers[li] && lps.bodies[li][h2] {
-          inner = true
-        }
+  lps = mir_lv_loops(f)
+  if lps.headers.size == 0 {
+    return
+  }
+  cx = HdCtx.new(f)
+  // Innermost loops only: a word held in a register across an inner
+  // loop competes with that loop's own values, and LLVM then spills it
+  // (a store and a load where the loop had one load): Graph::AStar's
+  // neighbour loop around its heap's sift-up read 6% more instructions
+  // with its row's words held. Innermost loops never share a block, and
+  // a preheader changes only its own header's predecessors, so one loop
+  // forest serves them all.
+  for li in 0..lps.headers.size {
+    inner = false
+    for h2 in lps.headers {
+      if h2 != lps.headers[li] && lps.bodies[li][h2] {
+        inner = true
       }
-      if lps.headers[li] != 0 && !inner && hd_hoist_one(m, f, lps.bodies[li], lps.headers[li], keep, coll, made) {
-        progress = true
-      }
-      li -= 1
     }
-    rounds += 1
+    if lps.headers[li] != 0 && !inner {
+      hd_hoist_one(m, f, lps.bodies[li], lps.headers[li], keep, coll, made, cx)
+    }
   }
 }
 
