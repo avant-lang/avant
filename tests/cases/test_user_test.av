@@ -77,6 +77,15 @@ fn ut_read_ms(path: String): Int {
   -1
 }
 
+fn listed_line(lines: Array(String), want: String): Bool {
+  for l in lines {
+    if l == want {
+      return true
+    }
+  }
+  false
+}
+
 fn ut_fill(template: String, dir: String): String {
   parts = template.split("DIR")
   b = Buf.new()
@@ -437,6 +446,40 @@ fn test_user_test(c: Checks) {
     c.expect(ut_has(fs.read("${root}/hung-env.log") ?? "", "FAIL tests/test_hang.av: the test process timed out after 1 s (--file-limit)\n"), "file limit: the environment's limit is the one named")
     c.eq_str((fs.read("${root}/hung-bad.rc") ?? "").strip(), "1", "file limit: a limit that is not a number is an error")
     c.expect(ut_has(fs.read("${root}/hung-bad.log") ?? "", "--file-limit needs a number of seconds"), "file limit: the error says what it needs")
+
+    // The slices of a run with --shard I/N --skip-exclusive and the run of
+    // --only-exclusive together are every file once (the gate splits its
+    // slowest GC mode that way): five files in the walk's order, two of
+    // them exclusive, in three slices.
+    mkdir_p("${root}/parts/tests")
+    _ = fs.write("${root}/parts/avant.toml", "[package]\nname = \"parts\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_x1.av\", \"tests/test_x2.av\"]\n")
+    part_names = ["a1", "a2", "a3", "a4", "a5", "x1", "x2"]
+    for pn in part_names {
+      _ = fs.write("${root}/parts/tests/test_${pn}.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
+    }
+    part_flags = ["--shard 1/3 --skip-exclusive", "--shard 2/3 --skip-exclusive", "--shard 3/3 --skip-exclusive", "--only-exclusive", "--only-exclusive --skip-exclusive", "--only-exclusive --shard 1/2"]
+    part_want = [["a1", "a4"], ["a2", "a5"], ["a3"], ["x1", "x2"], [], []]
+    part_rc = ["0", "0", "0", "0", "1", "1"]
+    part_sh = Buf.new()
+    part_sh.push_str("#!/bin/sh\ncd ${ut_quote(root)}/parts || exit 9\n")
+    for k in 0..part_flags.size {
+      part_sh.push_str("${ut_quote(compiler)} test ${part_flags[k]} > ${ut_quote(root)}/parts-${k}.log 2>&1; echo $? > ${ut_quote(root)}/parts-${k}.rc\n")
+    }
+    part_sh.push_str("echo 0 > ${ut_quote(root)}/parts.rc\n")
+    c.eq_int(ut_sh(part_sh.to_s(), "${root}/parts.rc"), 0, "slices: the runs end")
+    for k in 0..part_flags.size {
+      got: Array(String) = []
+      for line in (fs.read("${root}/parts-${k}.log") ?? "").split("\n") {
+        if line.size > 3 && line[..3] == "ok " {
+          got.push(line)
+        }
+      }
+      c.eq_str((fs.read("${root}/parts-${k}.rc") ?? "").strip(), part_rc[k], "slices: ${part_flags[k]}: status ${part_rc[k]}")
+      c.eq_int(got.size, part_want[k].size, "slices: ${part_flags[k]}: how many files ran")
+      for wn in part_want[k] {
+        c.expect(listed_line(got, "ok tests/test_${wn}.av"), "slices: ${part_flags[k]}: tests/test_${wn}.av ran")
+      }
+    }
 
     // `avant test --help` said `--junit PATH
     // one case per file`; the report has one case per check std.testing
