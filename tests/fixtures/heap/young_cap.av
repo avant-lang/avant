@@ -1,0 +1,74 @@
+import std.gc
+
+// The young budget grows past its small cap only after a full collection
+// finds dead much of what entered mature space since the last one: a
+// build of rows that all stay (each young collection's survivors live
+// on, so the budget stays small and old rows are remembered at their
+// pushes), then trees parsed whole and dropped at each round (they
+// outlive a small budget and die old, so the full collections that find
+// them dead let the budget grow), then a second build beside the first.
+// The output is the same whatever the budget.
+
+class Node {
+  left: Node?
+  right: Node?
+  value: Int
+}
+
+fn build(n: Int, salt: Int): Array(Array(Int32)) {
+  rows = Array(Array(Int32)).new(n, (i) { Array(Int32).new(0) })
+  for i in 1..n {
+    rows[i].push((i - 1 + salt).to_i32())
+    rows[i - 1].push((i + salt).to_i32())
+  }
+  for v in 0..n {
+    for j in 0..(v % 9) {
+      u = (v * 37 + j * 11 + salt) % n
+      rows[v].push(u.to_i32())
+      rows[u].push(v.to_i32())
+    }
+  }
+  rows
+}
+
+fn sum(rows: Array(Array(Int32))): Int {
+  s = 0
+  for r in rows {
+    for x in r {
+      s = (s * 31 + x.to_i()) % 1000000007
+    }
+  }
+  s
+}
+
+fn tree(depth: Int, seed: Int): Node? {
+  if depth == 0 {
+    return nil
+  }
+  n = Node.new()
+  n.left = tree(depth - 1, (seed * 3 + 1) % 1000003)
+  n.right = tree(depth - 1, (seed * 5 + 2) % 1000003)
+  n.value = seed % 1000
+  n
+}
+
+fn total(t: Node?): Int {
+  if n = t {
+    return (n.value + total(n.left) + total(n.right)) % 1000000007
+  }
+  0
+}
+
+fn main {
+  a = build(25000, 0)
+  puts(sum(a))
+  t = 0
+  for k in 0..4 {
+    t = (t + total(tree(17, k))) % 1000000007
+  }
+  puts(t)
+  gc.collect()
+  b = build(15000, 5)
+  puts(sum(b))
+  puts((sum(a) + sum(b)) % 1000000007)
+}
