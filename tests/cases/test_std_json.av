@@ -543,6 +543,62 @@ fn test_json_member_walk(c: Checks) {
   c.eq_str(last, "k5=0", "large member walk: the repeated name last, with its own value")
 }
 
+// The readers' answers at Int's bounds and for each other kind: an
+// integer read answers Int.min for "not an integer", so a real Int.min
+// must read as itself, before and after a miss.
+fn no_int(v: Int?): Bool {
+  if _ = v {
+    return false
+  }
+  true
+}
+
+fn no_str(v: String?): Bool {
+  if _ = v {
+    return false
+  }
+  true
+}
+
+fn no_bool(v: Bool?): Bool {
+  if _ = v {
+    return false
+  }
+  true
+}
+
+fn test_json_reader_answers(c: Checks) {
+  doc = Json.parse("{\"lo\": -9223372036854775808, \"hi\": 9223372036854775807, \"over\": 9223372036854775808, \"under\": -9223372036854775809, \"f\": 1.5, \"s\": \"x\", \"t\": true, \"n\": null}") ?? return c.expect(false, "reader answers: parse")
+  c.expect((doc.int("lo") ?? 0) == Int.min, "Int.min reads as itself")
+  c.expect(no_int(doc.int("over")), "an integer above Int is nil")
+  c.expect((doc.int("lo") ?? 0) == Int.min, "Int.min after a miss")
+  c.expect(no_int(doc.int("under")), "an integer below Int is nil")
+  c.expect((doc.int("hi") ?? 0) == Int.max, "Int.max")
+  c.expect(no_int(doc.int("f")), "a fraction is not an Int")
+  c.expect(no_int(doc.int("s")), "a string is not an Int")
+  c.expect(no_int(doc.int("missing")), "a missing member is not an Int")
+  if lo = doc.get("lo") {
+    c.expect((lo.int() ?? 0) == Int.min, "Int.min by the value's own int")
+    c.expect(no_str(lo.str()), "a number is not a String")
+    c.expect(no_bool(lo.bool()), "a number is not a Bool")
+  }
+  c.eq_str(doc.str("s") ?? "?", "x", "a string")
+  c.expect(no_str(doc.str("t")), "a Bool is not a String")
+  c.expect(no_str(doc.str("n")), "null is not a String")
+  c.expect(no_str(doc.str("missing")), "a missing member is not a String")
+  c.expect(doc.bool("t") ?? false, "true")
+  c.expect(no_bool(doc.bool("s")), "a string is not a Bool")
+  c.expect(no_bool(doc.bool("n")), "null is not a Bool")
+  c.expect(no_bool(doc.bool("missing")), "a missing member is not a Bool")
+  c.eq_str(doc.key_at(0) ?? "?", "lo", "key_at's first name")
+  c.eq_str(doc.key_at(7) ?? "?", "n", "key_at's last name")
+  c.expect(no_str(doc.key_at(8)), "key_at past the last member")
+  c.expect(no_str(doc.key_at(-1)), "key_at below the first member")
+  if s = doc.get("s") {
+    c.expect(no_str(s.key_at(0)), "key_at on a string")
+  }
+}
+
 // JsonValue's object members: a Hash by name, in the document's order;
 // a repeated name keeps its first value and place.
 fn test_json_members(c: Checks) {
@@ -688,6 +744,7 @@ fn main: Int {
   test_json_kinds(c)
   test_json_members(c)
   test_json_member_walk(c)
+  test_json_reader_answers(c)
   test_json_value_large(c)
   test_json_value_written(c)
   test_json_limits(c)

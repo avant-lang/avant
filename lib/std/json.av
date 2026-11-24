@@ -18,9 +18,10 @@ lib jsonc {
   fun avant_json_obj_f64(node: Ptr(Void), key: String): Float64
   fun avant_json_as_bool(node: Ptr(Void)): Int
   fun avant_json_obj_bool(node: Ptr(Void), key: String): Int
-  fun avant_json_as_str(node: Ptr(Void)): String
-  fun avant_json_obj_str(node: Ptr(Void), key: String): String
-  fun avant_json_key_at(node: Ptr(Void), index: Int): String
+  fun avant_json_as_str(node: Ptr(Void)): String?
+  fun avant_json_obj_str(node: Ptr(Void), key: String): String?
+  fun avant_json_key_at(node: Ptr(Void), index: Int): String?
+  fun avant_json_name(node: Ptr(Void)): String
   fun avant_json_text(node: Ptr(Void)): String
   fun avant_json_error_text: String
   fun avant_json_error_offset: Int
@@ -33,7 +34,7 @@ lib jsonc {
   fun avant_json_ord_int(node: Ptr(Void), key: String): Int
   fun avant_json_ord_f64(node: Ptr(Void), key: String): Float64
   fun avant_json_ord_bool(node: Ptr(Void), key: String): Int
-  fun avant_json_ord_str(node: Ptr(Void), key: String): String
+  fun avant_json_ord_str(node: Ptr(Void), key: String): String?
   fun avant_json_ord_mark(node: Ptr(Void)): Ptr(Void)
   fun avant_json_ord_resume(node: Ptr(Void), cur: Ptr(Void))
 }
@@ -223,16 +224,16 @@ pub struct Json {
   }
 
   pub fn key_at(index: Int): String? {
-    key = jsonc.avant_json_key_at(self.node, index)
-    if jsonc.avant_json_take_status() != 0 {
-      return nil
-    }
-    key
+    jsonc.avant_json_key_at(self.node, index)
   }
 
+  // Each reader answers in one call: a string or nil, a Bool's 1 or 0 or
+  // -1 for nil, a number or NaN. An integer has no spare value, so the
+  // runtime answers Int.min for "not an integer" and the status is read
+  // only for that value, to tell it from a real Int.min.
   pub fn int: Int? {
     v = jsonc.avant_json_as_int(self.node)
-    if jsonc.avant_json_take_status() != 0 {
+    if v == Int.min && jsonc.avant_json_take_status() != 0 {
       return nil
     }
     v
@@ -240,7 +241,7 @@ pub struct Json {
 
   pub fn int(key: String): Int? {
     v = jsonc.avant_json_obj_int(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
+    if v == Int.min && jsonc.avant_json_take_status() != 0 {
       return nil
     }
     v
@@ -266,24 +267,16 @@ pub struct Json {
   }
 
   pub fn str: String? {
-    v = jsonc.avant_json_as_str(self.node)
-    if jsonc.avant_json_take_status() != 0 {
-      return nil
-    }
-    v
+    jsonc.avant_json_as_str(self.node)
   }
 
   pub fn str(key: String): String? {
-    v = jsonc.avant_json_obj_str(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
-      return nil
-    }
-    v
+    jsonc.avant_json_obj_str(self.node, key)
   }
 
   pub fn bool: Bool? {
     v = jsonc.avant_json_as_bool(self.node)
-    if jsonc.avant_json_take_status() != 0 {
+    if v < 0 {
       return nil
     }
     v != 0
@@ -291,7 +284,7 @@ pub struct Json {
 
   pub fn bool(key: String): Bool? {
     v = jsonc.avant_json_obj_bool(self.node, key)
-    if jsonc.avant_json_take_status() != 0 {
+    if v < 0 {
       return nil
     }
     v != 0
@@ -335,7 +328,7 @@ pub struct Json {
       key = jsonc.avant_json_first_key(self.node)
       i = 0
       while kn = key {
-        name = jsonc.avant_json_as_str(kn)
+        name = jsonc.avant_json_name(kn)
         key = nil
         if vn = jsonc.avant_json_next(kn) {
           if !v.members.has(name) {
@@ -426,7 +419,7 @@ pub class JsonMembers {
         self.left = 0
       }
     }
-    JsonMember { name: jsonc.avant_json_as_str(kn), value: Json { node: vn, pool: self.pool } }
+    JsonMember { name: jsonc.avant_json_name(kn), value: Json { node: vn, pool: self.pool } }
   }
 }
 
@@ -653,7 +646,7 @@ fn codec_unknown(j: Json, known: Array(String)): JsonError? {
   key = jsonc.avant_json_first_key(j.node)
   i = 0
   while kn = key {
-    k = jsonc.avant_json_as_str(kn)
+    k = jsonc.avant_json_name(kn)
     if !known.has(k) {
       return JsonError.new("${codec_step(k)}: unknown member (ignore_unknown: true skips unknown members)")
     }
@@ -682,7 +675,7 @@ fn codec_done(e: JsonError): JsonError {
 
 fn codec_dec_int(j: Json): Int | JsonError {
   v = jsonc.avant_json_as_int(j.node)
-  if jsonc.avant_json_take_status() != 0 {
+  if v == Int.min && jsonc.avant_json_take_status() != 0 {
     return codec_wrong(j.node, "an integer")
   }
   v
@@ -697,16 +690,12 @@ fn codec_dec_f64(j: Json): Float64 | JsonError {
 }
 
 fn codec_dec_str(j: Json): String | JsonError {
-  v = jsonc.avant_json_as_str(j.node)
-  if jsonc.avant_json_take_status() != 0 {
-    return codec_wrong(j.node, "a string")
-  }
-  v
+  jsonc.avant_json_as_str(j.node) ?? return codec_wrong(j.node, "a string")
 }
 
 fn codec_dec_bool(j: Json): Bool | JsonError {
   v = jsonc.avant_json_as_bool(j.node)
-  if jsonc.avant_json_take_status() != 0 {
+  if v < 0 {
     return codec_wrong(j.node, "true or false")
   }
   v != 0
