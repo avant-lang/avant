@@ -117,6 +117,27 @@ pub fn (lw: MirLower) cov_finish {
   for i in 0..c.kinds.size {
     slot_of.push(0)
   }
+  // The points of a standard library function the program does not
+  // reach (lowered, then dropped: reach.av) get no slot: the map lists
+  // the library code the program can run, and every function of the
+  // program's own modules, reached or not.
+  present = Set(Int).new()
+  m = lw.lw_m
+  for fn0 in m.funcs {
+    for blk0 in fn0.blocks {
+      for st0 in blk0.stmts {
+        if st0.kind == msk_call() && st0.callee == "avant_cov_hit" && st0.args.size == 1 {
+          present.add(st0.args[0].ival.to_i())
+        }
+      }
+    }
+  }
+  lib_paths = Set(String).new()
+  for mi in lw.lw_prog.mods {
+    if mi.name.starts_with("std.") {
+      lib_paths.add(mi.path)
+    }
+  }
   buf = buf_new()
   buf.push_str("avant-cov 1\n")
   line_slot = Hash(String, Int).new()
@@ -128,6 +149,9 @@ pub fn (lw: MirLower) cov_finish {
       s1 = starts[order[r] + 1]
     }
     for k in s0..s1 {
+      if !present.has(k) && lib_paths.has(c.paths[k]) {
+        continue
+      }
       if c.kinds[k] == 4 {
         key = "${c.paths[k]}:${c.lines[k]}"
         if got = line_slot.get(key) {
@@ -141,7 +165,6 @@ pub fn (lw: MirLower) cov_finish {
       n += 1
     }
   }
-  m = lw.lw_m
   b = lw.lw_b
   for fn_ in m.funcs {
     for blk in fn_.blocks {
