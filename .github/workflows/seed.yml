@@ -109,8 +109,13 @@ jobs:
           curl -fsSL -o /tmp/avant-seed.tar.gz \
             "https://github.com/avant-lang/avant/releases/download/${AVANT_SEED_VERSION}/avant-linux-x86_64.tar.gz"
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
+          # Unpacked inside the checkout, as a developer's bin/vX: a seed
+          # started from under the working directory links this tree's
+          # runtime, which may export functions its own runtime lacks.
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
-          test -x /tmp/avant-linux-x86_64/avant
+          mkdir -p bin
+          mv /tmp/avant-linux-x86_64 "bin/${AVANT_SEED_VERSION}"
+          test -x "bin/${AVANT_SEED_VERSION}/avant"
 
       # tools/letters.sh holds the letters' one incantation: b is
       # the seed's build of compiler/main.av (bin/avant-b), c-llvm is B's
@@ -119,7 +124,7 @@ jobs:
       - name: Seed → B → C'
         run: |
           set -euo pipefail
-          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-llvm
+          LETTERS_SEED="bin/${AVANT_SEED_VERSION}" sh tools/letters.sh b c-llvm
           ./bin/avant-c-llvm run examples/hello.av
 
       - name: Native suite on C'
