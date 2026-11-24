@@ -925,6 +925,70 @@ avant_int avant_job_wait(void) {
   }
 }
 
+/* avant_job_wait that gives up after ms milliseconds: the pid of the job
+ * that finished, 0 when none did in that time, -1 when no job is running.
+ * The runner uses it to look at the clock between jobs' ends. The wait
+ * polls waitpid with short sleeps (1 ms, doubling to 20 ms): a job's end
+ * is noticed within 20 ms, and a runner with a few dozen jobs spends
+ * nothing visible. */
+avant_int avant_job_wait_for(avant_int ms) {
+  struct timespec pause = {0, 1000 * 1000};
+  struct timespec t0;
+  clock_gettime(CLOCK_MONOTONIC, &t0);
+  for (;;) {
+    int st = 0;
+    int32_t i;
+    pid_t pid;
+    struct timespec t1;
+    if (g_njobs == 0) {
+      return -1;
+    }
+    pid = waitpid(-1, &st, WNOHANG);
+    if (pid < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return -1;
+    }
+    if (pid > 0) {
+      for (i = 0; i < g_njobs; i++) {
+        if (g_jobs[i] == pid) {
+          g_jobs[i] = g_jobs[g_njobs - 1];
+          g_njobs = g_njobs - 1;
+          g_job_status = exit_code_of(st);
+          g_job_signal = WIFSIGNALED(st) ? WTERMSIG(st) : 0;
+          return (int32_t)pid;
+        }
+      }
+      continue;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    if ((int64_t)(t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 >= ms) {
+      return 0;
+    }
+    /* The process wait is native (rule 2): the sleep is too. */
+    avant_gc_native_begin();
+    nanosleep(&pause, NULL);
+    avant_gc_native_end();
+    if (pause.tv_nsec < 20 * 1000 * 1000) {
+      pause.tv_nsec *= 2;
+    }
+  }
+}
+
+/* Sends signal sig to the process group of a running job (each job is the
+ * leader of its own group, so its children are reached too): 0 when sent,
+ * -1 when pid is not a running job. */
+avant_int avant_job_stop(avant_int pid, avant_int sig) {
+  int32_t i;
+  for (i = 0; i < g_njobs; i++) {
+    if (g_jobs[i] == (pid_t)pid) {
+      return kill(-(pid_t)pid, (int)sig) == 0 ? 0 : -1;
+    }
+  }
+  return -1;
+}
+
 avant_int avant_job_status(void) {
   return g_job_status;
 }

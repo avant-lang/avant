@@ -121,7 +121,10 @@
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
 # A suite pass's limit is tools/suite-limit.sh's for its environment: 900 s,
 # or the larger own limit of a test file in that environment
-# (tests/limits.txt); the pass's summary line names it.
+# (tests/limits.txt); the pass's summary line names it. The limit is each
+# test process's (`avant test --file-limit`): a test file that hangs fails as
+# that file, named, at the limit; the pass itself gets two minutes more
+# (`timeout` limit + 120 s) to report it.
 # The runtime, B, C', and D' are built by tools/letters.sh (the one copy
 # of the letters' incantation, with those timeouts inside). The suites run
 # with no AVANT_BACKEND.
@@ -273,7 +276,7 @@ suite_pass() {
   echo "$lim" > "$out/limit-$1.txt"
   snap "$out/before-$1"
   # shellcheck disable=SC2086 # $3 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 "$((lim + 120))" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --file-limit "$lim" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || fail "suite on $1 failed (rc=$rc)"
@@ -398,7 +401,7 @@ gc_pass() {
   echo "$lim" > "$out/limit-$1.txt"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
   # shellcheck disable=SC2086 # $2 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 "$((lim + 120))" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --file-limit "$lim" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"
