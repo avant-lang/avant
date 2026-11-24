@@ -5098,9 +5098,11 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | `--name PATTERN` | run only the checks, `t.test` bodies and `t.parallel` bodies whose names contain `PATTERN` ([Choosing by name](#choosing-by-name)) |
 | `--coverage` | instrument the tests, print a coverage table after the summary, write `coverage/lcov.info` |
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
+| `--only-exclusive` | run only the files listed in `[test] exclusive` (so the slices of a `--shard` run, each with `--skip-exclusive`, and this one together are every file once; not with `--shard` or `--skip-exclusive`) |
+| `--file-limit SECONDS` | stop a test process that runs longer and fail its file: a file's compile, its serial run and each of its parallel tests have the limit each (default 900; 0 for none; `AVANT_TEST_FILE_LIMIT` sets it too). The process's group gets `SIGTERM`, then `SIGKILL` five seconds later; the `FAIL` line says `the test process timed out after 900 s (--file-limit)`. Once a minute the runner names on standard error the processes running longer than that |
 | `-h`, `--help` | print the flags and exit 0 |
 
-`--jobs=N`, `--shard=I/N`, `--junit=PATH` and `--name=PATTERN` work too. An unknown flag, or a `--`, is an error: test programs get no arguments.
+`--jobs=N`, `--shard=I/N`, `--junit=PATH`, `--name=PATTERN` and `--file-limit=SECONDS` work too. An unknown flag, or a `--`, is an error: test programs get no arguments.
 
 For each file the runner prints its output in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`); at the end, a total (`0 failed, 1 passed`). Its status is 1 when a file failed, nothing was selected, or the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 

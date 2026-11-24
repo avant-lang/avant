@@ -89,9 +89,21 @@
 #     seeds (the stub programs' work depends on the seed), its count the
 #     mean, OUT.seeds.tsv the counts with their mean, min and max; 13 seeds
 #     are refused;
-#   check-hash-seeds: a range that changes runtime/avant_hash.c counts both
+#   la-count-fixed-path: a program starts through a link in a directory
+#     (LA_RUN_DIR, default /tmp) whose path has one length whatever OUT's
+#     length is, so two OUT paths of different lengths give one count and
+#     the directory is left empty;
+#   check-hash-seeds: a commit that changes runtime/avant_hash.c counts both
 #     sides under the 12 seeds and the cell reads `RATIO (12 seeds: LO-HI)`;
 #     another runtime change keeps seed 0;
+#   check-hash-seeds-scope: in a range of three commits (a runtime change, a
+#     hash change, a runtime change) only the middle one is counted under the
+#     seeds (with the commit before counted again under them), the first and
+#     the last at seed 0, and each is compared with a seed-0 count of the
+#     commit before (the last one's ratio is its own seed-0 count over the
+#     hash commit's seed 0);
+#   check-hash-seeds-forced: CC_SEEDS=2 counts every commit of the range under
+#     two seeds;
 #   check-base-harness: a base that refuses the caller's tasks, with
 #     CC_BASE_LANGARENA naming the base's own harness: the base's side is
 #     read from it, so the first commit's programs are counted against the
@@ -105,8 +117,11 @@ set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/change-check.sh WORK" >&2; exit 2; }
 # The caller's change-check settings never reach the fake's runs: a
 # runner would take the real machine lock and log into the caller's run
-# log, a map or a harness would change what the checks select.
-unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP
+# log, a map or a harness would change what the checks select, and a seed
+# count (a caller's change-check started with CC_SEEDS=0, or 12 over a
+# range that changes the hash code) would turn the fake's seeds off or on
+# and add its seed range to every cell.
+unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP CC_SEEDS LA_SEEDS
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 w=$(realpath -m "$1")
 mkdir -p "$w"
@@ -151,7 +166,7 @@ compile)
   if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
   # the program's work depends on the hash seed (a loop of seed % 7 steps),
   # its output does not
-  printf '#!/bin/sh\nk=$(( ${AVANT_HASH_SEED:-0} %% 7 * 200 )); while [ $k -gt 0 ]; do k=$((k - 1)); done\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
+  printf '#!/bin/sh\nk=$(( ${AVANT_HASH_SEED:-0} %% 7 * 200 )); while [ $k -gt 0 ]; do k=$((k - 1)); done\necho checksum-%s\necho "argv0len=${#0}"\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
   chmod +x "$2" ;;
 test)
   f=0 p=0
@@ -516,6 +531,18 @@ say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';
   END { exit bad + (NR != 4) }' "$w/lc-seeds.tsv" "$w/lc-seeds.seeds.tsv"
 say la-count-seeds $? "rc=$rc rc13=$rc13; $(tr '\n' ';' < "$w/lc-seeds.tsv" 2>/dev/null); $(tr '\n' ';' < "$w/lc-seeds.seeds.tsv" 2>/dev/null)"
 
+# 17b. A program starts through a link whose path has one length whatever
+# OUT is (its argv[0] is copied to the heap, and a path of another length
+# moved a collection): the stub programs print the length of their $0, so
+# two runs from OUT directories of different lengths agree in every
+# program's output only when the lengths were equal.
+mkdir -p "$w/lc-short" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper" "$w/lc-run"
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-short/a.tsv" < /dev/null > /dev/null 2>&1); rc1=$?
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" < /dev/null > /dev/null 2>&1); rc2=$?
+[ $rc1 = 0 ] && [ $rc2 = 0 ] && [ -s "$w/lc-short/a.tsv" ] && [ "$(cut -f1,3 "$w/lc-short/a.tsv")" = "$(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv")" ] \
+  && [ -z "$(ls -A "$w/lc-run")" ]
+say la-count-fixed-path $? "rc=$rc1,$rc2; $(cut -f1,3 "$w/lc-short/a.tsv" 2>/dev/null | tr '\n' ';'); $(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" 2>/dev/null | tr '\n' ';'); left: $(ls -A "$w/lc-run" | tr '\n' ' ')"
+
 # 18. change-check turns the seeds on for a range that changes a hash file
 # (runtime/avant_hash.c), both sides counted under the 12, the cell with the
 # per-seed range; another range keeps seed 0.
@@ -524,9 +551,27 @@ echo 'hash v2' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash
 (cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18" < /dev/null > "$w/cc18.log" 2>&1)
 echo 'r3' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'another runtime file'
 (cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18b" < /dev/null > "$w/cc18b.log" 2>&1)
-grep -q '^hash seeds: the counts under 12 seeds of tools/la-count.sh, both sides (the range changes runtime/avant_hash.c' "$w/cc18/cache.txt" \
+grep -q '^hash seeds: the commits that change runtime/avant_hash.c compiler/mir/lower_hash.av compiler/mir/upsert.av ([0-9a-f]*) count under 12 seeds of tools/la-count.sh, both sides; the others at seed 0$' "$w/cc18/cache.txt" \
   && grep 'the hash probing' "$w/cc18/table.md" | grep -q ' [0-9][.][0-9]* (12 seeds: [0-9.]*-[0-9.]*)' \
   && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc18/01-"*/ins.seeds.tsv | sort -u)" = 12 ] \
   && grep -q '^hash seeds: seed 0 alone' "$w/cc18b/cache.txt" && ! grep -q 'seeds:' "$w/cc18b/table.md"
 say check-hash-seeds $? "$(grep 'hash seeds' "$w/cc18/cache.txt" "$w/cc18b/cache.txt" 2>/dev/null | tr '\n' ';'); $(grep 'the hash probing' "$w/cc18/table.md" | cut -c1-400)"
+
+# 19. The scope: three commits, only the hash one under the seeds, the last
+# compared with the hash commit's seed-0 count.
+echo 'rt a' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: a runtime change'
+echo 'hash v3' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'scope: the hash change'
+echo 'rt b' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: another runtime change'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc19" < /dev/null > "$w/cc19.log" 2>&1)
+d1=$(ls -d "$w/cc19/01-"*); d2=$(ls -d "$w/cc19/02-"*); d3=$(ls -d "$w/cc19/03-"*)
+[ ! -e "$d1/ins.seeds.tsv" ] && [ ! -s "$d1/prev-ins.seeds.tsv" ] \
+  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/ins.seeds.tsv" | sort -u)" = 12 ] && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/prev-ins.seeds.tsv" | sort -u)" = 12 ] \
+  && [ ! -e "$d3/ins.seeds.tsv" ] && [ ! -s "$d3/prev-ins.seeds.tsv" ] \
+  && [ "$(grep -c ' [0-9][.][0-9]* (12 seeds: ' "$w/cc19/table.md")" = 1 ] && grep 'scope: the hash change' "$w/cc19/table.md" | grep -q '(12 seeds: ' \
+  && ! grep 'scope: a runtime change\|scope: another runtime change' "$w/cc19/table.md" | grep -q 'seeds: ' \
+  && grep -q '^hash seeds: the commits that change .* count under 12 seeds' "$w/cc19/cache.txt"
+say check-hash-seeds-scope $? "$(grep 'hash seeds' "$w/cc19/cache.txt" | cut -c1-120); $(grep 'scope' "$w/cc19/table.md" | cut -d'|' -f3,9 | cut -c1-200 | tr '\n' ';')"
+(cd "$r" && CC_SEEDS=2 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc19b" < /dev/null > "$w/cc19b.log" 2>&1)
+[ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc19b/01-"*/ins.seeds.tsv "$w/cc19b/02-"*/ins.seeds.tsv | sort -u)" = 2 ] && grep -q '^hash seeds: every commit under 2 seeds' "$w/cc19b/cache.txt"
+say check-hash-seeds-forced $? "$(grep 'hash seeds' "$w/cc19b/cache.txt" | cut -c1-120)"
 echo done

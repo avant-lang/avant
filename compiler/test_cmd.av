@@ -40,6 +40,10 @@ pub class FileRun {
 lib job_rt {
   fun avant_job_start_env(path: String, args: Array(String), env: Array(String), out: String): Int
   fun avant_job_wait: Int
+  // Like avant_job_wait, giving up after ms milliseconds (0 then).
+  fun avant_job_wait_for(ms: Int): Int
+  // Signal sig to a running job's process group (0 when sent).
+  fun avant_job_stop(pid: Int, sig: Int): Int
   fun avant_job_status: Int
   fun avant_job_signal: Int
   // The CPUs the process may use (its affinity mask).
@@ -71,6 +75,17 @@ pub class JobCmd {
   signal: Int = 0
   unstarted: Bool = false
   what: String = ""
+  // The file's path as the report names it, for the line naming the jobs
+  // still running.
+  rel: String = ""
+  // The clock (milliseconds) when the job started, the limit it started
+  // under (0: none), when it was sent TERM for passing it (0: not yet), and
+  // whether it was sent KILL after that.
+  started_ms: Int = 0
+  limit_ms: Int = 0
+  term_ms: Int = 0
+  killed: Bool = false
+  timed_out: Bool = false
 
   fn initialize(env: Array(String), prog: String, args: Array(String), log: String, kind: Int, file: Int) {
     self.env = env
@@ -90,6 +105,13 @@ pub class JobSched {
   jobs: Array(JobCmd) = []
   limit: Int = 1
   running: Int = 0
+  // The time one job may run, in milliseconds (0: no bound): a job past it
+  // is sent TERM, and KILL five seconds later when it is still there.
+  time_limit_ms: Int = 0
+  // How often the jobs running past a minute are named on standard error
+  // (milliseconds), and when that was last done.
+  report_ms: Int = 60000
+  said_ms: Int = 0
 
   fn initialize(limit: Int) {
     self.limit = limit
@@ -97,6 +119,73 @@ pub class JobSched {
       self.limit = 1
     }
     self.running = 0
+    self.said_ms = now_ms()
+  }
+
+  // The jobs running past the report interval, named on standard error:
+  // a run that goes quiet for minutes says which files it is waiting for.
+  fn say_running(now: Int) {
+    self.said_ms = now
+    names = ""
+    n = 0
+    for cmd in self.jobs {
+      if cmd.started && !cmd.finished && cmd.pid > 0 && now - cmd.started_ms >= self.report_ms {
+        n += 1
+        if n <= 6 {
+          sep = ", "
+          if n == 1 {
+            sep = ""
+          }
+          secs = (now - cmd.started_ms) / 1000
+          names = "${names}${sep}${cmd.rel} (${cmd.what}, ${secs} s)"
+        }
+      }
+    }
+    if n > 0 {
+      more = ""
+      if n > 6 {
+        more = " and ${n - 6} more"
+      }
+      diag_puts("avant test: still running, ${n}: ${names}${more}")
+    }
+  }
+
+  // Looks at the clock between two jobs' ends: a job past its time limit
+  // is sent TERM (its process group: the test's children too), then KILL
+  // when it is still running five seconds later; the jobs running long are
+  // named from time to time.
+  fn look {
+    now = now_ms()
+    if self.time_limit_ms > 0 {
+      for cmd in self.jobs {
+        if cmd.started && !cmd.finished && cmd.pid > 0 && now - cmd.started_ms >= cmd.limit_ms && cmd.limit_ms > 0 {
+          if cmd.term_ms == 0 {
+            cmd.timed_out = true
+            cmd.term_ms = now
+            _ = job_rt.avant_job_stop(cmd.pid, 15)
+          } else if !cmd.killed && now - cmd.term_ms >= 5000 {
+            cmd.killed = true
+            _ = job_rt.avant_job_stop(cmd.pid, 9)
+          }
+        }
+      }
+    }
+    if now - self.said_ms >= self.report_ms {
+      self.say_running(now)
+    }
+  }
+
+  // The pid of the next job to end, or -1 when none is running; the clock
+  // is looked at every half second meanwhile.
+  fn wait_any: Int {
+    while true {
+      got = job_rt.avant_job_wait_for(500)
+      if got != 0 {
+        return got
+      }
+      self.look()
+    }
+    -1
   }
 
   pub fn add(cmd: JobCmd) {
@@ -151,12 +240,14 @@ pub class JobSched {
         return k
       }
       cmd.pid = pid
+      cmd.started_ms = now_ms()
+      cmd.limit_ms = self.time_limit_ms
       self.running += 1
     }
     if self.running == 0 {
       return -1
     }
-    got = job_rt.avant_job_wait()
+    got = self.wait_any()
     if got < 0 {
       return -1
     }
@@ -187,6 +278,12 @@ pub class TestHost {
   self_path: String = ""
   seq: Int = 0
   jobs: Int = 1
+  // The seconds one test process (a file's compile, its serial run, one of
+  // its parallel tests) may take before the run stops it and fails the file
+  // (0: no bound), and how often the processes running past a minute are
+  // named on standard error (seconds).
+  file_limit_s: Int = 900
+  progress_s: Int = 60
   coverage: Bool = false
   junit: Bool = false
   filter: String = ""
@@ -479,6 +576,8 @@ fn job_failed(f: FileRun, cmd: JobCmd) {
   }
   if cmd.unstarted {
     f.why = "${cmd.what} could not start"
+  } else if cmd.timed_out {
+    f.why = "${cmd.what} timed out after ${cmd.limit_ms / 1000} s (--file-limit)"
   } else if cmd.signal > 0 {
     // process_run's wording: "WHAT killed by signal N (NAME)".
     f.why = ProcessError.new(cmd.what, 0, cmd.signal, "").message()
@@ -522,6 +621,7 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
   results = "${base}.results"
   env = env_run(host.tests_compiler, names, "", host.coverage, frag, host.filter, matches, results)
   run = JobCmd.new(env, f.bin, empty_args(), "${base}.log", 1, at)
+  run.rel = f.rel
   run.names = names
   run.matches = matches
   run.results = results
@@ -539,6 +639,7 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
     results = "${host.fresh()}.results"
     env = env_run(host.tests_compiler, "", name, host.coverage, frag, "", "", results)
     cmd = JobCmd.new(env, f.bin, empty_args(), "${host.fresh()}.log", 2, at)
+    cmd.rel = f.rel
     cmd.results = results
     cmd.what = "the parallel test \"${name}\""
     sched.add(cmd)
@@ -598,6 +699,8 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     return
   }
   sched = JobSched.new(host.jobs)
+  sched.time_limit_ms = host.file_limit_s * 1000
+  sched.report_ms = host.progress_s * 1000
   i = 0
   while i < files.size {
     f = files[i]
@@ -614,6 +717,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
     cjob = JobCmd.new(env, host.self_path, args, "${host.fresh()}.log", 0, i)
     cjob.what = "the compile"
+    cjob.rel = f.rel
     sched.add(cjob)
     i += 1
   }
@@ -1020,9 +1124,19 @@ fn require_cov_dir(anchor: String, rel: String, key: String) {
 
 pub fn driver_test(args: Array(String)) {
   jobs = -1
+  file_limit = 900
+  if given_limit = env_get("AVANT_TEST_FILE_LIMIT") {
+    if given_limit.size > 0 {
+      file_limit = parse_u(given_limit)
+      if file_limit < 0 {
+        test_fail("AVANT_TEST_FILE_LIMIT is a number of seconds (0: no limit)")
+      }
+    }
+  }
   shard = ""
   junit = ""
   skip_ex = false
+  only_ex = false
   coverage = false
   name_pat = ""
   paths: Array(String) = []
@@ -1053,6 +1167,22 @@ pub fn driver_test(args: Array(String)) {
     } else if arg.starts_with("--shard=") {
       shard = str_slice(arg, 8, arg.size)
       i += 1
+    } else if arg == "--file-limit" || arg.starts_with("--file-limit=") {
+      lim_text = ""
+      if arg == "--file-limit" {
+        if i + 1 >= args.size {
+          test_fail("--file-limit needs a number of seconds")
+        }
+        lim_text = args[i + 1]
+        i += 2
+      } else {
+        lim_text = str_slice(arg, 13, arg.size)
+        i += 1
+      }
+      file_limit = parse_u(lim_text)
+      if file_limit < 0 {
+        test_fail("--file-limit needs a number of seconds (0: no limit)")
+      }
     } else if arg == "--junit" {
       if i + 1 >= args.size {
         test_fail("--junit needs a path")
@@ -1084,6 +1214,9 @@ pub fn driver_test(args: Array(String)) {
     } else if arg == "--skip-exclusive" {
       skip_ex = true
       i += 1
+    } else if arg == "--only-exclusive" {
+      only_ex = true
+      i += 1
     } else if arg == "--coverage" {
       coverage = true
       i += 1
@@ -1092,9 +1225,11 @@ pub fn driver_test(args: Array(String)) {
       diag_puts("--jobs N   test processes at once (default: the CPUs the process may use)")
       diag_puts("--jobs 1   one file at a time")
       diag_puts("--shard I/N   slice I of N, 1-based, round-robin")
+      diag_puts("--file-limit SECONDS   stop a test process (a file's compile, its serial run, one of its parallel tests) that runs longer and fail the file; default 900, 0 no limit (AVANT_TEST_FILE_LIMIT)")
       diag_puts("--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed")
       diag_puts("--name PATTERN   run only the checks, t.test bodies and t.parallel bodies whose names contain PATTERN")
       diag_puts("--skip-exclusive   omit [test] exclusive files")
+      diag_puts("--only-exclusive   run only the [test] exclusive files")
       diag_puts("--coverage   instrument tests and print one coverage table")
       diag_exit(0)
     } else if arg == "--" {
@@ -1284,6 +1419,20 @@ pub fn driver_test(args: Array(String)) {
     }
     files = kept
   }
+  if only_ex {
+    if skip_ex || shard.size > 0 {
+      test_fail("--only-exclusive cannot be combined with --skip-exclusive or --shard")
+    }
+    kept_ex: Array(FileRun) = []
+    f = 0
+    while f < files.size {
+      if files[f].exclusive {
+        kept_ex.push(files[f])
+      }
+      f += 1
+    }
+    files = kept_ex
+  }
   if files.size == 0 {
     test_fail("no tests selected")
   }
@@ -1294,6 +1443,12 @@ pub fn driver_test(args: Array(String)) {
     argv0 = args0[0]
   }
   host = TestHost.new(argv0, jobs)
+  host.file_limit_s = file_limit
+  if given_progress = env_get("AVANT_TEST_PROGRESS_S") {
+    if parse_u(given_progress) > 0 {
+      host.progress_s = parse_u(given_progress)
+    }
+  }
   host.coverage = coverage
   host.junit = junit.size > 0
   host.filter = name_pat

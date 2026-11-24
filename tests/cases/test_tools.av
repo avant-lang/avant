@@ -81,12 +81,12 @@ fn test_tools(c: Checks) {
   wf = "${scratch_dir()}/wave-final"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
   whats.push("wave-final.sh")
-  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary", "runner-term-leaves-nothing", "runner-term-summary", "group-term-leaves-nothing", "group-term-summary", "escape-leaves-nothing", "escape-summary", "psfail-leaves-nothing", "psfail-summary"])
+  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary", "runner-term-leaves-nothing", "runner-term-summary", "group-term-leaves-nothing", "group-term-summary", "escape-leaves-nothing", "escape-summary", "psfail-leaves-nothing", "psfail-summary", "slow-leaves-nothing", "slow-summary"])
   // The suite's start order from a run's times.
   tow = "${scratch_dir()}/test-order"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/test-order.sh", tow], "${tow}.log"))
   whats.push("test-order.sh")
-  names.push(["order-longest-first", "order-write"])
+  names.push(["order-longest-first", "order-write", "order-check-stale", "order-check-current"])
   // CI step times per unit of runner speed.
   cis = "${scratch_dir()}/ci-steps"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/ci-steps.sh", cis], "${cis}.log"))
@@ -101,12 +101,29 @@ fn test_tools(c: Checks) {
   slw = "${scratch_dir()}/suite-limits"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/suite-limits.sh", slw], "${slw}.log"))
   whats.push("suite-limit.sh")
-  names.push(["suite-limit-plain", "suite-limit-own", "suite-limit-other-env", "suite-limit-words", "suite-limit-default", "suite-limit-bad-seconds", "suite-limit-not-a-test", "suite-limit-repo"])
+  names.push(["suite-limit-plain", "suite-limit-own", "suite-limit-other-env", "suite-limit-words", "suite-limit-shard", "suite-limit-shard-plain", "suite-limit-default", "suite-limit-bad-seconds", "suite-limit-not-a-test", "suite-limit-repo"])
+  // The whole suite under every collector mode, in steps of a shared run's
+  // size (the stress pass in slices), on a fake checkout with a stub C'.
+  smw = "${scratch_dir()}/suite-modes"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/suite-modes.sh", smw], "${smw}.log"))
+  whats.push("suite-modes.sh")
+  names.push(["modes-green", "modes-slices", "modes-one-slice", "modes-red", "modes-litter", "modes-depth", "modes-runner", "modes-limit", "modes-usage"])
+  // The gate's sharded GC passes: SHARDS=N in a mode's entry.
+  gsw = "${scratch_dir()}/gate-shards"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/gate-shards.sh", gsw], "${gsw}.log"))
+  whats.push("gate.sh shards")
+  names.push(["shards-passes", "shards-default-passes", "shards-labels", "shards-limit", "shards-one", "shards-sequential"])
   // The fixed point alone, and its use by `git bisect run` over merges.
   fpw = "${scratch_dir()}/fixed-point"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/fixed-point.sh", fpw], "${fpw}.log"))
   whats.push("fixed-point.sh")
   names.push(["fp-same", "fp-differ", "fp-build-fails", "fp-bisect"])
+  // D' under the full stress mode, and the letters' step that builds it,
+  // on a fake checkout with a stub seed and a stub C'.
+  ds = "${scratch_dir()}/d-stress"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/d-stress.sh", ds], "${ds}.log"))
+  whats.push("d-stress.sh")
+  names.push(["stress-same", "stress-env", "stress-removed", "stress-kept", "stress-env-plain", "stress-differ", "stress-build-fails", "stress-timeout", "stress-no-c"])
   // The final evidence's provenance, litter and LR reference checks.
   wc = "${scratch_dir()}/wave-final-checks"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-checks.sh", wc], "${wc}.log"))
@@ -134,10 +151,12 @@ fn test_tools(c: Checks) {
   // the per-commit check, on a fake repository with a stub compiler. It
   // runs with a runner, a map and a base harness that do not exist set,
   // as a caller's change-check would leave them: the script clears them.
+  // The seed counts of a caller's change-check (CC_SEEDS, LA_SEEDS) are set
+  // to values that would change every cell, and the script clears those.
   cc = "${scratch_dir()}/change-check"
-  jobs.push(HJob.new("/usr/bin/env", ["CC_RUNNER=${cc}-no-runner", "TEST_MAP=${cc}-no-map", "CC_BASE_LANGARENA=${cc}-no-harness", "/bin/sh", "${root}/tests/tools/change-check.sh", cc], "${cc}.log"))
+  jobs.push(HJob.new("/usr/bin/env", ["CC_RUNNER=${cc}-no-runner", "TEST_MAP=${cc}-no-map", "CC_BASE_LANGARENA=${cc}-no-harness", "CC_SEEDS=0", "LA_SEEDS=12", "/bin/sh", "${root}/tests/tools/change-check.sh", cc], "${cc}.log"))
   whats.push("base-cache.sh and change-check.sh")
-  names.push(["cache-build", "cache-reuse", "cache-partial", "cache-concurrent", "digests-normalized", "prune-dry-run", "prune-removes-unread", "prune-keeps-read", "prune-keeps-in-use", "prune-after-reader", "prune-days-checked", "cache-read-stamp", "map-pick-carried", "map-pick-widened", "map-pick-unmapped", "map-pick-common", "cache-la", "neutral-cache", "neutral-default-la", "check-first-kept", "check-kept", "check-rebuilt", "check-runtime", "check-failed", "check-worktree", "cache-la-base-refuses", "neutral-base-refuses", "check-base-refuses", "check-base-harness", "check-map", "check-goldens-example", "check-goldens-golden", "check-map-none", "check-map-auto", "check-runner", "la-count-seeds", "check-hash-seeds"])
+  names.push(["cache-build", "cache-reuse", "cache-partial", "cache-concurrent", "digests-normalized", "prune-dry-run", "prune-removes-unread", "prune-keeps-read", "prune-keeps-in-use", "prune-after-reader", "prune-days-checked", "cache-read-stamp", "map-pick-carried", "map-pick-widened", "map-pick-unmapped", "map-pick-common", "cache-la", "neutral-cache", "neutral-default-la", "check-first-kept", "check-kept", "check-rebuilt", "check-runtime", "check-failed", "check-worktree", "cache-la-base-refuses", "neutral-base-refuses", "check-base-refuses", "check-base-harness", "check-map", "check-goldens-example", "check-goldens-golden", "check-map-none", "check-map-auto", "check-runner", "la-count-seeds", "la-count-fixed-path", "check-hash-seeds", "check-hash-seeds-scope", "check-hash-seeds-forced"])
   // The runtime's link check: a hidden function another object calls and
   // the exports file does not list fails the build, named.
   rl = "${scratch_dir()}/runtime-link"
@@ -150,6 +169,18 @@ fn test_tools(c: Checks) {
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/layout.sh", ly], "${ly}.log"))
   whats.push("layout-flag.py, layout-retime.sh, layout-cc.sh, layout-spread.py, rounds.py --layouts, layout-check.sh time and its sub-line build, layout-runtime.sh, la-mem.py")
   names.push(["flag-equal-counts", "flag-counts-moved", "flag-small", "retime-follows", "retime-overlap", "retime-args", "cc-shifts", "cc-passthrough", "cc-bad-shift", "rounds-layouts", "rounds-identical-skipped", "rounds-identical-timed", "rounds-reuse-within", "rounds-reuse-drift", "rounds-reuse-refused", "spread-verdicts", "spread-compare", "flag-spread", "check-rounds-many", "check-build-subline", "check-build-subline-checked", "check-build-subline-bad", "check-build-loops-bad", "cc-c-asm-same", "cc-c-shift", "cc-runtime", "check-build-runtime-moving", "check-build-runtime-fixed", "runtime-shift0-same", "mem-compare"])
+  // Every LangArena program under every collector mode: a fake checkout
+  // with a stub harness and a stub C'.
+  lm = "${scratch_dir()}/la-modes"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/la-modes.sh", lm], "${lm}.log"))
+  whats.push("la-modes.sh")
+  names.push(["modes-all-correct", "modes-stress-output", "modes-verify-status", "modes-hash-seed", "modes-limit", "modes-compile-fails", "modes-slugs", "modes-runner", "modes-size", "modes-usage"])
+  // The HTTP harness's build step and its base-against-final mode, with
+  // stub servers and a stub load generator.
+  hbw = "${scratch_dir()}/http-bench"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/http-bench.sh", hbw], "${hbw}.log"))
+  whats.push("bench/http/run.sh")
+  names.push(["http-no-build", "http-build-named", "http-crystal-flags", "http-versus-cells", "http-versus-order", "http-versus-ratio", "http-versus-usage"])
   // The LangArena spelling check: two fake harnesses through a stub C'.
   ls = "${scratch_dir()}/la-spelling"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/la-spelling.sh", ls], "${ls}.log"))

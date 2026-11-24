@@ -10,7 +10,12 @@ import std.process
 // overflow; the fault's signal for a fault: 139, 135), and remove the
 // program's private directory after stopping the children it waits on. The
 // program makes its directory, starts two children (`sleep`), each from a
-// task of its own, and crashes once both have written their pids. A trap
+// task of its own, and crashes once both have written their pids and a
+// quarter of a second more: a task registers the child it waits on just
+// after it starts it, and a crash in that gap (a loaded machine can hold a
+// task there for a while) leaves a child nobody knows of. Each check of a
+// child waits up to ten seconds for it to be gone before it reads it
+// alive. A trap
 // stops them too, and so does every crash, trap or signal of a program
 // that never made its directory (plain_cases).
 
@@ -28,7 +33,7 @@ fn program(dir: Bool): String {
   }
   b.push_str("  child = spawn {\n    args = [\"-c\", \"echo $$ > \${out}.pid.part && mv \${out}.pid.part \${out}.pid && exec sleep 30\"]\n    process.run(\"/bin/sh\", args) ?? -1\n  }\n")
   b.push_str("  child2 = spawn {\n    args2 = [\"-c\", \"echo $$ > \${out}.pid2.part && mv \${out}.pid2.part \${out}.pid2 && exec sleep 30\"]\n    process.run(\"/bin/sh\", args2) ?? -1\n  }\n")
-  b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") {\n    time.sleep_ms(10)\n  }\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
+  b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") {\n    time.sleep_ms(10)\n  }\n  time.sleep_ms(250)\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
   b.push_str("  if m == \"overflow\" {\n    puts(depth(100000000))\n  }\n")
   b.push_str("  if m == \"overflow-task\" {\n    h = spawn { depth(100000000) }\n    puts(h.join() ?? -1)\n  }\n")
   b.push_str("  if m == \"overflow-callback\" {\n    puts(crash_c.so_call_on_thread(start))\n  }\n")
@@ -105,7 +110,7 @@ fn read_all(path: String): String {
 // whether the child it waited on is gone and what TMPDIR still holds.
 fn case_lines(work: String, bin: String, name: String, mode: String): String {
   d = "${work}/${name}"
-  "(mkdir -p '${d}.base' && cd '${d}.base' && ulimit -c 0 && env AVANT_KEEP_TMP= TMPDIR='${d}.base' CRASH_MODE=${mode} CRASH_OUT='${d}' '${bin}' > '${d}.out' 2> '${d}.err'; echo $? > '${d}.rc'; for f in pid pid2; do p=$(cat \"${d}.$f\" 2>/dev/null); s=x; [ -n \"$p\" ] && s=$(ps -o stat= -p \"$p\" 2>/dev/null); case \"$s\" in ''|Z*) echo gone ;; *) echo \"alive $p\"; kill \"$p\" ;; esac; done > '${d}.child'; ls -A '${d}.base' > '${d}.left') &\n"
+  "(mkdir -p '${d}.base' && cd '${d}.base' && ulimit -c 0 && env AVANT_KEEP_TMP= TMPDIR='${d}.base' CRASH_MODE=${mode} CRASH_OUT='${d}' '${bin}' > '${d}.out' 2> '${d}.err'; echo $? > '${d}.rc'; for f in pid pid2; do p=$(cat \"${d}.$f\" 2>/dev/null); s=x; i=0; while [ -n \"$p\" ] && [ $i -lt 100 ]; do s=$(ps -o stat= -p \"$p\" 2>/dev/null); case \"$s\" in ''|Z*) break ;; esac; i=$((i+1)); sleep 0.1; done; case \"$s\" in ''|Z*) echo gone ;; *) echo \"alive $p\"; [ -n \"$p\" ] && kill \"$p\" ;; esac; done > '${d}.child'; ls -A '${d}.base' > '${d}.left') &\n"
 }
 
 // A program that made no private directory, ended by SIGTERM or SIGINT

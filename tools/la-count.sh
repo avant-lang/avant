@@ -64,6 +64,12 @@
 # on); tools/la-mem.py calls a peak moved only when these runs agree.
 # tools/la-mem.py compares two such files (the 50 tasks' average peak, its
 # spread, and the programs to run again).
+# Each program starts through a link `lac.XXXXXX/SLUG` in LA_RUN_DIR
+# (default /tmp), not from OUT's own directory: the program's path is its
+# argv[0], copied to the heap, and a path of another length moved a
+# collection (a collector benchmark's count read 11% apart for two sides
+# whose OUT paths differed by a byte), so every side now runs from a path of
+# one length. Keep LA_RUN_DIR's path the same for the two sides compared.
 # LA_RUNNER and LA_GROUP split the programs into shared runs of their own
 # (below, where it is read). Status 0, 1 when a program did not compile or
 # failed, 2 on usage.
@@ -78,6 +84,12 @@ if [ "${1:-}" = --one ]; then
   if ! (cd "$LAC_SRC" && env -u AVANT_ROOT timeout -k 10 300 "$LAC_ROOT/bin/avant-c-llvm" compile "$s.av" "$t" "$@" < /dev/null > "$t.compile.log" 2>&1); then
     printf '%s\tcompile-failed\t-\t-\t-\n' "$s"; exit 0
   fi
+  # The program is started through a link in a directory whose path has the
+  # same length whatever OUT is: a program's argv[0] is copied to the heap,
+  # and its length moved one young collection into another size class (a
+  # collector count read 11% apart between two sides' directories).
+  x=$LAC_RUN/$s
+  ln -sf "$t" "$x"
   if [ -n "${LA_SEEDS:-}" ]; then
     # One count per seed; the mean is the program's count, the counts in
     # OUT.seeds.tsv. Every seed's output must be the first seed's.
@@ -85,7 +97,7 @@ if [ "${1:-}" = --one ]; then
     for sd in $LA_SEED_LIST; do
       [ "$k" -lt "$LA_SEEDS" ] || break
       k=$((k + 1))
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED="$sd" perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out.$k" 2> "$t.err")
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED="$sd" perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$x" < /dev/null > "$t.out.$k" 2> "$t.err")
       r=$?; [ $r -ne 0 ] && rc=$r
       counts="$counts${counts:+,}$(grep 'instructions' "$t.perf" | cut -d, -f1)"
       m=$(md5sum < "$t.out.$k" | cut -c1-12)
@@ -95,7 +107,7 @@ if [ "${1:-}" = --one ]; then
     n=$(echo "$counts" | awk -F, '{ for (i = 1; i <= NF; i++) if ($i !~ /^[0-9]+$/) { print "-"; exit } ; s = 0; for (i = 1; i <= NF; i++) s += $i; printf "%.0f\n", s / NF }')
     echo "$counts" > "$LAC_TMP/$s.seeds"
   else
-    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
+    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$x" < /dev/null > "$t.out" 2> "$t.err")
     rc=$?
     n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
   fi
@@ -110,9 +122,9 @@ if [ "${1:-}" = --one ]; then
     # Runs past the first N keep address randomization on.
     if [ "$i" -le "$nm" ]; then nr="setarch -R"; else nr=; fi
     if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1)
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$x" < /dev/null > /dev/null 2>&1)
     else
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t" < /dev/null > /dev/null 2>&1) &
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 $nr /usr/bin/time -f %M -o "$t.rss.$i" "$x" < /dev/null > /dev/null 2>&1) &
     fi
   done
   wait
@@ -127,7 +139,7 @@ if [ "${1:-}" = --one ]; then
   done
   [ -n "$onr" ] && runs="$runs	$onr"
   [ -n "$runs" ] && echo "$runs" > "$LAC_TMP/$s.mem"
-  rm -f "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
+  rm -f "$x" "$t" "$t.out" "$t.err" "$t.perf" "$t".rss.* "$t.compile.log"
   exit 0
 fi
 
@@ -142,7 +154,10 @@ LAC_SRC=$LAC_DIR/avant/langarena/tmp
 [ -d "$LAC_DIR/args" ] && [ -d "$LAC_SRC" ] || { echo "la-count.sh: $LAC_DIR is not a base cache's LangArena part" >&2; exit 2; }
 command -v perf > /dev/null 2>&1 || { echo "la-count.sh: perf not found" >&2; exit 2; }
 LAC_TMP=$(mktemp -d "$(dirname "$out")/.la-count.XXXXXX") || exit 2
-export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP
+# The programs run from links in LA_RUN_DIR (default /tmp), `lac.XXXXXX`
+# there: a path of one length for every OUT (see --one).
+LAC_RUN=$(mktemp -d "${LA_RUN_DIR:-/tmp}/lac.XXXXXX") || { rm -rf "$LAC_TMP"; exit 2; }
+export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP LAC_RUN
 self=$(realpath "$0")
 if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u > "$LAC_TMP/slugs.txt"
 # With LA_RUNNER (the runner's command words, such as `python3 -I PATH/ledger
@@ -193,6 +208,6 @@ if [ -n "${LA_SEEDS:-}" ]; then
       if (!ok || n == 0) { printf "%s\t-\t-\t-\t-\t%s\n", $1, $2; next }
       m = s / n; printf "%s\t%.0f\t%d\t%d\t%.4f\t%s\n", $1, m, lo, hi, (hi - lo) / m * 100, $2 }' | LC_ALL=C sort > "${out%.tsv}.seeds.tsv"
 fi
-rm -rf "$LAC_TMP"
+rm -rf "$LAC_TMP" "$LAC_RUN"
 mv "$out.part" "$out"
 awk -F'\t' '$2 == "compile-failed" || $4 != 0 { bad = 1 } END { exit bad }' "$out"

@@ -77,6 +77,15 @@ fn ut_read_ms(path: String): Int {
   -1
 }
 
+fn listed_line(lines: Array(String), want: String): Bool {
+  for l in lines {
+    if l == want {
+      return true
+    }
+  }
+  false
+}
+
 fn ut_fill(template: String, dir: String): String {
   parts = template.split("DIR")
   b = Buf.new()
@@ -410,6 +419,71 @@ fn test_user_test(c: Checks) {
     ctlchar_text.push_str(" after\n")
     c.expect(ut_has(ctlchar_got, ctlchar_text.to_s()), "control characters: the failure's text is the file's output, each byte XML cannot carry as \\xNN")
     c.expect(ut_has(ctlchar_got, "case named \\x1b[1m bold\n"), "control characters: a check's name with a control character is written with \\xNN")
+
+    // A test file that hangs held the run until the job's own limit with
+    // no line naming it. --file-limit (or AVANT_TEST_FILE_LIMIT) stops a
+    // test process that runs past it (TERM to its group, KILL five seconds
+    // later), fails its file with the limit in the FAIL line and the JUnit
+    // failure, and the runner names the processes running past the report
+    // interval meanwhile; a file that ends in time is not touched.
+    mkdir_p("${root}/hung/tests")
+    _ = fs.write("${root}/hung/avant.toml", "[package]\nname = \"hung\"\nversion = \"0.1.0\"\n")
+    _ = fs.write("${root}/hung/tests/test_hang.av", "import std.time\n\nfn main: Int {\n  time.sleep_ms(600000)\n  0\n}\n")
+    _ = fs.write("${root}/hung/tests/test_quick.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
+    hang_rc = "${root}/hung.rc"
+    // The two runs go side by side, with the collector's modes cleared (a run
+    // under AVANT_GC_STRESS compiles the test files slowly, and the limits
+    // here are seconds) and limits a compile on a busy machine stays under.
+    clear_gc = "env -u AVANT_GC_STRESS -u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY"
+    hang_sh = "#!/bin/sh\ncd ${ut_quote(root)}/hung || exit 9\n(t0=$(date +%s); AVANT_TEST_PROGRESS_S=1 ${clear_gc} ${ut_quote(compiler)} test --file-limit 12 --junit ${ut_quote(root)}/hung.xml > ${ut_quote(root)}/hung.log 2>&1; echo $? > ${ut_quote(root)}/hung-flag.rc; echo $(( $(date +%s) - t0 )) > ${ut_quote(root)}/hung-flag.secs) &\n(t0=$(date +%s); AVANT_TEST_FILE_LIMIT=10 ${clear_gc} ${ut_quote(compiler)} test tests/test_hang.av > ${ut_quote(root)}/hung-env.log 2>&1; echo $? > ${ut_quote(root)}/hung-env.rc) &\n${clear_gc} ${ut_quote(compiler)} test --file-limit x > ${ut_quote(root)}/hung-bad.log 2>&1; echo $? > ${ut_quote(root)}/hung-bad.rc\nwait\necho 0 > ${ut_quote(hang_rc)}\n"
+    c.eq_int(ut_sh(hang_sh, hang_rc), 0, "file limit: the runs end")
+    hung_text = fs.read("${root}/hung.log") ?? ""
+    c.eq_str((fs.read("${root}/hung-flag.rc") ?? "").strip(), "1", "file limit: a hung file fails the run")
+    c.expect(ut_has(hung_text, "FAIL tests/test_hang.av: ") && ut_has(hung_text, " timed out after 12 s (--file-limit)\n"), "file limit: the FAIL line names the file and the limit")
+    c.expect(ut_has(hung_text, "ok tests/test_quick.av\n"), "file limit: the file that ends in time passes")
+    c.expect(ut_has(hung_text, "1 failed, 1 passed"), "file limit: the total counts the hung file once")
+    c.expect(ut_has(hung_text, "avant test: still running, ") && ut_has(hung_text, "tests/test_hang.av ("), "file limit: the runner names the process still running")
+    c.expect(ut_read_ms("${root}/hung-flag.secs") >= 0 && ut_read_ms("${root}/hung-flag.secs") < 120, "file limit: the run ends within the limit and the grace, not at the file's own end")
+    hung_xml = fs.read("${root}/hung.xml") ?? ""
+    c.expect(ut_has(hung_xml, " timed out after 12 s (--file-limit)\">"), "file limit: the JUnit failure says how the file ended")
+    c.eq_str((fs.read("${root}/hung-env.rc") ?? "").strip(), "1", "file limit: AVANT_TEST_FILE_LIMIT stops a hung file too")
+    c.expect(ut_has(fs.read("${root}/hung-env.log") ?? "", "FAIL tests/test_hang.av: ") && ut_has(fs.read("${root}/hung-env.log") ?? "", " timed out after 10 s (--file-limit)\n"), "file limit: the environment's limit is the one named")
+    c.eq_str((fs.read("${root}/hung-bad.rc") ?? "").strip(), "1", "file limit: a limit that is not a number is an error")
+    c.expect(ut_has(fs.read("${root}/hung-bad.log") ?? "", "--file-limit needs a number of seconds"), "file limit: the error says what it needs")
+
+    // The slices of a run with --shard I/N --skip-exclusive and the run of
+    // --only-exclusive together are every file once (the gate splits its
+    // slowest GC mode that way): five files in the walk's order, two of
+    // them exclusive, in three slices.
+    mkdir_p("${root}/parts/tests")
+    _ = fs.write("${root}/parts/avant.toml", "[package]\nname = \"parts\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_x1.av\", \"tests/test_x2.av\"]\n")
+    part_names = ["a1", "a2", "a3", "a4", "a5", "x1", "x2"]
+    for pn in part_names {
+      _ = fs.write("${root}/parts/tests/test_${pn}.av", "import std.testing\n\nfn main: Int {\n  t = testing.Test.new()\n  t.check(true, \"holds\")\n  t.finish()\n}\n")
+    }
+    part_flags = ["--shard 1/3 --skip-exclusive", "--shard 2/3 --skip-exclusive", "--shard 3/3 --skip-exclusive", "--only-exclusive", "--only-exclusive --skip-exclusive", "--only-exclusive --shard 1/2"]
+    part_want = [["a1", "a4"], ["a2", "a5"], ["a3"], ["x1", "x2"], [], []]
+    part_rc = ["0", "0", "0", "0", "1", "1"]
+    part_sh = Buf.new()
+    part_sh.push_str("#!/bin/sh\ncd ${ut_quote(root)}/parts || exit 9\n")
+    for k in 0..part_flags.size {
+      part_sh.push_str("${ut_quote(compiler)} test ${part_flags[k]} > ${ut_quote(root)}/parts-${k}.log 2>&1; echo $? > ${ut_quote(root)}/parts-${k}.rc\n")
+    }
+    part_sh.push_str("echo 0 > ${ut_quote(root)}/parts.rc\n")
+    c.eq_int(ut_sh(part_sh.to_s(), "${root}/parts.rc"), 0, "slices: the runs end")
+    for k in 0..part_flags.size {
+      got: Array(String) = []
+      for line in (fs.read("${root}/parts-${k}.log") ?? "").split("\n") {
+        if line.size > 3 && line[..3] == "ok " {
+          got.push(line)
+        }
+      }
+      c.eq_str((fs.read("${root}/parts-${k}.rc") ?? "").strip(), part_rc[k], "slices: ${part_flags[k]}: status ${part_rc[k]}")
+      c.eq_int(got.size, part_want[k].size, "slices: ${part_flags[k]}: how many files ran")
+      for wn in part_want[k] {
+        c.expect(listed_line(got, "ok tests/test_${wn}.av"), "slices: ${part_flags[k]}: tests/test_${wn}.av ran")
+      }
+    }
 
     // `avant test --help` said `--junit PATH
     // one case per file`; the report has one case per check std.testing

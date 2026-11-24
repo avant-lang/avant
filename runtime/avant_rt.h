@@ -814,6 +814,8 @@ void avant_tmp_keep(void);
 avant_int avant_job_start(const char *path, void *args, const char *out_path);
 avant_int avant_job_start_env(const char *path, void *args, void *env, const char *out_path);
 avant_int avant_job_wait(void);
+avant_int avant_job_wait_for(avant_int ms);
+avant_int avant_job_stop(avant_int pid, avant_int sig);
 avant_int avant_job_status(void);
 avant_int avant_job_signal(void);
 

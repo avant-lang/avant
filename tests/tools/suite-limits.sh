@@ -4,6 +4,7 @@
 #   suite-limit-own: a file's own limit in its environment is the pass's;
 #   suite-limit-other-env: it does not raise another environment's pass;
 #   suite-limit-words: an environment of two words matches its `,` form;
+#   suite-limit-shard: a SHARD=I/N word is no part of the environment;
 #   suite-limit-default: SUITE_LIMIT is the default, and an own limit below
 #     it does not lower it;
 #   suite-limit-bad-seconds, suite-limit-not-a-test: a malformed line stops
@@ -37,6 +38,8 @@ say suite-limit-plain "$(lim)" 900
 say suite-limit-own "$(lim AVANT_YOUNG_MB=1)" 1500
 say suite-limit-other-env "$(lim AVANT_GC_VERIFY=1)" 900
 say suite-limit-words "$(lim AVANT_GC_VERIFY=1 AVANT_NURSERY=0)" 1200
+say suite-limit-shard "$(lim AVANT_YOUNG_MB=1 SHARD=2/3)" 1500
+say suite-limit-shard-plain "$(lim SHARD=1/2)" 900
 say suite-limit-default "$(cd "$f" && SUITE_LIMIT=1800 sh tools/suite-limit.sh AVANT_YOUNG_MB=1 < /dev/null)" 1800
 cp "$f/tests/limits.txt" "$w/limits.good"
 echo "tests/cases/test_a.av AVANT_GC_STRESS=1 soon a reason" >> "$f/tests/limits.txt"
