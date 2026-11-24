@@ -49,8 +49,7 @@
 # starts (`OUT version`); a compiler that does not start is linked again
 # with GNU ld, cc's default, which every later step then uses. The first
 # step says which linker. mold reads the 115 MB LLVM object in a fifth of
-# GNU ld's time; lld cannot link the runtime (it puts its thread-local
-# common symbols outside the TLS block). The compilers keep linking user
+# GNU ld's time. The compilers keep linking user
 # programs with cc's default. LETTERS_MOLD_CHECK=fail makes the start
 # check fail (to test the fallback).
 #
@@ -90,6 +89,10 @@ if [ -z "${AVANT_LETTERS_LOCK:-}" ] && command -v flock > /dev/null 2>&1; then
 fi
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
+# The runtime's hot thread-locals' object, which a compiler links last by
+# itself; a seed that predates it does not know it, so every build names
+# it after avant_llvm.o (the compiler that knows it links it once, last).
+TLS_LINK="runtime/build/avant_tls.o"
 
 # The default seed (a release since v0.37.0): bin/v0.50.0, the release
 # archive unpacked (CI pins the same asset). The v0.36.0 release predates the runtime call table: the code it
@@ -179,12 +182,12 @@ build() {
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer, the flag and link_env are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" "$TLS_LINK" < /dev/null || return $?
   if [ -n "$link_env" ] && ! starts "$3"; then
     echo "letters: $3 linked by mold does not start: linked again with GNU ld, which the later steps use"
     link_env=""
     # shellcheck disable=SC2086 # timer and the flag are words or empty
-    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" "$TLS_LINK" < /dev/null || return $?
   fi
   record "$3" "$1"
 }

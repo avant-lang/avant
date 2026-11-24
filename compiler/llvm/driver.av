@@ -156,13 +156,22 @@ pub fn llvm_out_parent(out_path: String): String {
   ""
 }
 
-// cc OBJ <runtime objects> <job objects> <flags> -o OUT.
+// cc OBJ <runtime objects> <job objects> <the runtime's avant_tls.o>
+// <flags> -o OUT: the hot thread-locals' object comes after every other
+// object, so no other object's thread-locals come between them and the
+// thread pointer (runtime/avant_tls.c).
 pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   args: Array(String) = []
   args.push(obj)
-  rt = runtime_objects(avant_root())
+  root = avant_root()
+  rt = runtime_objects(root)
   args.concat(rt)
-  args.concat(job.objects)
+  for o in job.objects {
+    if !is_runtime_tls_object(o) {
+      args.push(o)
+    }
+  }
+  args.push(runtime_tls_object(root))
   extra = job.flags
   line = linker_flags_s(extra)
   words = line.split(" ")

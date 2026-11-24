@@ -130,6 +130,11 @@ build_core() {
   mv "$out/avant_cov.o" "$out/avant_cov.unit.o"
   ld -r -o "$out/avant_cov.o" "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
   rm -f "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
+  # The hot thread-locals generated code reads (avant_tls.c): their own
+  # object, which the compiler links after every other object of a
+  # program, so they end the thread-local block with any linker.
+  # shellcheck disable=SC2086
+  "$cc" -c $cflags -o "$out/avant_tls.o" "$root/avant_tls.c"
 }
 
 build_core "$root/build"

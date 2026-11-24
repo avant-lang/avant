@@ -312,6 +312,21 @@ pub fn runtime_objects(root: String): Array(String) {
   objs
 }
 
+// The runtime's object linked after every other object of a program
+// (runtime/avant_tls.c): the hot thread-locals generated code reads, which
+// then end the thread-local block, next to the thread pointer, with any
+// linker.
+pub fn runtime_tls_object(root: String): String {
+  "${root}/runtime/build/avant_tls.o"
+}
+
+// Whether a link argument names a runtime's avant_tls.o (an older compiler
+// is handed it as an object: tools/letters.sh's B), which the link then
+// places last itself instead of linking it twice.
+pub fn is_runtime_tls_object(path: String): Bool {
+  path == "runtime/build/avant_tls.o" || path.ends_with("/runtime/build/avant_tls.o")
+}
+
 pub fn linker_flags_s(extra: Array(String)): String {
   buf = buf_new()
   buf.push_str("-pthread -lm")
