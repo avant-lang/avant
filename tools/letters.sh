@@ -24,6 +24,14 @@
 #            compiles compiler/main.av into bin/avant-c-release, --release
 #            (built once per release; the letters and the gate stay
 #            --debug)
+#   d-stress D' under the full stress mode: bin/avant-c-llvm compiles
+#            compiler/main.av into bin/avant-d-stress, --debug, with
+#            AVANT_GC_STRESS=1 (a collection at every allocation: the
+#            compiler's whole runtime traffic, the largest program
+#            there is, checked at each allocation) and as long a limit as
+#            it needs (LETTERS_STRESS_TIMEOUT, default 1800 s; 4 to 10
+#            minutes here); tools/d-stress.sh runs it and compares it
+#            with C'
 #
 # Each compiler step also writes OUT.versions.txt beside the compiler it
 # built (record below): what `avant version` prints for it.
@@ -71,7 +79,7 @@
 #                     runtime no longer exports, so B does not link.
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-<step>.txt (b, c-llvm,
-#                     d-llvm, c-release)
+#                     d-llvm, c-release, d-stress)
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, a compiler build
 # 900 s) with stdin from /dev/null. Output goes to stdout and stderr. The
@@ -127,8 +135,8 @@ steps="$*"
 [ -n "$steps" ] || steps="runtime b c-llvm"
 for s in $steps; do
   case "$s" in
-    runtime|b|c-llvm|d-llvm|c-release) ;;
-    *) echo "letters: unknown step $s (runtime, b, c-llvm, d-llvm, c-release)" >&2; exit 2 ;;
+    runtime|b|c-llvm|d-llvm|c-release|d-stress) ;;
+    *) echo "letters: unknown step $s (runtime, b, c-llvm, d-llvm, c-release, d-stress)" >&2; exit 2 ;;
   esac
 done
 
@@ -166,12 +174,18 @@ starts() {
   env -u AVANT_ROOT timeout -k 5 60 "$1" version > /dev/null 2>&1 < /dev/null
 }
 
+# b_env: extra VAR=value words for one build's environment, b_timeout: its
+# limit in seconds (900 when unset); both set by the step that needs them.
+b_env=""
+b_timeout=""
 # build LETTER COMPILER OUT MODE [FLAG]
 # FLAG is --cpu=baseline for every compiler: the
 # avant binary stays on plain x86-64 whatever a program's artifact default
 # is, so it runs wherever a developer works. B too since the v0.41.0 seed
 # (older seeds predated --cpu and built plain x86-64 themselves).
 build() {
+  # The step's own environment and limit apply to this build only.
+  be=$b_env; bt=$b_timeout; b_env=""; b_timeout=""
   need_llvm
   link_setup
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
@@ -179,12 +193,12 @@ build() {
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer, the flag and link_env are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $be $link_env timeout -k 10 "${bt:-900}" $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
   if [ -n "$link_env" ] && ! starts "$3"; then
     echo "letters: $3 linked by mold does not start: linked again with GNU ld, which the later steps use"
     link_env=""
     # shellcheck disable=SC2086 # timer and the flag are words or empty
-    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $be timeout -k 10 "${bt:-900}" $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
   fi
   record "$3" "$1"
 }
@@ -228,6 +242,7 @@ for s in $steps; do
     c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
     d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
     c-release) build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
+    d-stress) b_env="AVANT_GC_STRESS=1"; b_timeout=${LETTERS_STRESS_TIMEOUT:-1800}; build d-stress ./bin/avant-c-llvm bin/avant-d-stress --debug --cpu=baseline ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc
