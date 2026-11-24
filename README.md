@@ -5468,7 +5468,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 
 ## Benchmarks
 
-One server (AMD EPYC 7351P, boost off at 2.4 GHz), Avant 0.51.0 `--release --cpu=v3` on 2026-11-24 (the other languages' LangArena runs 2026-11-14; the collector rows release 0.46.0, 2026-11-17); peak memory is `ru_maxrss`.
+One server (AMD EPYC 7351P, boost off at 2.4 GHz), Avant 0.51.0 `--release --cpu=v3` on 2026-11-24 (the other languages' LangArena runs 2026-11-14); peak memory is `ru_maxrss`.
 
 How each number was taken, the per-task tables, where Avant loses and every note: [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -5508,12 +5508,17 @@ How each number was taken, the per-task tables, where Avant loses and every note
 
 ### Garbage collector
 
-| Program | Avant | Fastest other | Smallest other |
-| --- | ---: | ---: | ---: |
-| `Binarytrees::Obj` with hints | 1.108 s, 67.6 MB | 2.925 s (Crystal) | 66.5 MB (C, Clang) |
-| `Binarytrees::Obj` without hints | 2.882 s, 114.3 MB | 2.925 s (Crystal) | 66.5 MB (C, Clang) |
-| `Calculator::Ast` with hints | 1.185 s, 8.1 MB | 1.333 s (Crystal) | 10.5 MB (C, GCC) |
-| `Calculator::Ast` without hints | 1.541 s, 17.4 MB | 1.333 s (Crystal) | 10.5 MB (C, GCC) |
+Valk's collector suite (`bench/valk-gc/`), as Valk ships it for Valk, Go, D and C#, with Avant (`--release`), Crystal and Java ported: seven scenarios in one process, each scenario's own time, the median of 7 runs, the whole machine, 2026-11-24.
+
+| Language | 1 short-lived (ms) | 2 stable collects (ms) | 3 build chain (ms) | 4 free chain (ms) | 5 mutate links (ms) | 6 churn + live (ms) | 7 tree churn (ms) | whole process (s) | peak memory (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Avant | **38.5** | 5.11 | 202 | **0.306** | 17.0 | 32.0 | 156 | **0.536** | 89.9 |
+| Valk | 40.9 | **0.855** | **173** | 85.4 | 21.1 | **20.7** | **109** | 0.541 | 81.1 |
+| Go | 370 | 16858 | 284 | 19.0 | **16.9** | 324 | 776 | 19.083 | **44.2** |
+| D | 452 | 5143 | 465 | 28.6 | 23.9 | 303 | 794 | 7.406 | 160.9 |
+| C# | 224 | 9375 | 592 | 74.4 | 32.7 | 125 | 409 | 11.097 | 156.4 |
+| Crystal | 338 | 3755 | 331 | 6.69 | 26.1 | 107 | 283 | 5.018 | 185.6 |
+| Java | 150 | 15971 | 434 | 20.3 | 25.5 | 123 | 225 | 17.268 | 254.7 |
 
 ## Goals
 

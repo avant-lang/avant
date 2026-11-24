@@ -11,7 +11,7 @@
 * A compiler built by `tools/letters.sh` names its runtime in its build record and links that runtime wherever it is copied, or says it is gone.
 * `avant test --file-limit SECONDS` (`AVANT_TEST_FILE_LIMIT`, default 900) stops a test process that runs too long and fails its file by name; the runner names what still runs once a minute; `avant test --only-exclusive` runs just the `[test] exclusive` files.
 * Developer tools: `tools/la-count.sh` reads peak memory exactly (`tools/la-run.c`); `tools/la-modes.sh`, `tools/suite-modes.sh` and `tools/d-stress.sh` run the collector modes over LangArena, the test suite and the compiler's own build.
-* The README's Benchmarks section is now four summary tables (LangArena, the HTTP servers, the WebSocket servers, the collector), all this release's measurements but the collector's; the details, the per-task tables and the exact peak memory beside `ru_maxrss` are in `BENCHMARKS.md`.
+* The README's Benchmarks section is now four summary tables of this release's measurements: LangArena, the HTTP servers, the WebSocket servers, and Valk's garbage-collector suite (Avant, Valk, Go, D, C#, Crystal, Java); the details, the per-task and per-scenario tables and the exact peak memory beside `ru_maxrss` are in `BENCHMARKS.md`.
 * The compiler is built from v0.50.0.
 
 ### Fixed
