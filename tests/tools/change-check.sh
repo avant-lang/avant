@@ -89,7 +89,11 @@
 #     seeds (the stub programs' work depends on the seed), its count the
 #     mean, OUT.seeds.tsv the counts with their mean, min and max; 13 seeds
 #     are refused;
-#   check-hash-seeds: a range that changes runtime/avant_hash.c counts both
+#   la-count-fixed-path: a program starts through a link in a directory
+#     (LA_RUN_DIR, default /tmp) whose path has one length whatever OUT's
+#     length is, so two OUT paths of different lengths give one count and
+#     the directory is left empty;
+#   check-hash-seeds: a commit that changes runtime/avant_hash.c counts both
 #     sides under the 12 seeds and the cell reads `RATIO (12 seeds: LO-HI)`;
 #     another runtime change keeps seed 0;
 #   check-base-harness: a base that refuses the caller's tasks, with
@@ -154,7 +158,7 @@ compile)
   if grep -q NEWSPELL "$1" && [ ! -f "$me/lib/spell" ]; then echo "error: unknown spelling NEWSPELL in $(pwd -P)/$1"; exit 1; fi
   # the program's work depends on the hash seed (a loop of seed % 7 steps),
   # its output does not
-  printf '#!/bin/sh\nk=$(( ${AVANT_HASH_SEED:-0} %% 7 * 200 )); while [ $k -gt 0 ]; do k=$((k - 1)); done\necho checksum-%s\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
+  printf '#!/bin/sh\nk=$(( ${AVANT_HASH_SEED:-0} %% 7 * 200 )); while [ $k -gt 0 ]; do k=$((k - 1)); done\necho checksum-%s\necho "argv0len=${#0}"\necho "avant gc: runtime=%s peak_heap=10 pause_young_ns=$$" >&2\n' "$(grep -v 'NEWSPELL\|^// file: ' "$1" | cksum | cut -d' ' -f1)" "$R" > "$2"
   chmod +x "$2" ;;
 test)
   f=0 p=0
@@ -527,6 +531,18 @@ echo 'hash v2' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash
 (cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18" < /dev/null > "$w/cc18.log" 2>&1)
 echo 'r3' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'another runtime file'
 (cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18b" < /dev/null > "$w/cc18b.log" 2>&1)
+# 17b. A program starts through a link whose path has one length whatever
+# OUT is (its argv[0] is copied to the heap, and a path of another length
+# moved a collection): the stub programs print the length of their $0, so
+# two runs from OUT directories of different lengths agree in every
+# program's output only when the lengths were equal.
+mkdir -p "$w/lc-short" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper" "$w/lc-run"
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-short/a.tsv" < /dev/null > /dev/null 2>&1); rc1=$?
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" < /dev/null > /dev/null 2>&1); rc2=$?
+[ $rc1 = 0 ] && [ $rc2 = 0 ] && [ -s "$w/lc-short/a.tsv" ] && [ "$(cut -f1,3 "$w/lc-short/a.tsv")" = "$(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv")" ] \
+  && [ -z "$(ls -A "$w/lc-run")" ]
+say la-count-fixed-path $? "rc=$rc1,$rc2; $(cut -f1,3 "$w/lc-short/a.tsv" 2>/dev/null | tr '\n' ';'); $(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" 2>/dev/null | tr '\n' ';'); left: $(ls -A "$w/lc-run" | tr '\n' ' ')"
+
 grep -q '^hash seeds: the counts under 12 seeds of tools/la-count.sh, both sides (the range changes runtime/avant_hash.c' "$w/cc18/cache.txt" \
   && grep 'the hash probing' "$w/cc18/table.md" | grep -q ' [0-9][.][0-9]* (12 seeds: [0-9.]*-[0-9.]*)' \
   && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc18/01-"*/ins.seeds.tsv | sort -u)" = 12 ] \
