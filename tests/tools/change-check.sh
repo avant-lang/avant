@@ -79,7 +79,8 @@
 #   check-stem-prefix: a compiler pass named for what it handles
 #     (compiler/mir/lower_ffi.av) selects the test files named for that
 #     (test_ffi, test_ffi_llvm), a library file of the same name none;
-#   la-count-groups: tools/la-count.sh with LA_RUNNER and LA_GROUP=1 runs
+#   la-count-groups: tools/la-count.sh with LA_RUNNER and LA_GROUP=1 builds
+#     tools/la-run.c in one runner call (`STEP la-run`) and runs
 #     the two programs as two runner calls (`STEP group 1/2`, `2/2`) and
 #     writes the table a plain run writes (the instruction counts of a
 #     run apart: the stub programs' counts differ a little from run to run);
@@ -117,7 +118,7 @@ say() { if [ "$2" = 0 ]; then echo "ok: $1"; else echo "FAIL: $1: $3"; fi; }
 r=$w/repo/avant
 mkdir -p "$r/tools" "$r/compiler" "$r/lib/std" "$r/runtime" "$r/examples" "$r/tests/cases" \
   "$r/bin/seed" "$r/langarena/harness" "$r/langarena/tasks" "$w/repo/LangArena"
-for t in base-cache.sh ll-digests.sh gcstats.sh la-count.sh neutral.sh change-check.sh test-map.sh; do cp "$root/tools/$t" "$r/tools/$t"; done
+for t in base-cache.sh ll-digests.sh gcstats.sh la-count.sh la-run.c neutral.sh change-check.sh test-map.sh; do cp "$root/tools/$t" "$r/tools/$t"; done
 cp "$root/tools/test-map.sh" "$r/tools/test-map-real.sh"
 for f in heap closures objects; do mkdir -p "$r/tests/fixtures/$f"; echo "churn $f" > "$r/tests/fixtures/$f/churn.av"; done
 echo 'v1' > "$r/compiler/main.av"
@@ -500,7 +501,7 @@ chmod +x "$w/lrunner"
 lap=$(cd "$r" && sh tools/base-cache.sh --la HEAD 2> "$w/la16.err" < /dev/null)
 (cd "$r" && sh tools/la-count.sh . "$lap" "$w/lc-plain.tsv" < /dev/null > /dev/null 2>&1)
 (cd "$r" && RUNNER_LOG="$w/lrunner.log" LA_RUNNER="$w/lrunner" LA_STEP="count" LA_GROUP=1 sh tools/la-count.sh . "$lap" "$w/lc-grouped.tsv" < /dev/null > /dev/null 2>&1)
-[ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
+[ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count la-run;shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
 say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w/lc-grouped.tsv" 2>/dev/null | tr '\n' ';')"
 (cd "$r" && LA_MEM_RUNS=3 sh tools/la-count.sh . "$lap" "$w/lc-mem.tsv" < /dev/null > /dev/null 2>&1)
 (cd "$r" && LA_MEM_RUNS=3 LA_MEM_PARALLEL=0 LA_MEM_METHOD=maxrss sh tools/la-count.sh . "$lap" "$w/lc-mem0.tsv" < /dev/null > /dev/null 2>&1)

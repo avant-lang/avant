@@ -3,6 +3,7 @@
 # harness stitches them, for one compiler.
 #
 #   sh tools/la-count.sh ROOT LADIR OUT.tsv [SLUG...]
+#   sh tools/la-count.sh --method     the counting method's name (below)
 #
 # ROOT is a checkout with its C' built (bin/avant-c-llvm). LADIR is a base
 # cache's LangArena part (tools/base-cache.sh --la): its stitched programs
@@ -12,7 +13,23 @@
 # then run once from it under `perf stat -x, -e instructions:u` with an
 # empty environment but PATH, HOME and AVANT_HASH_SEED=0 (another AVANT_*
 # variable would change the collector's work; the fixed hash seed makes
-# every run probe its hashes alike, so the count repeats). OUT.tsv gets one line per program, sorted:
+# every run probe its hashes alike, so the count repeats). Every run starts
+# the program through tools/la-run.c (built here with cc), which gives it
+# the same argv[0] (its slug) and the same executable name in the
+# auxiliary vector wherever OUT and its work directory lie: started from its own path, a program's stack and its argv
+# copy in the heap moved with that path's length, and a count could move by
+# a whole collector pass from one directory to another (a collector
+# benchmark's scenario read 138.1 M or 145.6 M instructions by the length
+# of its directory's name; through la-run 138.18 M from every length,
+# within 330 instructions), with address randomization off, and ends it
+# after 900 seconds itself: with randomization on, and timeout(1) in the
+# counted command (about two million instructions of its own), a count
+# moved by about two thousand instructions from run to run; this way by
+# tens (la-run's own start adds about 126,000 that repeat to a few). The
+# counting method's name, printed by --method, changes whenever the way a
+# count is taken does, so a cache of counts (tools/base-cache.sh) can tell
+# counts taken another way.
+# OUT.tsv gets one line per program, sorted:
 #
 #   SLUG <TAB> INSTRUCTIONS <TAB> MD5 <TAB> STATUS <TAB> FIRST LINE
 #
@@ -21,7 +38,7 @@
 # not compile reads `compile-failed` for its count. An instruction count is
 # not a time: the machine's load does not change it, so it runs under the
 # shared lock. LA_JOBS programs at once (default 8); compile under
-# `timeout -k 10 300`, run under `timeout -k 10 900`, stdin from /dev/null.
+# `timeout -k 10 300`, run for at most 900 seconds, stdin from /dev/null.
 #
 # Instruction counts of threaded programs (the Matmul tasks' workers)
 # cover every thread; they repeat as closely as the single-threaded ones
@@ -44,7 +61,7 @@
 # the low 32 bits of splitmix64 at 1 to 11.
 #
 # Peak memory, with LA_MEM_RUNS=N (default 0: none): each program is then
-# also run N times, its peak read exactly by tools/la-peak.c (built here
+# also run N times, its peak read exactly by tools/la-run.c's -p (built here
 # with cc): the resident size read before every system call that can lower
 # it and at exit, in the same environment. LA_MEM_METHOD=maxrss reads it as
 # the harness does instead (GNU time's %M of the task's own process, the
@@ -77,6 +94,7 @@
 # (below, where it is read). Status 0, 1 when a program did not compile or
 # failed, 2 on usage.
 set -u
+[ "${1:-}" = --method ] && { echo "la-run argv0=slug execfn=/dev/fd alarm aslr-off"; exit 0; }
 LA_SEED_LIST="0 2298633409 479680206 3674312685 3795028682 2743714650 2918178816 1496452567 4019533366 3195035748 2321035210 595603613"
 
 if [ "${1:-}" = --one ]; then
@@ -94,7 +112,7 @@ if [ "${1:-}" = --one ]; then
     for sd in $LA_SEED_LIST; do
       [ "$k" -lt "$LA_SEEDS" ] || break
       k=$((k + 1))
-      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED="$sd" perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out.$k" 2> "$t.err")
+      (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED="$sd" perf stat -x, -e instructions:u -o "$t.perf" "$LAC_TMP/la-run" -R -t 900 "$t" < /dev/null > "$t.out.$k" 2> "$t.err")
       r=$?; [ $r -ne 0 ] && rc=$r
       counts="$counts${counts:+,}$(grep 'instructions' "$t.perf" | cut -d, -f1)"
       m=$(md5sum < "$t.out.$k" | cut -c1-12)
@@ -104,7 +122,7 @@ if [ "${1:-}" = --one ]; then
     n=$(echo "$counts" | awk -F, '{ for (i = 1; i <= NF; i++) if ($i !~ /^[0-9]+$/) { print "-"; exit } ; s = 0; for (i = 1; i <= NF; i++) s += $i; printf "%.0f\n", s / NF }')
     echo "$counts" > "$LAC_TMP/$s.seeds"
   else
-    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" timeout -k 10 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
+    (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 perf stat -x, -e instructions:u -o "$t.perf" "$LAC_TMP/la-run" -R -t 900 "$t" < /dev/null > "$t.out" 2> "$t.err")
     rc=$?
     n=$(grep 'instructions' "$t.perf" | cut -d, -f1)
   fi
@@ -119,10 +137,10 @@ if [ "${1:-}" = --one ]; then
     # Runs past the first N keep address randomization on.
     if [ "$LA_MEM_METHOD" = exact ]; then
       if [ "$i" -le "$nm" ]; then nr=-R; else nr=; fi
-      set -- "$LAC_TMP/la-peak" $nr -o "$t.rss.$i" "$t"
+      set -- "$LAC_TMP/la-run" $nr -p "$t.rss.$i" "$t"
     else
       if [ "$i" -le "$nm" ]; then nr="setarch -R"; else nr=; fi
-      set -- $nr /usr/bin/time -f %M -o "$t.rss.$i" "$t"
+      set -- $nr /usr/bin/time -f %M -o "$t.rss.$i" "$LAC_TMP/la-run" "$t"
     fi
     if [ "${LA_MEM_PARALLEL:-1}" = 0 ]; then
       (cd "$LAC_SRC" && env -i PATH="$PATH" HOME="${HOME:-/}" AVANT_HASH_SEED=0 timeout -k 10 900 "$@" < /dev/null > /dev/null 2>&1)
@@ -171,13 +189,11 @@ export LAC_ROOT LAC_DIR LAC_SRC LAC_TMP
 self=$(realpath "$0")
 if [ $# -gt 0 ]; then printf '%s\n' "$@"; else ls "$LAC_DIR/args"; fi | LC_ALL=C sort -u > "$LAC_TMP/slugs.txt"
 runner=${LA_RUNNER:-}
-if [ "${LA_MEM_RUNS:-0}" -gt 0 ] && [ "$LA_MEM_METHOD" = exact ]; then
-  set -- cc -O2 -o "$LAC_TMP/la-peak" "$(dirname "$self")/la-peak.c"
-  # shellcheck disable=SC2086
-  [ -n "$runner" ] && set -- $runner --step "${LA_STEP:-la-count} la-peak" --kind "${LA_KIND:-new}" -- "$@"
-  if ! "$@" < /dev/null; then
-    echo "la-count.sh: tools/la-peak.c did not build (LA_MEM_METHOD=maxrss reads GNU time's %M instead)" >&2; rm -rf "$LAC_TMP"; exit 2
-  fi
+set -- cc -O2 -o "$LAC_TMP/la-run" "$(dirname "$self")/la-run.c"
+# shellcheck disable=SC2086
+[ -n "$runner" ] && set -- $runner --step "${LA_STEP:-la-count} la-run" --kind "${LA_KIND:-new}" -- "$@"
+if ! "$@" < /dev/null; then
+  echo "la-count.sh: tools/la-run.c did not build" >&2; rm -rf "$LAC_TMP"; exit 2
 fi
 # With LA_RUNNER (the runner's command words, such as `python3 -I PATH/ledger
 # run --shared --wave W`) the script is started outside the lock and each group

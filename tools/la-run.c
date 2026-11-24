@@ -1,8 +1,21 @@
-/* la-peak.c — a program's exact peak resident memory.
+/* la-run.c — a program run as tools/la-count.sh measures it: from a path
+ * that does not depend on where the program lies, and with its exact peak
+ * resident memory.
  *
- *   la-peak [-R] -o OUT PROGRAM [ARG...]
+ *   la-run [-R] [-t SECONDS] [-n NAME] [-p OUT] PROGRAM [ARG...]
  *
- * Runs PROGRAM as its child and writes to OUT one line:
+ * PROGRAM is started through a file descriptor (execveat of an O_PATH
+ * descriptor numbered RUN_FD, so the kernel names it /dev/fd/RUN_FD in the
+ * auxiliary vector) with NAME as its argv[0] (default PROGRAM's last path
+ * component): the strings the kernel copies to the top of the new stack, and
+ * whatever the program copies from them (argv() copies argv into the heap),
+ * are then the same wherever PROGRAM lies. From two paths of different
+ * lengths a program's stack starts at different offsets and its argv copy
+ * has another size, so its instruction count could move by a whole
+ * collector pass with the path (a collector benchmark read 142.8 M and
+ * 126.5 M instructions from two directories one byte apart).
+ *
+ * With -p OUT, PROGRAM runs as a child and OUT gets one line:
  *
  *   EXACT_KB <SP> MAXRSS_KB <SP> READS
  *
@@ -11,25 +24,33 @@
  * into the total only once it reaches a batch (64 pages, 256 KB, on a machine
  * of 32 CPUs or more), and the high-water mark behind ru_maxrss is taken from
  * the folded total: a peak read that way moves in steps of about 256 KB with
- * the phase of the batches, at equal work. EXACT_KB is the peak read exactly:
- * the resident size of a process only falls in a system call that unmaps or
- * discards memory (munmap, madvise, brk, mremap, shmdt, mmap over an existing
- * mapping) or at its exit, and between such calls it can only grow, so its
- * largest value is its value just before one of them or at exit_group. A
- * seccomp filter installed before PROGRAM starts stops each of those calls
- * (every thread's) until this program has read /proc/TID/statm, whose resident
- * field this kernel sums exactly over the CPUs, and lets the call go on. READS
- * is the number of such readings. A process killed by a signal has no final
- * reading: its EXACT_KB is the largest before its last such call.
+ * the phase of the batches, at equal work, and reads up to a batch per CPU
+ * the process ran on below (or, after frees, above) the true peak. EXACT_KB
+ * is the peak read exactly: the resident size of a process only falls in a
+ * system call that unmaps or discards memory (munmap, madvise, brk, mremap,
+ * shmdt, mmap over an existing mapping) or at its exit, and between such
+ * calls it can only grow, so its largest value is its value just before one
+ * of them or at exit_group. A seccomp filter installed before PROGRAM starts
+ * stops each of those calls (every thread's) until this program has read
+ * /proc/TID/statm, whose resident field the kernel sums exactly over the
+ * CPUs, and lets the call go on. READS is the number of such readings. A
+ * process killed by a signal has no final reading: its EXACT_KB is the
+ * largest before its last such call. In a threaded program another thread
+ * may fault pages in between a reading and the call that stopped for it;
+ * those pages are counted at the next reading unless that call itself
+ * unmaps them first, a window of one system call (no single-threaded
+ * program has it).
  *
- * In a threaded program another thread may fault pages in between a reading
- * and the call that stopped for it; those pages are counted at the next
- * reading unless that call itself unmaps them first, a window of one system
- * call (no single-threaded program has it).
- *
- * -R starts PROGRAM with address randomization off, as `setarch -R`. The exit
- * status is PROGRAM's (128 + n for a signal's death); 125 when this program
- * fails. Linux on x86-64 only (the seccomp user notification, 5.5 or later).
+ * -t SECONDS ends PROGRAM by SIGALRM after that many seconds (an alarm set
+ * before it starts, which an exec keeps), in place of timeout(1): under
+ * `perf stat`, which counts every process of the command, timeout's own
+ * two million instructions moved by about two thousand from run to run,
+ * where this program's own start before the exec repeats to a few.
+ * -R starts PROGRAM with address randomization off, as `setarch -R`.
+ * Without -p this program becomes PROGRAM (no child). The exit status is
+ * PROGRAM's (128 + n for a signal's death, with -p); 125 when this program
+ * fails, 127 when PROGRAM cannot be started. Linux on x86-64 only (execveat,
+ * the seccomp user notification: 5.5 or later).
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -50,12 +71,38 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* The descriptor PROGRAM is started through: one number on every run, so
+ * the name the kernel gives it is always the same string. */
+#define RUN_FD 200
+
 static void die(const char *what) {
-  fprintf(stderr, "la-peak: %s: %s\n", what, strerror(errno));
+  fprintf(stderr, "la-run: %s: %s\n", what, strerror(errno));
   exit(125);
+}
+
+static unsigned alarm_secs;
+
+/* Become PROGRAM (FD, opened as RUN_FD; PATH its path) with ARGV, its alarm
+ * set (SIGALRM at its default action, unblocked); returns only on failure.
+ * A script cannot start through a close-on-exec descriptor (its interpreter
+ * would open /dev/fd/RUN_FD after the exec closed it): it starts from its
+ * path, which its count then depends on, as before. */
+static void run(int fd, const char *path, char **argv) {
+  extern char **environ;
+  if (alarm_secs) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+    sigprocmask(SIG_UNBLOCK, &set, NULL);
+    signal(SIGALRM, SIG_DFL);
+    alarm(alarm_secs);
+  }
+  syscall(SYS_execveat, fd, "", argv, environ, AT_EMPTY_PATH);
+  if (errno == ENOENT) execve(path, argv, environ);
 }
 
 /* Stop every call that can lower the resident size; let the rest go. */
@@ -129,17 +176,53 @@ static long resident_kb(pid_t tid, long page_kb) {
 
 int main(int argc, char **argv) {
   int norand = 0;
-  const char *out = NULL;
+  const char *out = NULL, *name = NULL;
   int i = 1;
   for (; i < argc; i++) {
     if (strcmp(argv[i], "-R") == 0) norand = 1;
-    else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) out = argv[++i];
+    else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) out = argv[++i];
+    else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) name = argv[++i];
+    else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) alarm_secs = (unsigned)strtoul(argv[++i], NULL, 10);
     else if (strcmp(argv[i], "--") == 0) { i++; break; }
     else break;
   }
-  if (!out || i >= argc) {
-    fprintf(stderr, "usage: la-peak [-R] -o OUT PROGRAM [ARG...]\n");
+  if (i >= argc || argv[i][0] == '-') {
+    fprintf(stderr, "usage: la-run [-R] [-t SECONDS] [-n NAME] [-p OUT] PROGRAM [ARG...]\n");
     return 125;
+  }
+  const char *prog = argv[i];
+  static char path_buf[4096];
+  int pfd = -1;
+  if (strchr(prog, '/')) {
+    snprintf(path_buf, sizeof path_buf, "%s", prog);
+    pfd = open(prog, O_PATH | O_CLOEXEC);
+  } else {
+    /* A bare name is looked up on PATH, as execvp does. */
+    const char *path = getenv("PATH");
+    for (const char *d = path ? path : "/usr/bin:/bin"; pfd < 0 && *d;) {
+      size_t n = strcspn(d, ":");
+      if (snprintf(path_buf, sizeof path_buf, "%.*s/%s", (int)n, n ? d : ".", prog) < (int)sizeof path_buf && access(path_buf, X_OK) == 0)
+        pfd = open(path_buf, O_PATH | O_CLOEXEC);
+      d += n;
+      if (*d == ':') d++;
+    }
+    if (pfd < 0) errno = ENOENT;
+  }
+  if (pfd < 0) { fprintf(stderr, "la-run: %s: %s\n", prog, strerror(errno)); return 127; }
+  if (pfd != RUN_FD) {
+    if (dup3(pfd, RUN_FD, O_CLOEXEC) != RUN_FD) die("dup3");
+    close(pfd);
+  }
+  if (!name) {
+    const char *slash = strrchr(prog, '/');
+    name = slash ? slash + 1 : prog;
+  }
+  argv[i] = (char *)name;
+  if (!out) {
+    if (norand && personality(ADDR_NO_RANDOMIZE) == -1) die("personality");
+    run(RUN_FD, path_buf, argv + i);
+    fprintf(stderr, "la-run: %s: %s\n", prog, strerror(errno));
+    return 127;
   }
   int sv[2];
   if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0) die("socketpair");
@@ -153,21 +236,22 @@ int main(int argc, char **argv) {
     if (norand && personality(ADDR_NO_RANDOMIZE) == -1) _exit(125);
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) _exit(125);
     int lfd = install_filter();
-    if (lfd < 0) { fprintf(stderr, "la-peak: seccomp: %s\n", strerror(errno)); _exit(125); }
+    if (lfd < 0) { fprintf(stderr, "la-run: seccomp: %s\n", strerror(errno)); _exit(125); }
     send_fd(sv[1], lfd);
     close(lfd);
     close(sv[1]);
-    execvp(argv[i], argv + i);
-    fprintf(stderr, "la-peak: %s: %s\n", argv[i], strerror(errno));
+    run(RUN_FD, path_buf, argv + i);
+    fprintf(stderr, "la-run: %s: %s\n", prog, strerror(errno));
     _exit(127);
   }
+  close(RUN_FD);
   close(sv[1]);
   int lfd = recv_fd(sv[0]);
   close(sv[0]);
   if (lfd < 0) {
     int st;
     waitpid(child, &st, 0);
-    fprintf(stderr, "la-peak: no seccomp listener from the child\n");
+    fprintf(stderr, "la-run: no seccomp listener from the child\n");
     return 125;
   }
   long page_kb = sysconf(_SC_PAGESIZE) / 1024;

@@ -77,9 +77,12 @@
 #   mem-method: tools/la-mem.py refuses two files whose peaks were read
 #     by different methods (their first line; none is maxrss) unless
 #     --mixed, and names the method;
-#   peak-exact: tools/la-peak.c reads a program that touches 16 more pages
+#   peak-exact: tools/la-run.c's -p reads a program that touches 16 more pages
 #     64 KB higher, run after run (ru_maxrss moves by 0 or 256 KB there),
-#     with its exit status and at least one reading.
+#     with its exit status and at least one reading;
+#   run-path: tools/la-run.c starts a program from two directories of
+#     different lengths with the same argv[0] and auxiliary-vector name
+#     (/dev/fd/200), and as one more argv[0] with -n.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/layout.sh WORK" >&2; exit 2; }
@@ -425,7 +428,7 @@ o3=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-exact.tsv" "$lmm/head-exact.t
   && [ $rc3 -eq 0 ] && echo "$o3" | grep -q '^peaks read: exact$' && echo "$o3" | grep -q '^average peak over 3 tasks: .*: lower$'
 say mem-method $? "rc=$rc1/$rc2/$rc3 $(tr '\n' ';' < "$lmm/mixed.out")"
 
-# 11. tools/la-peak.c: an exact peak, 4 KB per page touched.
+# 11. tools/la-run.c -p: an exact peak, 4 KB per page touched.
 lp=$w/lp; mkdir -p "$lp"
 cat > "$lp/touch.c" <<'TOUCH'
 #include <stdlib.h>
@@ -437,15 +440,26 @@ int main(int argc, char **argv) {
   return 3;
 }
 TOUCH
-cc -O2 -o "$lp/la-peak" "$root/tools/la-peak.c" && cc -O2 -o "$lp/touch" "$lp/touch.c"; rc=$?
+cc -O2 -o "$lp/la-run" "$root/tools/la-run.c" && cc -O2 -o "$lp/touch" "$lp/touch.c"; rc=$?
 ok=$rc; d=""
 for k in 1 2 3; do
-  "$lp/la-peak" -R -o "$lp/a.$k" "$lp/touch" 1000 < /dev/null; ra=$?
-  "$lp/la-peak" -R -o "$lp/b.$k" "$lp/touch" 1016 < /dev/null; rb=$?
+  "$lp/la-run" -R -p "$lp/a.$k" "$lp/touch" 1000 < /dev/null; ra=$?
+  "$lp/la-run" -R -p "$lp/b.$k" "$lp/touch" 1016 < /dev/null; rb=$?
   a=$(cut -d' ' -f1 "$lp/a.$k" 2>/dev/null); b=$(cut -d' ' -f1 "$lp/b.$k" 2>/dev/null); n=$(cut -d' ' -f3 "$lp/a.$k" 2>/dev/null)
   d="$d $a/$b/$n"
   { [ $ra -eq 3 ] && [ $rb -eq 3 ] && [ "${n:-0}" -ge 1 ] && [ $((b - a)) -eq 64 ]; } || ok=1
 done
 [ $ok -eq 0 ]
 say peak-exact $? "rc=$rc exact/exact+16/readings:$d"
+cat > "$lp/names.c" <<'NAMES'
+#include <stdio.h>
+#include <sys/auxv.h>
+int main(int argc, char **argv) { printf("%s %s %d\n", argv[0], (const char *)getauxval(AT_EXECFN), argc); return 0; }
+NAMES
+mkdir -p "$lp/a" "$lp/a-much-longer-directory"
+cc -O2 -o "$lp/a/names" "$lp/names.c" && cp "$lp/a/names" "$lp/a-much-longer-directory/names"; rc=$?
+o1=$("$lp/la-run" "$lp/a/names" x < /dev/null); o2=$("$lp/la-run" -R "$lp/a-much-longer-directory/names" x < /dev/null)
+o3=$("$lp/la-run" -n other -p "$lp/n.out" "$lp/a/names" x < /dev/null)
+[ $rc -eq 0 ] && [ "$o1" = "names /dev/fd/200 2" ] && [ "$o2" = "$o1" ] && [ "$o3" = "other /dev/fd/200 2" ]
+say run-path $? "rc=$rc '$o1' '$o2' '$o3'"
 echo done
