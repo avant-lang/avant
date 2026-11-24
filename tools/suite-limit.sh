@@ -7,8 +7,8 @@
 # the plain pass). A pass's limit is SUITE_LIMIT (default 900), or the
 # larger own limit of a test file in that pass's environment:
 # tests/limits.txt holds one line per such file, `PATH ENV SECONDS REASON`,
-# ENV the environment's words joined by `,` (`plain` for none), and `#`
-# starts a comment. The suite runs its files side by side, longest first,
+# ENV the environment's words joined by `,` (`plain` for none; a SHARD=I/N word
+# is left out), and `#` starts a comment. The suite runs its files side by side, longest first,
 # so a pass lasts about as long as its longest file: a file that needs
 # more time than the pass gives it in one environment (the compiler's own
 # dump under the verifier with a 1 MiB young generation) is given its
@@ -19,7 +19,9 @@
 set -u
 limit=${SUITE_LIMIT:-900}
 case "$limit" in ''|*[!0-9]*) echo "suite-limit.sh: SUITE_LIMIT must be a number" >&2; exit 2 ;; esac
-env=$(printf '%s' "$*" | tr -s ' ' ',')
+# A SHARD=... word (tools/gate.sh: the slice of the suite a pass runs) is no
+# part of the environment: the limits of a mode hold for each of its slices.
+env=$(printf '%s' "$*" | tr -s ' ' '\n' | grep -v '^SHARDS\{0,1\}=' | paste -s -d, -)
 [ -n "$env" ] || env=plain
 f=tests/limits.txt
 [ -f "$f" ] || { echo "$limit"; exit 0; }
