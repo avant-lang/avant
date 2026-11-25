@@ -12,7 +12,6 @@
 // Every entry returns "" on success or the message for diag_puts; the
 // caller exits 1 on a message.
 
-import std.gc
 import source
 import pipeline
 import mir.ir
@@ -120,15 +119,25 @@ fn box_name(box: IrBox): String {
   ""
 }
 
+// The runtime's full collection that also returns every free resident
+// byte to the system (gc.collect() keeps what it frees for the next
+// cycle). The compiler calls it at its two phase boundaries, where what
+// it frees is not needed again: the text's building needs less than the
+// front end did, and LLVM allocates outside the heap.
+lib gc_release {
+  fun avant_gc_release
+}
+
 // Verify (in the verify mode), emit, and compile to obj_path. With job.keep_ll set, the
 // pre-optimization .ll is also written there (for the goldens and the
 // self-hosting fixed point). An LLVM failure after the verifier passed
 // is an emitter bug, reported as an internal error. The box's module is
 // dropped once its text is made; what the program's compile left dead
 // (the syntax tree, the checker's tables) is collected first, and the
-// module before LLVM starts, so the compiler's own heap is the text.
+// module before LLVM starts, so the compiler's own heap is the text;
+// each collection gives what it freed back to the system.
 pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
-  gc.collect()
+  gc_release.avant_gc_release()
   r = llvm_text(box, job.inline_fast, job.codegen == "release", llvm_verify_mode())
   if r.err.size > 0 {
     return r.err
@@ -147,7 +156,7 @@ pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
     cpu = llvm_cpu_default()
   }
   llvm_set_cpu(cpu)
-  gc.collect()
+  gc_release.avant_gc_release()
   t1 = now_us()
   err = llvm_compile_text(text, "${name}.ll", job.codegen, obj_path)
   job.compile_us = now_us() - t1
@@ -161,7 +170,7 @@ pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
 // (`avant __emit-ll`, the self-hosting fixed point), after the stage
 // final verifier.
 pub fn llvm_emit_ll(box: IrBox, inline_fast: Bool, ll_path: String): String {
-  gc.collect()
+  gc_release.avant_gc_release()
   r = llvm_text(box, inline_fast, true, true)
   if r.err.size > 0 {
     return r.err

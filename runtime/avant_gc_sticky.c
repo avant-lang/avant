@@ -60,7 +60,7 @@ static inline uint32_t note_marked(void *payload, uintptr_t tag) {
   return gc_heap.noted_n++;
 }
 
-/* A large pointer buffer the trace marked (young or not) is also on the
+/* A carded buffer the trace marked (young or not) is also on the
  * carded list, in the order it was marked: gc_cards_settle makes the
  * cards of each exact after the collection, and reads this list instead
  * of every noted entry. */
@@ -1005,6 +1005,19 @@ static inline __attribute__((always_inline)) void fix_field(const FixCtx *c, voi
   }
 }
 
+/* A carded object the trace scanned by its marked cards only: by the
+ * card invariant no other slot names a young (movable) object. A
+ * function of its own: the card walk in line in fix_holder gave every
+ * holder's fix-up the walk's registers to save (LangArena's
+ * compress_lzwdecode-pure, which has no carded buffer, counted 7 M more
+ * instructions there). */
+static __attribute__((noinline)) void fix_holder_cards(void *p) {
+  int aged = 0;
+  FixCtx c;
+  fix_open(&c);
+  EACH_CARD_SLOT(p, slot, { fix_field(&c, slot, &aged); });
+}
+
 /* The fix-up of one holder P (its copy, when it moved): the slots of its
  * marked cards when the trace scanned it by them, else every field. One
  * that is not young and now names an aged copy (YOUNG_AGE 2) joins the
@@ -1018,13 +1031,11 @@ static void fix_holder(void *p) {
   if (h->type_id == AVANT_TYPE_BYTES) {
     return;
   }
-  fix_open(&c);
-  /* A carded object the trace scanned by its marked cards only: by the
-   * card invariant no other slot names a young (movable) object. */
   if (h->flags & AVANT_FLAG_CARD_SCAN) {
-    EACH_CARD_SLOT(p, slot, { fix_field(&c, slot, &aged); });
+    fix_holder_cards(p);
     return;
   }
+  fix_open(&c);
   EACH_REF_SLOT(p, slot, { fix_field(&c, slot, &aged); });
   if (aged && !(h->flags & AVANT_FLAG_YOUNG)) {
     gc_keep_add(p);
@@ -1082,7 +1093,7 @@ static void splus_fix(void) {
       }
     }
     /* A small record's fields here, by its type's list (a carded object
-     * is a pointer buffer, never one); any other holder in fix_holder. */
+     * is a buffer, never one); any other holder in fix_holder. */
     ph = avant_header(p);
     d = gc_heap.refs[ph->type_id];
     k = (unsigned)(d & 0xffu);

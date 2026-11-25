@@ -382,7 +382,7 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
  * collects; the growth path keeps the array (and push_ptr's element) in
  * handles across array_grow and forms the slot after it (RC2). */
 /* An element store barriers the buffer with its slot (avant_barrier_slot:
- * a large pointer buffer marks the slot's card) and not the array object,
+ * a carded buffer marks the cards of the element at the slot) and not the array object,
  * whose size and capacity are not references (remembering
  * the array object at every push made the young collection scan the
  * buffer it names whole, and defeated the cards); array_grow
@@ -1080,8 +1080,10 @@ void avant_array_sort_str(void *arr) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
   }
   if (a && a->buf && a->size > 1) {
-    /* The strings change places in their buffer (RC5). */
+    /* The strings change places in their buffer (RC5), and may leave
+     * the cards that a large one's young strings marked. */
     avant_gc_overwrite(a->buf);
+    avant_gc_moved(a->buf);
     stable_sort_str((char **)a->buf, a->size);
   }
 }
@@ -1122,8 +1124,10 @@ void avant_array_reverse(void *arr, uint64_t elem_size) {
   }
   /* The elements change places in their buffer; references among them
    * move to other words of it (RC5; nothing for a buffer without
-   * references). */
+   * references), and may leave the cards that a large one's young
+   * references marked. */
   avant_gc_overwrite(a->buf);
+  avant_gc_moved(a->buf);
   if (elem_size > sizeof(tmp)) {
     uint8_t *big = (uint8_t *)malloc((size_t)elem_size);
     if (!big) {

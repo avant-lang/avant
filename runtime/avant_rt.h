@@ -216,6 +216,12 @@ typedef struct AvantGcStats {
 extern AvantGcStats avant_g_stats;
 void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
+/* avant_gc_collect, then every free resident byte returned to the system
+ * (the compiler before LLVM; declared with `lib`). */
+void avant_gc_release(void);
+/* A fixed young budget of MB MiB, as AVANT_YOUNG_MB (the compiler at its
+ * start; declared with `lib`). */
+void avant_gc_young_fixed(avant_int mb);
 /* A young collection on request: std.gc's `gc.collect()` (deferred to the
  * end of an enclosing hold), and the collector's own tests (declared with
  * `lib` as avant_gc_collect is). It was avant_nursery_reclaim, the

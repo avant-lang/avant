@@ -439,8 +439,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
    * the collections the budget asks for only (the program's end it,
    * gc_collect). In the phase a young collection is a probe: the phase
    * goes on, its interval doubled up to TENURE_GAP_MAX budgets, while
-   * nearly everything still survives. Out of it, the second such
-   * collection in a row starts it. */
+   * nearly everything still survives. Out of it, the second
+   * high-survival collection in a row starts it when it kept more than
+   * TENURE_ENTER_NUM / TENURE_ENTER_DEN of its young bytes. */
   if (budget && (gc_heap.tenure_on || (high && gc_heap.young_high_prev))) {
     int nearly = surv * TENURE_SURV_DEN > used * TENURE_SURV_NUM;
     if (gc_heap.tenure_on) {
@@ -451,7 +452,7 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
       } else {
         gc_heap.tenure_on = 0;
       }
-    } else if (nearly && gc_sticky_tenure_ok()) {
+    } else if (surv * TENURE_ENTER_DEN > used * TENURE_ENTER_NUM && gc_sticky_tenure_ok()) {
       gc_heap.tenure_on = 1;
       gc_heap.tenure_gap = 1;
       gc_heap.tenure_left = 1;
@@ -1429,6 +1430,56 @@ void avant_gc_collect(void) {
     return;
   }
   gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* A full collection that then returns every free resident byte to the
+ * system at once (gc_heap_return_all), for a program about to allocate
+ * outside the heap what its heap just freed: the compiler before the
+ * in-process LLVM compiles its text. avant_gc_collect keeps what it
+ * frees for the next cycle's use, as every collection does: a program
+ * that calls gc.collect() before each build of a structure of the same
+ * size (Binarytrees::Obj) took its pages back from the system at every
+ * build when that collection returned them (2.8 times its time). Inside
+ * a hold or a no-GC region it is avant_gc_collect: the collection is
+ * deferred and nothing is returned. */
+void avant_gc_release(void) {
+  gc_init();
+  gc_alloc_sync();
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
+  if ((gc_thread.hold && !gc_thread.nogc) || region_refuses()) {
+    gc_heap.explicit_pending = 1;
+    gc_fast_clear();
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
+  gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  gc_heap_return_all();
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* A fixed young budget of MB MiB from now on, as AVANT_YOUNG_MB sets one
+ * at start-up: every survivor is promoted at its first young collection
+ * (no aging, no tenured phase). For a program whose data mostly lives
+ * on once built, called before it allocates: the compiler, whose syntax
+ * tree, tables and MIR are kept, and whose survivors the adaptive budget
+ * copied once more to age them (its build of itself 3.3% fewer
+ * instructions and 2% less time at 16 MiB). Nothing changes when the
+ * environment already chose the young generation's mode (AVANT_YOUNG_MB,
+ * AVANT_NURSERY=0) or a check mode runs (AVANT_GC_STRESS, AVANT_GC_VERIFY:
+ * they check the collector as the program would run without the call),
+ * or once a collection has run. */
+void avant_gc_young_fixed(avant_int mb) {
+  gc_init();
+  if (mb <= 0 || mb > 1024 || gc_heap.set.young_fixed || gc_heap.set.nursery_off || gc_heap.set.stress ||
+      gc_heap.set.verify || avant_g_stats.collections) {
+    return;
+  }
+  gc_lock(&gc_heap.world);
+  gc_heap.set.young_fixed = (uint64_t)mb * 1024ull * 1024ull;
+  avant_young_bytes = gc_heap.set.young_fixed;
+  gc_fast_clear();
   pthread_mutex_unlock(&gc_heap.world);
 }
 
