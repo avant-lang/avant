@@ -457,24 +457,98 @@ static const char *lcov_out_path(void) {
   return AVANT_LCOV_DEFAULT;
 }
 
+/* The lcov report. The map lists a file's slots together, so a slot's file
+   is looked up by name only when it differs from the previous slot's; the
+   slots then go into one list per file (a stable bucket sort, so each file
+   keeps the map's order), and a line's count is summed in one pass over the
+   file's line slots into an array indexed by line. The cost is linear in
+   the slots: the compiler's own map has 150 thousand of them. Every
+   allocation is made before the report file is opened, so a failure writes
+   nothing. */
 static void write_lcov(void) {
   FILE *out;
   int i;
+  int s;
+  int k;
   int file_n = 0;
   int file_cap = 0;
   CovFile *files = NULL;
   const char *path;
   const char *out_path = lcov_out_path();
+  int *fidx = NULL;
+  int *start = NULL;
+  int *pos = NULL;
+  int *order = NULL;
+  int *line_order = NULL;
+  uint64_t *sum = NULL;
+  unsigned char *seen = NULL;
+  int last = -1;
+  int lo = 0;
+  int hi = 0;
+  int widest = 0;
 
   if (!out_path || !g_slots || g_nslots <= 0) {
     return;
   }
 
-  for (i = 0; i < g_nslots; i++) {
-    if (!find_file(&files, &file_n, &file_cap, g_slots[i].path ? g_slots[i].path : "")) {
-      free(files);
-      return;
+  fidx = (int *)malloc((size_t)g_nslots * sizeof(int));
+  if (!fidx) {
+    return;
+  }
+  for (s = 0; s < g_nslots; s++) {
+    const char *sp = g_slots[s].path ? g_slots[s].path : "";
+    CovFile *f;
+    if (last >= 0 && strcmp(files[last].path, sp) == 0) {
+      fidx[s] = last;
+      continue;
     }
+    f = find_file(&files, &file_n, &file_cap, sp);
+    if (!f) {
+      goto done;
+    }
+    last = (int)(f - files);
+    fidx[s] = last;
+  }
+
+  start = (int *)calloc((size_t)file_n + 1, sizeof(int));
+  pos = (int *)malloc(((size_t)file_n + 1) * sizeof(int));
+  order = (int *)malloc((size_t)g_nslots * sizeof(int));
+  if (!start || !pos || !order) {
+    goto done;
+  }
+  for (s = 0; s < g_nslots; s++) {
+    start[fidx[s] + 1]++;
+  }
+  for (i = 0; i < file_n; i++) {
+    if (start[i + 1] > widest) {
+      widest = start[i + 1];
+    }
+    start[i + 1] += start[i];
+  }
+  for (i = 0; i < file_n; i++) {
+    pos[i] = start[i];
+  }
+  for (s = 0; s < g_nslots; s++) {
+    order[pos[fidx[s]]++] = s;
+    if (g_slots[s].kind == 'L') {
+      if (g_slots[s].line < lo) {
+        lo = g_slots[s].line;
+      }
+      if (g_slots[s].line > hi) {
+        hi = g_slots[s].line;
+      }
+    }
+  }
+
+  /* One count and one seen flag per line number, from lo (below zero only
+     for a map with negative lines, which the compiler never writes) to hi,
+     shared by the files and cleared after each; and the file's distinct
+     lines in the order of their first slots. */
+  sum = (uint64_t *)calloc((size_t)hi - (size_t)lo + 1, sizeof(uint64_t));
+  seen = (unsigned char *)calloc((size_t)hi - (size_t)lo + 1, 1);
+  line_order = (int *)malloc(((size_t)widest + 1) * sizeof(int));
+  if (!sum || !seen || !line_order) {
+    goto done;
   }
 
   if (strcmp(out_path, AVANT_LCOV_DEFAULT) == 0) {
@@ -482,41 +556,30 @@ static void write_lcov(void) {
   }
   out = fopen(out_path, "w");
   if (!out) {
-    for (i = 0; i < file_n; i++) {
-      free(files[i].path);
-      free(files[i].show);
-      free(files[i].uncovered);
-    }
-    free(files);
-    return;
+    goto done;
   }
 
   for (i = 0; i < file_n; i++) {
-    int s;
     int fn_tot = 0, fn_hit = 0;
     int br_tot = 0, br_hit = 0;
     int br_idx = 0;
     int lf = 0, lh = 0;
+    int line_n = 0;
     path = lcov_sf_path(files[i].path ? files[i].path : "");
     fprintf(out, "TN:\n");
     fprintf(out, "SF:%s\n", path ? path : "<input>");
 
-    for (s = 0; s < g_nslots; s++) {
-      const char *sp = g_slots[s].path ? g_slots[s].path : "";
-      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
-        continue;
-      }
+    for (k = start[i]; k < start[i + 1]; k++) {
+      s = order[k];
       if (g_slots[s].kind == 'F') {
         const char *name = g_slots[s].name && g_slots[s].name[0] ? g_slots[s].name : "fn";
         fprintf(out, "FN:%d,%s\n", g_slots[s].line, name);
       }
     }
-    for (s = 0; s < g_nslots; s++) {
-      uint64_t hit = (g_hits && s >= 0 && s < g_nslots) ? g_hits[s] : 0;
-      const char *sp = g_slots[s].path ? g_slots[s].path : "";
-      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
-        continue;
-      }
+    for (k = start[i]; k < start[i + 1]; k++) {
+      uint64_t hit;
+      s = order[k];
+      hit = g_hits ? g_hits[s] : 0;
       if (g_slots[s].kind == 'F') {
         const char *name = g_slots[s].name && g_slots[s].name[0] ? g_slots[s].name : "fn";
         fprintf(out, "FNDA:%llu,%s\n", (unsigned long long)hit, name);
@@ -529,12 +592,10 @@ static void write_lcov(void) {
     fprintf(out, "FNF:%d\n", fn_tot);
     fprintf(out, "FNH:%d\n", fn_hit);
 
-    for (s = 0; s < g_nslots; s++) {
-      uint64_t hit = (g_hits && s >= 0 && s < g_nslots) ? g_hits[s] : 0;
-      const char *sp = g_slots[s].path ? g_slots[s].path : "";
-      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
-        continue;
-      }
+    for (k = start[i]; k < start[i + 1]; k++) {
+      uint64_t hit;
+      s = order[k];
+      hit = g_hits ? g_hits[s] : 0;
       if (g_slots[s].kind == 'B') {
         if (hit) {
           fprintf(out, "BRDA:%d,0,%d,%llu\n", g_slots[s].line, br_idx, (unsigned long long)hit);
@@ -549,45 +610,30 @@ static void write_lcov(void) {
     fprintf(out, "BRF:%d\n", br_tot);
     fprintf(out, "BRH:%d\n", br_hit);
 
-    for (s = 0; s < g_nslots; s++) {
-      const char *sp = g_slots[s].path ? g_slots[s].path : "";
-      int t;
-      int found = 0;
-      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
-        continue;
-      }
+    /* A line's count is the sum over the file's line slots on it, written
+       at the first of them. */
+    for (k = start[i]; k < start[i + 1]; k++) {
+      int at;
+      s = order[k];
       if (g_slots[s].kind != 'L') {
         continue;
       }
-      for (t = 0; t < s; t++) {
-        const char *tp = g_slots[t].path ? g_slots[t].path : "";
-        if (g_slots[t].kind == 'L' && g_slots[t].line == g_slots[s].line &&
-            strcmp(tp, sp) == 0) {
-          found = 1;
-          break;
-        }
+      at = g_slots[s].line - lo;
+      if (!seen[at]) {
+        seen[at] = 1;
+        line_order[line_n++] = g_slots[s].line;
       }
-      if (found) {
-        continue;
+      sum[at] += g_hits ? g_hits[s] : 0;
+    }
+    for (k = 0; k < line_n; k++) {
+      int at = line_order[k] - lo;
+      fprintf(out, "DA:%d,%llu\n", line_order[k], (unsigned long long)sum[at]);
+      lf++;
+      if (sum[at]) {
+        lh++;
       }
-      {
-        uint64_t sum = 0;
-        int u;
-        for (u = s; u < g_nslots; u++) {
-          const char *up = g_slots[u].path ? g_slots[u].path : "";
-          if (g_slots[u].kind == 'L' && g_slots[u].line == g_slots[s].line &&
-              strcmp(up, sp) == 0) {
-            if (g_hits && u >= 0 && u < g_nslots) {
-              sum += g_hits[u];
-            }
-          }
-        }
-        fprintf(out, "DA:%d,%llu\n", g_slots[s].line, (unsigned long long)sum);
-        lf++;
-        if (sum) {
-          lh++;
-        }
-      }
+      sum[at] = 0;
+      seen[at] = 0;
     }
     fprintf(out, "LF:%d\n", lf);
     fprintf(out, "LH:%d\n", lh);
@@ -595,12 +641,20 @@ static void write_lcov(void) {
   }
 
   fclose(out);
+done:
   for (i = 0; i < file_n; i++) {
     free(files[i].path);
     free(files[i].show);
     free(files[i].uncovered);
   }
   free(files);
+  free(fidx);
+  free(start);
+  free(pos);
+  free(order);
+  free(line_order);
+  free(sum);
+  free(seen);
 }
 
 static void print_report(void) {
