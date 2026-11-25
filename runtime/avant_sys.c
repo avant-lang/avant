@@ -34,6 +34,9 @@ char **avant_io_build_argv(const char *path, void *args);
 void avant_io_free_argv(char **argv);
 __attribute__((noreturn)) void avant_io_child_fail(int errfd, int32_t stage);
 void avant_io_wait_child(int32_t pid);
+int avant_io_start_claim(sigset_t *old);
+void avant_io_start_child(const sigset_t *old);
+void avant_io_start_done(int32_t pid, const sigset_t *old);
 
 static _Thread_local int32_t g_sys_errno;
 static _Thread_local int32_t g_sys_signal;
@@ -435,6 +438,7 @@ avant_int avant_sys_capture(const char *path, void *args, const char *input) {
   sigset_t pipe_set;
   sigset_t old_set;
   sigset_t pending;
+  sigset_t start_mask;
   int had_pipe;
   int i;
   memset(bufs, 0, sizeof bufs);
@@ -465,7 +469,17 @@ avant_int avant_sys_capture(const char *path, void *args, const char *input) {
   }
   fflush(stdout);
   fflush(stderr);
-  pid = fork();
+  if (avant_io_start_claim(&start_mask)) {
+    pid = fork();
+    if (pid == 0) {
+      avant_io_start_child(&start_mask);
+    } else {
+      avant_io_start_done(pid, &start_mask);
+    }
+  } else {
+    pid = -1;
+    errno = ECANCELED;
+  }
   if (pid < 0) {
     g_sys_errno = errno;
     close(fds[0]);
@@ -496,7 +510,6 @@ avant_int avant_sys_capture(const char *path, void *args, const char *input) {
   close(out_p[1]);
   close(err_p[1]);
   avant_io_free_argv(argv);
-  avant_io_wait_child(pid);
   sigemptyset(&pipe_set);
   sigaddset(&pipe_set, SIGPIPE);
   sigpending(&pending);
