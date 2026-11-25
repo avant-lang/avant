@@ -29,6 +29,13 @@
 #     later in the others, each of which runs;
 #   cc-passthrough: a compile (-c) and a link without LAYOUT_DIR pass
 #     through untouched; cc-bad-shift: a shift not a multiple of 64 fails;
+#   cc-runtime-shift: a shift r128 links the program with the runtime's
+#     objects alone 128 bytes later (main where it was, the runtime's
+#     function 128 bytes on), and it runs; cc-runtime-shift-hot: in a link
+#     with the hot-section script, r128 moves the hot section's function
+#     alone (main and the runtime's cold function where they were);
+#     check-build-runtime-shift: layout-check.sh build at "0 r128" links
+#     the r128 layout with main where it was and avant_alloc 128 bytes on;
 #   rounds-identical-skipped, rounds-identical-timed: with two sides, a
 #     task whose binaries are byte-identical on both at every layout is not
 #     timed and is named (output, session.txt, identical.tsv, rounds.md);
@@ -183,6 +190,22 @@ say cc-passthrough $? "rc=$rc $(cat "$c/log2")"
 (cd "$c" && env LAYOUT_DIR="$c/lay3" LAYOUT_SHIFTS="0 48" sh "$root/tools/layout-cc.sh" p.o -o r < /dev/null > "$c/log3" 2>&1); rc=$?
 [ $rc -eq 2 ] && grep -q 'shift 48 is not a multiple of 64' "$c/log3"
 say cc-bad-shift $? "rc=$rc $(cat "$c/log3")"
+# The runtime alone moved: a program object and a runtime object at a
+# runtime/build path, linked plainly and then with the hot-section script.
+printf 'int rt_cold(int x) { return x + 1; }\n__attribute__((section(".avant_hot.5.rt_hot"))) int rt_hot(int x) { return x * 2; }\n' > "$c/rt.c"
+mkdir -p "$c/runtime/build"; cc -c -O1 -falign-functions=64 -o "$c/runtime/build/avant_rt.o" "$c/rt.c"
+printf 'int rt_cold(int); int rt_hot(int);\nint main(void) { return rt_cold(rt_hot(0)) - 1; }\n' > "$c/m.c"; cc -c -O1 -falign-functions=64 -o "$c/m.o" "$c/m.c"
+sym() { nm "$1" 2>/dev/null | awk -v s="$2" '$3 == s { print $1 }'; }
+(cd "$c" && env CC= LAYOUT_DIR="$c/lay4" LAYOUT_SHIFTS="0 r128" sh "$root/tools/layout-cc.sh" m.o "$c/runtime/build/avant_rt.o" -o rp < /dev/null > "$c/log4" 2>&1); rc=$?
+m0=$(sym "$c/lay4/0/rp" main); m1=$(sym "$c/lay4/r128/rp" main); k0=$(sym "$c/lay4/0/rp" rt_cold); k1=$(sym "$c/lay4/r128/rp" rt_cold)
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ $((0x$k1 - 0x$k0)) = 128 ] && "$c/lay4/r128/rp"
+say cc-runtime-shift $? "rc=$rc main at $m0 $m1, rt_cold at $k0 $k1; $(cat "$c/log4")"
+printf 'SECTIONS\n{\n  .avant_hot ALIGN(4096) : { *(SORT(.avant_hot.*)) }\n}\nINSERT AFTER .text;\n' > "$c/avant_hot.ld"
+(cd "$c" && env CC= LAYOUT_DIR="$c/lay5" LAYOUT_SHIFTS="0 r128" sh "$root/tools/layout-cc.sh" m.o "$c/runtime/build/avant_rt.o" -fuse-ld=bfd "-Wl,-T,$c/avant_hot.ld" -o hp < /dev/null > "$c/log5" 2>&1); rc=$?
+m0=$(sym "$c/lay5/0/hp" main); m1=$(sym "$c/lay5/r128/hp" main); k0=$(sym "$c/lay5/0/hp" rt_cold); k1=$(sym "$c/lay5/r128/hp" rt_cold)
+h0=$(sym "$c/lay5/0/hp" rt_hot); h1=$(sym "$c/lay5/r128/hp" rt_hot)
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ -n "$k0" ] && [ "$k0" = "$k1" ] && [ -n "$h0" ] && [ $((0x$h1 - 0x$h0)) = 128 ] && "$c/lay5/r128/hp"
+say cc-runtime-shift-hot $? "rc=$rc main at $m0 $m1, rt_cold at $k0 $k1, rt_hot at $h0 $h1; $(cat "$c/log5")"
 
 # 4. rounds.py --layouts: two fake layouts of one fake task.
 r=$w/rl; mkdir -p "$r/bin/0" "$r/bin/64"
@@ -425,6 +448,11 @@ LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh 
 a16=$(nm "$lm/d2/layouts/16/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
 [ $rc -eq 0 ] && [ $((0x$a16 % 64)) -eq 0 ] && [ "$(cat "$lm/d2/method.txt")" = "runtime: fixed" ]
 say check-build-runtime-fixed $? "rc=$rc alloc@16=$a16"
+LAYOUT_CHECK_SHIFTS="0 r128" LAYOUT_CHECK_SUBLINE="" sh "$lm/root/tools/layout-check.sh" build "$lm/la" "$lm/d3" x_one < /dev/null > "$lm/log3" 2>&1; rc=$?
+m0=$(nm "$lm/d3/layouts/0/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }'); m1=$(nm "$lm/d3/layouts/r128/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
+a0=$(nm "$lm/d3/layouts/0/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }'); a1=$(nm "$lm/d3/layouts/r128/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ $((0x$a1 - 0x$a0)) = 128 ] && [ "$(cat "$lm/d3/shifts.txt")" = "0 r128" ] && "$lm/d3/layouts/r128/x_one" < /dev/null; r=$?
+say check-build-runtime-shift $r "rc=$rc main at $m0 $m1, avant_alloc at $a0 $a1; $(tail -2 "$lm/log3" | tr '\n' ';')"
 sh "$lm/root/tools/layout-runtime.sh" --check "$lm/root/runtime" 0 "$lm/rt0" < /dev/null; rc=$?
 [ $rc -eq 0 ]
 say runtime-shift0-same $? "rc=$rc"

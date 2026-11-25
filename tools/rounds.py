@@ -42,7 +42,8 @@ whole base is timed again. drift.tsv has each drift row's verdict.
 
 --layouts S1,S2,... times every task across code layouts: each BIN_DIR then
 holds one directory per shift, BIN_DIR/S/SLUG, the same program with its
-code S bytes later (tools/layout-cc.sh links them), and round r runs every
+code S bytes later (tools/layout-cc.sh links them; at a shift rS only the
+runtime's code is S bytes later), and round r runs every
 side's binary at the ((r - 1) mod K)-th shift (the warm-up at S1). With as
 many rounds as shifts, every layout runs once per side, so a task's median
 is over its layouts and its min-max spread covers what one address can move
@@ -586,8 +587,8 @@ def cmd_langarena(argv):
                 sides.append(tuple(v.split("=", 1)))
             elif x == "--layouts":
                 layouts = [p.strip() for p in v.split(",") if p.strip()]
-                if not layouts or any(not re.fullmatch(r"[0-9]+(l(16|64))?", p) for p in layouts):
-                    die("--layouts needs shifts in bytes, comma-separated (0,64,192; a sub-line shift may name its loops' alignment, 16l16)")
+                if not layouts or any(not re.fullmatch(r"[0-9]+(l(16|64))?|r[0-9]+", p) for p in layouts):
+                    die("--layouts needs shifts in bytes, comma-separated (0,64,192; a sub-line shift may name its loops' alignment, 16l16; r768 moves the runtime alone)")
             elif x == "--pin":
                 pin = int(v)
             elif x == "--short":

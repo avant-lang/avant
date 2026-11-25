@@ -11,7 +11,13 @@
 # tools/layout-cc.sh, so DIR/layouts/S/SLUG is the program with its code S
 # bytes later for each S in LAYOUT_CHECK_SHIFTS (default "0 64 192 448"):
 # whole lines, since every function starts on a 64-byte line, so these
-# never move a loop within its line. Then once more for each S in
+# never move a loop within its line. A shift written rS (r768) moves the
+# runtime's code alone S bytes against the program's (layout-cc.sh: the
+# hot section where the link has one, else every runtime object), so the
+# distance between a program's loop and a runtime routine it calls, which
+# the other layouts all keep, is sampled once more; each such binary's
+# `main` is checked to sit where it sits at shift 0 and its `avant_alloc`
+# S bytes later. Then once more for each S in
 # LAYOUT_CHECK_SUBLINE (default "16l16 32l16 48l16", "" for none; each
 # from 1 to 63, with its loops' alignment as below), compiled with
 # AVANT_CODE_SHIFT=S: every function of the program
@@ -82,6 +88,15 @@ case "$1" in
       # its threads there (cfg_threads), and scales its limit on
       # involuntary switches for a program with more threads than its CPUs.
       if [ -f "$src/$s.cfg.av" ]; then cp "$src/$s.cfg.av" "$d/layouts/$s.cfg.av" || exit 2; fi
+      for e in $shifts; do
+        case "$e" in r*) ;; *) continue ;; esac
+        m0=$(nm "$d/build/$s" 2>/dev/null | awk '$3 == "main" { print $1; exit }')
+        a0=$(nm "$d/build/$s" 2>/dev/null | awk '$3 == "avant_alloc" { print $1; exit }')
+        m=$(nm "$d/layouts/$e/$s" 2>/dev/null | awk '$3 == "main" { print $1; exit }')
+        a=$(nm "$d/layouts/$e/$s" 2>/dev/null | awk '$3 == "avant_alloc" { print $1; exit }')
+        [ -n "$m" ] && [ -n "$a" ] && [ "$m" = "$m0" ] && [ $((0x$a - 0x$a0)) -eq "${e#r}" ] \
+          || { echo "layout-check.sh: $s at runtime shift $e: main at ${m:-no address} (${m0:-none} unshifted), avant_alloc at ${a:-no address} (${a0:-none} unshifted): not the runtime alone ${e#r} bytes later" >&2; exit 1; }
+      done
       for e in $subline; do
         k=${e%%l*}; n=""; [ "$k" = "$e" ] || n=${e#*l}
         mkdir -p "$d/layouts/$e" || exit 2

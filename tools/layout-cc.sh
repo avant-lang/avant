@@ -18,6 +18,21 @@
 # (a PLT entry, a C start file, a larger runtime unit): a time measured
 # across them is a time that one address cannot decide.
 #
+# A shift written rS (r768) moves the runtime's code alone, S bytes
+# against the program's (a multiple of 64), into DIR/rS/<basename of OUT>:
+# in a link that places the runtime's hot functions (below) the block goes
+# at the start of that section only, so the hot functions move and the
+# program's code and the rest do not; in a link without it, the block goes
+# before the link's first runtime object (.../runtime/build/NAME.o, or
+# LAYOUT_RUNTIME's), so every runtime object moves and the program's code
+# does not (a link with no runtime object fails, status 2). The whole-line shifts move
+# program and runtime together, so none of them changes the distance
+# between a program's loop and a runtime routine it calls, and a loop and
+# a routine that meet in the processor's caches by that distance (a set of
+# the decoded-instruction cache, which repeats every few KiB) meet at every
+# one of them; rS samples another distance, as a runtime change that grows
+# or shrinks the code before the routine does.
+#
 # Two more settings move the C code within its lines, for the sub-line
 # layouts (a program compiled with AVANT_CODE_SHIFT=K, whose own functions
 # start K bytes into their lines):
@@ -134,10 +149,13 @@ for a in "$@"; do
   case "$a" in -Wl,-T,*avant_hot.ld) hot=-hot ;; esac
 done
 for s in ${LAYOUT_SHIFTS:-0 64 192 448}; do
-  case "$s" in *[!0-9]*|'') echo "layout-cc.sh: shift '$s' is not a number of bytes" >&2; exit 2 ;; esac
-  [ $((s % 64)) -eq 0 ] || { echo "layout-cc.sh: shift $s is not a multiple of 64" >&2; exit 2; }
+  rs=""; n=$s
+  case "$s" in r*) rs=r; n=${s#r} ;; esac
+  case "$n" in *[!0-9]*|'') echo "layout-cc.sh: shift '$s' is not a number of bytes" >&2; exit 2 ;; esac
+  [ $((n % 64)) -eq 0 ] || { echo "layout-cc.sh: shift $s is not a multiple of 64" >&2; exit 2; }
+  [ -n "$rs" ] && [ "$n" -eq 0 ] && { echo "layout-cc.sh: shift $s moves nothing" >&2; exit 2; }
   mkdir -p "$dir/$s" "$dir/pads" || exit 2
-  if [ "$s" -eq 0 ]; then
+  if [ "$n" -eq 0 ]; then
     cp "$out" "$dir/$s/$name" || exit 2
     continue
   fi
@@ -147,21 +165,28 @@ for s in ${LAYOUT_SHIFTS:-0 64 192 448}; do
     # place: links run in parallel.
     # The block has a section of its own, so a link that orders sections
     # (ld's --section-ordering-file) can keep it first.
-    hotpad=""
-    [ -n "$hot" ] && hotpad=$(printf '.section .avant_hot.1.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n' "$s")
-    printf '%s\n.section .text.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n.section .note.GNU-stack,"",@progbits\n' "$hotpad" "$s" > "$dir/pads/shift$s$hot.$$.s" || exit 2
+    hotpad=""; textpad=""
+    [ -n "$hot" ] && hotpad=$(printf '.section .avant_hot.1.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n' "$n")
+    [ -n "$rs" ] && [ -n "$hot" ] || textpad=$(printf '.section .text.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n' "$n")
+    printf '%s\n%s\n.section .note.GNU-stack,"",@progbits\n' "$hotpad" "$textpad" > "$dir/pads/shift$s$hot.$$.s" || exit 2
     as -o "$dir/pads/shift$s$hot.$$.o" "$dir/pads/shift$s$hot.$$.s" || exit 2
     mv -f "$dir/pads/shift$s$hot.$$.o" "$pad"; rm -f "$dir/pads/shift$s$hot.$$.s"
   fi
-  # The arguments again, the pad before the first object and the output
-  # renamed.
-  first=1; prev=""
+  # The arguments again, the pad before the first object (before the first
+  # runtime object for a runtime shift without the hot section) and the
+  # output renamed.
+  first=1; prev=""; lead=$pad; put=""
+  [ -n "$rs" ] && [ -z "$hot" ] && { lead=""; put=$pad; }
   for a in "$@"; do
     [ $first = 1 ] && set --
     first=0
     if [ "$prev" = "-o" ]; then set -- "$@" "$dir/$s/$name"; prev=$a; continue; fi
+    if [ -n "$put" ]; then
+      case "$a" in */runtime/build/*.o|"${rt:-/nonexistent}"/*.o) set -- "$@" "$put"; put="" ;; esac
+    fi
     set -- "$@" "$a"; prev=$a
   done
-  "$real" "$pad" "$@" || { echo "layout-cc.sh: the link shifted by $s failed" >&2; exit 1; }
+  [ -z "$put" ] || { echo "layout-cc.sh: the link names no runtime object (.../runtime/build/NAME.o) for shift $s to move" >&2; exit 2; }
+  "$real" ${lead:+"$lead"} "$@" || { echo "layout-cc.sh: the link shifted by $s failed" >&2; exit 1; }
 done
 exit 0
