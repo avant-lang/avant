@@ -756,7 +756,16 @@ fn ll_call(e: LlEmit, st: MStmt) {
     } else if x.name == "avant_buf_push_byte" && e.inline_fast {
       result = ll_buf_push_byte(e, st.args)
     } else if (x.name == "avant_array_push_i32" || x.name == "avant_array_push_i64" || x.name == "avant_array_push_ptr" || x.name == "avant_array_push_slot") && e.inline_fast {
-      result = ll_array_push(e, x.name, st.args)
+      // A slot whose element holds no reference (an enum's code, a Bool,
+      // a Float) needs no barrier before the MIR's store through it.
+      refs = true
+      if x.name == "avant_array_push_slot" && st.dest >= 0 {
+        pt = e.ts.pointee(e.f.locals[st.dest].ty)
+        if pt >= 0 && !e.ts.ref_carrying(pt) {
+          refs = false
+        }
+      }
+      result = ll_array_push(e, x.name, st.args, refs)
     } else if (x.name == "avant_array_pop_ptr" || x.name == "avant_array_pop_slot") && e.inline_fast {
       result = ll_array_pop(e, x.name, st.args)
     } else if x.name == "avant_str_view_test" && e.inline_fast {

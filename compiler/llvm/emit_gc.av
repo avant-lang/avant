@@ -1023,9 +1023,11 @@ pub fn ll_buf_push_byte(e: LlEmit, args: Array(MOperand)): String {
 // reference, and a slot that may hold one, first passes the buffer's
 // barrier, before the store, as an element store's (ll_barrier): nothing
 // while the buffer is young or remembered, else avant_barrier_slot with
-// the slot (the runtime's own push skips only a young buffer). push_slot returns the slot, which the MIR then stores through.
+// the slot (the runtime's own push skips only a young buffer). push_slot returns the slot, which the MIR then stores through;
+// refs is false when that slot's element holds no reference, and then
+// no barrier comes before it, as for an Int's push.
 // The call form when inline fast paths are off.
-pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
+pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand), refs: Bool): String {
   e.used_tbaa = true
   e.need(name)
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
@@ -1076,7 +1078,7 @@ pub fn ll_array_push(e: LlEmit, name: String, args: Array(MOperand)): String {
   e.line("${off} = mul nuw nsw i64 ${w}, ${esz}")
   ep = e.tmp()
   e.line("${ep} = getelementptr inbounds i8, ptr ${dp}, i64 ${off}")
-  if name == "avant_array_push_ptr" || slot_form {
+  if name == "avant_array_push_ptr" || (slot_form && refs) {
     // The barrier before the store, as an element store's (ll_barrier):
     // the buffer's header flags (the 16 bits at its payload - 2), in the
     // heap and young (32) or remembered (16), else the call.
