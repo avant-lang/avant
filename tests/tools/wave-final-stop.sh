@@ -25,7 +25,8 @@
 # environment. An eighth run has a step that ignores TERM, under a `sleep`
 # ten times slower than asked (as on a machine so loaded that each wait of
 # the stop takes several times its nominal time): the stop's waits are
-# measured in elapsed time, so it still ends within the bound. Prints one
+# measured in elapsed time, so it still ends within the bound and makes fewer
+# than 25 of the slow waits (slow-rounds-by-clock). Prints one
 # line per check,
 # `ok: NAME` or `FAIL: NAME: why`; test_tools.av expects each NAME.
 set -u
@@ -56,6 +57,7 @@ echo started > "$d/started"
 wait
 EOF
 
+ka=60
 say() { if [ "$2" = 0 ]; then echo "ok: $1"; else echo "FAIL: $1: $3"; fi; }
 alive() { s=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; case "$s" in Z*|"") return 1 ;; esac; return 0; }
 # The processes whose working directory is the fake checkout (or below it).
@@ -87,8 +89,10 @@ reap() { # STUBDIR
 # The run snapshots the real /tmp (WAVE_PRIVATE_TMP=0): the stub step's
 # PID files, under WORK, may be under /tmp (inside the gate's private
 # /tmp), which a private /tmp of the run's own would hide from this script.
-# Start wave-final.sh under an outer timeout of LIMIT seconds; $tp is that
-# timeout's PID. In an emptied environment: run inside a real final
+# Start wave-final.sh under an outer timeout of LIMIT seconds (its KILL
+# follows $ka seconds after its TERM: a stop that ends by itself ends before,
+# and the bound is the one a loaded machine, where each wait of the stop takes
+# several times its nominal time, still keeps); $tp is that timeout's PID. In an emptied environment: run inside a real final
 # evidence (the gate's suite under wave-final.sh), the caller's WAVE_LA,
 # WAVE_LA_SIDE and GATE_* would otherwise reach the fake run, whose
 # LangArena step would then run in the real checkout. The steps run in
@@ -96,7 +100,7 @@ reap() { # STUBDIR
 start() { # NAME LIMIT [VAR=VALUE...]
   n=$1; l=$2; shift 2
   mkdir -p "$w/$n.stub"
-  env -i PATH="$PATH" HOME="$HOME" WAVE_BESIDE=0 "$@" WF_STUB="$w/$n.stub" WAVE_PRIVATE_TMP=0 timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$HOME" WAVE_BESIDE=0 "$@" WF_STUB="$w/$n.stub" WAVE_PRIVATE_TMP=0 timeout -k $ka "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
   tp=$!
 }
 started() { # NAME: wait up to 60 s for the stub step to start
@@ -123,7 +127,7 @@ if started term; then
   l=$(left "$w/term.stub" | tr '\n' ' ')
   [ -z "$l" ]; say term-leaves-nothing $? "left: $l"
   [ $rc -eq 124 ] || [ $rc -eq 143 ]; say term-status $? "status $rc"
-  [ $((t1 - t0)) -lt 10 ]; say term-within-kill-after $? "$((t1 - t0)) s"
+  [ $((t1 - t0)) -lt $ka ]; say term-within-kill-after $? "$((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/term.out/SUMMARY.txt"
   say term-summary $? "$(tail -1 "$w/term.out/SUMMARY.txt" 2>/dev/null)"
 else
@@ -154,7 +158,7 @@ if started runner; then
   wait $tp
   t1=$(date +%s)
   l=$(left "$w/runner.stub" | tr '\n' ' ')
-  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say runner-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  [ -z "$l" ] && [ $((t1 - t0)) -lt $ka ]; say runner-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/runner.out/SUMMARY.txt"
   say runner-term-summary $? "$(tail -1 "$w/runner.out/SUMMARY.txt" 2>/dev/null)"
 else
@@ -173,7 +177,7 @@ if started group; then
   wait $tp
   t1=$(date +%s)
   l=$(left "$w/group.stub" | tr '\n' ' ')
-  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say group-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  [ -z "$l" ] && [ $((t1 - t0)) -lt $ka ]; say group-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during shared steps; every process of the step stopped$' "$w/group.out/SUMMARY.txt"
   say group-term-summary $? "$(tr '\n' ';' < "$w/group.out/SUMMARY.txt" 2>/dev/null)"
 else
@@ -191,7 +195,7 @@ if started escape; then
   wait $tp
   t1=$(date +%s)
   l=$(left "$w/escape.stub" | tr '\n' ' ')
-  [ -s "$w/escape.stub/escaped.pid" ] && [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say escape-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  [ -s "$w/escape.stub/escaped.pid" ] && [ -z "$l" ] && [ $((t1 - t0)) -lt $ka ]; say escape-leaves-nothing $? "left: $l; $((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/escape.out/SUMMARY.txt"
   say escape-summary $? "$(tail -1 "$w/escape.out/SUMMARY.txt" 2>/dev/null)"
 else
@@ -212,7 +216,7 @@ if started psfail; then
   wait $tp
   t1=$(date +%s)
   l=$(left "$w/psfail.stub" | tr '\n' ' ')
-  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say psfail-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  [ -z "$l" ] && [ $((t1 - t0)) -lt $ka ]; say psfail-leaves-nothing $? "left: $l; $((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/psfail.out/SUMMARY.txt"
   say psfail-summary $? "$(tail -1 "$w/psfail.out/SUMMARY.txt" 2>/dev/null)"
 else
@@ -226,7 +230,7 @@ reap "$w/psfail.stub"
 # minutes), and the stop ends within the bound with nothing left.
 mkdir -p "$w/slow-sleep"
 real_sleep=$(command -v sleep)
-printf '#!/bin/sh\ncase "$1" in 0.*) exec %s 1 ;; *) exec %s "$@" ;; esac\n' "$real_sleep" "$real_sleep" > "$w/slow-sleep/sleep"; chmod +x "$w/slow-sleep/sleep"
+printf '#!/bin/sh\ncase "$1" in 0.*) echo round >> "%s"; exec %s 1 ;; *) exec %s "$@" ;; esac\n' "$w/slow-rounds" "$real_sleep" "$real_sleep" > "$w/slow-sleep/sleep"; chmod +x "$w/slow-sleep/sleep"
 start slow 300 WF_STUB_IGNORE=1 PATH="$w/slow-sleep:$PATH"
 if started slow; then
   t0=$(date +%s)
@@ -234,9 +238,14 @@ if started slow; then
   wait $tp
   t1=$(date +%s)
   l=$(left "$w/slow.stub" | tr '\n' ' ')
-  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say slow-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  [ -z "$l" ] && [ $((t1 - t0)) -lt $ka ]; say slow-leaves-nothing $? "left: $l; $((t1 - t0)) s"
   grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/slow.out/SUMMARY.txt"
   say slow-summary $? "$(tail -1 "$w/slow.out/SUMMARY.txt" 2>/dev/null)"
+  # By the clock, not by a count: a stop that waited fifty slow rounds for a step that
+  # ignores TERM would have made fifty; the grace of 5 s makes about five of 1 s (fewer
+  # where a round takes longer), whatever the machine's load.
+  n=$(wc -l < "$w/slow-rounds" 2>/dev/null || echo 0)
+  [ "$n" -gt 0 ] && [ "$n" -lt 25 ]; say slow-rounds-by-clock $? "$n slow rounds"
 else
   kill -TERM $tp; wait $tp
   say slow-leaves-nothing 1 "the stub step did not start"
