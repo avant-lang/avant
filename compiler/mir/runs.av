@@ -602,10 +602,12 @@ pub fn mir_runs_pass(m: MModule) {
         work.push(b)
       }
       budget = 64
+      // The predecessors change only where a run is split, so they are
+      // computed once and again after each split, not once per block.
+      preds = mir_preds(f)
       while work.size > 0 && budget > 0 {
         b = work[work.size - 1]
         work.pop()
-        preds = mir_preds(f)
         chain = rn_chain(f, b, preds)
         // The chain's statements as one sequence (each block dominates the
         // next), with each one's block and position.
@@ -624,6 +626,7 @@ pub fn mir_runs_pass(m: MModule) {
           rest = rn_split(f, chain, cb, cj, run)
           work.push(rest.id)
           budget -= 1
+          preds = mir_preds(f)
         }
       }
     }

@@ -393,6 +393,21 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
   }
   lp = LvLoops.new()
   for h in rpo {
+    // A block is a header when one of its predecessors is a back edge;
+    // only then does it get a body (one flag per block), so a function
+    // of n blocks allocates n flags per loop, not per block.
+    header = false
+    k = 0
+    while k < preds[h].size && !header {
+      p = preds[h][k]
+      if num[p] >= 0 && lv_dominates(idom, h, p) {
+        header = true
+      }
+      k += 1
+    }
+    if !header {
+      continue
+    }
     body = mir_bools(n, false)
     found = false
     k = 0
