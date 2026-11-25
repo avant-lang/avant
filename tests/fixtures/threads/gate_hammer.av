@@ -1,0 +1,221 @@
+// Every way a gate is waited on, hammered, round after round: many
+// senders and many receivers on buffered and rendezvous channels;
+// receivers waiting on an empty channel and senders waiting on a full one
+// (or for a receiver) when the channel closes; a Mutex taken by many
+// tasks that allocate inside their `with`, so collections run, and move
+// the objects, while other tasks spin or park for the lock; and a task
+// that traps while it holds a Mutex other tasks wait for. A waiter spins
+// a little before it parks, so each case meets both. Every line is a
+// count that must come out exact: a lost wake-up hangs the program, a
+// lost or doubled message or update changes a line. The first argument
+// is the number of rounds (default 3).
+import std.process
+import std.sync
+
+lib c {
+  fun usleep(micros: UInt32): Int32
+}
+
+fn pause_ms(ms: Int) {
+  wait: UInt32 = (ms * 1000).wrap_u32()
+  _ = c.usleep(wait)
+}
+
+// The sum of every value sent, as the receivers add them up.
+fn many(cap: Int, senders: Int, receivers: Int, per: Int): Int {
+  ch = sync.Channel(Int).new(cap)
+  rs: Array(JoinHandle(Int)) = []
+  for r in 0..receivers {
+    rs.push(spawn {
+      sum = 0
+      for v in ch {
+        sum += v
+      }
+      sum
+    })
+  }
+  ss: Array(JoinHandle(Int)) = []
+  for s in 0..senders {
+    ss.push(spawn {
+      for i in 0..per {
+        _ = ch.send(s * per + i + 1)
+      }
+      0
+    })
+  }
+  for h in ss {
+    _ = h.join()
+  }
+  ch.close()
+  total = 0
+  for h in rs {
+    total += h.join() ?? -1000000
+  }
+  total
+}
+
+fn many_ok(cap: Int, senders: Int, receivers: Int, per: Int): Bool {
+  n = senders * per
+  many(cap, senders, receivers, per) == n * (n + 1) / 2
+}
+
+// Receivers wait on an empty channel and senders on a full one (or, on a
+// rendezvous channel, for a receiver) when it closes: every receiver gets
+// nil, every waiting send returns false, and what was in the channel
+// before the close is still drained.
+fn close_waiting_ok(cap: Int, n: Int): Bool {
+  empty = sync.Channel(Int).new(cap)
+  rs: Array(JoinHandle(Int)) = []
+  for r in 0..n {
+    rs.push(spawn {
+      got = 0
+      while v = empty.recv() {
+        got += 1
+      }
+      got
+    })
+  }
+  pause_ms(5)
+  empty.close()
+  got = 0
+  for h in rs {
+    got += h.join() ?? 1000
+  }
+  full = sync.Channel(Int).new(cap)
+  for i in 0..cap {
+    _ = full.send(i)
+  }
+  ss: Array(JoinHandle(Int)) = []
+  for s in 0..n {
+    ss.push(spawn {
+      sent = 0
+      if full.send(s) {
+        sent = 1
+      }
+      sent
+    })
+  }
+  pause_ms(5)
+  full.close()
+  sent = 0
+  for h in ss {
+    sent += h.join() ?? 1000
+  }
+  drained = 0
+  while v = full.recv() {
+    drained += 1
+  }
+  got == 0 && sent == 0 && drained == cap
+}
+
+class Box {
+  pub n: Int = 0
+  pub keep: Array(String) = []
+}
+
+// Tasks take one Mutex and allocate under it: no update is lost.
+fn mutex_alloc_ok(tasks: Int, per: Int): Bool {
+  m = sync.Mutex(Box).new(Box.new())
+  hs: Array(JoinHandle(Int)) = []
+  for t in 0..tasks {
+    hs.push(spawn {
+      for i in 0..per {
+        m.with (b) {
+          b.n += 1
+          s = "t${t}-${i}"
+          for k in 0..4 {
+            b.keep.push("${s}/${k}")
+          }
+          if b.keep.size > 64 {
+            b.keep = []
+          }
+        }
+      }
+      0
+    })
+  }
+  for h in hs {
+    _ = h.join()
+  }
+  m.with (b) { b.n } == tasks * per
+}
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn trapped(h: JoinHandle(Int)): Bool {
+  _ = h.join() else e {
+    return true
+  }
+  false
+}
+
+// 1 when the mutex was poisoned for this task, else 0 (it added 10).
+fn try_add(m: sync.Mutex(Int)): Int {
+  m.try_with (x) { x += 10 } else e {
+    return 1
+  }
+  0
+}
+
+// A task traps while it holds the mutex and others wait for it: the trap
+// ends the task, the waiters each get the lock (healthy before the trap,
+// poisoned after it), and the mutex stays poisoned until cleared.
+fn trap_holding_ok(waiters: Int, round: Int): Bool {
+  m = sync.Mutex(Int).new(0)
+  xs = [1]
+  holder = spawn {
+    m.with (x) {
+      x += 1
+      pause_ms(10)
+      x += at(xs, 4 + round)
+    }
+    0
+  }
+  pause_ms(3)
+  ws: Array(JoinHandle(Int)) = []
+  for w in 0..waiters {
+    ws.push(spawn {
+      try_add(m)
+    })
+  }
+  ended = trapped(holder)
+  seen = 0
+  for h in ws {
+    seen += h.join() ?? 1000
+  }
+  poisoned = m.poisoned()
+  m.clear_poison()
+  healthy = !m.poisoned()
+  ended && poisoned && healthy && seen >= 0 && seen <= waiters
+}
+
+fn main {
+  rounds = 3
+  args = process.args()
+  if args.size > 1 {
+    rounds = args[1].to_i() ?? rounds
+  }
+  failed = 0
+  for round in 0..rounds {
+    checks = [
+      many_ok(16, 4, 4, 3000),
+      many_ok(1, 4, 4, 1000),
+      many_ok(0, 4, 4, 1000),
+      many_ok(64, 1, 8, 4000),
+      many_ok(64, 8, 1, 1000),
+      close_waiting_ok(4, 6),
+      close_waiting_ok(0, 6),
+      mutex_alloc_ok(8, 1000),
+      trap_holding_ok(6, round)
+    ]
+    for k in 0..checks.size {
+      if !checks[k] {
+        puts("round ${round}: check ${k} failed")
+        failed += 1
+      }
+    }
+  }
+  puts("failed: ${failed}")
+}

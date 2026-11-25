@@ -40,9 +40,10 @@
  * thus ends at a task that runs, and nested parallelism (a recursive
  * split that joins its halves) needs no more threads than the bound.
  *
- * A task waiting on a gate gives its run back: a worker that waits in a
- * Channel's send or recv or for a Mutex
- * (pool_block, from the gate functions below) stops counting as running,
+ * A task waiting on a gate gives its run back: a worker that parks in a
+ * Channel's send or recv or for a Mutex (pool_block, from the gate
+ * functions below; a short spin before the park keeps its run) stops
+ * counting as running,
  * so a queued task may start, on an idle worker or, when every worker
  * is waiting, on a new one, up to POOL_THREAD_LIMIT threads (or the
  * bound, if larger); past the limit the program is told once on
@@ -1376,65 +1377,72 @@ void avant_parallel_trap(void) {
   avant_trap_text(msg);
 }
 
-/* The gates under std.sync's Channel and Mutex. A gate is a word in its object
- * (the `gate` field), and
- * the gate functions take the object and the word's byte offset in it,
- * so the word's address w is computed in the call. The word is the
- * gate's number (avant_gate_new) shifted left by two, and two bits:
- * GATE_LOCKED, the lock of an uncontended gate, and GATE_QUEUED, set
- * while a thread waits on the gate, when the gate's state is an entry of
- * a table of GATE_BUCKETS buckets keyed by the number.
+/* The gates under std.sync's Channel and Mutex. A gate is a word in its
+ * object (the `gate` field), and the gate functions take the object and
+ * the word's byte offset in it, so the word's address w is computed in
+ * the call. The word is the gate's number (avant_gate_new) shifted left
+ * by four, and four bits: GATE_LOCKED, the lock; GATE_LWAIT and
+ * GATE_CWAIT, set while a thread may be parked for the lock or in a wait
+ * on the gate, whose parking state is then an entry of a table of
+ * GATE_BUCKETS buckets keyed by the number; and GATE_POISON (below).
  *
- * Uncontended, a lock and an unlock are one compare-and-swap each on the
- * word and nothing else: no table, no mutex (an earlier table took a
- * bucket's mutex and searched it on every lock and unlock, 222
- * instructions per lock-unlock where the leaking pthread gate before it
- * took 78). A thread that finds the gate locked, or that waits on
- * it (avant_gate_wait), sets GATE_QUEUED under the bucket's mutex and
- * moves the gate's state into an entry (made then, from the bucket's
- * spare list); from then on every operation on the gate goes through
- * the entry, until an unlock that leaves no waiter clears the word back
- * to the plain number and gives the entry back. So a gate allocates
- * nothing and nothing has to be freed when its object dies: a program
- * that makes a million channels holds flat memory (once every gate
- * was a calloc'd mutex and condition that nothing freed), and the spare
- * lists hold at most as many entries as gates were waited on at once.
+ * The lock is always the word's bit, parked threads or not: a lock is a
+ * compare-and-swap that sets it, an unlock one that clears it; only an
+ * unlock that finds GATE_LWAIT goes on to the bucket, to wake one parked
+ * locker, and only a signal or broadcast that finds GATE_CWAIT does. So
+ * a gate allocates nothing and nothing has to be freed when its object
+ * dies: a program that makes a million channels holds flat memory, and
+ * the spare lists hold at most as many entries as gates were parked on at
+ * once.
+ *
+ * A thread that finds the gate locked spins first, for a short bounded
+ * time (gate_spin_lock), and takes the lock as soon as the word shows it
+ * free, whatever its waiter bits; only then does it park: under the
+ * bucket's mutex it sets GATE_LWAIT while the word is still locked (so the
+ * unlock that frees it comes to the bucket), counts itself in the entry
+ * and waits on the entry's lock_cv. A wait (avant_gate_wait, a
+ * condition's wait: the caller holds the lock) spins too
+ * (gate_wait_spin): it gives the lock up, watches the word until another
+ * thread has locked and unlocked it, takes the lock again and returns, as
+ * a condition's wait may without a signal; after GATE_WAIT_SPINS such
+ * returns in one wait loop it parks on cond_cv, counted in the entry,
+ * after setting GATE_CWAIT and giving up the lock under the bucket's
+ * mutex. This is the form of Rust's futex mutex and of glibc's adaptive
+ * mutex, with the parking place out of the word, since the word moves
+ * with its object.
  *
  * The word's address is valid only while the calling thread runs: the
  * object may move at a collection, which can run while a thread waits
- * natively. So the address is read only before a thread's first native
- * wait in a call, never after it; the waiting thread then works on the
- * entry only (its lock is the entry's `locked` flag), and the word is
- * written back to plain only by an unlock, whose caller is running
- * throughout (an unlock never waits).
+ * natively. So a function that parks keeps the object in a handle scope
+ * (AVANT_GC_ROOT) and computes the word's address again after each
+ * native wait; a spinner runs throughout (it stops spinning when a
+ * collection is requested), so its address stays valid.
  *
- * A waiting thread waits natively on the entry's lock_cv or cond_cv
- * (rule 2): the lock's holder runs Avant code (a
- * Mutex.with block, a channel operation) and may stop at a safepoint. A
- * bucket's mutex is held only inside these functions and never across a
- * safepoint, so it is a plain lock (a short lock whose holder never stops
- * while holding it may be); a native wait releases it, and
- * so does the return from native while a collection runs
- * (native_end_holding). avant_gate_wait gives up the gate's lock and
- * waits on cond_cv; like a condition variable it may return without a
- * signal, and every caller loops on its condition. */
+ * A parked thread waits natively (rule 2): the lock's holder runs Avant
+ * code (a Mutex.with block, a channel operation) and may stop at a
+ * safepoint. A bucket's mutex is held only inside these functions and
+ * never across a safepoint, so it is a plain lock (a short lock whose
+ * holder never stops while holding it may be); a native wait releases it,
+ * and so does the return from native while a collection runs
+ * (native_end_holding). The two bits are set and cleared only under the
+ * bucket's mutex: each is cleared, and the entry given back, by the
+ * thread that finds no thread counted for it (gate_settle). */
 #define GATE_BUCKETS 1024
 #define GATE_LOCKED 1ull
-#define GATE_QUEUED 2ull
-/* a task trapped while holding the gate (a Mutex
- * held in `with`): poisoned, for good. A poisoned word never takes the
- * fast paths, so only the slow paths read it; the number is shifted by
- * three since. */
+#define GATE_LWAIT 2ull
+/* A task trapped while holding the gate (a Mutex held in `with`):
+ * poisoned, for good. A poisoned word never takes the fast lock, so only
+ * the slow path reads it. */
 #define GATE_POISON 4ull
-#define GATE_BITS 7ull
+#define GATE_CWAIT 8ull
+#define GATE_BITS 15ull
 
 typedef struct GateEnt {
   uint64_t id;
-  int locked;
-  /* the holder's task trapped; dead: it did so while the gate was
-   * not queued, so the entry waits for the next lock to queue it (the
-   * word still says locked). */
-  int poisoned;
+  /* The holder's task trapped (gate_dead, which cannot reach the word:
+   * its address may have moved): the word still says locked, and the next
+   * thread that finds it so under the bucket's mutex takes the lock as
+   * its own and poisons the word. */
   int dead;
   int lock_waiters;
   int cond_waiters;
@@ -1462,9 +1470,13 @@ static void gate_init(void) {
   }
 }
 
+static inline uint64_t *gate_word(void *obj, uint64_t off) {
+  return (uint64_t *)((char *)obj + off);
+}
+
 /* id is a word without its bits. */
 static GateBucket *gate_bucket(uint64_t id) {
-  return &gate_buckets[((id >> 3) * 0x9E3779B97F4A7C15ull) >> 54];
+  return &gate_buckets[((id >> 4) * 0x9E3779B97F4A7C15ull) >> 54];
 }
 
 static GateEnt *gate_find(GateBucket *b, uint64_t id) {
@@ -1477,9 +1489,13 @@ static GateEnt *gate_find(GateBucket *b, uint64_t id) {
   return NULL;
 }
 
-/* A new entry for a gate being queued (b->mu held). */
-static GateEnt *gate_take(GateBucket *b, uint64_t id) {
-  GateEnt *e = b->spare;
+/* The gate's entry, made when it has none (b->mu held). */
+static GateEnt *gate_entry(GateBucket *b, uint64_t id) {
+  GateEnt *e = gate_find(b, id);
+  if (e) {
+    return e;
+  }
+  e = b->spare;
   if (e) {
     b->spare = e->next;
   } else {
@@ -1492,8 +1508,6 @@ static GateEnt *gate_take(GateBucket *b, uint64_t id) {
     }
   }
   e->id = id;
-  e->locked = 0;
-  e->poisoned = 0;
   e->dead = 0;
   e->lock_waiters = 0;
   e->cond_waiters = 0;
@@ -1502,9 +1516,19 @@ static GateEnt *gate_take(GateBucket *b, uint64_t id) {
   return e;
 }
 
-/* The entry of a gate no thread waits on goes back (b->mu held). */
-static void gate_put(GateBucket *b, GateEnt *e) {
-  GateEnt **p = &b->live;
+/* The word's waiter bits follow the entry's counts, and an entry no
+ * thread is counted in goes back (b->mu held, the caller running, so w is
+ * valid). A dead entry stays: it holds the trapped holder's lock. */
+static void gate_settle(GateBucket *b, GateEnt *e, uint64_t *w) {
+  GateEnt **p;
+  uint64_t clear = (e->lock_waiters > 0 ? 0 : GATE_LWAIT) | (e->cond_waiters > 0 ? 0 : GATE_CWAIT);
+  if (clear) {
+    __atomic_fetch_and(w, ~clear, __ATOMIC_RELAXED);
+  }
+  if (e->lock_waiters > 0 || e->cond_waiters > 0 || e->dead) {
+    return;
+  }
+  p = &b->live;
   while (*p != e) {
     p = &(*p)->next;
   }
@@ -1513,110 +1537,195 @@ static void gate_put(GateBucket *b, GateEnt *e) {
   b->spare = e;
 }
 
-/* The entry of the gate at w, queuing the gate when it is not yet (b->mu
- * held, the caller running, so w is valid). A gate queued here was
- * locked by a thread through the word: its lock moves into the entry. */
-static GateEnt *gate_queue(GateBucket *b, uint64_t *w, uint64_t id) {
-  uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  GateEnt *e;
-  for (;;) {
-    if (v & GATE_QUEUED) {
-      e = gate_find(b, id);
-      if (!e) {
-        die_task("gate queued without its entry");
-      }
-      return e;
-    }
-    if (!(v & GATE_LOCKED)) {
-      return NULL;
-    }
-    if (__atomic_compare_exchange_n(w, &v, v | GATE_QUEUED, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-      e = gate_find(b, id);
-      if (e && e->dead) {
-        /* Its holder's task trapped (gate_dead): the lock is free. */
-        e->dead = 0;
-        return e;
-      }
-      e = gate_take(b, id);
-      e->locked = 1;
-      e->poisoned = (v & GATE_POISON) != 0;
-      return e;
-    }
+/* Spinning before a park: a bounded time, GATE_SPIN_TICKS of the
+ * time-stamp counter (about 2 to 4 microseconds), with the CPU's pause
+ * instruction between reads. Most waits in a channel's send or recv, or
+ * for a Mutex's short `with`, end within that time, and a park costs a
+ * condition wait, kernel calls and a context switch on each side, and the
+ * pool's lock twice. Nothing spins when the process may use one CPU only
+ * (the holder cannot run meanwhile). Where there is no time-stamp counter
+ * the bound is a count of reads. */
+#if defined(__x86_64__) || defined(__i386__)
+#define GATE_SPIN_TICKS 8000u
+static inline uint64_t gate_spin_now(void) {
+  return __builtin_ia32_rdtsc();
+}
+static inline void gate_spin_pause(void) {
+  __builtin_ia32_pause();
+}
+#else
+#define GATE_SPIN_TICKS 2000u
+static __thread uint64_t gate_spin_count;
+static inline uint64_t gate_spin_now(void) {
+  return ++gate_spin_count;
+}
+static inline void gate_spin_pause(void) {
+  __asm__ __volatile__("" ::: "memory");
+}
+#endif
+
+/* 1 when spinning may help: the process may use more than one CPU (read
+ * once; 0 until read). */
+static int gate_spin_state;
+
+static int gate_may_spin(void) {
+  int s = __atomic_load_n(&gate_spin_state, __ATOMIC_RELAXED);
+  if (__builtin_expect(s == 0, 0)) {
+    s = avant_usable_cpus() > 1 ? 1 : 2;
+    __atomic_store_n(&gate_spin_state, s, __ATOMIC_RELAXED);
   }
+  return s == 1;
 }
 
-/* Takes the entry's lock, waiting natively while another thread holds it
- * (b->mu held on entry and on return; w is not read). */
-static void gate_acquire(GateBucket *b, GateEnt *e) {
-  while (e->locked) {
-    pool_block();
-    e->lock_waiters++;
-    avant_gc_cond_wait(&e->lock_cv, &b->mu);
-    e->lock_waiters--;
+static inline int gate_spin_over(uint64_t start) {
+  return atomic_load_explicit(&avant_gc_requested, memory_order_relaxed) ||
+         gate_spin_now() - start > GATE_SPIN_TICKS;
+}
+
+/* The uncontended lock: one compare-and-swap on a word neither locked nor
+ * poisoned (whatever its waiter bits). */
+static inline int gate_try(uint64_t *w) {
+  uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  return !(v & (GATE_LOCKED | GATE_POISON)) &&
+         __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+}
+
+/* Spins for the lock of the gate at w (the caller running): 1 when it
+ * took it, 0 when the slow path must go on (the gate is poisoned, a
+ * collection is requested, or the time is up). */
+static int gate_spin_lock(uint64_t *w) {
+  uint64_t start;
+  if (!gate_may_spin()) {
+    return 0;
   }
-  e->locked = 1;
+  start = gate_spin_now();
+  for (;;) {
+    uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
+    if (v & GATE_POISON) {
+      return 0;
+    }
+    if (!(v & GATE_LOCKED)) {
+      if (__atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+        return 1;
+      }
+      continue;
+    }
+    if (gate_spin_over(start)) {
+      return 0;
+    }
+    gate_spin_pause();
+  }
 }
 
 uint64_t avant_gate_new(void) {
   pthread_once(&gate_once, gate_init);
-  return __atomic_add_fetch(&gate_next, 1, __ATOMIC_RELAXED) << 3;
+  return __atomic_add_fetch(&gate_next, 1, __ATOMIC_RELAXED) << 4;
 }
 
-/* 1 when the gate is poisoned. */
-static int gate_lock_slow(uint64_t *w) {
-  uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
-  GateBucket *b = gate_bucket(id);
-  GateEnt *e;
-  int poisoned;
-  pthread_mutex_lock(&b->mu);
+/* The lock past the fast path, without noting it held (the caller does):
+ * spins, then parks until it takes it; 1 when the gate is poisoned. *objp
+ * is the object, rooted by the caller (it is read again after each native
+ * wait). A task that waited here gets a run again before it returns
+ * (pool_resume). */
+static int gate_lock_park(void **objp, uint64_t off) {
   for (;;) {
-    uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-    if (!(v & (GATE_LOCKED | GATE_QUEUED))) {
-      /* Unlocked meanwhile, or poisoned and free. */
+    uint64_t *w = gate_word(*objp, off);
+    uint64_t v;
+    uint64_t id;
+    GateBucket *b;
+    GateEnt *e;
+    if (gate_spin_lock(w)) {
+      pool_resume();
+      return 0;
+    }
+    v = __atomic_load_n(w, __ATOMIC_RELAXED);
+    id = v & ~GATE_BITS;
+    b = gate_bucket(id);
+    pthread_mutex_lock(&b->mu);
+    v = __atomic_load_n(w, __ATOMIC_RELAXED);
+    if (!(v & GATE_LOCKED)) {
+      /* Free (poisoned or not: the poison is the word's, for good). */
       if (__atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         pthread_mutex_unlock(&b->mu);
-        held_push(id);
+        pool_resume();
         return (v & GATE_POISON) != 0;
       }
+      pthread_mutex_unlock(&b->mu);
       continue;
     }
-    e = gate_queue(b, w, id);
-    if (e) {
-      break;
+    e = gate_entry(b, id);
+    if (e->dead) {
+      /* Its holder's task trapped (gate_dead): the lock is this
+       * thread's now, and the gate poisoned. */
+      e->dead = 0;
+      __atomic_fetch_or(w, GATE_POISON, __ATOMIC_ACQUIRE);
+      gate_settle(b, e, w);
+      pthread_mutex_unlock(&b->mu);
+      pool_resume();
+      return 1;
     }
+    if (!(v & GATE_LWAIT) && !__atomic_compare_exchange_n(w, &v, v | GATE_LWAIT, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      /* Unlocked meanwhile: look again. */
+      gate_settle(b, e, w);
+      pthread_mutex_unlock(&b->mu);
+      continue;
+    }
+    /* Marked while locked: the unlock comes to the bucket and wakes a
+     * locker counted here. */
+    e->lock_waiters++;
+    pool_block();
+    avant_gc_cond_wait(&e->lock_cv, &b->mu);
+    e->lock_waiters--;
+    gate_settle(b, e, gate_word(*objp, off));
+    pthread_mutex_unlock(&b->mu);
   }
-  gate_acquire(b, e);
-  poisoned = e->poisoned;
-  pthread_mutex_unlock(&b->mu);
-  pool_resume();
+}
+
+static __attribute__((noinline)) int gate_lock_slow(void *obj, uint64_t off) {
+  uint64_t *w = gate_word(obj, off);
+  uint64_t id;
+  int poisoned;
+  if (gate_spin_lock(w)) {
+    held_push(__atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS);
+    return 0;
+  }
+  {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &obj);
+    poisoned = gate_lock_park(&obj, off);
+    id = __atomic_load_n(gate_word(obj, off), __ATOMIC_RELAXED) & ~GATE_BITS;
+  }
   held_push(id);
   return poisoned;
 }
 
 void avant_gate_lock(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t *w = gate_word(obj, off);
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  if (!(v & GATE_BITS) && __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-    held_push(v);
+  if (!(v & (GATE_LOCKED | GATE_POISON)) &&
+      __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    held_push(v & ~GATE_BITS);
     return;
   }
-  (void)gate_lock_slow(w);
+  (void)gate_lock_slow(obj, off);
 }
 
 int32_t avant_gate_lock_with(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t *w = gate_word(obj, off);
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  if (!(v & GATE_BITS) && __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-    held_push(v);
+  if (!(v & (GATE_LOCKED | GATE_POISON)) &&
+      __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    held_push(v & ~GATE_BITS);
     return 0;
   }
-  return gate_lock_slow(w);
+  return gate_lock_slow(obj, off);
 }
 
 /* Whether the gate is poisoned (Mutex.poisoned): the word's bit, or the
- * entry of a gate whose holder's task trapped and that no lock took yet. */
+ * dead entry of a gate whose holder's task trapped and that no lock took
+ * yet. */
 int32_t avant_gate_poisoned(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t *w = gate_word(obj, off);
   uint64_t v = __atomic_load_n(w, __ATOMIC_ACQUIRE);
   uint64_t id = v & ~GATE_BITS;
   GateBucket *b;
@@ -1625,13 +1734,13 @@ int32_t avant_gate_poisoned(void *obj, uint64_t off) {
   if (v & GATE_POISON) {
     return 1;
   }
-  if (!(v & (GATE_LOCKED | GATE_QUEUED))) {
+  if (!(v & GATE_LOCKED)) {
     return 0;
   }
   b = gate_bucket(id);
   pthread_mutex_lock(&b->mu);
   e = gate_find(b, id);
-  if (e && e->poisoned) {
+  if (e && e->dead) {
     r = 1;
   }
   pthread_mutex_unlock(&b->mu);
@@ -1640,46 +1749,24 @@ int32_t avant_gate_poisoned(void *obj, uint64_t off) {
 
 /* Clears the poison of a gate the calling thread holds (Mutex.recover,
  * clear_poison, and a recover function's rebuild under `with`): the
- * word's bit, and the entry's flag when the gate is queued or was taken
- * through a dead entry. Under the bucket's mutex, so no thread queues the
- * gate meanwhile; the caller holds the lock, so the word stays locked or
- * queued and only this call clears its poison bit. */
+ * word's bit. The caller holds the lock, so no thread takes a dead entry
+ * meanwhile (the only other writer of the bit). */
 void avant_gate_clear_poison(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
-  uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
-  GateBucket *b = gate_bucket(id);
-  GateEnt *e;
-  uint64_t v;
-  pthread_mutex_lock(&b->mu);
-  e = gate_find(b, id);
-  if (e) {
-    e->poisoned = 0;
-  }
-  v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  while (v & GATE_POISON) {
-    if (__atomic_compare_exchange_n(w, &v, v & ~GATE_POISON, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-      break;
-    }
-  }
-  pthread_mutex_unlock(&b->mu);
+  __atomic_fetch_and(gate_word(obj, off), ~GATE_POISON, __ATOMIC_RELAXED);
 }
 
-/* The task that held the gate numbered id trapped (run_job): the gate is
- * poisoned and its lock given up. A queued gate's entry is free at once
- * (a waiter takes it); a gate locked through its word alone gets a dead
- * entry, which the next lock, finding the word locked, queues and takes
- * (gate_queue). The word itself is not read: its address may have moved. */
+/* The task that held the gate numbered id trapped (recover_end): its lock
+ * is given up through a dead entry, which the next lock that finds the
+ * word locked under the bucket's mutex takes (gate_lock_park); a parked
+ * locker is woken for it, and the parked waiters too (the task's end may
+ * close the channels it captured). The word itself is not read: its
+ * address may have moved. */
 static void gate_dead(uint64_t id) {
   GateBucket *b = gate_bucket(id);
   GateEnt *e;
   pthread_mutex_lock(&b->mu);
-  e = gate_find(b, id);
-  if (!e) {
-    e = gate_take(b, id);
-    e->dead = 1;
-  }
-  e->locked = 0;
-  e->poisoned = 1;
+  e = gate_entry(b, id);
+  e->dead = 1;
   if (e->lock_waiters > 0) {
     pthread_cond_signal(&e->lock_cv);
   }
@@ -1689,79 +1776,153 @@ static void gate_dead(uint64_t id) {
   pthread_mutex_unlock(&b->mu);
 }
 
-static void gate_unlock_slow(uint64_t *w) {
-  uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
-  GateBucket *b = gate_bucket(id);
+/* The unlock of a gate with a parked locker (the caller running and holding it): the
+ * lock is freed, then one parked locker is woken (a spinner may take the
+ * lock first: the woken one then looks again). */
+static __attribute__((noinline)) void gate_unlock_slow(uint64_t *w) {
+  uint64_t v = __atomic_fetch_and(w, ~GATE_LOCKED, __ATOMIC_RELEASE);
+  uint64_t id = v & ~GATE_BITS;
+  GateBucket *b;
   GateEnt *e;
-  uint64_t v;
-  pthread_mutex_lock(&b->mu);
-  v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  if (!(v & GATE_QUEUED)) {
-    if (!(v & GATE_LOCKED)) {
-      die_task("gate unlocked without its lock");
-    }
-    /* Not queued (a poisoned gate's unlock, or a compare-and-swap that
-     * failed spuriously: the word is read again under the mutex). */
-    __atomic_store_n(w, id | (v & GATE_POISON), __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&b->mu);
-    return;
-  }
-  e = gate_find(b, id);
-  if (!e || !e->locked) {
+  if (!(v & GATE_LOCKED)) {
     die_task("gate unlocked without its lock");
   }
-  e->locked = 0;
-  if (e->lock_waiters > 0) {
-    pthread_cond_signal(&e->lock_cv);
-  } else if (e->cond_waiters == 0) {
-    /* Nobody waits: the gate is plain again (poisoned for good). */
-    __atomic_store_n(w, id | (e->poisoned ? GATE_POISON : 0), __ATOMIC_RELEASE);
-    gate_put(b, e);
+  if (!(v & GATE_LWAIT)) {
+    /* No locker parked (a compare-and-swap that failed spuriously). */
+    return;
+  }
+  b = gate_bucket(id);
+  pthread_mutex_lock(&b->mu);
+  e = gate_find(b, id);
+  if (e) {
+    if (e->lock_waiters > 0) {
+      pthread_cond_signal(&e->lock_cv);
+    } else {
+      gate_settle(b, e, w);
+    }
   }
   pthread_mutex_unlock(&b->mu);
 }
 
-void avant_gate_unlock(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
+static inline void gate_release(uint64_t *w) {
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-  held_pop();
-  if ((v & GATE_BITS) == GATE_LOCKED && __atomic_compare_exchange_n(w, &v, v & ~GATE_BITS, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+  if ((v & (GATE_LOCKED | GATE_LWAIT)) == GATE_LOCKED &&
+      __atomic_compare_exchange_n(w, &v, v & ~GATE_LOCKED, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
     return;
   }
   gate_unlock_slow(w);
 }
 
+/* The gate whose wait loop this thread spins in, and its spins so far
+ * (gate_wait_spin); a gate's unlock and a park clear it. */
+#define GATE_WAIT_SPINS 2
+static __thread uint64_t g_wait_gate;
+static __thread int g_wait_spins;
+
+void avant_gate_unlock(void *obj, uint64_t off) {
+  held_pop();
+  g_wait_gate = 0;
+  gate_release(gate_word(obj, off));
+}
+
+/* A wait's spin (the caller holds the gate and runs): 1 when it gave the
+ * lock up, watched the word until another thread had locked and unlocked
+ * it (that thread may have changed what the caller waits for) or the time
+ * was up, and took the lock again; the wait then returns, and the caller
+ * tests its condition again. 0 when the wait must park: the thread spun
+ * GATE_WAIT_SPINS times in this wait loop already, or the gate is
+ * poisoned. */
+static int gate_wait_spin(void **objp, uint64_t off) {
+  uint64_t *w = gate_word(*objp, off);
+  uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  uint64_t id = v & ~GATE_BITS;
+  uint64_t start;
+  int seen = 0;
+  if ((v & GATE_POISON) || !gate_may_spin()) {
+    return 0;
+  }
+  if (g_wait_gate != id) {
+    g_wait_gate = id;
+    g_wait_spins = 0;
+  }
+  if (g_wait_spins >= GATE_WAIT_SPINS) {
+    return 0;
+  }
+  g_wait_spins++;
+  gate_release(w);
+  start = gate_spin_now();
+  for (;;) {
+    uint64_t x = __atomic_load_n(w, __ATOMIC_RELAXED);
+    if (x & GATE_LOCKED) {
+      seen = 1;
+    } else if (seen) {
+      break;
+    }
+    if (gate_spin_over(start)) {
+      break;
+    }
+    gate_spin_pause();
+  }
+  if (!gate_try(w)) {
+    (void)gate_lock_park(objp, off);
+  }
+  return 1;
+}
+
 void avant_gate_wait(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
-  uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
-  GateBucket *b = gate_bucket(id);
+  uint64_t *w;
+  uint64_t v;
+  uint64_t id;
+  GateBucket *b;
   GateEnt *e;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &obj);
+  if (gate_wait_spin(&obj, off)) {
+    return;
+  }
+  g_wait_gate = 0;
+  w = gate_word(obj, off);
+  v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  id = v & ~GATE_BITS;
+  b = gate_bucket(id);
   pthread_mutex_lock(&b->mu);
-  e = gate_queue(b, w, id);
-  if (!e || !e->locked) {
+  if (!(__atomic_load_n(w, __ATOMIC_RELAXED) & GATE_LOCKED)) {
     die_task("gate wait without its lock");
   }
+  e = gate_entry(b, id);
+  /* Queued before the lock is given up: the signal that follows a change
+   * comes from a holder that took the lock after it, so it finds the bit
+   * and the count. */
+  __atomic_fetch_or(w, GATE_CWAIT, __ATOMIC_RELAXED);
   e->cond_waiters++;
-  e->locked = 0;
+  __atomic_fetch_and(w, ~GATE_LOCKED, __ATOMIC_RELEASE);
   if (e->lock_waiters > 0) {
     pthread_cond_signal(&e->lock_cv);
   }
   pool_block();
   avant_gc_cond_wait(&e->cond_cv, &b->mu);
   e->cond_waiters--;
-  gate_acquire(b, e);
+  gate_settle(b, e, gate_word(obj, off));
   pthread_mutex_unlock(&b->mu);
-  pool_resume();
+  /* The lock again (pool_resume at its end); a poisoned gate's waiter
+   * is not told here: the next `with` is. */
+  if (!gate_try(gate_word(obj, off))) {
+    (void)gate_lock_park(&obj, off);
+  } else {
+    pool_resume();
+  }
 }
 
-/* Waiters exist only on a queued gate; the caller holds the gate's lock,
- * so a waiter that queued it did so before this call (it holds the lock
- * while it queues). */
+/* Parked waiters exist only while GATE_CWAIT is set; the caller holds
+ * the gate's lock, so a waiter counted itself and set the bit before this
+ * call (it held the lock while it did). A thread that signals has changed
+ * what waiters wait for: its own next wait loop spins afresh. */
 static void gate_wake(uint64_t *w, int all) {
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
   GateBucket *b;
   GateEnt *e;
-  if (!(v & GATE_QUEUED)) {
+  g_wait_gate = 0;
+  if (!(v & GATE_CWAIT)) {
     return;
   }
   v &= ~GATE_BITS;
@@ -1779,13 +1940,11 @@ static void gate_wake(uint64_t *w, int all) {
 }
 
 void avant_gate_signal(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
-  gate_wake(w, 0);
+  gate_wake(gate_word(obj, off), 0);
 }
 
 void avant_gate_broadcast(void *obj, uint64_t off) {
-  uint64_t *w = (uint64_t *)((char *)obj + off);
-  gate_wake(w, 1);
+  gate_wake(gate_word(obj, off), 1);
 }
 
 /* The 64-bit monotonic clock: now_ms and now_us

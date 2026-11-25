@@ -170,6 +170,30 @@ fn test_tasks(c: Checks) {
     lib_trap_cases(c, compiler, now_ms())
     task_exit_cases(c, compiler, now_ms())
     mutex_recover_cases(c, compiler, now_ms())
+    gate_hammer_cases(c, compiler, now_ms())
+  }
+}
+
+// Channels and mutexes under contention (tests/fixtures/threads/
+// gate_hammer.av), under the suite's collector mode: a waiter spins
+// briefly before it parks, so each case meets both, and a pool of one or
+// two runs makes the spinner's peer a task that cannot start until the
+// spinner parks. Every count exact; each run bounded by 120 s, so a lost
+// wake-up is a failed case, not a hung suite.
+fn gate_hammer_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/tasks-hammer-${stamp}.bin"
+  clog = "${scratch()}/tasks-hammer-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/gate_hammer.av", bin, clog)
+  c.eq_int(code, 0, "the gate-hammer fixture compiles")
+  for flag in ["--avant-threads=1", "--avant-threads=2", "--avant-threads=4", ""] {
+    log = "${scratch()}/tasks-hammer-${stamp}${flag}.log"
+    args: Array(String) = []
+    args.push("-c")
+    args.push("timeout -k 5 120 ${bin} ${flag} 1 2> ${log}.err")
+    status = run_out("/bin/sh", args, log) ?? -1
+    out = fs.read(log) ?? ""
+    c.eq_int(status, 0, "gate hammer ${flag}: status 0")
+    c.expect(out == "failed: 0\n", "gate hammer ${flag}: every count exact: ${out}")
   }
 }
 
