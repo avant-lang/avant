@@ -353,6 +353,28 @@ fn lv_dominates(idom: Array(Int), h: Int, b0: Int): Bool {
 
 pub fn mir_lv_loops(f: MFunc): LvLoops {
   n = f.blocks.size
+  // A cycle needs an edge to a block at or before its source (an edge
+  // to a later block always moves forward in the numbering): without
+  // one the function has no loop, and its forest is empty.
+  back = false
+  b0 = 0
+  while b0 < n && !back {
+    if t0 = f.blocks[b0].term {
+      for x in t0.targets {
+        if x <= b0 {
+          back = true
+        }
+      }
+    }
+    b0 += 1
+  }
+  if !back {
+    empty = LvLoops.new()
+    for i0 in 0..n {
+      empty.depth.push(0)
+    }
+    return empty
+  }
   rpo = lv_rpo(f)
   num: Array(Int) = []
   idom: Array(Int) = []
