@@ -325,7 +325,7 @@ perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
   skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
-    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups la-count-mem-parallel la-count-seeds check-hash-seeds
+    cache-la-base-refuses neutral-base-refuses check-base-refuses check-base-harness check-goldens-example check-goldens-golden check-map-none check-map-auto check-runner check-stem-prefix la-count-groups la-count-mem-parallel la-count-seeds check-hash-seeds check-hash-seeds-scope check-hash-seeds-forced la-count-fixed-path
   echo done; exit 0
 fi
 
