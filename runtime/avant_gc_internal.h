@@ -2185,6 +2185,7 @@ int gc_chunk_take_at(uint64_t first, uint64_t n);
 void gc_chunk_give(uint64_t c);
 void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
+void gc_heap_return_all(void);
 void gc_heap_return(uint64_t live);
 void gc_side_use(int which, uint64_t bytes);
 void gc_side_settle(int full);

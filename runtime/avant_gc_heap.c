@@ -739,6 +739,25 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * at four chunks, sixteen popcounts for each large-object chunk, growing
  * with the heap). AVANT_GC_VERIFY recounts both from the chunk map, as
  * every call did. */
+/* After an explicit full collection: what the collection itself freed is idle
+ * too (the clock moves on), and no retention history keeps it. */
+void gc_heap_return_all(void) {
+  uint64_t hist[RETAIN_CYCLES];
+  uint32_t k;
+  uint64_t yk = gc_heap.young_keep;
+  for (k = 0; k < RETAIN_CYCLES; k++) {
+    hist[k] = gc_heap.retain_hist[k];
+    gc_heap.retain_hist[k] = 0;
+  }
+  gc_heap.young_keep = 0;
+  gc_heap.return_clock++;
+  gc_heap_return(gc_heap.live);
+  for (k = 0; k < RETAIN_CYCLES; k++) {
+    gc_heap.retain_hist[k] = hist[k];
+  }
+  gc_heap.young_keep = yk;
+}
+
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint32_t k;

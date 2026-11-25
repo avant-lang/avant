@@ -1432,6 +1432,32 @@ void avant_gc_collect(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* A full collection that then returns every free resident byte to the
+ * system at once (gc_heap_return_all), for a program about to allocate
+ * outside the heap what its heap just freed: the compiler before the
+ * in-process LLVM compiles its text. avant_gc_collect keeps what it
+ * frees for the next cycle's use, as every collection does: a program
+ * that calls gc.collect() before each build of a structure of the same
+ * size (Binarytrees::Obj) took its pages back from the system at every
+ * build when that collection returned them (2.8 times its time). Inside
+ * a hold or a no-GC region it is avant_gc_collect: the collection is
+ * deferred and nothing is returned. */
+void avant_gc_release(void) {
+  gc_init();
+  gc_alloc_sync();
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
+  if ((gc_thread.hold && !gc_thread.nogc) || region_refuses()) {
+    gc_heap.explicit_pending = 1;
+    gc_fast_clear();
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
+  gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  gc_heap_return_all();
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
 /* `gc.hold { }` (std.gc): GcThread.hold's comment.
  * The compiler brackets the block with these two and ends the hold on
  * every way out of it (the end of the block, return, break, continue,
