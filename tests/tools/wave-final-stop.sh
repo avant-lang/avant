@@ -132,8 +132,10 @@ else
 fi
 reap "$w/term.stub"
 
-# 3. The outer timeout fires during the goldens step.
-start expire 4
+# 3. The outer timeout fires during the goldens step: its limit (30 s) is far
+# longer than the script needs to reach that step, also on a machine so loaded
+# that a start of 4 s ended before the step began.
+start expire 30
 started expire; st=$?
 wait $tp; rc=$?
 l=$(left "$w/expire.stub" | tr '\n' ' ')
