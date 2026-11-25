@@ -314,6 +314,11 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   d = st.dest
   slot = e.slot_vol(d)
   if rv.kind == cabi_direct() {
+    // A value local has no alloca: the call's result is its value.
+    if e.ssa(d) {
+      e.ssa_val[d] = r
+      return
+    }
     e.store(rv.ty, r, e.local_addr(d), slot)
     return
   }

@@ -556,6 +556,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   e.label = "alloca"
   // The frame record first: a slot local's address is in it.
   e.slot_named = false
+  ll_ssa_plan(e, f)
   if e.frame_words >= 0 {
     e.line("%gcf = alloca ${ll_gc_frame_type(e)}, align ${e.frame_align}")
     // An optimized build names each slot's address once: the optimizer
@@ -575,7 +576,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
       ty = f.locals[i].ty
       // A slot local has no alloca: its address is its place in the
       // record, computed where it is used (local_addr).
-      if e.frame_words < 0 || e.frame_at[i] < 0 {
+      if (e.frame_words < 0 || e.frame_at[i] < 0) && !e.ssa(i) {
         e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
       }
     }
@@ -621,6 +622,10 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
     if p = st.place, rv = st.rv {
       pt = e.place_type(p)
       val = ll_rvalue(e, rv, pt)
+      if p.proj.size == 0 && e.ssa(p.local) {
+        e.ssa_val[p.local] = val
+        return
+      }
       ptr = e.place_ptr(p)
       e.store_tagged(pt, val, ptr, e.pa_vol, e.pa_tbaa)
       if p.proj.size == 0 && e.shadowed(p.local) {
@@ -656,6 +661,161 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
     }
   } else if k == msk_gc_leave() {
     ll_gc_frame_leave(e)
+  }
+}
+
+// The locals of f an optimized build keeps as values instead of allocas
+// (into e.ssa_ok): a local of a scalar or pointer type, not a parameter,
+// the result or a frame slot, defined once (an assignment of the whole
+// local, or a call's destination) and read only after it in the same
+// block, each read a whole-local operand or the base of a place that
+// starts with a deref. mem2reg makes the same values of such an alloca;
+// the optimizer is spared parsing and promoting about a third of the
+// loads and stores a large function has. Any other mention (an address
+// taken, a field of the local, a root list) keeps the alloca.
+pub fn ll_ssa_plan(e: LlEmit, f: MFunc) {
+  e.ssa_ok = []
+  e.ssa_val = []
+  if !e.shadows_on {
+    return
+  }
+  n = f.locals.size
+  defs: Array(Int) = []
+  dblk: Array(Int) = []
+  dat: Array(Int) = []
+  bad: Array(Bool) = []
+  for i in 0..n {
+    ok = i > f.nparams && f.valid_local(i) && !(e.frame_words >= 0 && i < e.frame_at.size && e.frame_at[i] >= 0) && ll_ssa_type(e.llt(f.locals[i].ty))
+    e.ssa_ok.push(ok)
+    e.ssa_val.push("")
+    defs.push(0)
+    dblk.push(-1)
+    dat.push(-1)
+    bad.push(!ok)
+  }
+  if n == 0 {
+    return
+  }
+  // reads at (b, j): j the statement's index, the terminator's is the
+  // block's statement count; a read before or at its local's definition
+  // (or with no definition yet seen in its block) is bad
+  reads: Array(Int) = []
+  for b in 0..f.blocks.size {
+    blk = f.blocks[b]
+    for j in 0..blk.stmts.size {
+      st = blk.stmts[j]
+      reads.clear()
+      for l in st.locals {
+        ll_ssa_bad(bad, l)
+      }
+      if p = st.place {
+        if st.kind == msk_assign() && p.proj.size == 0 {
+          ll_ssa_def(defs, dblk, dat, bad, p.local, b, j)
+        } else {
+          ll_ssa_place(p, false, reads, bad)
+        }
+      }
+      if r = st.rv {
+        ll_ssa_opt(r.a, reads, bad)
+        ll_ssa_opt(r.b, reads, bad)
+        for o in r.ops {
+          ll_ssa_operand(o, reads, bad)
+        }
+        if p = r.place {
+          if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
+            ll_ssa_place(p, false, reads, bad)
+          } else {
+            ll_ssa_bad(bad, p.local)
+          }
+        }
+      }
+      ll_ssa_opt(st.indirect, reads, bad)
+      for o in st.args {
+        ll_ssa_operand(o, reads, bad)
+      }
+      // reads first: a statement that reads the local it defines keeps it
+      for l in reads {
+        ll_ssa_read(dblk, dat, bad, l, b, j)
+      }
+      if st.kind == msk_call() && st.dest >= 0 {
+        ll_ssa_def(defs, dblk, dat, bad, st.dest, b, j)
+      }
+    }
+    if t = blk.term {
+      reads.clear()
+      ll_ssa_opt(t.cond, reads, bad)
+      for l in reads {
+        ll_ssa_read(dblk, dat, bad, l, b, blk.stmts.size)
+      }
+    }
+  }
+  for i in 0..n {
+    e.ssa_ok[i] = !bad[i] && defs[i] == 1
+  }
+}
+
+fn ll_ssa_type(t: String): Bool {
+  t == "ptr" || t == "i64" || t == "i32" || t == "i16" || t == "i8" || t == "i1" || t == "double" || t == "float"
+}
+
+fn ll_ssa_bad(bad: Array(Bool), l: Int) {
+  if l >= 0 && l < bad.size {
+    bad[l] = true
+  }
+}
+
+fn ll_ssa_def(defs: Array(Int), dblk: Array(Int), dat: Array(Int), bad: Array(Bool), l: Int, b: Int, j: Int) {
+  if l < 0 || l >= defs.size {
+    return
+  }
+  defs[l] += 1
+  if defs[l] > 1 {
+    bad[l] = true
+  }
+  dblk[l] = b
+  dat[l] = j
+}
+
+fn ll_ssa_read(dblk: Array(Int), dat: Array(Int), bad: Array(Bool), l: Int, b: Int, j: Int) {
+  if l < 0 || l >= bad.size {
+    return
+  }
+  if dblk[l] != b || dat[l] >= j {
+    bad[l] = true
+  }
+}
+
+fn ll_ssa_opt(o: MOperand?, reads: Array(Int), bad: Array(Bool)) {
+  if x = o {
+    ll_ssa_operand(x, reads, bad)
+  }
+}
+
+fn ll_ssa_operand(o: MOperand, reads: Array(Int), bad: Array(Bool)) {
+  if p = o.place {
+    ll_ssa_place(p, true, reads, bad)
+  }
+}
+
+// A place's mentions: its local is read when the place is a whole-local
+// operand or starts with a deref, else it is bad; the index operands of
+// its projections are operands.
+fn ll_ssa_place(p: MPlace, whole_ok: Bool, reads: Array(Int), bad: Array(Bool)) {
+  if p.proj.size == 0 {
+    if whole_ok {
+      reads.push(p.local)
+    } else {
+      ll_ssa_bad(bad, p.local)
+    }
+  } else if p.proj[0].kind == mpk_deref() {
+    reads.push(p.local)
+  } else {
+    ll_ssa_bad(bad, p.local)
+  }
+  for pr in p.proj {
+    if o = pr.index {
+      ll_ssa_operand(o, reads, bad)
+    }
   }
 }
 

@@ -9,9 +9,12 @@
 // and rewrite them at any instruction. emit_gc.av holds the GC sequences,
 // emit.av the statements, functions, and the module.
 //
-// Kept within what an older seed's type maps traced (see
-// compiler/checker.av, FlowFacts): LlEmit holds 27 words; no array of
-// structs or unions.
+// LlEmit is one object per module with a field per piece of emitter state
+// (66 fields). An old seed's type maps once lost the reference words past
+// an object's payload word 63 (compiler/checker.av, FlowFacts), which held
+// this class to a smaller size; no seed that builds the compiler now has
+// that fault, so its size has no limit of that kind. Its arrays still hold
+// scalars, Strings or classes only, no structs or unions.
 
 import source
 import mir.types
@@ -50,6 +53,12 @@ pub class LlEmit {
   // once, in its entry block (%sl<n>, an optimized build), instead of a
   // GEP at each use (local_addr).
   pub slot_named: Bool = false
+  // The locals of the function being emitted that are values, not
+  // allocas (ll_ssa_plan, an optimized build): defined once and read only
+  // after that in the same block, so the value itself stands for every
+  // read; ssa_val holds it once its definition is emitted.
+  pub ssa_ok: Array(Bool)
+  pub ssa_val: Array(String)
   // The slot locals read through a copy of their own (ll_shadow_slots):
   // true at each such local's index, in the function being emitted;
   // whether this module's functions get them (an optimized build), and
@@ -140,6 +149,8 @@ pub class LlEmit {
     self.frame_at = []
     self.frame_maps = []
     self.shadow = []
+    self.ssa_ok = []
+    self.ssa_val = []
     self.sh_mask = []
     self.sh_live = []
     self.sh_after = []
@@ -338,6 +349,11 @@ pub class LlEmit {
     local_name(n)
   }
 
+  // Whether local n is a value, not an alloca (ll_ssa_plan).
+  pub fn ssa(n: Int): Bool {
+    n < self.ssa_ok.size && self.ssa_ok[n]
+  }
+
   // Whether local n is a slot local read through its copy.
   pub fn shadowed(n: Int): Bool {
     n < self.shadow.size && self.shadow[n]
@@ -356,6 +372,10 @@ pub class LlEmit {
   // A store of a whole local's value: into its place, and into its copy
   // when it is shadowed.
   pub fn store_local(n: Int, val: String) {
+    if ssa(n) {
+      self.ssa_val[n] = val
+      return
+    }
     ty = self.f.locals[n].ty
     store(ty, val, local_addr(n), slot_vol(n))
     if shadowed(n) {
@@ -458,7 +478,15 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = read_addr(p.local)
+    // A value local is reached only through a deref (ll_ssa_plan): its
+    // value is the pointer the first deref would load.
+    held = ssa(p.local)
+    ptr = ""
+    if held {
+      ptr = self.ssa_val[p.local]
+    } else {
+      ptr = read_addr(p.local)
+    }
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an
@@ -482,7 +510,11 @@ pub class LlEmit {
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
-        ptr = load_tagged(mt_ptr(), ptr, volatile, region_tag(region, foff, mt_ptr()))
+        if held {
+          held = false
+        } else {
+          ptr = load_tagged(mt_ptr(), ptr, volatile, region_tag(region, foff, mt_ptr()))
+        }
         volatile = false
         region = -1
         pend = -1
@@ -644,6 +676,10 @@ pub class LlEmit {
   // here (E1); constants are immediate.
   pub fn value(o: MOperand): String {
     if p = o.place {
+      if p.proj.size == 0 && ssa(p.local) {
+        self.ov_ty = self.f.locals[p.local].ty
+        return self.ssa_val[p.local]
+      }
       ptr = place_ptr(p)
       ty = self.pa_ty
       if self.pa_atomic {
