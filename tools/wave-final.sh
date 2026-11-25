@@ -131,7 +131,9 @@
 #      la/table.md, else the la/table.md beside BASE_STATS when there is one
 #      (its column headed by WAVE_FLOOR_BASE_LABEL, else by its path)
 #   6b. with WAVE_LA=1 and WAVE_BASE, when the floor's base table is of the
-#      base cache entry's tree: the head's instruction counts of the base
+#      base cache entry's tree (or of a tree whose compiler/, runtime/, lib/,
+#      tests/fixtures/ and langarena/ are the entry's, as a base branch moved
+#      by a commit of tests or tools only): the head's instruction counts of the base
 #      cache's stitched programs (tools/la-count.sh, shared), and the tasks
 #      whose time moved beyond 3% and 0.02 s at counts within 0.1% named
 #      (tools/layout-flag.py), each then timed again with its code at four
@@ -841,12 +843,23 @@ elif [ "${WAVE_LA:-0}" = 1 ]; then
     # and judged by its own layouts below. Only when the base's table and the base cache are of one
     # tree, so the times and the counts are of one base.
     curname=layout
+    # Two trees are one base for the times and the counts when what the
+    # programs are built from is the same in both: a base branch moved by a
+    # commit that touches only tests or tools is still the base. A tree this
+    # repository does not hold is only equal to itself.
+    same_built() {
+      [ -n "$1" ] && [ -n "$2" ] && git cat-file -e "$1^{tree}" 2> /dev/null && git cat-file -e "$2^{tree}" 2> /dev/null || return 1
+      for sb_p in compiler runtime lib tests/fixtures langarena; do
+        [ "$(git rev-parse -q --verify "$1:$sb_p" 2> /dev/null)" = "$(git rev-parse -q --verify "$2:$sb_p" 2> /dev/null)" ] || return 1
+      done
+      return 0
+    }
     blr=${fbase:+$(dirname "$fbase")/lr-avant.tsv}
     btree=""; [ -n "$fbase" ] && btree=$(sed -n '2p' "$(dirname "$(dirname "$fbase")")/head.txt" 2>/dev/null)
     if [ $lrc -ne 0 ]; then :
     elif [ -z "$entry" ]; then step "layout: skipped (WAVE_BASE unset: no base instruction counts)"
     elif [ -z "$blr" ] || [ ! -f "$blr" ]; then step "layout: skipped (no base LR re-measure: lr-avant.tsv beside the floor's base table)"
-    elif [ "$btree" != "$(basename "$entry")" ]; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"): times and counts of two bases; a statistics base of that tree: check out $WAVE_BASE (tree $(basename "$entry")), run WAVE_ONLY=stats,la WAVE_LA=1 sh tools/wave-final.sh there, and name its OUT as BASE_STATS)"
+    elif [ "$btree" != "$(basename "$entry")" ] && ! same_built "$btree" "$(basename "$entry")"; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"), which differ in what the programs are built from (compiler/, runtime/, lib/, tests/fixtures/, langarena/): times and counts of two bases; a statistics base of that tree: check out $WAVE_BASE (tree $(basename "$entry")), run WAVE_ONLY=stats,la WAVE_LA=1 sh tools/wave-final.sh there, and name its OUT as BASE_STATS)"
     else
       # shellcheck disable=SC2016
       lk shared "langarena counts" sh -c 'lap=$(BASE_CACHE=$(dirname "$1") sh tools/base-cache.sh --la "$(basename "$1")" 2> "$2/ins-head.log" < /dev/null) || exit 3

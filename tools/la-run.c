@@ -33,7 +33,14 @@
  * of them or at exit_group. A seccomp filter installed before PROGRAM starts
  * stops each of those calls (every thread's) until this program has read
  * /proc/TID/statm, whose resident field the kernel sums exactly over the
- * CPUs, and lets the call go on. READS is the number of such readings, and
+ * CPUs, and lets the call go on. The statm file of each thread stays open
+ * once opened and is read again from its start (a read of an open file
+ * costs a third of opening, reading and closing one): a program that makes
+ * tens of thousands of such calls (a garbage collector that returns memory
+ * to the system, Go's) waits less at each, and its own memory grows less
+ * while it waits (Go's Compress::LZWDecode read 433 to 505 MB at every one of
+ * six runs with the file opened at each stop, and 22 to 52 MB, as without
+ * the reader, with it kept open). READS is the number of such readings, and
  * ANON_KB the largest of them less the file-backed and shared pages
  * (statm's third field): a program's resident file pages also depend on
  * the page cache (which pages of its binary and libraries are cached, in
@@ -164,17 +171,44 @@ static int recv_fd(int sock) {
   return fd;
 }
 
+/* The statm file of each thread a handler has answered, kept open: the
+ * file belongs to the task it was opened for (a thread that has ended, its
+ * number reused, reads as an error, never as another process), so a read that
+ * fails opens it again. Slot TID % STATM_SLOTS. */
+#define STATM_SLOTS 128
+struct statm_cache {
+  pid_t tid[STATM_SLOTS];
+  int fd[STATM_SLOTS];
+};
+
 /* The resident size of TID's process in KB, from /proc/TID/statm, and in
  * *ANON its part not backed by a file or shared; -1 when it cannot be read
  * (the task is gone). */
-static long resident_kb(pid_t tid, long page_kb, long *anon) {
-  char path[64], buf[256];
-  snprintf(path, sizeof path, "/proc/%d/statm", (int)tid);
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) return -1;
-  ssize_t n = read(fd, buf, sizeof buf - 1);
-  close(fd);
-  if (n <= 0) return -1;
+static long resident_kb(struct statm_cache *c, pid_t tid, long page_kb, long *anon) {
+  char buf[256];
+  int slot = (int)((unsigned)tid % STATM_SLOTS);
+  ssize_t n = -1;
+  if (c->tid[slot] == tid && c->fd[slot] >= 0) {
+    n = pread(c->fd[slot], buf, sizeof buf - 1, 0);
+    if (n <= 0) {
+      close(c->fd[slot]);
+      c->fd[slot] = -1;
+    }
+  }
+  if (n <= 0) {
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/statm", (int)tid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    n = pread(fd, buf, sizeof buf - 1, 0);
+    if (n <= 0) {
+      close(fd);
+      return -1;
+    }
+    if (c->fd[slot] >= 0) close(c->fd[slot]);
+    c->tid[slot] = tid;
+    c->fd[slot] = fd;
+  }
   buf[n] = 0;
   long size, res, shared;
   if (sscanf(buf, "%ld %ld %ld", &size, &res, &shared) != 3) return -1;
@@ -270,6 +304,8 @@ int main(int argc, char **argv) {
   struct seccomp_notif *req = calloc(1, sz.seccomp_notif < sizeof *req ? sizeof *req : sz.seccomp_notif);
   struct seccomp_notif_resp *resp = calloc(1, sz.seccomp_notif_resp < sizeof *resp ? sizeof *resp : sz.seccomp_notif_resp);
   if (!req || !resp) die("calloc");
+  struct statm_cache cache;
+  for (int k = 0; k < STATM_SLOTS; k++) { cache.tid[k] = 0; cache.fd[k] = -1; }
   long peak = 0, peak_anon = 0, reads = 0;
   for (;;) {
     struct pollfd p = { .fd = lfd, .events = POLLIN };
@@ -281,7 +317,7 @@ int main(int argc, char **argv) {
         if (errno == EINTR || errno == ENOENT) continue;
         break;
       }
-      long anon = 0, kb = resident_kb((pid_t)req->pid, page_kb, &anon);
+      long anon = 0, kb = resident_kb(&cache, (pid_t)req->pid, page_kb, &anon);
       if (kb > peak) peak = kb;
       if (kb >= 0 && anon > peak_anon) peak_anon = anon;
       if (kb >= 0) reads++;

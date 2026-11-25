@@ -56,7 +56,11 @@
 #     (stubs) and a base LR table of the base cache entry's tree, a task
 #     whose time moved 10% at an equal count reads "layout?" in its
 #     `layout:` line and in floor.md's "Layout?" section; with a base table
-#     of another tree the step says it is skipped and why.
+#     of another tree the step says it is skipped and why;
+#   layout-same-built, layout-built-differs: a base table of a tree that
+#     differs from the base cache entry's only outside compiler/, runtime/,
+#     lib/, tests/fixtures/ and langarena/ is the same base (the step runs);
+#     one that differs in langarena/ is not (the step is skipped).
 #   only-stats, only-gate-no-build, only-unknown: WAVE_ONLY runs only the
 #     named steps (the others read `skipped`), builds C' first only when the
 #     gate is not among them, ends `WAVE PARTIAL GREEN` and never `WAVE FINAL`,
@@ -375,6 +379,35 @@ printf 'deadbeef\nanothertree\n' > "$w/layb/final/head.txt"
 final "$f" "$w/lay2.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
 has '^layout: skipped (the floor.s base table is of tree anothertree, the base cache.s entry of feedface' "$w/lay2.out/SUMMARY.txt"
 say layout-two-bases $? "$(line layout: "$w/lay2.out/SUMMARY.txt")"
+# A base branch moved by a commit that touches neither the compiler, the
+# runtime, the library, the fixtures nor the harness is the same base: the
+# base table's tree is the first commit's, the base cache's entry the
+# head's (they differ in one file of tools/ only), and the step runs; with a
+# commit in langarena/ between them it is skipped.
+t_base=$(cd "$f" && git rev-parse 'HEAD^{tree}')
+echo marker > "$f/tools/marker.txt"
+(cd "$f" && git add tools/marker.txt && git -c user.name=t -c user.email=t@t commit -q -m marker) > /dev/null 2>&1
+t_head=$(cd "$f" && git rev-parse 'HEAD^{tree}')
+le2=$lc/$t_head; cp -a "$le" "$le2"
+cat > "$f/tools/base-cache.sh" <<CACHE
+#!/bin/sh
+[ "\$1" = --la ] && { echo "$le2/la-x"; exit 0; }
+echo "$le2"
+CACHE
+printf 'deadbeef\n%s\n' "$t_base" > "$w/layb/final/head.txt"
+final "$f" "$w/lay4.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
+[ "$t_base" != "$t_head" ] && has "^layout: 1 tasks moved at an equal instruction count;" "$w/lay4.out/SUMMARY.txt"
+say layout-same-built $? "$t_base against $t_head: $(line layout: "$w/lay4.out/SUMMARY.txt")"
+echo changed > "$f/langarena/harness/changed.txt"
+(cd "$f" && git add langarena/harness/changed.txt && git -c user.name=t -c user.email=t@t commit -q -m harness) > /dev/null 2>&1
+t_head3=$(cd "$f" && git rev-parse 'HEAD^{tree}'); le4=$lc/$t_head3; cp -a "$le" "$le4"
+sed "s|$le2|$le4|g" "$f/tools/base-cache.sh" > "$f/tools/base-cache.new"; mv "$f/tools/base-cache.new" "$f/tools/base-cache.sh"
+(cd "$f" && git add tools/base-cache.sh && git -c user.name=t -c user.email=t@t commit -q -m cache) > /dev/null 2>&1
+t_head3=$(cd "$f" && git rev-parse 'HEAD^{tree}'); le5=$lc/$t_head3; cp -a "$le" "$le5"
+sed "s|$le4|$le5|g" "$f/tools/base-cache.sh" > "$f/tools/base-cache.new"; mv "$f/tools/base-cache.new" "$f/tools/base-cache.sh"
+final "$f" "$w/lay5.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/lay/side" WAVE_LR_DEFAULT="$w/default" WAVE_BASE=base WAVE_FLOOR_BASE="$w/layb/final/la/table.md"
+has "^layout: skipped (the floor.s base table is of tree $t_base, the base cache.s entry of $t_head3" "$w/lay5.out/SUMMARY.txt"
+say layout-built-differs $? "$(line layout: "$w/lay5.out/SUMMARY.txt")"
 
 # 13. The twins at once: a stub harness whose tasks pass lists two twins,
 # each twin's pass writes its row, and a pass that names no task writes the
