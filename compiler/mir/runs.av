@@ -591,58 +591,15 @@ fn rn_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
   nx
 }
 
-// The blocks of the checked copies loop versioning leaves: the loops
-// whose header a back edge marks cold (loops.av's original loop, run only
-// when the versioning guard fails, with every check in place). A run
-// found there would only add a cold copy of cold code. Empty when no
-// edge is cold.
-fn rn_cold_blocks(f: MFunc): Array(Bool) {
-  any = false
-  for blk in f.blocks {
-    if t = blk.term, t.cold > 0 {
-      any = true
-    }
-  }
-  out: Array(Bool) = []
-  if !any {
-    return out
-  }
-  out = mir_bools(f.blocks.size, false)
-  lps = mir_lv_loops(f)
-  for li in 0..lps.headers.size {
-    h = lps.headers[li]
-    body = lps.bodies[li]
-    cold = false
-    for b in 0..f.blocks.size {
-      if body[b] {
-        if t = f.blocks[b].term, t.cold == h + 1 {
-          cold = true
-        }
-      }
-    }
-    if cold {
-      for b in 0..f.blocks.size {
-        if body[b] {
-          out[b] = true
-        }
-      }
-    }
-  }
-  out
-}
-
 // The pass (after the loop pass, before the GC passes): every function
 // whose kind is unset.
 pub fn mir_runs_pass(m: MModule) {
   keep = mir_lv_summary(m)
   for f in m.funcs {
     if f.kind == mfk_unset() {
-      cold = rn_cold_blocks(f)
       work: Array(Int) = []
       for b in 0..f.blocks.size {
-        if cold.size == 0 || !cold[b] {
-          work.push(b)
-        }
+        work.push(b)
       }
       budget = 64
       // The predecessors change only where a run is split, so they are
