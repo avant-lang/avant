@@ -12,12 +12,17 @@
  * which never moves: the Avant Json value roots that buffer, interior
  * yyjson pointers stay valid,
  * and the collector reclaims the whole document when the last Json is
- * dropped. Accessors report a missing key or a wrong kind through the
- * thread-local status, in the zlib/base64 shape. */
+ * dropped. An accessor answers a missing key or a wrong kind in its
+ * result (below); a parse reports its failure through the thread-local
+ * status, in the zlib/base64 shape. */
 
-/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure,
+/* 0 ok, 1 invalid JSON / not an integer, 2 allocation failure,
  * 3 nested deeper than the parse's max_depth, 4 more values than its
- * max_entries. */
+ * max_entries. The readers answer in their result alone (NULL for a
+ * string, -1 for a Bool, NaN for a float) but the integer's, whose
+ * every value is an Int: it answers AVANT_INT_MIN for "not an integer"
+ * and only then sets the status, which tells a real AVANT_INT_MIN from
+ * it (status 0). */
 static __thread int32_t g_json_status;
 /* Why the last parse on this thread failed:
  * yyjson's message (a static string) and the byte offset it names. */
@@ -381,48 +386,41 @@ static char *copy_str(const char *p, size_t n) {
   return out;
 }
 
-/* A JSON integer (no fraction, no exponent: yyjson's int and uint kinds)
- * within [lo, hi], else status 1 (Json.int is
- * nil for a real, for a non-number and outside the type's range). */
-static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
+/* Json.int: a JSON integer (no fraction, no exponent: yyjson's int and
+ * uint kinds) within Int (64-bit; there is no separate Json.int64, one
+ * spelling). Anything else (a real, a non-number, an integer beyond
+ * Int) is AVANT_INT_MIN with status 1; AVANT_INT_MIN itself is answered
+ * with status 0, so the caller reads the status only for that value. */
+static avant_int node_int(yyjson_val *v) {
   if (v && yyjson_is_uint(v)) {
     uint64_t u = yyjson_get_uint(v);
-    if (u <= (uint64_t)hi) {
-      set_status(0);
-      return (int64_t)u;
+    if (u <= (uint64_t)AVANT_INT_MAX) {
+      return (avant_int)u;
     }
   } else if (v && yyjson_is_sint(v)) {
     int64_t s = yyjson_get_sint(v);
-    if (s >= lo && s <= hi) {
+    if (s == AVANT_INT_MIN) {
       set_status(0);
-      return s;
     }
+    return (avant_int)s;
   }
   set_status(1);
-  return 0;
+  return AVANT_INT_MIN;
 }
 
-/* Json.int: an integer within Int (64-bit; there is no separate
- * Json.int64, one spelling). */
-static avant_int node_int(yyjson_val *v) {
-  return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
-}
-
-static int32_t node_bool(yyjson_val *v) {
+/* 1 for true, 0 for false, -1 for any other value (Json.bool is nil). */
+static avant_int node_bool(yyjson_val *v) {
   if (!v || !yyjson_is_bool(v)) {
-    set_status(1);
-    return 0;
+    return -1;
   }
-  set_status(0);
   return yyjson_get_bool(v) ? 1 : 0;
 }
 
+/* A string's copy, NULL for any other value (Json.str is nil: String?). */
 static char *node_str(yyjson_val *v) {
   if (!v || !yyjson_is_str(v)) {
-    set_status(1);
-    return avant_str_empty();
+    return NULL;
   }
-  set_status(0);
   return copy_str(yyjson_get_str(v), yyjson_get_len(v));
 }
 
@@ -468,15 +466,22 @@ char *avant_json_obj_str(void *nodep, const char *key) {
   return node_str((yyjson_val *)avant_json_get(nodep, key));
 }
 
+/* The name of an object's member: the string of a name node
+ * (avant_json_first_key, then every second avant_json_next), which is
+ * always a string. */
+char *avant_json_name(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  return copy_str(unsafe_yyjson_get_str(v), unsafe_yyjson_get_len(v));
+}
+
+/* The name of member i, NULL when there is none (Json.key_at: String?). */
 char *avant_json_key_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
   yyjson_val *key;
   yyjson_obj_iter iter;
-  int32_t at = 0;
-  set_status(0);
+  avant_int at = 0;
   if (!v || i < 0 || !yyjson_is_obj(v)) {
-    set_status(1);
-    return avant_str_empty();
+    return NULL;
   }
   iter = yyjson_obj_iter_with(v);
   while ((key = yyjson_obj_iter_next(&iter)) != NULL) {
@@ -485,8 +490,7 @@ char *avant_json_key_at(void *nodep, avant_int i) {
     }
     at++;
   }
-  set_status(1);
-  return avant_str_empty();
+  return NULL;
 }
 
 /* The node's own JSON text, copied into collector memory. */
