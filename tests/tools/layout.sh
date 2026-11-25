@@ -13,9 +13,15 @@
 #   flag-small: one whose time moved 1% (or 0.01 s) is not;
 #   retime-follows: tools/layout-retime.sh in a fake checkout whose stub
 #     C' makes the shifted binary (`--cc`) slower: the runs alternate and
-#     the verdict is that the time follows the layout;
-#   retime-overlap: with both binaries alike (each run 0.05 s or 0.25 s
-#     in turn, so their ranges overlap whatever the noise), "not separated";
+#     the verdict is that the time follows the layout. The walls come from
+#     a stub timer (LAYOUT_TIME) that reads the figure each run declares
+#     (0.05 s, 0.4 s for the shifted binary), not from a clock, so the load
+#     of the machine cannot move them;
+#   retime-overlap: with both binaries alike (each run declares 0.05 s or
+#     0.25 s in turn, so their ranges overlap), "not separated";
+#   retime-real-timer: the same tool with /usr/bin/time prints each run's
+#     wall, user and involuntary switches as numbers (their values are the
+#     machine's, so only their form is checked);
 #   retime-args: the stub saw the harness's compile arguments and the
 #     shift's C file, and nothing is left in TMPDIR;
 #   cc-shifts: tools/layout-cc.sh as CC links a C program as asked and once
@@ -110,34 +116,51 @@ f=$w/fake/avant; mkdir -p "$f/tools/layout" "$f/bin"
 cp "$root/tools/layout-retime.sh" "$f/tools/"; cp "$root/tools/layout/plt.c" "$f/tools/layout/"
 cat > "$f/bin/avant-c-llvm" <<'STUB'
 #!/bin/sh
-# compile SRC OUT ARGS...: a program that sleeps, longer with --cc when
-# STUB_SLOW_SHIFT=1; the arguments are logged. With STUB_SPREAD=1 each
-# binary's runs sleep 0.05 s and 0.25 s in turn (its own counter), so the
-# two ranges overlap by construction: a noisy machine cannot separate
-# two alike binaries by chance.
+# compile SRC OUT ARGS...: a program that declares the wall time of each
+# of its runs (in OUT.wall, read by the stub timer below): 0.05 s, 0.4 s with
+# --cc when STUB_SLOW_SHIFT=1; with STUB_SPREAD=1 each binary's runs declare
+# 0.05 s and 0.25 s in turn (its own counter), so the two ranges overlap by
+# construction. The arguments are logged. With STUB_REAL=1 the program
+# really sleeps 0.05 s instead.
 [ "$1" = compile ] || exit 2
 src=$2 out=$3; shift 3
 echo "$*" >> "$STUB_ARGS"
 d=0.05
 case " $* " in *" --cc "*) [ "${STUB_SLOW_SHIFT:-0}" = 1 ] && d=0.4 ;; esac
-if [ "${STUB_SPREAD:-0}" = 1 ]; then
-  printf '#!/bin/sh\nn=$(cat "%s.n" 2>/dev/null || echo 0); echo $((n + 1)) > "%s.n"\nif [ $((n %% 2)) = 1 ]; then sleep 0.25; else sleep 0.05; fi\necho checksum-1\n' "$out" "$out" > "$out"
+if [ "${STUB_REAL:-0}" = 1 ]; then
+  printf '#!/bin/sh\nsleep 0.05\necho checksum-1\n' > "$out"
+elif [ "${STUB_SPREAD:-0}" = 1 ]; then
+  printf '#!/bin/sh\nn=$(cat "%s.n" 2>/dev/null || echo 0); echo $((n + 1)) > "%s.n"\nif [ $((n %% 2)) = 1 ]; then echo 0.25; else echo 0.05; fi > "%s.wall"\necho checksum-1\n' "$out" "$out" "$out" > "$out"
 else
-  printf '#!/bin/sh\nsleep %s\necho checksum-1\n' "$d" > "$out"
+  printf '#!/bin/sh\necho %s > "%s.wall"\necho checksum-1\n' "$d" "$out" > "$out"
 fi
 chmod +x "$out"
 STUB
 chmod +x "$f/bin/avant-c-llvm"
+cat > "$f/bin/stub-time" <<'STUB'
+#!/bin/sh
+# stub-time -f FORMAT -o FILE COMMAND...: runs COMMAND and writes "WALL 0.00 0"
+# to FILE, WALL being what the program (the last word) declared in PROGRAM.wall.
+of=$4; shift 4
+"$@"; rc=$?
+for last; do :; done
+echo "$(cat "$last.wall") 0.00 0" > "$of"
+exit $rc
+STUB
+chmod +x "$f/bin/stub-time"
 la=$w/part; mkdir -p "$la/avant/langarena/tmp" "$la/args"
 echo 'task' > "$la/avant/langarena/tmp/a_task.av"; printf -- '--release\n--cpu=v3\n' > "$la/args/a_task"
 mkdir -p "$w/tmp"
-(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args1.log" STUB_SLOW_SHIFT=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime1.out" 2>&1); rc=$?
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args1.log" LAYOUT_TIME="$f/bin/stub-time" STUB_SLOW_SHIFT=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime1.out" 2>&1); rc=$?
 [ $rc -eq 0 ] && [ "$(grep -c '^a_task plain wall=' "$w/retime1.out")" = 3 ] && [ "$(grep -c '^a_task shifted wall=' "$w/retime1.out")" = 3 ] \
   && grep -q '^verdict: the time follows the layout (median +[0-9.]*% with the code shifted)$' "$w/retime1.out"
 say retime-follows $? "rc=$rc $(tr '\n' ';' < "$w/retime1.out")"
-(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" STUB_SPREAD=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" LAYOUT_TIME="$f/bin/stub-time" STUB_SPREAD=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -q '^verdict: not separated' "$w/retime2.out"
 say retime-overlap $? "rc=$rc $(tr '\n' ';' < "$w/retime2.out")"
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args3.log" STUB_REAL=1 sh tools/layout-retime.sh "$la" a_task 2 < /dev/null > "$w/retime3.out" 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$(grep -c '^a_task \(plain\|shifted\) wall=[0-9.][0-9.]* user=[0-9.][0-9.]* invol=[0-9][0-9]*$' "$w/retime3.out")" = 4 ] && grep -q '^verdict: ' "$w/retime3.out"
+say retime-real-timer $? "rc=$rc $(tr '\n' ';' < "$w/retime3.out")"
 grep -qx -- '--release --cpu=v3' "$w/args1.log" && grep -qx -- "--release --cpu=v3 --cc $f/tools/layout/plt.c" "$w/args1.log" && [ -z "$(ls "$w/tmp")" ]
 say retime-args $? "$(tr '\n' ';' < "$w/args1.log"); left: $(ls "$w/tmp" | tr '\n' ' ')"
 # 3. The CC wrapper, on a real link.
