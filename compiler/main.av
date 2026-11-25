@@ -430,8 +430,8 @@ pub fn driver_run(args: Array(String)) {
     // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
-    if m = box.mir {
-      err = llvm_build(m, llvm_job_of(job), out)
+    if _ = box.mir {
+      err = llvm_build(box, llvm_job_of(job), out)
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
@@ -477,9 +477,9 @@ pub fn driver_compile(args: Array(String)) {
     if !attach_std_link(box, job) {
       diag_exit(1)
     }
-    if m = box.mir {
+    if _ = box.mir {
       // The driver leaves this line to its caller.
-      err = llvm_build(m, llvm_job_of(job), out_path)
+      err = llvm_build(box, llvm_job_of(job), out_path)
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
@@ -669,12 +669,14 @@ fn driver_mir_build(args: Array(String)) {
     if g = m.func("main") {
       has_main = true
     }
+    box = IrBox.new(true)
+    box.mir = m
     if object {
-      err = llvm_object(m, job, files[1])
+      err = llvm_object(box, job, files[1])
     } else if !has_main {
       err = "__mir-build: ${files[0]} has no main (use --object)"
     } else {
-      err = llvm_build(m, job, files[1])
+      err = llvm_build(box, job, files[1])
     }
     if timed {
       diag_puts("emit_us=${job.emit_us} compile_us=${job.compile_us} link_us=${job.link_us}")
@@ -763,8 +765,8 @@ fn driver_emit_ll(args: Array(String)) {
   paths.push(args[0])
   box = compile_av_paths(paths)
   if box.ok {
-    if m = box.mir {
-      err = llvm_emit_ll(m, llvm_inline_fast(), args[1])
+    if _ = box.mir {
+      err = llvm_emit_ll(box, llvm_inline_fast(), args[1])
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
