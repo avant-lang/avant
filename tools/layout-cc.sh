@@ -124,6 +124,15 @@ fi
 "$real" "$@" || exit $?
 dir=$LAYOUT_DIR
 name=$(basename "$out")
+# A link that places the runtime's hot functions (a -Wl,-T,.../avant_hot.ld
+# argument: compiler/llvm/driver.av's llvm_hot_script, an output section
+# after all other code on a 4 KiB boundary) gets a pad of S bytes at the
+# start of that section too: its alignment would take up the first pad, and
+# the hot functions would not move.
+hot=""
+for a in "$@"; do
+  case "$a" in -Wl,-T,*avant_hot.ld) hot=-hot ;; esac
+done
 for s in ${LAYOUT_SHIFTS:-0 64 192 448}; do
   case "$s" in *[!0-9]*|'') echo "layout-cc.sh: shift '$s' is not a number of bytes" >&2; exit 2 ;; esac
   [ $((s % 64)) -eq 0 ] || { echo "layout-cc.sh: shift $s is not a multiple of 64" >&2; exit 2; }
@@ -132,15 +141,17 @@ for s in ${LAYOUT_SHIFTS:-0 64 192 448}; do
     cp "$out" "$dir/$s/$name" || exit 2
     continue
   fi
-  pad=$dir/pads/shift$s.o
+  pad=$dir/pads/shift$s$hot.o
   if [ ! -f "$pad" ]; then
     # Written once, under a name of this process's own, then renamed into
     # place: links run in parallel.
     # The block has a section of its own, so a link that orders sections
     # (ld's --section-ordering-file) can keep it first.
-    printf '.section .text.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n.section .note.GNU-stack,"",@progbits\n' "$s" > "$dir/pads/shift$s.$$.s" || exit 2
-    as -o "$dir/pads/shift$s.$$.o" "$dir/pads/shift$s.$$.s" || exit 2
-    mv -f "$dir/pads/shift$s.$$.o" "$pad"; rm -f "$dir/pads/shift$s.$$.s"
+    hotpad=""
+    [ -n "$hot" ] && hotpad=$(printf '.section .avant_hot.1.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n' "$s")
+    printf '%s\n.section .text.layout_pad,"ax",@progbits\n.p2align 6\n.skip %d, 0xcc\n.section .note.GNU-stack,"",@progbits\n' "$hotpad" "$s" > "$dir/pads/shift$s$hot.$$.s" || exit 2
+    as -o "$dir/pads/shift$s$hot.$$.o" "$dir/pads/shift$s$hot.$$.s" || exit 2
+    mv -f "$dir/pads/shift$s$hot.$$.o" "$pad"; rm -f "$dir/pads/shift$s$hot.$$.s"
   fi
   # The arguments again, the pad before the first object and the output
   # renamed.

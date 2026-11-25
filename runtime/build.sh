@@ -44,7 +44,10 @@ fi
 # both, so the runtime growing anywhere moved the hot functions linked
 # after it by 16-byte steps, and with them tasks' times (up to 14%;
 # tools/placement-probe.sh measures it).
-place="-falign-functions=64 -falign-loops=32"
+# Each function also gets a section of its own (.text.NAME), so the hot
+# ones can be placed apart from the rest (place_hot below); the linker
+# keeps the others in the order they had in one .text.
+place="-falign-functions=64 -falign-loops=32 -ffunction-sections"
 # A source path in an object (`__FILE__` of an `assert`, as picohttpparser's)
 # is written relative to the checkout (runtime/...), so a program built in
 # one checkout is byte for byte the one built from the same commit in
@@ -174,6 +177,8 @@ rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
 # PCRE2's 20 GB; with PCRE2's match and depth limits (ten million) it is
 # what std.regex's Regex.compile defaults to, so a Regex with the default
 # limits matches with no match context (avant_re.c, cache entries).
+# Its functions get sections of their own too, so its hot ones can be
+# placed (runtime/hot.txt, place_hot below).
 pcre="$root/third_party/pcre2"
 pcre_out="$root/build/pcre2"
 rm -rf "$pcre_out"
@@ -182,7 +187,7 @@ for f in auto_possess chkdint chartables compile compile_cgroup compile_class co
   dfa_match error extuni find_bracket jit_compile maketables match match_data match_next newline ord2utf \
   pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
 do
-  "$cc" -c -O2 -pthread -fno-omit-frame-pointer $harden -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
+  "$cc" -c -O2 -pthread -fno-omit-frame-pointer -ffunction-sections $harden -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
     -DHEAP_LIMIT=262144 -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
 done
 "$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
@@ -212,8 +217,9 @@ case "$(uname -m)" in
     ;;
 esac
 # shellcheck disable=SC2086
-# The library's Makefile adds its own flags to CFLAGS.
-( cd "$b64" && env CC="$cc" CFLAGS="$harden" $simd make lib/libbase64.o )
+# The library's Makefile adds its own flags to CFLAGS; function sections,
+# so its hot codecs can be placed (runtime/hot.txt, place_hot below).
+( cd "$b64" && env CC="$cc" CFLAGS="$harden -ffunction-sections" $simd make lib/libbase64.o )
 cp "$b64/lib/libbase64.o" "$root/build/libbase64.o"
 # The aklomp object stays separate: the compiler links it only for a
 # program that imports std.base64. The SIMD codecs need their own -m
@@ -226,6 +232,40 @@ compile "$us/loop.c" "$root/build/us_loop.o"
 compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
+
+# The hot functions' own place. A function of runtime/hot.txt (the
+# runtime's functions that take a large share of some benchmark program's
+# time; the file says how it was chosen) has its section renamed
+# .avant_hot.K.NAME. The program's link (compiler/llvm/driver.av,
+# llvm_hot_script) gathers these sections, sorted by name, into one output
+# section after all other code, on a 4 KiB boundary: each hot function
+# then sits after only the hot functions whose names sort before it,
+# whatever else the runtime or the program holds, and the program's own
+# code does not move. Before, a hot function sat wherever the objects and
+# functions linked before it ended: a collector change moved the string
+# parser 0x180 to 0x240 bytes, and a task calling it from its loop ran 20%
+# slower at equal instructions (its loop and the parser met in the same
+# op-cache sets, which repeat every 2 KiB). K is 9 for the collector's
+# (avant_rt.o) and 5 for the others, so the code that changes most often
+# comes last and moves nothing else. A link without the script (the seed's
+# link of the compiler) keeps each name as a section of its own after the
+# code, unsorted.
+place_hot() {
+  while read -r o f; do
+    case "$o" in ''|'#'*) continue ;; esac
+    [ -f "$root/build/$o" ] || { echo "runtime/build.sh: runtime/hot.txt names $o, which is not built" >&2; exit 1; }
+    k=5
+    [ "$o" = avant_rt.o ] && k=9
+    # The function's section, or its clones' (gcc names a specialized
+    # copy NAME.constprop.0, NAME.isra.0, ...).
+    secs=$(readelf -SW "$root/build/$o" | awk -v f="$f" '{ for (i = 1; i <= NF; i++) if ($i == ".text." f || index($i, ".text." f ".") == 1) print $i }')
+    [ -n "$secs" ] || { echo "runtime/build.sh: runtime/hot.txt names $f, which $o has no section for" >&2; exit 1; }
+    for sec in $secs; do
+      objcopy --rename-section "$sec=.avant_hot.$k.${sec#.text.}" "$root/build/$o"
+    done
+  done < "$root/hot.txt"
+}
+place_hot
 
 # Every avant_* symbol an object calls is defined globally by one of them:
 # a hidden function of a core unit that another object calls is made local
