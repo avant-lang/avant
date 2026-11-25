@@ -215,10 +215,63 @@ pub fn llvm_out_parent(out_path: String): String {
   ""
 }
 
+// The linker script the link adds to the default one (GNU ld and lld
+// read it with -T; INSERT keeps their default script): the runtime's hot
+// functions (sections .avant_hot.K.NAME, runtime/build.sh's place_hot)
+// sorted by name into one output section after all other code, starting
+// on a 4 KiB boundary. Placed there, a hot function moves only when a hot
+// function sorted before it changes: neither the program's code, which
+// stays where it was, nor the rest of the runtime moves it within its
+// page.
+pub fn llvm_hot_script: String {
+  "SECTIONS\n{\n  .avant_hot ALIGN(4096) : { *(SORT(.avant_hot.*)) }\n}\nINSERT AFTER .text;\n"
+}
+
+// pipeline.run_cc with the output to log.
+pub fn llvm_run_cc_out(args: Array(String), log: String): Int {
+  if v = env_get("CC"), file_exists(v) {
+    return tool_run_out(v, args, log)
+  }
+  if file_exists("/usr/bin/cc") {
+    return tool_run_out("/usr/bin/cc", args, log)
+  }
+  wrapped: Array(String) = []
+  wrapped.push("cc")
+  wrapped.concat(args)
+  tool_run_out("/usr/bin/env", wrapped, log)
+}
+
+// Whether the linker this link runs reads llvm_hot_script: cc with the
+// link's own flags (a -fuse-ld among them, or a CC that adds one) asked
+// for its linker's version (one short run before the link). GNU ld and
+// lld read it; mold and gold do not, and get no script: their links keep
+// each hot section as an output section of its own, where that linker
+// puts an unknown code section, on no page boundary.
+pub fn llvm_linker_reads_script(flags: Array(String), log: String): Bool {
+  args: Array(String) = []
+  args.concat(flags)
+  args.push("-Wl,--version")
+  ok = false
+  if llvm_run_cc_out(args, log) == 0 {
+    text = file_read(log) ?? ""
+    // The linker's own version line (cc prints its command lines too;
+    // mold's line says it is compatible with GNU ld, so the start of the
+    // line decides).
+    for l in text.split("\n") {
+      if l.starts_with("GNU ld ") || (l.contains("LLD ") && l.contains("compatible with GNU linkers")) {
+        ok = true
+      }
+    }
+  }
+  fs_unlink(log)
+  ok
+}
+
 // cc OBJ <runtime objects> <job objects> <the runtime's avant_tls.o>
-// <flags> -o OUT: the hot thread-locals' object comes after every other
-// object, so no other object's thread-locals come between them and the
-// thread pointer (runtime/avant_tls.c).
+// <flags> -Wl,-T,avant_hot.ld -o OUT: the hot thread-locals' object comes
+// after every other object, so no other object's thread-locals come
+// between them and the thread pointer (runtime/avant_tls.c); the script
+// (llvm_hot_script) is written beside OBJ when the linker reads it.
 pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   args: Array(String) = []
   args.push(obj)
@@ -234,16 +287,30 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   extra = job.flags
   line = linker_flags_s(extra)
   words = line.split(" ")
+  flags: Array(String) = []
   i = 0
   while i < words.size {
     if words[i].size > 0 {
       args.push(words[i])
+      flags.push(words[i])
     }
     i += 1
+  }
+  dir = llvm_out_parent(obj)
+  script = ""
+  if llvm_linker_reads_script(flags, "${dir}/linker.txt") {
+    script = "${dir}/avant_hot.ld"
+    if e = write_failure(file_write(script, llvm_hot_script())) {
+      return e.message()
+    }
+    args.push("-Wl,-T,${script}")
   }
   args.push("-o")
   args.push(out_path)
   code = run_cc(args)
+  if script.size > 0 {
+    fs_unlink(script)
+  }
   if code != 0 {
     return "link failed: cc exited ${code}"
   }

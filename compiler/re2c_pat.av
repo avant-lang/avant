@@ -921,6 +921,17 @@ pub class Re2cCollect {
     buf.push_str("#include <stdint.h>\n")
     buf.push_str("#include <string.h>\n\n")
     buf.push_str("/*!maxnmatch:re2c*/\n\n")
+    // The matchers and their entry are hot code of the program's regex
+    // searches: declared first with a section of the runtime's hot
+    // functions (runtime/build.sh, place_hot; compiler/llvm/driver.av,
+    // llvm_hot_script), so the runtime's size, linked before this
+    // object, no longer moves them. Declarations, so
+    // each definition's first line stays the one re2c_line_owners reads.
+    place = " __attribute__((section(\".avant_hot.5.avant_re2c\")))"
+    for i in 0..self.bodies.size {
+      buf.push_str("static int32_t avant_re2c_find_${i + 1}(const char *s, avant_int from, avant_int *m0, avant_int *m1, avant_int *c0, avant_int *c1)${place};\n")
+    }
+    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, avant_int from, avant_int *spans, int32_t max_pairs)${place};\n\n")
     any_cap = false
     for bd in self.bodies {
       if body_has_capture(bd) {
