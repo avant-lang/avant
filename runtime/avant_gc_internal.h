@@ -2435,6 +2435,21 @@ _Static_assert(LINES_PER_BLOCK == 128, "a mixed block's snapshot is two 64-bit w
 #define TENURE_SURV_NUM 7
 #define TENURE_SURV_DEN 8
 #endif
+/* The survival that starts the phase (the probes keep the one above):
+ * more than TENURE_ENTER_NUM / TENURE_ENTER_DEN. A retired budget is
+ * promoted in allocation order, its dead objects with it, where the
+ * young copy places each survivor after what names it: Etc::GameOfLife's
+ * build survives at 87-96% a collection, so at 7/8 it entered the phase
+ * twice, its cells and their neighbor buffers stayed apart with the
+ * dead smaller buffers between them, and its 500 generations over them
+ * ran 14% slower (2.44 s against 2.84 s). A build that keeps everything
+ * (the collector benchmark's chain, the unhinted binary trees, the
+ * Graph tasks' rows created) survives at more than 31/32 and still
+ * enters it. */
+#ifndef TENURE_ENTER_NUM
+#define TENURE_ENTER_NUM 31
+#define TENURE_ENTER_DEN 32
+#endif
 
 /* avant_gc_sticky.c: the young generation (S+) and the noted list, and
  * the young allocator's block lists in avant_gc_alloc.c. */

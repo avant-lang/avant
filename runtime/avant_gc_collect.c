@@ -439,8 +439,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
    * the collections the budget asks for only (the program's end it,
    * gc_collect). In the phase a young collection is a probe: the phase
    * goes on, its interval doubled up to TENURE_GAP_MAX budgets, while
-   * nearly everything still survives. Out of it, the second such
-   * collection in a row starts it. */
+   * nearly everything still survives. Out of it, the second
+   * high-survival collection in a row starts it when it kept more than
+   * TENURE_ENTER_NUM / TENURE_ENTER_DEN of its young bytes. */
   if (budget && (gc_heap.tenure_on || (high && gc_heap.young_high_prev))) {
     int nearly = surv * TENURE_SURV_DEN > used * TENURE_SURV_NUM;
     if (gc_heap.tenure_on) {
@@ -451,7 +452,7 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
       } else {
         gc_heap.tenure_on = 0;
       }
-    } else if (nearly && gc_sticky_tenure_ok()) {
+    } else if (surv * TENURE_ENTER_DEN > used * TENURE_ENTER_NUM && gc_sticky_tenure_ok()) {
       gc_heap.tenure_on = 1;
       gc_heap.tenure_gap = 1;
       gc_heap.tenure_left = 1;
