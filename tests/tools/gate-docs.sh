@@ -1,13 +1,14 @@
 #!/bin/sh
-# The gate's document checks cover DESIGN.md: its links into the README
-# are checked, so a README heading renamed under them fails the gate.
+# The gate's document checks cover DESIGN.md and BENCHMARKS.md: their links
+# into the README are checked, so a README heading renamed under them fails
+# the gate.
 # Run by tests/cases/test_tools.av; by hand:
 #
 #   sh tests/tools/gate-docs.sh WORK
 #
 # Reads tools/gate.sh's readme_checks for each document's links check,
-# runs tools/readme-links.sh on the tree's DESIGN.md, then on a copy whose
-# README lost a heading DESIGN.md links. Prints one line per check,
+# runs tools/readme-links.sh on the tree's DESIGN.md and BENCHMARKS.md, then
+# on a copy whose README lost a heading each links. Prints one line per check,
 # `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/gate-docs.sh WORK" >&2; exit 2; }
@@ -17,7 +18,7 @@ rm -rf "$w"
 mkdir -p "$w"
 say() { if [ "$2" = 0 ]; then echo "ok: $1"; else echo "FAIL: $1: $3"; fi; }
 sed -n '/^readme_checks() {/,/^}/p' "$root/tools/gate.sh" > "$w/readme_checks.sh"
-for doc in README CONTRIBUTING DESIGN; do
+for doc in README CONTRIBUTING DESIGN BENCHMARKS; do
   name=$(echo "$doc" | tr 'A-Z' 'a-z')
   if [ "$doc" = README ]; then
     grep -q 'tools/readme-links.sh >' "$w/readme_checks.sh"
@@ -41,4 +42,19 @@ TMPDIR=$w sh "$root/tools/readme-links.sh" "$w/tree/DESIGN.md" > "$w/broken.out"
 rc=$?
 [ -n "$anchor" ] && [ $rc -eq 1 ] && grep -q "$anchor" "$w/broken.out"
 say design-renamed-heading-fails $? "anchor '$anchor', status $rc: $(tail -n 2 "$w/broken.out" | tr '\n' ';')"
+# The same for BENCHMARKS.md, which links the README's sections.
+TMPDIR=$w sh "$root/tools/readme-links.sh" "$root/BENCHMARKS.md" > "$w/bench.out" 2>&1
+rc=$?
+[ $rc -eq 0 ]; say benchmarks-links-pass $? "status $rc: $(tail -n 1 "$w/bench.out")"
+anchor=$(grep -o '](README.md#[a-z0-9_-]*)' "$root/BENCHMARKS.md" | head -n 1 | sed 's/^](README.md#//; s/)$//')
+mkdir -p "$w/tree2"
+cp "$root/BENCHMARKS.md" "$w/tree2/BENCHMARKS.md"
+awk -v A="$anchor" '
+function slug(s) { s = tolower(s); gsub(/[^a-z0-9 _-]/, "", s); gsub(/ /, "-", s); return s }
+/^#+ / { h = $0; sub(/^#+ /, "", h); if (slug(h) == A && !done) { print $0 " renamed"; done = 1; next } }
+{ print }' "$root/README.md" > "$w/tree2/README.md"
+TMPDIR=$w sh "$root/tools/readme-links.sh" "$w/tree2/BENCHMARKS.md" > "$w/broken2.out" 2>&1
+rc=$?
+[ -n "$anchor" ] && [ $rc -eq 1 ] && grep -q "$anchor" "$w/broken2.out"
+say benchmarks-renamed-heading-fails $? "anchor '$anchor', status $rc: $(tail -n 2 "$w/broken2.out" | tr '\n' ';')"
 echo done
