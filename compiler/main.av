@@ -777,7 +777,17 @@ fn driver_emit_ll(args: Array(String)) {
   diag_exit(1)
 }
 
+// The runtime's fixed young budget (avant_gc_young_fixed): the compiler
+// keeps what it builds (the syntax tree, the checker's tables, the MIR),
+// so its survivors are promoted at their first young collection instead
+// of being copied once more to age them. The environment's collector
+// modes (AVANT_YOUNG_MB, the check modes) still apply.
+lib gc_young {
+  fun avant_gc_young_fixed(mb: Int)
+}
+
 fn main {
+  gc_young.avant_gc_young_fixed(16)
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
     show_usage()

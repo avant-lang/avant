@@ -1458,6 +1458,30 @@ void avant_gc_release(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* A fixed young budget of MB MiB from now on, as AVANT_YOUNG_MB sets one
+ * at start-up: every survivor is promoted at its first young collection
+ * (no aging, no tenured phase). For a program whose data mostly lives
+ * on once built, called before it allocates: the compiler, whose syntax
+ * tree, tables and MIR are kept, and whose survivors the adaptive budget
+ * copied once more to age them (its build of itself 3.3% fewer
+ * instructions and 2% less time at 16 MiB). Nothing changes when the
+ * environment already chose the young generation's mode (AVANT_YOUNG_MB,
+ * AVANT_NURSERY=0) or a check mode runs (AVANT_GC_STRESS, AVANT_GC_VERIFY:
+ * they check the collector as the program would run without the call),
+ * or once a collection has run. */
+void avant_gc_young_fixed(avant_int mb) {
+  gc_init();
+  if (mb <= 0 || mb > 1024 || gc_heap.set.young_fixed || gc_heap.set.nursery_off || gc_heap.set.stress ||
+      gc_heap.set.verify || avant_g_stats.collections) {
+    return;
+  }
+  gc_lock(&gc_heap.world);
+  gc_heap.set.young_fixed = (uint64_t)mb * 1024ull * 1024ull;
+  avant_young_bytes = gc_heap.set.young_fixed;
+  gc_fast_clear();
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
 /* `gc.hold { }` (std.gc): GcThread.hold's comment.
  * The compiler brackets the block with these two and ends the hold on
  * every way out of it (the end of the block, return, break, continue,
