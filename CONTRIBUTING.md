@@ -31,7 +31,7 @@ You need:
 
 Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 (the link and the compiler's LLVM glue) and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 with its clang, which builds the runtime (`tools/install-llvm.sh`). The archive runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before each release. LLVM 22 is used over 20.1.8 for compile speed (the compiler's release build 18% faster, its self-compile 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with programs as fast (LangArena geometric mean 0.993, same memory) and the archive 4.7% larger; LLVM 20, 21 and 23 also build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
-The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.49.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
+The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.50.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
 
 ```sh
 sh runtime/build.sh
@@ -40,7 +40,7 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, wherever it is copied (if that library is gone, it says so instead of reading another), and any other (a release, a bare copy) the nearest `lib/` in its directory or one above. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names and links and compiles against the `runtime/` it names (its `lib:` and `runtime:` lines), wherever it is copied (if one is gone, it says so instead of reading another), and any other (a release, a bare copy) the nearest `lib/` in its directory or one above, and the runtime of the checkout around it or of its own install. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
 
 ## The gate and the suite
 

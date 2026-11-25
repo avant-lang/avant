@@ -62,6 +62,24 @@ root=${1:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}
 files=$(ls "$root"/runtime/avant_*.c | grep -v -e '/avant_gc_' -e '/avant_rt_traps\.c$')
 # shellcheck disable=SC2086
 awk '
+# The name a column-0 line defines: leading __attribute__((...)) groups are
+# not the name (a weak or cold function is named by what follows them).
+function defname(s,    d, i, c) {
+  while (s ~ /^__attribute__[ \t]*\(/) {
+    s = substr(s, index(s, "("))
+    d = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "(") d++
+      else if (c == ")") { d--; if (d == 0) break }
+    }
+    s = substr(s, i + 1)
+    sub(/^[ \t]+/, "", s)
+  }
+  sub(/\(.*/, "", s)
+  n = split(s, w, /[ \t*]+/)
+  return w[n]
+}
 function flush() {
   if (fn != "") {
     nfn++
@@ -92,11 +110,8 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0 }
   }
   sub(/\/\/.*/, "", out)
   gsub(/"([^"\\]|\\.)*"/, "\"\"", out)
-  if (fn == "" && out ~ /^[A-Za-z_]/ && out ~ /\(/ && out !~ /;[ \t]*$/ && out !~ /^(typedef|struct|enum|union|#)/) {
-    s = out
-    sub(/\(.*/, "", s)
-    n = split(s, w, /[ \t*]+/)
-    fn = w[n]; start = FNR; calls = " "; ok = pending_ok; pending_ok = 0
+  if (fn == "" && out ~ /^[A-Za-z_]/ && out ~ /\(/ && out !~ /;[ \t]*$/ && out !~ /^(typedef|struct|enum|union|#|__asm__|asm)/) {
+    fn = defname(out); start = FNR; calls = " "; ok = pending_ok; pending_ok = 0
     next
   }
   if (fn == "" && out ~ /[^ \t]/ && raw !~ /gc-lint: holds nothing/ && out !~ /^[ \t]*$/) { pending_ok = pending_ok && (out ~ /^[ \t]*$/) }
@@ -109,10 +124,12 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0 }
     while (match(t, /[A-Za-z_][A-Za-z_0-9]*[ \t]*\(/)) {
       nm = substr(t, RSTART, RLENGTH)
       sub(/[ \t]*\($/, "", nm)
+      t = substr(t, RSTART + RLENGTH)
+      # Not calls: the attribute, asm and sizeof forms of C.
+      if (nm ~ /^(__attribute__|__asm__|asm|sizeof|__typeof__|typeof|_Alignof|__builtin_offsetof)$/) continue
       nc++
       cfn[nc] = nfn + 1; cname[nc] = nm; cline[nc] = FNR; cret[nc] = isret ? FNR : 0
       if (index(calls, " " nm " ") == 0) { calls = calls nm " " }
-      t = substr(t, RSTART + RLENGTH)
     }
     if (raw ~ /^}/) { flush() }
   }
@@ -156,14 +173,50 @@ END {
 # defined before its helper is read with the helper's name known.
 # shellcheck disable=SC2086
 helpers=$(awk '
+# The name a column-0 line defines: leading __attribute__((...)) groups are
+# not the name (a weak or cold function is named by what follows them).
+function defname(s,    d, i, c) {
+  while (s ~ /^__attribute__[ \t]*\(/) {
+    s = substr(s, index(s, "("))
+    d = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "(") d++
+      else if (c == ")") { d--; if (d == 0) break }
+    }
+    s = substr(s, i + 1)
+    sub(/^[ \t]+/, "", s)
+  }
+  sub(/\(.*/, "", s)
+  n = split(s, w, /[ \t*]+/)
+  return w[n]
+}
 /gc-lint: a store helper/ { want = 1; next }
 want && /^[A-Za-z_]/ && /\(/ && !/;[ \t]*$/ {
-  s = $0; sub(/\(.*/, "", s); n = split(s, w, /[ \t*]+/); printf "%s ", w[n]; want = 0; next
+  printf "%s ", defname($0); want = 0; next
 }
 want && /^[ \t]*$/ { want = 0 }
 ' $files)
 # shellcheck disable=SC2086
 awk -v list="$stores" -v helperlist="$helpers" '
+# The name a column-0 line defines: leading __attribute__((...)) groups are
+# not the name (a weak or cold function is named by what follows them).
+function defname(s,    d, i, c) {
+  while (s ~ /^__attribute__[ \t]*\(/) {
+    s = substr(s, index(s, "("))
+    d = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c == "(") d++
+      else if (c == ")") { d--; if (d == 0) break }
+    }
+    s = substr(s, i + 1)
+    sub(/^[ \t]+/, "", s)
+  }
+  sub(/\(.*/, "", s)
+  n = split(s, w, /[ \t*]+/)
+  return w[n]
+}
 function flush() {
   if (fn != "") {
     if (helper) { helpers[fn] = 1 }
@@ -205,11 +258,8 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0; pending_helper = 0
   }
   sub(/\/\/.*/, "", out)
   gsub(/"([^"\\]|\\.)*"/, "\"\"", out)
-  if (fn == "" && out ~ /^[A-Za-z_]/ && out ~ /\(/ && out !~ /;[ \t]*$/ && out !~ /^(typedef|struct|enum|union|#)/) {
-    s = out
-    sub(/\(.*/, "", s)
-    n = split(s, w, /[ \t*]+/)
-    fn = w[n]; store = 0; bar = 0; ok = pending_ok; helper = pending_helper
+  if (fn == "" && out ~ /^[A-Za-z_]/ && out ~ /\(/ && out !~ /;[ \t]*$/ && out !~ /^(typedef|struct|enum|union|#|__asm__|asm)/) {
+    fn = defname(out); store = 0; bar = 0; ok = pending_ok; helper = pending_helper
     pending_ok = 0; pending_helper = 0
     next
   }

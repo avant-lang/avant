@@ -24,6 +24,14 @@
 #            compiles compiler/main.av into bin/avant-c-release, --release
 #            (built once per release; the letters and the gate stay
 #            --debug)
+#   d-stress D' under the full stress mode: bin/avant-c-llvm compiles
+#            compiler/main.av into bin/avant-d-stress, --debug, with
+#            AVANT_GC_STRESS=1 (a collection at every allocation: the
+#            compiler's whole runtime traffic, the largest program
+#            there is, checked at each allocation) and as long a limit as
+#            it needs (LETTERS_STRESS_TIMEOUT, default 1800 s; 4 to 10
+#            minutes here); tools/d-stress.sh runs it and compares it
+#            with C'
 #
 # Each compiler step also writes OUT.versions.txt beside the compiler it
 # built (record below): what `avant version` prints for it.
@@ -49,13 +57,12 @@
 # starts (`OUT version`); a compiler that does not start is linked again
 # with GNU ld, cc's default, which every later step then uses. The first
 # step says which linker. mold reads the 115 MB LLVM object in a fifth of
-# GNU ld's time; lld cannot link the runtime (it puts its thread-local
-# common symbols outside the TLS block). The compilers keep linking user
+# GNU ld's time. The compilers keep linking user
 # programs with cc's default. LETTERS_MOLD_CHECK=fail makes the start
 # check fail (to test the fallback).
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.49.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.50.0, the
 #                     release; a seed must emit the runtime call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -71,7 +78,7 @@
 #                     runtime no longer exports, so B does not link.
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-<step>.txt (b, c-llvm,
-#                     d-llvm, c-release)
+#                     d-llvm, c-release, d-stress)
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, a compiler build
 # 900 s) with stdin from /dev/null. Output goes to stdout and stderr. The
@@ -90,17 +97,21 @@ if [ -z "${AVANT_LETTERS_LOCK:-}" ] && command -v flock > /dev/null 2>&1; then
 fi
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
+# The runtime's hot thread-locals' object, which a compiler links last by
+# itself; a seed that predates it does not know it, so every build names
+# it after avant_llvm.o (the compiler that knows it links it once, last).
+TLS_LINK="runtime/build/avant_tls.o"
 
-# The default seed (a release since v0.37.0): bin/v0.49.0, the release
+# The default seed (a release since v0.37.0): bin/v0.50.0, the release
 # archive unpacked (CI pins the same asset). The v0.36.0 release predates the runtime call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and the
 # scan is retired, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed.
-default_seed=bin/v0.49.0
+default_seed=bin/v0.50.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.49.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.50.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
 # A seed under the checkout keeps its path under the checkout even when
@@ -127,8 +138,8 @@ steps="$*"
 [ -n "$steps" ] || steps="runtime b c-llvm"
 for s in $steps; do
   case "$s" in
-    runtime|b|c-llvm|d-llvm|c-release) ;;
-    *) echo "letters: unknown step $s (runtime, b, c-llvm, d-llvm, c-release)" >&2; exit 2 ;;
+    runtime|b|c-llvm|d-llvm|c-release|d-stress) ;;
+    *) echo "letters: unknown step $s (runtime, b, c-llvm, d-llvm, c-release, d-stress)" >&2; exit 2 ;;
   esac
 done
 
@@ -166,12 +177,18 @@ starts() {
   env -u AVANT_ROOT timeout -k 5 60 "$1" version > /dev/null 2>&1 < /dev/null
 }
 
+# b_env: extra VAR=value words for one build's environment, b_timeout: its
+# limit in seconds (900 when unset); both set by the step that needs them.
+b_env=""
+b_timeout=""
 # build LETTER COMPILER OUT MODE [FLAG]
 # FLAG is --cpu=baseline for every compiler: the
 # avant binary stays on plain x86-64 whatever a program's artifact default
 # is, so it runs wherever a developer works. B too since the v0.41.0 seed
 # (older seeds predated --cpu and built plain x86-64 themselves).
 build() {
+  # The step's own environment and limit apply to this build only.
+  be=$b_env; bt=$b_timeout; b_env=""; b_timeout=""
   need_llvm
   link_setup
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
@@ -179,12 +196,12 @@ build() {
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer, the flag and link_env are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $link_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $be $link_env timeout -k 10 "${bt:-900}" $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" "$TLS_LINK" < /dev/null || return $?
   if [ -n "$link_env" ] && ! starts "$3"; then
     echo "letters: $3 linked by mold does not start: linked again with GNU ld, which the later steps use"
     link_env=""
     # shellcheck disable=SC2086 # timer and the flag are words or empty
-    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+    env -u AVANT_BACKEND -u AVANT_ROOT AVANT_VERIFY=1 $be timeout -k 10 "${bt:-900}" $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" "$TLS_LINK" < /dev/null || return $?
   fi
   record "$3" "$1"
 }
@@ -193,10 +210,11 @@ build() {
 # `avant version` prints: avant.toml's version,
 # the commit (unknown outside git), `dirty: yes` when compiler/, lib/ or
 # runtime/ differ from that commit (untracked files there included), and
-# the step, and `lib:` the checkout's lib/ (physical path) that the
+# the step, `lib:` the checkout's lib/ (physical path) that the
 # compiler reads its standard library from when AVANT_ROOT is not set
 # (so a kept or copied compiler keeps its own library, or
-# says it is gone). The compiler carries none of it, so a compiler stays
+# says it is gone), and `runtime:` the checkout's runtime/ that it links
+# and compiles against, the same way. The compiler carries none of it, so a compiler stays
 # byte-identical across commits that do not change it.
 record() {
   v=$(sed -n 's/^version = "\(.*\)"$/\1/p' avant.toml | head -n 1)
@@ -209,6 +227,7 @@ record() {
     fi
     echo "built: tools/letters.sh $2"
     echo "lib: $(pwd -P)/lib"
+    echo "runtime: $(pwd -P)/runtime"
   } > "$1.versions.txt"
 }
 
@@ -228,6 +247,7 @@ for s in $steps; do
     c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
     d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
     c-release) build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
+    d-stress) b_env="AVANT_GC_STRESS=1"; b_timeout=${LETTERS_STRESS_TIMEOUT:-1800}; build d-stress ./bin/avant-c-llvm bin/avant-d-stress --debug --cpu=baseline ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc

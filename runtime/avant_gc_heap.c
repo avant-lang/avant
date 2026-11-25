@@ -124,6 +124,100 @@ void gc_work_push(void *p) {
     gc_heap.work = gc_xrealloc(gc_heap.work, gc_heap.work_cap * sizeof(void *));
   }
   gc_heap.work[gc_heap.work_n++] = p;
+  if (gc_heap.work_n > gc_heap.work_hw) {
+    gc_heap.work_hw = gc_heap.work_n;
+  }
+}
+
+/* The collector's side arrays give back what they no longer use. Each
+ * grows by doubling when a collection (or the barrier, for the
+ * remembered set and the proof's holders) fills it, and was never
+ * shrunk: a program whose build phase noted a million survivors kept its
+ * noted list, the work list of one full mark of a wide array, its
+ * remembered set and its holders list resident to its exit (Graph::BFS:
+ * about 11 MB of its 139 MB, through its whole search phase). The
+ * arrays keep their capacity (no realloc: nothing moves, and the next
+ * growth costs what it did). At the end of a collection, each array that
+ * kind of collection uses settles (side_settle): the pages past what it
+ * keeps (the most this collection used of it, or half of what it kept
+ * before, so the kept part halves over collections that use less, and a
+ * program whose collections alternate between a large and a small use
+ * keeps half the large one's pages) are given back with MADV_DONTNEED
+ * when at least SIDE_RELEASE_MIN of them may be resident; they fault in
+ * again as zero pages if a later collection reaches them. A steady
+ * program uses what it used before and gives back nothing. How much of
+ * an array may be resident is counted from its start: its capacity when
+ * it grew or moved (realloc copies the old part), the deepest use since
+ * the last release otherwise, so a settle that finds nothing past the
+ * kept part makes no call. The pages given back lie inside the array's
+ * own storage (its start rounded up to a page, its end rounded down), so
+ * the allocator's headers on either side are never touched. */
+#define SIDE_RELEASE_MIN (512ull * 1024ull)
+
+void gc_side_use(int which, uint64_t bytes) {
+  GcSide *u = &gc_heap.side[which];
+  if (bytes > u->peak) {
+    u->peak = bytes;
+  }
+}
+
+static void side_settle(int which, void *v, uint64_t cap, uint64_t used) {
+  GcSide *u = &gc_heap.side[which];
+  uint64_t keep;
+  uintptr_t lo, hi;
+  if (used < u->peak) {
+    used = u->peak;
+  }
+  u->peak = 0;
+  keep = used > u->prev / 2 ? used : u->prev / 2;
+  u->prev = keep;
+  if (v != u->seen || cap != u->seen_cap) {
+    u->seen = v;
+    u->seen_cap = cap;
+    u->touched = cap;
+  } else if (used > u->touched) {
+    u->touched = used;
+  }
+  if (!v || u->touched <= keep || u->touched - keep < SIDE_RELEASE_MIN) {
+    return;
+  }
+  lo = ((uintptr_t)v + keep + PAGE_SIZE - 1) & ~(uintptr_t)(PAGE_SIZE - 1);
+  hi = ((uintptr_t)v + (u->touched < cap ? u->touched : cap)) & ~(uintptr_t)(PAGE_SIZE - 1);
+  if (hi > lo) {
+    (void)madvise((void *)lo, hi - lo, MADV_DONTNEED);
+  }
+  u->touched = keep;
+}
+
+/* At the end of a collection (gc_collect): the side arrays its kind uses
+ * settle. A young collection uses the noted list, the work list (whose
+ * entries are noted entries: at most the noted list's use besides a full
+ * mark's deepest point, work_hw), the remembered set (its entries since
+ * the last collection) and the keep list; a full one the work list, the
+ * remembered set (scrubbed) and the proof's holders (logged since the
+ * last full collection). An array is settled only by the kind that uses
+ * it, so a young collection's noted list is not given back by the full
+ * collection after it. */
+void gc_side_settle(int full) {
+  const uint64_t w = sizeof(void *);
+  uint64_t noted = (uint64_t)gc_heap.noted_n * w;
+  uint64_t work = (uint64_t)gc_heap.work_hw * w;
+  if (gc_heap.side[GC_SIDE_NOTED].peak > noted) {
+    noted = gc_heap.side[GC_SIDE_NOTED].peak;
+  }
+  gc_heap.work_hw = gc_heap.work_n;
+  if (!full) {
+    side_settle(GC_SIDE_NOTED, gc_heap.noted, (uint64_t)gc_heap.noted_cap * w, noted);
+    side_settle(GC_SIDE_KEEP, gc_heap.keep, (uint64_t)gc_heap.keep_cap * w, (uint64_t)gc_heap.keep_n * w);
+    if (noted > work) {
+      work = noted;
+    }
+  } else {
+    side_settle(GC_SIDE_HOLDERS, gc_heap.proof.holders, (uint64_t)gc_heap.proof.holders_cap * w,
+                (uint64_t)gc_heap.proof.holders_n * w);
+  }
+  side_settle(GC_SIDE_WORK, gc_heap.work, (uint64_t)gc_heap.work_cap * w, work);
+  side_settle(GC_SIDE_REM, gc_heap.remset, (uint64_t)gc_heap.rem_cap * w, (uint64_t)gc_heap.rem_n * w);
 }
 
 /* Reserve LEN bytes of address space, PROT_NONE and MAP_NORESERVE: no

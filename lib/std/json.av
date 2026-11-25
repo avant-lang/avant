@@ -295,20 +295,34 @@ pub struct Json {
     } else if self.is_bool() {
       v.bool_val = self.bool() ?? false
     } else if self.is_arr() {
-      i = 0
-      while i < self.len() {
-        if child = at(i) {
+      // One sibling step per element: at(i) walks from the first element
+      // when the array holds containers, so a loop over i read n*n/2.
+      if elems = self.arr() {
+        for child in elems {
           v.arr.push(child.to_value())
         }
-        i += 1
       }
     } else if self.is_obj() {
+      // One pass over the members, name then value, in the document's
+      // order: key_at(i) and get(key) each walked from the first member,
+      // so an object of n members (an untrusted request body) cost n*n
+      // steps. The first of a repeated name keeps its value and place.
+      n = self.len()
+      key = jsonc.avant_json_first_key(self.node)
       i = 0
-      while i < self.len() {
-        if key = key_at(i), child = get(key), !v.members.has(key) {
-          v.members[key] = child.to_value()
+      while kn = key {
+        name = jsonc.avant_json_as_str(kn)
+        key = nil
+        if vn = jsonc.avant_json_next(kn) {
+          if !v.members.has(name) {
+            child = Json { node: vn, pool: self.pool }
+            v.members[name] = child.to_value()
+          }
+          i += 1
+          if i < n {
+            key = jsonc.avant_json_next(vn)
+          }
         }
-        i += 1
       }
     }
     v

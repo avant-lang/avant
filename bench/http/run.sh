@@ -71,7 +71,25 @@
 #    errors, timeouts or non-2xx answers is not a result and
 #    tables.py says so.
 #
-# `run.sh build` only builds. `run.sh check [row ...|all]` is the
+# `run.sh build [row ...|all]` only builds (the rows named; every row
+# without one). HTTP_BENCH_NO_BUILD=1 builds nothing, in any mode: the
+# binaries in HTTP_BENCH_BUILD are run as they are, and a row without its
+# server there stops the run, named. HTTP_BENCH_PORT and HTTP_BENCH_WS_PORT
+# change the ports (18301 and 18311).
+#
+# `METHOD=B run.sh versus BASE_BUILD FINAL_BUILD [row ...|all]` is the
+# method's load on two builds of the same rows in one session, so a lane's
+# HTTP check against its base is one command: each directory is a build
+# directory (`HTTP_BENCH_BUILD=DIR run.sh build ROW`, the base's with
+# AVANT_BENCH_COMPILER naming the base's compiler). HTTP_BENCH_RUNS (3)
+# rounds; in each round every row runs on both builds, the base first in the
+# odd rounds and the final first in the even ones, so the machine's drift
+# falls on both. The cells are kept under HTTP_BENCH_OUT/base/METHOD and
+# HTTP_BENCH_OUT/final/METHOD (default: FINAL_BUILD/out; tables.py takes
+# each), and the last lines give each row's median requests per second on
+# each build, the runs counted (those with no socket error, timeout or
+# non-2xx answer) and the final's over the base's.
+# `run.sh check [row ...|all]` is the
 # untimed correctness pass: each row's server is started, check.py
 # runs against it (the exact response bytes, 16 pipelined requests in
 # one write and cut in two at several bytes, 3,200 pipelined requests
@@ -130,8 +148,8 @@ WSLAY_ROOT=${WSLAY_ROOT:-/tmp/wslay/root/usr}
 WSLAY_PC=${WSLAY_PC:-/tmp/wslay/pc}
 mkdir -p "$BUILD"
 COMPILER=${AVANT_BENCH_COMPILER:-$AVANT_ROOT/bin/avant-b}
-HPORT=18301
-WPORT=18311
+HPORT=${HTTP_BENCH_PORT:-18301}
+WPORT=${HTTP_BENCH_WS_PORT:-18311}
 METHOD=${METHOD:-}
 URL="http://127.0.0.1:$HPORT/"
 
@@ -201,14 +219,17 @@ build_row() {
       fresh "$BUILD/go_ws" "$HERE/go_ws.go" || (cd "$HERE" && go build -o "$BUILD/go_ws" go_ws.go) ;;
     crystal)
       # Crystal is single-threaded unless built with -Dpreview_mt (one
-      # scheduler thread per core, fibers run truly in parallel); the
-      # run.sh freshness check makes a flag change rebuild the binaries.
-      if ! fresh "$BUILD/crystal_server" "$HERE/crystal_server.cr" || ! fresh "$BUILD/crystal_server" "$HERE/run.sh"; then
-        (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_server" crystal_server.cr)
-      fi
-      if ! fresh "$BUILD/crystal_ws" "$HERE/crystal_ws.cr" || ! fresh "$BUILD/crystal_ws" "$HERE/run.sh"; then
-        (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_ws" crystal_ws.cr)
-      fi ;;
+      # scheduler thread per core, fibers run truly in parallel). The flags
+      # are kept beside each binary and compared by content: a change of
+      # them rebuilds the binary, an edit of this script that leaves them
+      # alone does not (the script's own time used to, 40 s a check).
+      crystal_flags="--release -Dpreview_mt"
+      for cr in crystal_server crystal_ws; do
+        if ! fresh "$BUILD/$cr" "$HERE/$cr.cr" || [ "$(cat "$BUILD/$cr.flags" 2>/dev/null)" != "$crystal_flags" ]; then
+          # shellcheck disable=SC2086 # the flags are words
+          (cd "$HERE" && crystal build $crystal_flags -o "$BUILD/$cr" "$cr.cr") && printf '%s\n' "$crystal_flags" > "$BUILD/$cr.flags"
+        fi
+      done ;;
     hyper | hyper-nodate)
       # Rust hyper and Go fasthttp: the versions are the committed
       # Cargo.lock's and go.sum's (the first build downloads them).
@@ -232,10 +253,54 @@ build_row() {
 
 # The WebSocket load generator, for the first mode's WebSocket phases.
 build_ws_load() {
+  if [ "$no_build" = 1 ]; then
+    [ -x "$BUILD/ws_load" ] || { say "HTTP_BENCH_NO_BUILD=1: no $BUILD/ws_load"; exit 2; }
+    return 0
+  fi
   fresh "$BUILD/ws_load" "$HERE/ws_load.go" || (cd "$HERE" && go build -o "$BUILD/ws_load" ws_load.go)
 }
 
+# HTTP_BENCH_NO_BUILD=1: the binaries in $BUILD are taken as built, none is
+# built or looked at for age (two build directories made with another
+# compiler each, or a build kept from an earlier session, are run as they
+# are). A row whose binary is not there stops the run, named.
+no_build=${HTTP_BENCH_NO_BUILD:-0}
+
+# row_binary ROW: the file that holds the row's server.
+row_binary() {
+  case "$1" in
+    avant | avant-nosigpipe) echo "$BUILD/avant_server" ;;
+    h2o) echo "$BUILD/h2o_server" ;;
+    rust) echo "$BUILD/rust_server" ;;
+    go) echo "$BUILD/go_server" ;;
+    crystal) echo "$BUILD/crystal_server" ;;
+    hyper | hyper-nodate) echo "$BUILD/rust_hyper/release/rust_hyper" ;;
+    fasthttp | fasthttp-nodate) echo "$BUILD/go_fasthttp" ;;
+    valk) echo "$BUILD/valk_server" ;;
+    *) echo "$BUILD/unknown-row-$1" ;;
+  esac
+}
+
+# check_built ROW...: every named row's server is in $BUILD (`all` names
+# the rows a session runs, as expand_rows does).
+check_built() {
+  for r in "$@"; do
+    case "$r" in
+      all) continue ;;
+      ws_load) continue ;;
+    esac
+    if [ ! -x "$(row_binary "$r")" ]; then
+      say "HTTP_BENCH_NO_BUILD=1: the row $r has no server in $BUILD ($(row_binary "$r"))"
+      return 1
+    fi
+  done
+}
+
 build_all() {
+  if [ "$no_build" = 1 ]; then
+    say "HTTP_BENCH_NO_BUILD=1: nothing is built; the binaries in $BUILD are used as they are"
+    return 0
+  fi
   say "building servers into $BUILD"
   for row in avant h2o rust go crystal hyper fasthttp valk; do
     build_row "$row"
@@ -246,6 +311,11 @@ build_all() {
 # build_rows ROW...: every row when one of them is `all`, else the rows
 # named.
 build_rows() {
+  if [ "$no_build" = 1 ]; then
+    say "HTTP_BENCH_NO_BUILD=1: nothing is built; the binaries in $BUILD are used as they are"
+    check_built "$@" || exit 2
+    return 0
+  fi
   for r in "$@"; do
     if [ "$r" = all ]; then
       build_all
@@ -441,7 +511,7 @@ method_cell() {
   rm -f "$cell.wrk" "$cell.warm" "$cell.time" "$cell.meta" "$cell.server.log" "$cell.body"
   idle_kb=0; peak_kb=0; nthreads=0; t0="0 0"; t1="0 0"; tticks=; alive=n/a
   if port_open $HPORT; then
-    say "$METHOD r$round $row: port $HPORT is in use, nothing started"
+    say "${CELL_TAG:+$CELL_TAG: }$METHOD r$round $row: port $HPORT is in use, nothing started"
     printf 'method=%s\nrow=%s\nround=%s\nstatus=port-in-use\n' "$METHOD" "$row" "$round" >"$cell.meta"
     return 0
   fi
@@ -519,7 +589,7 @@ method_cell() {
   rm -f "$cell.body"
   rps=$(awk '/Requests\/sec/ {print $2}' "$cell.wrk" 2>/dev/null || true)
   errs=$(grep -a -E 'Socket errors|Non-2xx' "$cell.wrk" 2>/dev/null | tr -s ' ' | tr '\n' ';' || true)
-  say "$METHOD r$round $row status=$status req/s=${rps:-?} alive_after_load=${alive:-n/a} ${errs:+ERRORS:$errs}"
+  say "${CELL_TAG:+$CELL_TAG: }$METHOD r$round $row status=$status req/s=${rps:-?} alive_after_load=${alive:-n/a} ${errs:+ERRORS:$errs}"
 }
 
 # node_split: NODE_SERVER_CPUS and NODE_WRK_CPUS, method C's default
@@ -557,7 +627,9 @@ PY
   fi
 }
 
-method_mode() {
+# method_setup: the method's load, threads and pinning (THREADS, SERVER_CPUS,
+# WRK_PIN, WARM, DUR, RUNS).
+method_setup() {
   THREADS=${HTTP_BENCH_THREADS:-}
   SERVER_CPUS=
   WRK_PIN=
@@ -578,6 +650,10 @@ method_mode() {
       exit 2 ;;
   esac
   RUNS=${HTTP_BENCH_RUNS:-3}
+}
+
+method_mode() {
+  method_setup
   MOUT=${HTTP_BENCH_OUT:-$BUILD/out}/$METHOD
   mkdir -p "$MOUT"
   # shellcheck disable=SC2046 # the row list is split on purpose
@@ -603,6 +679,73 @@ method_mode() {
     round=$((round + 1))
   done
   say "raw files in $MOUT ($n rows, $RUNS rounds); tables: python3 $HERE/tables.py ${HTTP_BENCH_OUT:-$BUILD/out}"
+}
+
+# versus_mode BASE FINAL ROW...: the method's load on two builds of the same
+# rows, one session: HTTP_BENCH_RUNS rounds, and in each round every row on
+# both builds (the base's server first in the odd rounds, the final's in the
+# even ones, the row order rotating as in method_mode), so a drift of the
+# machine falls on both. BASE and FINAL are build directories
+# (HTTP_BENCH_BUILD's layout); each side's cells are kept under
+# HTTP_BENCH_OUT/base/METHOD and HTTP_BENCH_OUT/final/METHOD (tables.py takes
+# each), and the medians with their ratio are printed at the end.
+versus_mode() {
+  v_base=$1 v_final=$2
+  shift 2
+  method_setup
+  VOUT=${HTTP_BENCH_OUT:-$v_final/out}
+  BUILD=$v_base
+  # shellcheck disable=SC2046 # the row list is split on purpose
+  set -- $(expand_rows "$@")
+  for v_side in base final; do
+    if [ "$v_side" = base ]; then BUILD=$v_base; else BUILD=$v_final; fi
+    check_built "$@" || exit 2
+    mkdir -p "$VOUT/$v_side/$METHOD"
+  done
+  v_rows=$*
+  v_round=1
+  while [ "$v_round" -le "$RUNS" ]; do
+    for v_row in "$@"; do
+      if [ $((v_round % 2)) = 1 ]; then v_order="base final"; else v_order="final base"; fi
+      for v_side in $v_order; do
+        if [ "$v_side" = base ]; then BUILD=$v_base; else BUILD=$v_final; fi
+        MOUT=$VOUT/$v_side/$METHOD
+        CELL_TAG=$v_side
+        method_cell "$v_round" "$v_row"
+      done
+    done
+    v_first=$1
+    shift
+    set -- "$@" "$v_first"
+    v_round=$((v_round + 1))
+  done
+  CELL_TAG=
+  for v_row in $v_rows; do
+    for v_side in base final; do
+      # The valid runs' requests per second: status ok, no socket error, timeout or non-2xx answer.
+      v_vals=""
+      for v_f in "$VOUT/$v_side/$METHOD"/r*."$v_row".wrk; do
+        [ -f "$v_f" ] || continue
+        v_m=${v_f%.wrk}.meta
+        grep -q '^status=ok$' "$v_m" 2>/dev/null || continue
+        grep -a -q -E 'Socket errors|Non-2xx' "$v_f" && continue
+        v_vals="$v_vals $(awk '/Requests\/sec/ {print $2}' "$v_f")"
+      done
+      # shellcheck disable=SC2086
+      set -- $(printf '%s\n' $v_vals | sort -g)
+      v_n=$#
+      if [ "$v_n" -eq 0 ]; then v_med=none; v_lo=-; v_hi=-
+      else
+        v_lo=$1
+        eval "v_hi=\${$v_n}"
+        v_med=$(printf '%s\n' "$@" | awk '{ v[NR] = $1 } END { print (NR % 2) ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2 }')
+      fi
+      if [ "$v_side" = base ]; then v_bm=$v_med v_bn=$v_n v_bl=$v_lo v_bh=$v_hi; else v_fm=$v_med v_fn=$v_n v_fl=$v_lo v_fh=$v_hi; fi
+    done
+    v_ratio=$(awk -v a="$v_fm" -v b="$v_bm" 'BEGIN { if (a + 0 > 0 && b + 0 > 0) printf "%.4f", a / b; else print "n/a" }')
+    say "versus $METHOD $v_row: base $v_bm req/s ($v_bn runs, $v_bl-$v_bh), final $v_fm req/s ($v_fn runs, $v_fl-$v_fh), final/base $v_ratio"
+  done
+  say "raw files in $VOUT/base and $VOUT/final ($RUNS rounds); tables: python3 $HERE/tables.py $VOUT/base, and $VOUT/final"
 }
 
 # check_mode ROW...: the untimed correctness pass (see the header).
@@ -771,7 +914,21 @@ if [ "${1:-}" = syscalls ]; then
 fi
 
 if [ "${1:-}" = build ]; then
-  build_all
+  shift
+  if [ $# -eq 0 ]; then set -- all; fi
+  build_rows "$@"
+  say "done"
+  exit 0
+fi
+
+if [ "${1:-}" = versus ]; then
+  [ -n "$METHOD" ] || { say "versus needs METHOD=A, A8, B, C or B1"; exit 2; }
+  [ $# -ge 3 ] || { say "usage: METHOD=B run.sh versus BASE_BUILD FINAL_BUILD ROW..."; exit 2; }
+  shift
+  v_b=$1 v_f=$2
+  shift 2
+  [ -d "$v_b" ] && [ -d "$v_f" ] || { say "versus: $v_b and $v_f must be build directories"; exit 2; }
+  versus_mode "$(CDPATH= cd -- "$v_b" && pwd)" "$(CDPATH= cd -- "$v_f" && pwd)" "$@"
   say "done"
   exit 0
 fi

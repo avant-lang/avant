@@ -114,6 +114,7 @@ static void fix_extra_add(void *payload) {
  * late start bits. */
 void gc_clear_noted(void) {
   void **const noted = gc_heap.noted;
+  gc_side_use(GC_SIDE_NOTED, (uint64_t)gc_heap.noted_n * sizeof(void *));
   /* The entries past the last one the copy did not move are all moved:
    * nothing of theirs is read (noted_hi, splus_evacuate). */
   const uint32_t n = gc_heap.noted_hi < gc_heap.noted_n ? gc_heap.noted_hi : gc_heap.noted_n;
@@ -694,6 +695,7 @@ static void rem_empty(void) {
     }
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
+  gc_side_use(GC_SIDE_REM, (uint64_t)gc_heap.rem_n * sizeof(void *));
   gc_heap.rem_n = 0;
 }
 
@@ -1707,6 +1709,7 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
   uint32_t empty = 0;
   int ticked = 0;
   gc_heap.young_large_live = 0;
+  gc_side_use(GC_SIDE_KEEP, (uint64_t)gc_heap.keep_n * sizeof(void *));
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
   gc_heap.noted_hi = UINT32_MAX;
@@ -2089,6 +2092,7 @@ void gc_sticky_retire(void) {
   gc_lazy_build_all();
   gc_rem_merge_all();
   rem_empty();
+  gc_side_use(GC_SIDE_KEEP, (uint64_t)gc_heap.keep_n * sizeof(void *));
   gc_heap.keep_n = 0;
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     retire_block(gc_heap.young_blocks[i], epoch, &bytes);

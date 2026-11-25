@@ -598,14 +598,16 @@ char *avant_str_cat_int(const char *prefix, avant_int n) {
   return p;
 }
 
-/* Exact fast float parse of the strict shape [+-]digits[.digits][(e|E)
- * [+-]digits] (both digit runs of the mantissa non-empty
- * when present): 1 with the value when the mantissa fits in 53 bits with
- * at most 15 significant digits and the decimal exponent is within 22 (the
- * true value is then mantissa * 10^e with both operands exactly
+/* The strict float shape [+-]digits[.digits][(e|E)[+-]digits] (both
+ * digit runs of the mantissa non-empty when present), the one rule of
+ * what a float's text is, and its exact fast parse: -1 when the text is
+ * not of the shape; 1 with the value when the mantissa fits in 53 bits
+ * with at most 15 significant digits and the decimal exponent is within
+ * 22 (the true value is then mantissa * 10^e with both operands exactly
  * representable, so one IEEE multiply or divide rounds it exactly as the
- * correctly rounded strtod does); -1 when the text is not of the shape; 0
- * when it may be but needs strtod. */
+ * correctly rounded strtod does); 0 when it is of the shape but needs
+ * strtod. The whole text is read before either verdict, so 0 always
+ * means the shape holds. */
 static int fast_f64(const char *p, size_t len, double *out) {
   static const double pow10_exact[23] = {
       1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
@@ -616,7 +618,7 @@ static int fast_f64(const char *p, size_t len, double *out) {
   int sig = 0;
   int started = 0;
   long exp10 = 0;
-  size_t ndig = 0;
+  long e = 0;
   if (i < len && (p[i] == '-' || p[i] == '+')) {
     neg = p[i] == '-';
     i++;
@@ -624,17 +626,15 @@ static int fast_f64(const char *p, size_t len, double *out) {
   if (i >= len || p[i] < '0' || p[i] > '9') {
     return -1;
   }
+  /* Past 15 significant digits the mantissa wraps unread: the value then
+   * comes from strtod. */
   while (i < len && p[i] >= '0' && p[i] <= '9') {
     int d = p[i] - '0';
     if (d != 0 || started) {
       started = 1;
       sig++;
-      if (sig > 15) {
-        return 0;
-      }
       mant = mant * 10u + (uint64_t)d;
     }
-    ndig++;
     i++;
   }
   if (i < len && p[i] == '.') {
@@ -648,20 +648,12 @@ static int fast_f64(const char *p, size_t len, double *out) {
       if (d != 0 || started) {
         started = 1;
         sig++;
-        if (sig > 15) {
-          return 0;
-        }
         mant = mant * 10u + (uint64_t)d;
       }
-      ndig++;
       i++;
     }
   }
-  if (ndig == 0) {
-    return 0;
-  }
   if (i < len && (p[i] == 'e' || p[i] == 'E')) {
-    long e = 0;
     int eneg = 0;
     size_t j = i + 1;
     if (j < len && (p[j] == '-' || p[j] == '+')) {
@@ -675,15 +667,18 @@ static int fast_f64(const char *p, size_t len, double *out) {
       if (p[j] < '0' || p[j] > '9') {
         return -1;
       }
-      e = e * 10 + (p[j] - '0');
-      if (e > 1000) {
-        return 0;
+      /* Held below 10^4 + 9: any exponent past 1000 needs strtod. */
+      if (e <= 1000) {
+        e = e * 10 + (p[j] - '0');
       }
     }
     exp10 += eneg ? -e : e;
     i = len;
   }
-  if (i != len || mant >= (1ull << 53)) {
+  if (i != len) {
+    return -1;
+  }
+  if (sig > 15 || e > 1000 || mant >= (1ull << 53)) {
     return 0;
   }
   if (exp10 > 22 || exp10 < -22) {
@@ -797,40 +792,6 @@ uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok) {
   return m;
 }
 
-static int digits_at(const char *p, size_t n, size_t *i) {
-  size_t start = *i;
-  while (*i < n && p[*i] >= '0' && p[*i] <= '9') {
-    (*i)++;
-  }
-  return *i > start;
-}
-
-static int float_syntax(const char *p, size_t n) {
-  size_t i = 0;
-  if (i < n && (p[i] == '-' || p[i] == '+')) {
-    i++;
-  }
-  if (!digits_at(p, n, &i)) {
-    return 0;
-  }
-  if (i < n && p[i] == '.') {
-    i++;
-    if (!digits_at(p, n, &i)) {
-      return 0;
-    }
-  }
-  if (i < n && (p[i] == 'e' || p[i] == 'E')) {
-    i++;
-    if (i < n && (p[i] == '-' || p[i] == '+')) {
-      i++;
-    }
-    if (!digits_at(p, n, &i)) {
-      return 0;
-    }
-  }
-  return i == n;
-}
-
 static double parse_float(const char *p, size_t n, int32_t *ok) {
   double v = 0.0;
   *ok = 0;
@@ -839,9 +800,8 @@ static double parse_float(const char *p, size_t n, int32_t *ok) {
     return 0.0;
   }
   if (fast == 0) {
-    if (!float_syntax(p, n)) {
-      return 0.0;
-    }
+    /* Of the shape (fast_f64 read it whole): strtod's correctly rounded
+     * value. */
     char buf[128];
     char *tmp = buf;
     if (n >= sizeof(buf)) {

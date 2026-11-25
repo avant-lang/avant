@@ -22,7 +22,11 @@
 # process that left its tree (reparented away) before the TERM; a seventh
 # through the runner with a `ps` that fails, so no listing of the tree finds
 # the step's processes: both are found by the run's mark in their
-# environment. Prints one line per check,
+# environment. An eighth run has a step that ignores TERM, under a `sleep`
+# ten times slower than asked (as on a machine so loaded that each wait of
+# the stop takes several times its nominal time): the stop's waits are
+# measured in elapsed time, so it still ends within the bound. Prints one
+# line per check,
 # `ok: NAME` or `FAIL: NAME: why`; test_tools.av expects each NAME.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-stop.sh WORK" >&2; exit 2; }
@@ -39,6 +43,9 @@ cat > "$fake/tools/run-goldens.sh" <<'EOF'
 d=$WF_STUB
 if [ "${WF_STUB_QUICK:-0}" = 1 ]; then echo "1 same, 0 different, 0 skipped"; exit 0; fi
 echo $$ > "$d/step.pid"
+# WF_STUB_IGNORE=1: the step and everything it starts ignore TERM, so only
+# the stop's KILL ends them.
+if [ "${WF_STUB_IGNORE:-0}" = 1 ]; then trap '' TERM; fi
 # WF_STUB_ESCAPE=1: a process that leaves the step's tree (its parent exits,
 # so it is reparented away), found only by the run's mark.
 if [ "${WF_STUB_ESCAPE:-0}" = 1 ]; then sh -c 'setsid sleep 600 & echo $! > "$1/escaped.pid"' escape "$d"; fi
@@ -211,4 +218,26 @@ else
   say psfail-leaves-nothing 1 "the stub step did not start"
 fi
 reap "$w/psfail.stub"
+
+# 8. A step that ignores TERM, with a slow `sleep`: the stop's grace ends by
+# the clock, not after a count of rounds (fifty slow rounds would take
+# minutes), and the stop ends within the bound with nothing left.
+mkdir -p "$w/slow-sleep"
+real_sleep=$(command -v sleep)
+printf '#!/bin/sh\ncase "$1" in 0.*) exec %s 1 ;; *) exec %s "$@" ;; esac\n' "$real_sleep" "$real_sleep" > "$w/slow-sleep/sleep"; chmod +x "$w/slow-sleep/sleep"
+start slow 300 WF_STUB_IGNORE=1 PATH="$w/slow-sleep:$PATH"
+if started slow; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/slow.stub" | tr '\n' ' ')
+  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say slow-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/slow.out/SUMMARY.txt"
+  say slow-summary $? "$(tail -1 "$w/slow.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say slow-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/slow.stub"
 echo done

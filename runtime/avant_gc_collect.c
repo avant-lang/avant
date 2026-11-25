@@ -1013,6 +1013,8 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.ctr.pause.max_ns = dt;
     }
   }
+  /* The side arrays give back the pages no recent collection used. */
+  gc_side_settle(full);
   if (gc_heap.quarantine) {
     gc_quarantine_seal();
   }

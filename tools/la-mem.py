@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """la-mem.py — two sides' peak memory of the LangArena programs, compared.
 
-    python3 -I tools/la-mem.py BASE.mem.tsv HEAD.mem.tsv [--md]
+    python3 -I tools/la-mem.py BASE.mem.tsv HEAD.mem.tsv [--md] [--mixed]
 
 Each file is tools/la-count.sh's OUT.mem.tsv (LA_MEM_RUNS=N): per program
 its median, minimum and maximum peak RSS in KB over N runs, unbound and with
-address randomization off, and the runs. Printed:
+address randomization off, and the runs. Its first line names how the peaks
+were read (`# peak: exact`, or `# peak: maxrss`, the kernel's ru_maxrss,
+which moves in steps of about 256 KB at equal work; a file without that line
+is maxrss, as la-count.sh wrote them before it read peaks exactly). Two files
+of different methods are not compared (status 2) unless --mixed is given: a
+step of the counter would read as a moved peak. Printed:
 
 - the average peak over the published tasks (every program but the
   pure-Avant twins, named `-pure`, `-common` or `-clever`) of each side, from the medians, and their ratio; its
@@ -40,21 +45,32 @@ def median(v):
     return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 def load(p):
+    """The file's method and its rows."""
     r = {}
+    method = "maxrss"
     for line in open(p):
+        if line.startswith("#"):
+            if line.startswith("# peak: "):
+                method = line[len("# peak: "):].strip()
+            continue
         f = line.rstrip("\n").split("\t")
         if len(f) < 5:
             sys.exit("la-mem.py: %s: not a la-count.sh mem file (%r)" % (p, line))
         on = [float(x) for x in f[5].split(",") if x] if len(f) > 5 else []
         r[f[0]] = (float(f[1]), float(f[2]), float(f[3]), [float(x) for x in f[4].split(",")], on)
-    return r
+    return method, r
 
 def main(argv):
     md = "--md" in argv
-    args = [a for a in argv if a != "--md"]
+    mixed = "--mixed" in argv
+    args = [a for a in argv if a not in ("--md", "--mixed")]
     if len(args) != 2:
         sys.exit(__doc__.strip())
-    b, h = load(args[0]), load(args[1])
+    (mb_, b), (mh_, h) = load(args[0]), load(args[1])
+    if mb_ != mh_ and not mixed:
+        print("la-mem.py: the base's peaks are %s and the head's %s: read both sides alike (la-count.sh's LA_MEM_METHOD), or pass --mixed" % (mb_, mh_), file=sys.stderr)
+        sys.exit(2)
+    method = mb_ if mb_ == mh_ else "base %s, head %s" % (mb_, mh_)
     both = sorted(set(b) & set(h))
     tasks = [s for s in both if not s.endswith(("-pure", "-common", "-clever"))]
     if not tasks:
@@ -69,6 +85,7 @@ def main(argv):
     verdict = "lower" if hi < 1 else "higher" if lo > 1 else "within the spread"
     out = []
     out.append("average peak over %d tasks: base %.1f KB, head %.1f KB, head/base %.4f (passes %.4f–%.4f): %s" % (len(tasks), ab, ah, ah / ab, lo, hi, verdict))
+    out.append("peaks read: %s" % method)
     if all(b[s][4] and h[s][4] for s in tasks):
         aob = sum(median(b[s][4]) for s in tasks) / len(tasks)
         aoh = sum(median(h[s][4]) for s in tasks) / len(tasks)

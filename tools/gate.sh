@@ -27,7 +27,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.49.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.50.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -57,6 +57,21 @@
 #                   state AVANT_NURSERY=1 (tests/cases/harness.av,
 #                   gc_env_outer). AVANT_GC_STATS is not a suite
 #                   environment: it writes to every program's stderr.
+#                   An entry may carry SHARDS=N (N from 2): it then stands
+#                   for N+1 entries of that environment, the I-th with
+#                   SHARD=I/N, which is not a variable of the pass but
+#                   its `avant test --shard I/N --skip-exclusive` (a slice
+#                   of the files, round-robin), and a last one with
+#                   SHARD=exclusive (`avant test --only-exclusive`: the
+#                   files that must run alone). The slices and the last
+#                   together are every file once, so the mode keeps its
+#                   whole depth. They take turns in the overlap like any
+#                   other pass, so the slowest mode (AVANT_GC_STRESS=1:
+#                   three times the others' time, 14 minutes in one run
+#                   under load) is shorter passes, each under a shared
+#                   run's limit; a label gains `shard_I_N` or
+#                   `shard_exclusive`. tools/suite-limit.sh looks up the
+#                   environment without the SHARD word.
 #   GATE_GC_OVERLAP how many GC passes run at once (default 2). The timed
 #                   passes (the builds, the B and C'
 #                   suites, D' and __emit-ll) always run alone; the GC
@@ -121,7 +136,10 @@
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
 # A suite pass's limit is tools/suite-limit.sh's for its environment: 900 s,
 # or the larger own limit of a test file in that environment
-# (tests/limits.txt); the pass's summary line names it.
+# (tests/limits.txt); the pass's summary line names it. The limit is each
+# test process's (`avant test --file-limit`): a test file that hangs fails as
+# that file, named, at the limit; the pass itself gets two minutes more
+# (`timeout` limit + 120 s) to report it.
 # The runtime, B, C', and D' are built by tools/letters.sh (the one copy
 # of the letters' incantation, with those timeouts inside). The suites run
 # with no AVANT_BACKEND.
@@ -263,17 +281,34 @@ build_c() {
 rm -f "$out/kept-c" "$out/reuse.txt"
 [ -z "$REUSE" ] && build_c
 
+# shard_split WORDS: pass_env is WORDS without a SHARD=... word, pass_shard
+# the arguments of `avant test` it stands for: SHARD=I/N is the slice I of N
+# of the files that may run beside others, SHARD=exclusive the files that
+# run alone; empty without one. SHARD is the slice of the suite a pass
+# runs, not a variable of its environment.
+shard_split() {
+  pass_env=""; pass_shard=""
+  for w in $1; do
+    case "$w" in
+      SHARD=exclusive) pass_shard="--only-exclusive" ;;
+      SHARD=[1-9]*/[1-9]*) pass_shard="--shard ${w#SHARD=} --skip-exclusive" ;;
+      *) pass_env="$pass_env${pass_env:+ }$w" ;;
+    esac
+  done
+}
+
 # suite_pass L COMPILER ENV: the suite on bin/avant-COMPILER with the
 # VAR=value words ENV, logged as L (suite-L.log, junit-L.xml, time-L.txt),
 # with the /tmp and repository snapshots around it (no litter).
 suite_pass() {
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
-  # shellcheck disable=SC2086 # $3 holds VAR=value words
-  lim=$(sh tools/suite-limit.sh $3 2> "$out/limit-$1.txt") || { fail "suite limit for $1: $(cat "$out/limit-$1.txt")"; return; }
+  shard_split "$3"
+  # shellcheck disable=SC2086 # pass_env holds VAR=value words
+  lim=$(sh tools/suite-limit.sh $pass_env 2> "$out/limit-$1.txt") || { fail "suite limit for $1: $(cat "$out/limit-$1.txt")"; return; }
   echo "$lim" > "$out/limit-$1.txt"
   snap "$out/before-$1"
-  # shellcheck disable=SC2086 # $3 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  # shellcheck disable=SC2086 # pass_env holds VAR=value words, pass_shard flags or nothing
+  env -u AVANT_BACKEND -u AVANT_COMPILER $pass_env timeout -k 10 "$((lim + 120))" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test $pass_shard --file-limit "$lim" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || fail "suite on $1 failed (rc=$rc)"
@@ -371,7 +406,14 @@ format_check
 # the list's non-empty entries, one per line; with one entry the pass is
 # logged as c-llvm-gc, as before the list form, else as c-llvm-gc-SLUG.
 SUITES="b $C"
-GC_LIST=$(printf '%s\n' "$GC_ENV" | tr ';' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d')
+GC_LIST=$(printf '%s\n' "$GC_ENV" | tr ';' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' \
+  | awk '{
+      n = 0
+      for (i = 1; i <= NF; i++) if ($i ~ /^SHARDS=[0-9]+$/) { n = substr($i, 8) + 0; at = i }
+      if (n < 2) { out = ""; for (i = 1; i <= NF; i++) if ($i !~ /^SHARDS=/) out = out (out == "" ? "" : " ") $i; print out; next }
+      for (k = 1; k <= n; k++) { out = ""; for (i = 1; i <= NF; i++) out = out (out == "" ? "" : " ") (i == at ? "SHARD=" k "/" n : $i); print out }
+      out = ""; for (i = 1; i <= NF; i++) out = out (out == "" ? "" : " ") (i == at ? "SHARD=exclusive" : $i); print out
+    }')
 GC_N=$(printf '%s' "$GC_LIST" | grep -c .)
 gc_label() {
   if [ "$GC_N" -eq 1 ]; then
@@ -393,12 +435,13 @@ gc_pass() {
   t=$(cat "$out/tmpdir-$1")
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
   : > "$out/fails-$1.txt"
-  # shellcheck disable=SC2086 # $2 holds VAR=value words
-  lim=$(sh tools/suite-limit.sh $2 2> "$out/limit-$1.txt") || { echo "suite limit for $1: $(cat "$out/limit-$1.txt")" >> "$out/fails-$1.txt"; return; }
+  shard_split "$2"
+  # shellcheck disable=SC2086 # pass_env holds VAR=value words
+  lim=$(sh tools/suite-limit.sh $pass_env 2> "$out/limit-$1.txt") || { echo "suite limit for $1: $(cat "$out/limit-$1.txt")" >> "$out/fails-$1.txt"; return; }
   echo "$lim" > "$out/limit-$1.txt"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
-  # shellcheck disable=SC2086 # $2 holds VAR=value words
-  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 "$lim" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  # shellcheck disable=SC2086 # pass_env holds VAR=value words, pass_shard flags or nothing
+  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $pass_env timeout -k 10 "$((lim + 120))" /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" $pass_shard --file-limit "$lim" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"

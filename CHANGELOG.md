@@ -1,5 +1,25 @@
 # Avant Language changelog
 
+## 0.51.0 - 2026-11-24
+
+### Changed
+
+* An interpolation pushed into a `Buf` (`buf.push_str("x=${x}")`) is written into the `Buf` in place, with no `String` built for it (less memory); an insert into a `String`-keyed `Hash` or `Set` by a slice looks the key up once; `h.delete(k)` as a statement copies no value out; float parsing reads each number's text once.
+* Faster graph searches: an innermost loop that may call keeps the size and storage address of the arrays it reads in registers, reading them again only after a statement that may change them; a small buffer grown by `push` no longer calls into the collector each time; the collector gives back the pages of its own work lists that recent collections no longer used.
+* `sort` without a comparator is stable by construction for every element type (an `Int` beyond Int32, `UInt64`, `Float64` with -0.0, 0.0 and NaNs kept in their order, `String`), with no call to the C library's `qsort`.
+* A literal regex pattern whose scanner re2c warns about runs on PCRE2, with re2c's message as a note; the other literal patterns keep their scanners.
+* A compiler built by `tools/letters.sh` names its runtime in its build record and links that runtime wherever it is copied, or says it is gone.
+* `avant test --file-limit SECONDS` (`AVANT_TEST_FILE_LIMIT`, default 900) stops a test process that runs too long and fails its file by name; the runner names what still runs once a minute; `avant test --only-exclusive` runs just the `[test] exclusive` files.
+* Developer tools: `tools/la-count.sh` reads peak memory exactly (`tools/la-run.c`); `tools/la-modes.sh`, `tools/suite-modes.sh` and `tools/d-stress.sh` run the collector modes over LangArena, the test suite and the compiler's own build.
+* The README's Benchmarks section is now four summary tables of this release's measurements: LangArena, the HTTP servers, the WebSocket servers, and Valk's garbage-collector suite (Avant, Valk, Go, D, C#, Crystal, Java); the details, the per-task and per-scenario tables and the exact peak memory beside `ru_maxrss` are in `BENCHMARKS.md`.
+* The compiler is built from v0.50.0.
+
+### Fixed
+
+* Programs linked with lld (or a `CC` that links with it) run: the runtime's hot thread-locals are linked last, where every linker places them in the thread-local block (before, lld placed them outside it and a program could crash at its first frame); a program linked so that they fall outside it stops before `main` with a message.
+* `Json.to_value` reads a large object or array in one pass, so reading untrusted JSON is linear (it was quadratic in the members).
+* A client that shuts down its sending side while an answer is still to come from a task gets that answer and the requests it pipelined behind it (they were dropped).
+
 ## 0.50.0 - 2026-11-23
 
 ### Changed

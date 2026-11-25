@@ -334,6 +334,7 @@ void avant_buf_push_str(void *buf, const char *s);
 void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int stop);
 void avant_buf_push_fmt_f(void *buf, double v, avant_int prec);
 void avant_buf_push_fmt_i(void *buf, avant_int n);
+void avant_buf_push_float(void *buf, double v);
 char *avant_buf_to_str(void *buf);
 char *avant_buf_take_str(void *buf);
 avant_int avant_buf_size(void *buf);
@@ -814,6 +815,8 @@ void avant_tmp_keep(void);
 avant_int avant_job_start(const char *path, void *args, const char *out_path);
 avant_int avant_job_start_env(const char *path, void *args, void *env, const char *out_path);
 avant_int avant_job_wait(void);
+avant_int avant_job_wait_for(avant_int ms);
+avant_int avant_job_stop(avant_int pid, avant_int sig);
 avant_int avant_job_status(void);
 avant_int avant_job_signal(void);
 

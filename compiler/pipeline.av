@@ -204,13 +204,53 @@ pub fn drop_av_suffix(path: String): String {
   base
 }
 
+// The `runtime: PATH` line of the build's record beside the compiler
+// (EXE.versions.txt, tools/letters.sh): the runtime/ of the checkout it
+// was built in; "" without a record or without the line (a release
+// archive's versions.txt, a seed, a bare copy).
+pub fn record_runtime: String {
+  exe = self_exe_path()
+  if exe.size == 0 {
+    return ""
+  }
+  if text = file_read("${exe}.versions.txt") {
+    for line in text.split("\n") {
+      if line.size > 9 && line.starts_with("runtime: ") {
+        return str_slice(line, 9, line.size)
+      }
+    }
+  }
+  ""
+}
+
+// The root whose runtime/ the build's record names (record_runtime), or
+// "" when it names none: a kept or copied compiler links and compiles
+// against the runtime it was built with, never the one its path or the
+// working directory climbs to, and stops saying why when that runtime
+// is gone.
+pub fn record_runtime_root: String {
+  rt = record_runtime()
+  if rt.size == 0 {
+    return ""
+  }
+  if !file_exists("${rt}/build/avant_rt.o") {
+    diag_puts("${self_exe_path()}.versions.txt names the runtime ${rt}, which has no build/avant_rt.o; set AVANT_ROOT to the checkout whose runtime this compiler should link")
+    diag_exit(1)
+  }
+  path_dirname(rt)
+}
+
 // The checkout the compiler runs from, or "" when it is not in one (a
-// release install): AVANT_ROOT, else the parent of the compiler's bin/
-// when it holds runtime/build/avant_rt.o, else the current directory when
-// it does.
+// release install): AVANT_ROOT, else the one whose runtime the build's
+// record names, else the parent of the compiler's bin/ when it holds
+// runtime/build/avant_rt.o, else the current directory when it does.
 pub fn avant_checkout_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
+  }
+  rec = record_runtime_root()
+  if rec.size > 0 {
+    return rec
   }
   args = argv()
   if args.size > 0 {
@@ -230,14 +270,20 @@ pub fn avant_checkout_root: String {
 }
 
 // The root whose runtime/ the compiler links and compiles against:
-// AVANT_ROOT; else a checkout (the parent of the compiler's bin/, then the
-// current directory) when it holds runtime/build/avant_rt.o; else the
-// compiler's own install, the directory of its executable, when that holds
-// one (the release layout); else ".". A checkout wins so that a seed in
-// bin/vX/ links the runtime of the tree it builds.
+// AVANT_ROOT; else the one whose runtime the build's record names
+// (record_runtime_root); else a checkout (the parent of the compiler's
+// bin/, then the current directory) when it holds
+// runtime/build/avant_rt.o; else the compiler's own install, the
+// directory of its executable, when that holds one (the release layout);
+// else ".". A checkout wins so that a seed in bin/vX/ links the runtime
+// of the tree it builds.
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
+  }
+  rec = record_runtime_root()
+  if rec.size > 0 {
+    return rec
   }
   args = argv()
   if args.size > 0 {
@@ -310,6 +356,21 @@ pub fn runtime_objects(root: String): Array(String) {
     i += 1
   }
   objs
+}
+
+// The runtime's object linked after every other object of a program
+// (runtime/avant_tls.c): the hot thread-locals generated code reads, which
+// then end the thread-local block, next to the thread pointer, with any
+// linker.
+pub fn runtime_tls_object(root: String): String {
+  "${root}/runtime/build/avant_tls.o"
+}
+
+// Whether a link argument names a runtime's avant_tls.o (an older compiler
+// is handed it as an object: tools/letters.sh's B), which the link then
+// places last itself instead of linking it twice.
+pub fn is_runtime_tls_object(path: String): Bool {
+  path == "runtime/build/avant_tls.o" || path.ends_with("/runtime/build/avant_tls.o")
 }
 
 pub fn linker_flags_s(extra: Array(String)): String {
@@ -388,18 +449,37 @@ pub fn compile_program(src: Source, program: Program, cov_map: String, cpu: Int)
     diag_puts(err)
     return IrBox.new(false)
   }
-  // The literal regex patterns re2c can match.
+  // The literal regex patterns re2c can match. A pattern whose scanner
+  // re2c warns about stays on PCRE2 (compile_re2c), and the others are
+  // generated again without it, once.
   plan = re2c_plan(program)
-  for note in plan.notes {
-    diag_puts(note)
-  }
   if plan.count > 0 {
-    obj = compile_re2c(plan.src)
-    if obj.size > 0 {
+    built = compile_re2c(plan)
+    if built.bad.size > 0 {
+      skip = Hash(String, String).new()
+      for id, why in built.bad {
+        if id >= 1 && id <= plan.keys.size {
+          skip[plan.keys[id - 1]] = why
+        }
+      }
+      plan = re2c_plan(program, skip)
+      built = Re2cBuild.new()
+      if plan.count > 0 {
+        built = compile_re2c(plan)
+        if built.bad.size > 0 {
+          diag_puts("re2c: the scanners warned again without the patterns re2c warned about: every literal pattern stays on PCRE2")
+          built.obj = ""
+        }
+      }
+    }
+    if built.obj.size > 0 {
       program.re2c_ids = plan.ids
       program.re2c_groups = plan.groups
-      program.re2c_obj = obj
+      program.re2c_obj = built.obj
     }
+  }
+  for note in plan.notes {
+    diag_puts(note)
   }
   map = cov_map
   if map.size == 0 && coverage_wanted() {
@@ -944,28 +1024,117 @@ pub fn re2c_bin: String {
   "re2c"
 }
 
-pub fn compile_re2c(src: String): String {
+// What compile_re2c made: the scanners' object ("" when there is none),
+// and the scanners re2c warned about, by id, with its first message.
+pub class Re2cBuild {
+  pub obj: String = ""
+  pub bad: Hash(Int, String)
+
+  fn initialize {
+    h = Hash(Int, String).new()
+    self.bad = h
+    self.obj = ""
+  }
+}
+
+// The scanner id (avant_re2c_find_ID) whose lines hold each line of the
+// generated source, 0 for a line outside every scanner: by 1-based line.
+pub fn re2c_line_owners(src: String): Array(Int) {
+  owners: Array(Int) = [0]
+  cur = 0
+  for line in src.split("\n") {
+    if line.starts_with("static int32_t avant_re2c_find_") {
+      rest = str_slice(line, 31, line.size)
+      k = 0
+      while k < rest.size && rest[k] >= 48 && rest[k] <= 57 {
+        k += 1
+      }
+      cur = str_slice(rest, 0, k).to_i() ?? 0
+    } else if line.starts_with("}") {
+      owners.push(cur)
+      cur = 0
+      continue
+    }
+    owners.push(cur)
+  }
+  owners
+}
+
+// Reads re2c's messages (PATH:LINE:COL: warning: ... or error: ...) into
+// build.bad by the scanner each line falls in; false when a message names
+// no scanner (then no pattern can be kept on re2c).
+pub fn re2c_read_warnings(text: String, re_path: String, owners: Array(Int), build: Re2cBuild): Bool {
+  prefix = "${re_path}:"
+  for line in text.split("\n") {
+    if !(line.contains(": warning: ") || line.contains(": error: ")) {
+      continue
+    }
+    if !line.starts_with(prefix) {
+      return false
+    }
+    rest = str_slice(line, prefix.size, line.size)
+    k = 0
+    while k < rest.size && rest[k] >= 48 && rest[k] <= 57 {
+      k += 1
+    }
+    n = str_slice(rest, 0, k).to_i() ?? 0
+    if n <= 0 || n >= owners.size || owners[n] == 0 {
+      return false
+    }
+    id = owners[n]
+    if have = build.bad.get(id) {
+      continue
+    }
+    at = line.index_of(": warning: ") ?? (line.index_of(": error: ") ?? 0)
+    why = str_slice(line, at + 2, line.size)
+    build.bad[id] = "re2c ${why}"
+  }
+  true
+}
+
+pub fn compile_re2c(plan: Re2cPlan): Re2cBuild {
+  build = Re2cBuild.new()
+  src = plan.src
   base = "${tmp_new_dir()}/re2c"
   re_path = "${base}.re"
   c_path = "${base}.c"
   log_path = "${base}.log"
   if e = write_failure(file_write(re_path, src)) {
     diag_puts("re2c: ${e.message()}")
-    return ""
+    return build
   }
   // No --bit-vectors: re2c's end-of-input rule, which lets a text hold
   // NUL bytes (the scanner's own comment), cannot be used with it.
+  // Every warning on: a warning has meant a generator mistake (a NUL
+  // sentinel inside a rule made a scanner read past its text), so a
+  // scanner re2c warns about is not used and its pattern stays on PCRE2.
+  // Except that a rule matches the empty string: every scanner's
+  // end-of-input rule (`$`) does by design, and a pattern that matches
+  // it is an ordinary regex (re2c reports the end-of-input rule it then
+  // shadows as an error of its own, which still keeps that pattern off).
   args: Array(String) = []
+  args.push("-W")
+  args.push("-Wno-match-empty-string")
   args.push("-o")
   args.push(c_path)
   args.push(re_path)
   code = tool_run_out(re2c_bin(), args, log_path)
+  text = file_read(log_path) ?? ""
+  if text.contains(": warning: ") || text.contains(": error: ") {
+    if re2c_read_warnings(text, re_path, re2c_line_owners(src), build) && build.bad.size > 0 {
+      return build
+    }
+    diag_puts("re2c: generator warned outside a pattern's scanner, every literal pattern stays on PCRE2")
+    diag_puts(text)
+    build.bad.clear()
+    return build
+  }
   if code != 0 {
     diag_puts("re2c: generator failed, pattern stays on PCRE2")
-    if text = file_read(log_path) {
+    if text.size > 0 {
       diag_puts(text)
     }
-    return ""
+    return build
   }
   obj = "${base}.o"
   cc: Array(String) = []
@@ -984,9 +1153,10 @@ pub fn compile_re2c(src: String): String {
   code = run_cc(cc)
   if code != 0 {
     diag_puts("re2c: C compile failed, pattern stays on PCRE2")
-    return ""
+    return build
   }
-  obj
+  build.obj = obj
+  build
 }
 
 pub fn compile_c_file(path: String): String {

@@ -202,6 +202,80 @@ fn test_stdlib(c: Checks) {
   }
 }
 
+// sort without a comparator is stable for Float64, where equal elements
+// can differ: -0.0 and 0.0 compare equal, and so do NaNs of different
+// bits; each keeps the order it had, in a short array (sorted by
+// insertion) and a long one (merged). The other types the runtime sorts
+// by comparison (an Int beyond Int32, UInt64, String) give the order the
+// comparator sort gives, on arrays long enough to be merged.
+fn test_sort_stable(c: Checks) {
+  for n in [7, 1000] {
+    xs: Array(Float64) = []
+    nan_a = Float64.from_bits(0x7ff8000000000001u64)
+    nan_b = Float64.from_bits(0x7ff8000000000002u64)
+    for i in 0..n {
+      k = (i * 7919) % 5
+      if k == 0 {
+        xs.push(0.0)
+      } else if k == 1 {
+        xs.push(-0.0)
+      } else if k == 2 {
+        xs.push(if i % 2 == 0 { nan_a } else { nan_b })
+      } else {
+        xs.push((i % 13).to_f() - 6.0)
+      }
+    }
+    want_zeros: Array(UInt64) = []
+    want_nans: Array(UInt64) = []
+    for x in xs {
+      if x == 0.0 {
+        want_zeros.push(x.to_bits())
+      } else if x != x {
+        want_nans.push(x.to_bits())
+      }
+    }
+    xs.sort()
+    got_zeros: Array(UInt64) = []
+    got_nans: Array(UInt64) = []
+    ordered = true
+    for i in 0..xs.size {
+      x = xs[i]
+      if x == 0.0 {
+        got_zeros.push(x.to_bits())
+      } else if x != x {
+        got_nans.push(x.to_bits())
+      }
+      if i > 0 && x < xs[i - 1] {
+        ordered = false
+      }
+      if i > 0 && xs[i - 1] != xs[i - 1] && x == x {
+        ordered = false
+      }
+    }
+    c.expect(ordered, "stable sort ${n}: numbers ascending, NaN after every number")
+    c.expect(got_zeros == want_zeros, "stable sort ${n}: -0.0 and 0.0 keep their order")
+    c.expect(got_nans == want_nans, "stable sort ${n}: NaNs of different bits keep their order")
+  }
+  wide: Array(Int) = []
+  big: Array(UInt64) = []
+  words: Array(String) = []
+  for i in 0..3000 {
+    v = (i * 2654435761) % 1000003
+    wide.push(v * 10000000000 - 5000000000000000)
+    big.push(v.to_u64() * 18000000000000u64)
+    words.push("w${v % 997}")
+  }
+  wide_want = wide.sorted (a, b) { a < b }
+  big_want = big.sorted (a, b) { a < b }
+  words_want = words.sorted (a, b) { a < b }
+  wide.sort()
+  big.sort()
+  words.sort()
+  c.expect(wide == wide_want, "sort Int beyond Int32: the comparator sort's order")
+  c.expect(big == big_want, "sort UInt64: the comparator sort's order")
+  c.expect(words == words_want, "sort String: the comparator sort's order")
+}
+
 fn main: Int {
   if list_only() {
     return 0
@@ -209,5 +283,6 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_stdlib(c)
+  test_sort_stable(c)
   c.finish()
 }
