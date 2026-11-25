@@ -707,7 +707,7 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
     b.push_str("  key = jsonc.avant_json_first_key(j.node)\n")
     b.push_str("  i = 0\n")
     b.push_str("  while kn = key {\n")
-    b.push_str("    k = jsonc.avant_json_as_str(kn)\n")
+    b.push_str("    k = jsonc.avant_json_name(kn)\n")
     b.push_str("    vn = jsonc.avant_json_next(kn) ?? return codec_wrong(j.node, \"an object\")\n")
     b.push_str("    if !out.has(k) {\n")
     inner = vt
@@ -783,13 +783,21 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
     reader = json_scalar_reader(inner)
     if reader.size > 0 {
       // A scalar is read by name in one runtime call, as `doc.f64(name)`
-      // reads it; only a miss looks again, to tell a member that is
-      // absent from one of another kind.
-      b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
-      if inner.is_float() {
-        b.push_str("  if r${i} == r${i} {\n")
+      // reads it, the answer in the call's result: a string or nil, a
+      // Bool's 1 or 0 or -1, a number or NaN, an integer or Int.min (the
+      // status read only then, to tell a real Int.min); only a miss looks
+      // again, to tell a member that is absent from one of another kind.
+      if inner.is_string() {
+        b.push_str("  if r${i} = jsonc.${reader}(j.node, ${key}) {\n")
       } else {
-        b.push_str("  if jsonc.avant_json_take_status() == 0 {\n")
+        b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
+        if inner.is_float() {
+          b.push_str("  if r${i} == r${i} {\n")
+        } else if inner.is_bool() {
+          b.push_str("  if r${i} >= 0 {\n")
+        } else {
+          b.push_str("  if r${i} != Int.min || jsonc.avant_json_take_status() == 0 {\n")
+        }
       }
       b.push_str("    found += 1\n")
       if inner.is_bool() {

@@ -370,6 +370,8 @@ typedef struct GcTune {
   uint64_t start;     /* AVANT_GC_TUNE_START_KB: the first budget */
   uint64_t dflt;      /* AVANT_GC_TUNE_DEFAULT_KB: YOUNG_BYTES_DEFAULT */
   uint64_t cap;       /* AVANT_GC_TUNE_CAP_KB: YOUNG_BYTES_CAP */
+  uint64_t small_cap; /* AVANT_GC_TUNE_SMALL_CAP_KB: YOUNG_SMALL_CAP (0: none) */
+  uint64_t big_pct;   /* AVANT_GC_TUNE_BIG_PCT: YOUNG_BIG_DEAD_PCT */
   uint64_t heap_div;  /* AVANT_GC_TUNE_HEAP_DIV: YOUNG_HEAP_DIV */
   uint64_t high_pct;  /* AVANT_GC_TUNE_HIGH_PCT: the survival that grows the budget, YOUNG_GROW_PCT */
   uint64_t low_pct;   /* AVANT_GC_TUNE_LOW_PCT: a low-survival collection, 10 */
@@ -1933,6 +1935,12 @@ typedef struct GcHeap {
    * at the last full or complete collection, and the bytes allocated from
    * there that make a full collection due (ALLOC_FULL_PCT). */
   uint64_t live;
+  /* The live bytes the last full or complete collection found, and
+   * whether the young budget may grow past YOUNG_SMALL_CAP (young_cap,
+   * avant_gc_collect.c): set by each full collection that finds dead
+   * much of what entered mature space since the last one. */
+  uint64_t full_live;
+  uint8_t young_big;
   uint64_t last_full_at;
   uint64_t alloc_full_due;
   /* mature_since_full at the last budget collection (ALLOC_FULL_QUIET_DIV). */

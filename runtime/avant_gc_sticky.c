@@ -590,6 +590,25 @@ static uint64_t field_count(void *p) {
   return (uint64_t)gc_heap.types[id].nrefs;
 }
 
+/* A remembered entry at a young collection is a live heap object: the
+ * barriers and the collector remember only heap objects (avant_barrier,
+ * rem_rebuild, gc_rem_keep_large_holders, gc_cards_settle), a young one
+ * never (it is traced from the roots), a full collection drops the dead
+ * ones (gc_rem_full_scrub) and rewrites the moved ones, a young
+ * collection frees no old object before the set is emptied, and the one
+ * free outside a collection, avant_gc_large_drop, leaves a remembered
+ * object alone. So the young collection reads each entry's header
+ * without a lookup; the verifier checks that the lookup agrees. */
+static void rem_entry_check(void *obj) {
+  AvantHeader *ol = NULL;
+  if (!gc_is_heap_payload(obj, NULL, &ol)) {
+    gc_die("avant gc verify: a remembered entry is not a live heap object at a young collection");
+  }
+  if ((ol != NULL) != ((avant_header(obj)->flags & AVANT_FLAG_LARGE) != 0)) {
+    gc_die("avant gc verify: a remembered entry's large flag differs from the heap's");
+  }
+}
+
 /* The trace: frame slots (the value, and the location when it lies in a
  * young object, which keeps that object), the remembered set (each entry
  * marked and its fields traced as R1'(c) says), pins, the runtime-held
@@ -631,9 +650,11 @@ static void trace_all(void) {
     }
     for (i = 0; i < gc_heap.rem_n; i++) {
       void *obj = gc_heap.remset[i];
-      AvantHeader *ol = NULL;
-      if (!gc_is_heap_payload(obj, NULL, &ol)) {
-        continue;
+      /* Every entry is a live heap object here (rem_entry_check): its
+       * header says whether it is a large one, with no lookup. */
+      AvantHeader *ol = (avant_header(obj)->flags & AVANT_FLAG_LARGE) ? avant_header(obj) : NULL;
+      if (gc_heap.set.verify) {
+        rem_entry_check(obj);
       }
       {
         AvantHeader *oh = avant_header(obj);
@@ -685,14 +706,19 @@ static void trace_all(void) {
  * objects remembered since the last collection). rem_rebuild then
  * remembers again the holders that name a young large object staying
  * young (the one case where
- * an object is still young after an S young collection). */
+ * an object is still young after an S young collection).
+ * No entry is looked up: every one is a live heap object (rem_entry_check
+ * says why, and checks it under AVANT_GC_VERIFY). The lookup of each
+ * entry's block and start bit used to be about 4% of a build that
+ * remembers hundreds of thousands of old rows a collection. */
 static void rem_empty(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
-    if (gc_is_heap_payload(obj, NULL, NULL)) {
-      avant_header(obj)->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
+    if (gc_heap.set.verify) {
+      rem_entry_check(obj);
     }
+    avant_header(obj)->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
   gc_side_use(GC_SIDE_REM, (uint64_t)gc_heap.rem_n * sizeof(void *));

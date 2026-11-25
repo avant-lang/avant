@@ -1,0 +1,172 @@
+// Every way a program reaches a function, so a compiler that keeps only
+// the functions a program reaches must keep each of these: a direct
+// call, a method through an interface bound, a closure, a named function
+// taken as a value and called from an array, a callback handed to C
+// (libc's qsort calls it), a spawned task, a hash keyed by a struct's own
+// equality and hash (the runtime calls them through thunks), a constant
+// computed before main, an enum's name, a lambda a builtin inlines, a
+// std function called only through a value, a test body handed to
+// std.testing, and a function reached only through another reached one.
+// It also defines functions nothing reaches (`never_called`, a method
+// no one calls, an unused std function): the test checks those are gone
+// from the program's .ll and the others are there.
+
+import std.fs
+import std.testing
+
+lib c {
+  struct CInt {
+    v: Int32
+  }
+  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)
+  fun malloc(n: Int): Ptr(CInt)
+  fun free(p: Ptr(CInt))
+}
+
+interface Show {
+  fn show: String
+}
+
+class Dog {
+  name: String
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+
+  fn show: String {
+    "dog ${name}"
+  }
+
+  fn never_barks: String {
+    "silent"
+  }
+}
+
+struct Key {
+  k: String
+
+  fn equals(other: Key): Bool {
+    key_text(self.k) == key_text(other.k)
+  }
+
+  fn hash(h: Hasher) {
+    h.add(key_text(self.k))
+  }
+}
+
+enum Color { red, green, blue }
+
+const start_total = count_up(4)
+
+fn count_up(n: Int): Int {
+  t = 0
+  for i in 0..n {
+    t += i
+  }
+  t
+}
+
+// The text lowered to ASCII lower case.
+fn key_text(s: String): String {
+  b = Buf.new()
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    b.push_byte(c)
+    i += 1
+  }
+  b.to_s()
+}
+
+fn direct(x: Int): Int {
+  deeper(x) + 1
+}
+
+fn deeper(x: Int): Int {
+  x * 10
+}
+
+fn describe(x: T): String {
+  x.show()
+}
+
+fn make_adder(n: Int): fn(Int): Int {
+  (x: Int) { x + n + adder_bonus() }
+}
+
+fn adder_bonus: Int {
+  100
+}
+
+fn twice(x: Int): Int {
+  x * 2
+}
+
+fn thrice(x: Int): Int {
+  x * 3
+}
+
+fn by_v(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
+  if a.v < b.v {
+    return -1
+  }
+  if a.v > b.v {
+    return 1
+  }
+  0
+}
+
+fn spawned(n: Int): Int {
+  n * n
+}
+
+fn in_block(x: Int): Int {
+  x + 7
+}
+
+fn test_body: Nil {
+  puts("test body ran")
+  nil
+}
+
+fn never_called: Int {
+  42
+}
+
+fn main {
+  puts(direct(4))
+  puts(describe(Dog.new("rex")))
+  add = make_adder(1)
+  puts(add(2))
+  ops: Array(fn(Int): Int) = []
+  ops.push(twice)
+  ops.push(thrice)
+  for op in ops {
+    puts(op(5))
+  }
+  buf = c.malloc(16)
+  buf.v = 3
+  c.qsort(buf, 1, 4, by_v)
+  puts(buf.v)
+  c.free(buf)
+  h = spawn { spawned(6) }
+  puts(h.join())
+  seen = Hash(Key, Int).new()
+  seen[Key { k: "A" }] = 1
+  seen[Key { k: "a" }] = 2
+  puts(seen.size)
+  puts(start_total)
+  puts(Color.green.name())
+  xs = [1, 2, 3]
+  sum = 0
+  xs.each (x) { sum += in_block(x) }
+  puts(sum)
+  probe: fn(String): Bool = fs.exists
+  puts(probe("/nonexistent/reach/path"))
+  t = testing.Test.new()
+  t.test("body", test_body)
+}

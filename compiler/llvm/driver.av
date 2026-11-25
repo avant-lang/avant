@@ -12,6 +12,7 @@
 // Every entry returns "" on success or the message for diag_puts; the
 // caller exits 1 on a message.
 
+import std.gc
 import source
 import pipeline
 import mir.ir
@@ -76,21 +77,66 @@ pub fn llvm_verify(m: MModule): String {
   buf.to_s()
 }
 
+// The .ll text of a program, and what the steps after it still need of
+// the module.
+class LlvmText {
+  text: String = ""
+  name: String = ""
+  err: String = ""
+  emit_us: Int = 0
+}
+
+// Verify (when verify), then emit the box's module. The module is taken
+// out of the box: when this returns nothing holds it, so the collection
+// that follows frees the whole MIR before the .ll text is compiled (the
+// in-process LLVM then grows on top of the text alone, not of the text and
+// the MIR).
+fn llvm_text(box: IrBox, inline_fast: Bool, shadows: Bool, verify: Bool): LlvmText {
+  r = LlvmText.new()
+  if m = box.mir {
+    box.mir = nil
+    r.name = m.name
+    if verify {
+      bad = llvm_verify(m)
+      if bad.size > 0 {
+        r.err = bad
+        return r
+      }
+    }
+    t0 = now_us()
+    r.text = ll_emit_module(m, inline_fast, shadows)
+    r.emit_us = now_us() - t0
+  } else {
+    r.err = "internal error: the program has no module"
+  }
+  r
+}
+
+// The module's name ("" when the box has none).
+fn box_name(box: IrBox): String {
+  if m = box.mir {
+    return m.name
+  }
+  ""
+}
+
 // Verify (in the verify mode), emit, and compile to obj_path. With job.keep_ll set, the
 // pre-optimization .ll is also written there (for the goldens and the
 // self-hosting fixed point). An LLVM failure after the verifier passed
-// is an emitter bug, reported as an internal error.
-pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
-  if llvm_verify_mode() {
-    bad = llvm_verify(m)
-    if bad.size > 0 {
-      return bad
-    }
+// is an emitter bug, reported as an internal error. The box's module is
+// dropped once its text is made; what the program's compile left dead
+// (the syntax tree, the checker's tables) is collected first, and the
+// module before LLVM starts, so the compiler's own heap is the text.
+pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
+  gc.collect()
+  r = llvm_text(box, job.inline_fast, job.codegen == "release", llvm_verify_mode())
+  if r.err.size > 0 {
+    return r.err
   }
-  t0 = now_us()
-  text = ll_emit_module(m, job.inline_fast, job.codegen == "release")
-  t1 = now_us()
-  job.emit_us = t1 - t0
+  job.emit_us = r.emit_us
+  text = r.text
+  name = r.name
+  r = LlvmText.new()
   if job.keep_ll.size > 0 {
     if e = write_failure(file_write(job.keep_ll, text)) {
       return e.message()
@@ -101,7 +147,9 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
     cpu = llvm_cpu_default()
   }
   llvm_set_cpu(cpu)
-  err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
+  gc.collect()
+  t1 = now_us()
+  err = llvm_compile_text(text, "${name}.ll", job.codegen, obj_path)
   job.compile_us = now_us() - t1
   if err.size > 0 {
     return "internal error: ${err}"
@@ -109,14 +157,16 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   ""
 }
 
-// Verify and emit only: the pre-optimization .ll written to ll_path
-// (`avant __emit-ll`, the self-hosting fixed point).
-pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
-  bad = llvm_verify(m)
-  if bad.size > 0 {
-    return bad
+// Emit only: the pre-optimization .ll written to ll_path
+// (`avant __emit-ll`, the self-hosting fixed point), after the stage
+// final verifier.
+pub fn llvm_emit_ll(box: IrBox, inline_fast: Bool, ll_path: String): String {
+  gc.collect()
+  r = llvm_text(box, inline_fast, true, true)
+  if r.err.size > 0 {
+    return r.err
   }
-  if e = write_failure(file_write(ll_path, ll_emit_module(m, inline_fast, true))) {
+  if e = write_failure(file_write(ll_path, r.text)) {
     return e.message()
   }
   ""
@@ -125,14 +175,14 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 // Verify, emit, compile, and link the program out_path. A missing
 // parent directory of out_path is created first (kept from the old
 // driver: `compile x.av out/dir/x` works).
-pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
+pub fn llvm_build(box: IrBox, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
   if parent.size > 0 && fs_mkdir_p(parent) != 0 {
     return "cannot create the output directory ${parent}"
   }
   work = tmp_new_dir()
-  obj = "${work}/${m.name}.o"
-  err = llvm_object(m, job, obj)
+  obj = "${work}/${box_name(box)}.o"
+  err = llvm_object(box, job, obj)
   if err.size > 0 {
     return err
   }

@@ -1,0 +1,154 @@
+import harness
+import backends
+import std.fs
+import std.process
+
+// The compiler keeps only the functions a program reaches
+// (compiler/mir/reach.av). tests/fixtures/reach/ways.av reaches a
+// function in every way a program can: a direct call, a method through an
+// interface bound, a closure, named functions taken as values, a
+// callback libc's qsort calls, a spawned task, a hash keyed by a
+// struct's own equality and hash (the runtime calls the key thunks), a
+// constant computed before main, an enum's name, a block a builtin
+// inlines, a std function called only through a value, and a test body
+// handed to std.testing. Checked: (a) it compiles in --debug, bare and
+// --release and prints the known output in each, plain and under the
+// collector's modes (a function wrongly dropped would fail the link or
+// the run); (b) its .ll defines each of those functions and none of the
+// ones nothing reaches (a function no one calls, a method no one calls,
+// the std modules' other functions); (c) `avant dump` prints no
+// function nothing reaches; (d) a program importing std.fs that calls
+// only fs.read defines only what that call needs.
+
+fn ways_out: String {
+  "41\ndog rex\n103\n10\n15\n3\n36\n1\n6\ngreen\n27\nfalse\ntest body ran\n"
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0"]
+}
+
+// The symbols the .ll must define: each way of reaching.
+fn kept_syms: Array(String) {
+  ["\"av.ways/direct\"", "\"av.ways/deeper\"", "\"av.ways/describe[ways.Dog]\"", "\"av.ways/Dog.show\"", "\"av.ways/make_adder#lam1\"", "\"av.ways/adder_bonus\"", "\"av.ways/twice#fnval\"", "\"av.ways/thrice#fnval\"", "\"av.ways/by_v#cb\"", "\"av.ways/by_v\"", "\"av.ways/main#spawn1\"", "\"av.ways/spawned\"", "\"av.ways/__avant_key_hash[ways.Key]#keyhash\"", "\"av.ways/__avant_key_eq[ways.Key]#keyeq\"", "\"av.ways/key_text\"", "\"av.ways/__consts\"", "\"av.ways/count_up\"", "\"av.ways/ways.Color.name\"", "\"av.ways/in_block\"", "\"av.std.fs/exists#fnval\"", "\"av.std.testing/Test.test\"", "\"av.ways/test_body#fnval\""]
+}
+
+// The symbols it must not define: nothing reaches them.
+fn dropped_syms: Array(String) {
+  ["\"av.ways/never_called\"", "\"av.ways/Dog.never_barks\"", "\"av.std.fs/write\"", "\"av.std.fs/read\"", "\"av.std.testing/Test.golden\""]
+}
+
+fn defines(ll: String, sym: String): Bool {
+  for line in ll.split("\n") {
+    if line.starts_with("define ") && line.contains(" @${sym}(") {
+      return true
+    }
+  }
+  false
+}
+
+fn test_reach(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/reach/ways.av"
+  modes = ["--debug", "", "--release"]
+  tags = ["debug", "bare", "release"]
+  jobs: Array(HJob) = []
+  for i in 0..modes.size {
+    a: Array(String) = []
+    a.push("compile")
+    a.push(src)
+    a.push("${dir}/ways.${tags[i]}")
+    if modes[i].size > 0 {
+      a.push(modes[i])
+    }
+    jobs.push(env_job("", compiler, a, "${dir}/ways.${tags[i]}.log"))
+  }
+  ll_args: Array(String) = []
+  ll_args.push("__emit-ll")
+  ll_args.push(src)
+  ll_args.push("${dir}/ways.ll")
+  jobs.push(env_job("", compiler, ll_args, "${dir}/ways.ll.log"))
+  dump_args: Array(String) = []
+  dump_args.push("dump")
+  dump_args.push(src)
+  jobs.push(env_job("", compiler, dump_args, "${dir}/ways.mir"))
+  fs_src = "${dir}/read_only.av"
+  _ = fs.write(fs_src, "import std.fs\n\nfn main {\n  puts(fs.read(\"/nonexistent/reach/file\") ?? \"none\")\n}\n") ?? 0
+  fs_args: Array(String) = []
+  fs_args.push("__emit-ll")
+  fs_args.push(fs_src)
+  fs_args.push("${dir}/read_only.ll")
+  jobs.push(env_job("", compiler, fs_args, "${dir}/read_only.ll.log"))
+  run_waves(jobs)
+  for i in 0..modes.size {
+    c.eq_int(jobs[i].code, 0, "ways.av compiles (${tags[i]}): ${log_text("${dir}/ways.${tags[i]}.log")}")
+  }
+  c.eq_int(jobs[3].code, 0, "ways.av: __emit-ll")
+  c.eq_int(jobs[4].code, 0, "ways.av: avant dump")
+  c.eq_int(jobs[5].code, 0, "read_only.av: __emit-ll")
+
+  // (a) the runs.
+  envs = gc_envs()
+  runs: Array(HJob) = []
+  for i in 0..modes.size {
+    runs.push(run_job(dir, "ways.${tags[i]}", "ways.${tags[i]}.r"))
+    for e in 0..envs.size {
+      runs.push(run_job_env(dir, "ways.${tags[i]}", "ways.${tags[i]}.g${e}", envs[e]))
+    }
+  }
+  run_waves(runs)
+  per = 1 + envs.size
+  for i in 0..modes.size {
+    c.eq_int(runs[per * i].code, 0, "ways.av (${tags[i]}): exit 0")
+    c.eq_str(log_text("${dir}/ways.${tags[i]}.r.out"), ways_out(), "ways.av (${tags[i]}): every way of reaching ran")
+    for e in 0..envs.size {
+      c.eq_int(runs[per * i + 1 + e].code, 0, "ways.av (${tags[i]}) under ${envs[e]}: exit 0")
+      c.eq_str(log_text("${dir}/ways.${tags[i]}.g${e}.out"), ways_out(), "ways.av (${tags[i]}) under ${envs[e]}: the known stdout")
+      c.eq_str(log_text("${dir}/ways.${tags[i]}.g${e}.err"), "", "ways.av (${tags[i]}) under ${envs[e]}: no stderr")
+    }
+  }
+
+  // (b) what the .ll defines.
+  ll = log_text("${dir}/ways.ll")
+  for s in kept_syms() {
+    c.expect(defines(ll, s), "ways.ll defines ${s} (reached)")
+  }
+  for s in dropped_syms() {
+    c.expect(!defines(ll, s), "ways.ll does not define ${s} (nothing reaches it)")
+  }
+
+  // (c) the MIR dump.
+  mir = log_text("${dir}/ways.mir")
+  c.expect(mir.contains("av.ways/direct"), "avant dump prints a reached function")
+  c.expect(!mir.contains("av.ways/never_called"), "avant dump prints no function nothing reaches")
+  c.expect(!mir.contains("av.std.fs/write"), "avant dump prints no std function nothing reaches")
+
+  // (d) a std module of which one function is called.
+  rl = log_text("${dir}/read_only.ll")
+  c.expect(defines(rl, "\"av.std.fs/read\""), "read_only.ll defines fs.read")
+  n = 0
+  for line in rl.split("\n") {
+    if line.starts_with("define ") && line.contains("@\"av.std.fs/") {
+      n += 1
+    }
+  }
+  c.eq_int(n, 1, "read_only.ll defines one function of std.fs")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_reach.av")
+  if compiler = process.env("AVANT_COMPILER") {
+    test_reach(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

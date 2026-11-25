@@ -84,83 +84,6 @@ extern avant_trap_expect(ref str) -> void never noreturn
 extern avant_trap_frozen(i32) -> void never noreturn
 extern avant_trap_poisoned() -> void never noreturn
 
-fn av.std.sync/__avant_mutex_poisoned() -> u8 leaf @lib/std/sync.av:208:5 {
-  let _0: u8
-
-bb0:
-  _0 = const u8 0   @209:13
-  return   @209:13
-}
-
-fn av.std.sync/pool_size() -> i64 frame @lib/std/sync.av:226:5 {
-  let _0: i64
-  let _1: i64
-
-bb0:
-  _1 = call avant_chosen_threads() collects   @227:10
-  _0 = copy _1   @227:10
-  return   @227:10
-}
-
-fn av.std.sync/set_pool_size(_1: i64) -> void frame @lib/std/sync.av:230:5 {
-  let _1 (n): i64
-  let _2: bool
-  let _3: bool
-  let _4: bool
-  let _5: ref str slot
-  let _6: ref str slot
-  let _7: ref str
-  let _8: i64
-  let _9: bool
-  let _10: ref str slot
-  let _11: ref str slot
-  let _12: ref str
-
-bb0:
-  _5 = zero   @230:5
-  _6 = zero   @230:5
-  _10 = zero   @230:5
-  _11 = zero   @230:5
-  gc.enter   @230:5
-  gc.roots _5, _6, _10, _11   @230:5
-  _2 = lt copy _1, const i64 1   @231:8
-  _3 = copy _2   @231:12
-  branch copy _3, bb2, bb1   @231:12
-
-bb1:
-  _4 = gt copy _1, const i64 1024   @231:17
-  _3 = copy _4   @231:12
-  goto bb2   @231:12
-
-bb2:
-  branch copy _3, bb3, bb4   @231:3
-
-bb3:
-  _5 = call avant_str_from_int(copy _1) collects   @232:33
-  _6 = call avant_str_concat(const str.0, copy _5) collects   @232:11
-  _5 = zero   @232:11
-  _7 = call avant_str_concat(copy _6, const str.1) collects   @232:11
-  call avant_trap_expect(copy _7) nocollect   @232:5
-  unreachable   @232:5
-
-bb4:
-  _8 = call avant_set_pool_size(copy _1) collects   @234:13
-  _9 = ne copy _8, const i64 0   @234:37
-  branch copy _9, bb5, bb6   @234:3
-
-bb5:
-  _10 = call avant_str_from_int(copy _1) collects   @235:33
-  _11 = call avant_str_concat(const str.0, copy _10) collects   @235:11
-  _10 = zero   @235:11
-  _12 = call avant_str_concat(copy _11, const str.2) collects   @235:11
-  call avant_trap_expect(copy _12) nocollect   @235:5
-  unreachable   @235:5
-
-bb6:
-  gc.leave   @230:5
-  return   @230:5
-}
-
 fn av.mutex/bump(_1: ref %std.sync.Mutex(Int), _2: i64) -> i64 frame @mutex.av:26:1 {
   let _0: i64
   let _1 (m): ref %std.sync.Mutex(Int) slot
@@ -932,32 +855,6 @@ bb2:
   return   @26:3
 }
 
-fn av.task/__avant_task_error(_1: ref str, _2: ref str) -> ref %task.TaskError frame @<task>:31:5 {
-  let _0: ref %task.TaskError
-  let _1 (what): ref str slot
-  let _2 (site): ref str slot
-  let _3: ref %task.TaskError slot
-
-bb0:
-  _3 = zero   @31:5
-  gc.enter   @31:5
-  gc.roots _1, _2, _3   @31:5
-  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @32:12
-  call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @32:12
-  _0 = copy _3   @32:12
-  gc.leave   @32:12
-  return   @32:12
-}
-
-fn av.std.sync/std.sync.MutexError.message(_1: u8) -> ref str frame @lib/std/sync.av:202:7 {
-  let _0: ref str
-  let _1 (self): u8
-
-bb0:
-  _0 = const str.5   @203:5
-  return   @203:5
-}
-
 fn av.mutex/Held.initialize(_1: ref %mutex.Held, _2: i64) -> void frame @mutex.av:16:3 {
   let _1 (self): ref %mutex.Held
   let _2 (n): i64
@@ -976,64 +873,6 @@ bb0:
   (*_1).0 = copy _2 fresh   @8:15
   (*_1).1 = copy _3 fresh   @9:15
   return   @7:3
-}
-
-fn av.task/TaskError.message(_1: ref %task.TaskError) -> ref str frame @<task>:12:7 {
-  let _0: ref str
-  let _1 (self): ref %task.TaskError
-  let _2: ref str
-  let _3: i64
-  let _4: bool
-  let _5: ref str slot
-  let _6: ref str slot
-  let _7: ref str slot
-  let _8: ref str slot
-  let _9: ref str
-  let _10: ref str slot
-  let _11: ref str
-
-bb0:
-  _5 = zero   @12:7
-  _6 = zero   @12:7
-  _7 = zero   @12:7
-  _8 = zero   @12:7
-  _10 = zero   @12:7
-  gc.enter   @12:7
-  gc.roots _5, _6, _7, _8, _10   @12:7
-  _2 = copy (*_1).1   @13:8
-  _3 = call avant_str_size(copy _2) nocollect   @13:12
-  _4 = gt copy _3, const i64 0   @13:18
-  branch copy _4, bb1, bb2   @13:5
-
-bb1:
-  _5 = copy (*_1).0   @14:35
-  _6 = copy (*_1).1   @14:46
-  _7 = call avant_str_concat(const str.6, copy _5) collects   @14:14
-  _5 = zero   @14:14
-  _8 = call avant_str_concat(copy _7, const str.7) collects   @14:14
-  _7 = zero   @14:14
-  _9 = call avant_str_concat(copy _8, copy _6) collects   @14:14
-  _0 = copy _9   @14:7
-  gc.leave   @14:7
-  return   @14:7
-
-bb2:
-  _10 = copy (*_1).0   @16:26
-  _11 = call avant_str_concat(const str.6, copy _10) collects   @16:5
-  _0 = copy _11   @16:5
-  gc.leave   @16:5
-  return   @16:5
-}
-
-fn av.task/TaskError.__avant_error_text(_1: ref %task.TaskError) -> ref str frame @<task>:3:5 {
-  let _0: ref str
-  let _1 (self): ref %task.TaskError
-  let _2: ref str
-
-bb0:
-  _2 = call av.task/TaskError.message(copy _1) collects   @3:5
-  _0 = copy _2   @3:5
-  return   @3:5
 }
 
 fn av.std.sync/Mutex(Int).initialize(_1: ref %std.sync.Mutex(Int), _2: i64, _3: %fn():Int) -> void frame @lib/std/sync.av:140:3 {
@@ -1070,47 +909,6 @@ bb1:
 bb2:
   gc.leave   @140:3
   return   @140:3
-}
-
-fn av.std.sync/Mutex(Int).poisoned(_1: ref %std.sync.Mutex(Int)) -> bool frame @lib/std/sync.av:151:7 {
-  let _0: bool
-  let _1 (self): ref %std.sync.Mutex(Int)
-  let _2: i32
-  let _3: bool
-
-bb0:
-  _2 = call avant_gate_poisoned(copy _1, const u64 8) nocollect   @152:5
-  _3 = ne copy _2, const i32 0   @152:5
-  _0 = copy _3   @152:5
-  return   @152:5
-}
-
-fn av.std.sync/Mutex(Int).recover(_1: ref %std.sync.Mutex(Int), _2: i64) -> void frame @lib/std/sync.av:156:7 {
-  let _1 (self): ref %std.sync.Mutex(Int) slot
-  let _2 (value): i64
-
-bb0:
-  gc.enter   @156:7
-  gc.roots _1   @156:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @157:5
-  (*_1).0 = copy _2   @158:15
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @159:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @160:5
-  gc.leave   @156:7
-  return   @156:7
-}
-
-fn av.std.sync/Mutex(Int).clear_poison(_1: ref %std.sync.Mutex(Int)) -> void frame @lib/std/sync.av:164:7 {
-  let _1 (self): ref %std.sync.Mutex(Int) slot
-
-bb0:
-  gc.enter   @164:7
-  gc.roots _1   @164:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @165:5
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @166:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @167:5
-  gc.leave   @164:7
-  return   @164:7
 }
 
 fn av.std.sync/Mutex(Int).__avant_heal(_1: ref %std.sync.Mutex(Int)) -> bool frame @lib/std/sync.av:175:7 {
@@ -1203,48 +1001,6 @@ bb1:
 bb2:
   gc.leave   @140:3
   return   @140:3
-}
-
-fn av.std.sync/Mutex(mutex.Held).poisoned(_1: ref %std.sync.Mutex(mutex.Held)) -> bool frame @lib/std/sync.av:151:7 {
-  let _0: bool
-  let _1 (self): ref %std.sync.Mutex(mutex.Held)
-  let _2: i32
-  let _3: bool
-
-bb0:
-  _2 = call avant_gate_poisoned(copy _1, const u64 8) nocollect   @152:5
-  _3 = ne copy _2, const i32 0   @152:5
-  _0 = copy _3   @152:5
-  return   @152:5
-}
-
-fn av.std.sync/Mutex(mutex.Held).recover(_1: ref %std.sync.Mutex(mutex.Held), _2: ref %mutex.Held) -> void frame @lib/std/sync.av:156:7 {
-  let _1 (self): ref %std.sync.Mutex(mutex.Held) slot
-  let _2 (value): ref %mutex.Held slot
-
-bb0:
-  gc.enter   @156:7
-  gc.roots _1, _2   @156:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @157:5
-  barrier copy _1   @158:15
-  (*_1).0 = copy _2   @158:15
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @159:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @160:5
-  gc.leave   @156:7
-  return   @156:7
-}
-
-fn av.std.sync/Mutex(mutex.Held).clear_poison(_1: ref %std.sync.Mutex(mutex.Held)) -> void frame @lib/std/sync.av:164:7 {
-  let _1 (self): ref %std.sync.Mutex(mutex.Held) slot
-
-bb0:
-  gc.enter   @164:7
-  gc.roots _1   @164:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @165:5
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @166:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @167:5
-  gc.leave   @164:7
-  return   @164:7
 }
 
 fn av.std.sync/Mutex(mutex.Held).__avant_heal(_1: ref %std.sync.Mutex(mutex.Held)) -> bool frame @lib/std/sync.av:175:7 {
@@ -1340,48 +1096,6 @@ bb2:
   return   @140:3
 }
 
-fn av.std.sync/Mutex(mutex.Cell).poisoned(_1: ref %std.sync.Mutex(mutex.Cell)) -> bool frame @lib/std/sync.av:151:7 {
-  let _0: bool
-  let _1 (self): ref %std.sync.Mutex(mutex.Cell)
-  let _2: i32
-  let _3: bool
-
-bb0:
-  _2 = call avant_gate_poisoned(copy _1, const u64 16) nocollect   @152:5
-  _3 = ne copy _2, const i32 0   @152:5
-  _0 = copy _3   @152:5
-  return   @152:5
-}
-
-fn av.std.sync/Mutex(mutex.Cell).recover(_1: ref %std.sync.Mutex(mutex.Cell), _2: %mutex.Cell) -> void frame @lib/std/sync.av:156:7 {
-  let _1 (self): ref %std.sync.Mutex(mutex.Cell) slot
-  let _2 (value): %mutex.Cell slot
-
-bb0:
-  gc.enter   @156:7
-  gc.roots _1, _2   @156:7
-  call avant_gate_lock(copy _1, const u64 16) collects   @157:5
-  barrier copy _1   @158:15
-  (*_1).0 = copy _2   @158:15
-  call avant_gate_clear_poison(copy _1, const u64 16) nocollect   @159:5
-  call avant_gate_unlock(copy _1, const u64 16) nocollect   @160:5
-  gc.leave   @156:7
-  return   @156:7
-}
-
-fn av.std.sync/Mutex(mutex.Cell).clear_poison(_1: ref %std.sync.Mutex(mutex.Cell)) -> void frame @lib/std/sync.av:164:7 {
-  let _1 (self): ref %std.sync.Mutex(mutex.Cell) slot
-
-bb0:
-  gc.enter   @164:7
-  gc.roots _1   @164:7
-  call avant_gate_lock(copy _1, const u64 16) collects   @165:5
-  call avant_gate_clear_poison(copy _1, const u64 16) nocollect   @166:5
-  call avant_gate_unlock(copy _1, const u64 16) nocollect   @167:5
-  gc.leave   @164:7
-  return   @164:7
-}
-
 fn av.std.sync/Mutex(mutex.Cell).__avant_heal(_1: ref %std.sync.Mutex(mutex.Cell)) -> bool frame @lib/std/sync.av:175:7 {
   let _0: bool
   let _1 (self): ref %std.sync.Mutex(mutex.Cell) slot
@@ -1475,48 +1189,6 @@ bb2:
   return   @140:3
 }
 
-fn av.std.sync/Mutex(String).poisoned(_1: ref %std.sync.Mutex(String)) -> bool frame @lib/std/sync.av:151:7 {
-  let _0: bool
-  let _1 (self): ref %std.sync.Mutex(String)
-  let _2: i32
-  let _3: bool
-
-bb0:
-  _2 = call avant_gate_poisoned(copy _1, const u64 8) nocollect   @152:5
-  _3 = ne copy _2, const i32 0   @152:5
-  _0 = copy _3   @152:5
-  return   @152:5
-}
-
-fn av.std.sync/Mutex(String).recover(_1: ref %std.sync.Mutex(String), _2: ref str) -> void frame @lib/std/sync.av:156:7 {
-  let _1 (self): ref %std.sync.Mutex(String) slot
-  let _2 (value): ref str slot
-
-bb0:
-  gc.enter   @156:7
-  gc.roots _1, _2   @156:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @157:5
-  barrier copy _1   @158:15
-  (*_1).0 = copy _2   @158:15
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @159:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @160:5
-  gc.leave   @156:7
-  return   @156:7
-}
-
-fn av.std.sync/Mutex(String).clear_poison(_1: ref %std.sync.Mutex(String)) -> void frame @lib/std/sync.av:164:7 {
-  let _1 (self): ref %std.sync.Mutex(String) slot
-
-bb0:
-  gc.enter   @164:7
-  gc.roots _1   @164:7
-  call avant_gate_lock(copy _1, const u64 8) collects   @165:5
-  call avant_gate_clear_poison(copy _1, const u64 8) nocollect   @166:5
-  call avant_gate_unlock(copy _1, const u64 8) nocollect   @167:5
-  gc.leave   @164:7
-  return   @164:7
-}
-
 fn av.std.sync/Mutex(String).__avant_heal(_1: ref %std.sync.Mutex(String)) -> bool frame @lib/std/sync.av:175:7 {
   let _0: bool
   let _1 (self): ref %std.sync.Mutex(String) slot
@@ -1591,23 +1263,6 @@ bb0:
   return   @12:1
 }
 
-fn av.task/TaskError.new(_1: ref str, _2: ref str) -> ref %task.TaskError frame @<task>:3:5 {
-  let _0: ref %task.TaskError
-  let _1 (what): ref str slot
-  let _2 (site): ref str slot
-  let _3: ref %task.TaskError slot
-
-bb0:
-  _3 = zero   @3:5
-  gc.enter   @3:5
-  gc.roots _1, _2, _3   @3:5
-  _3 = call avant_alloc(const u64 16, const u32 2) collects fresh   @3:5
-  call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @3:5
-  _0 = copy _3   @3:5
-  gc.leave   @3:5
-  return   @3:5
-}
-
 fn av.std.sync/Mutex(Int).new(_1: i64, _2: %fn():Int) -> ref %std.sync.Mutex(Int) frame @lib/std/sync.av:132:5 {
   let _0: ref %std.sync.Mutex(Int)
   let _1 (value): i64
@@ -1624,22 +1279,6 @@ bb0:
   _0 = copy _3   @132:5
   gc.leave   @132:5
   return   @132:5
-}
-
-fn av.std.sync/MutexHeal(Int).new(_1: %fn():Int) -> ref %std.sync.MutexHeal(Int) frame @lib/std/sync.av:186:1 {
-  let _0: ref %std.sync.MutexHeal(Int)
-  let _1 (f): %fn():Int slot
-  let _2: ref %std.sync.MutexHeal(Int) slot
-
-bb0:
-  _2 = zero   @186:1
-  gc.enter   @186:1
-  gc.roots _1, _2   @186:1
-  _2 = call avant_alloc(const u64 16, const u32 4) collects fresh   @186:1
-  call av.std.sync/MutexHeal(Int).initialize(copy _2, copy _1) collects   @186:1
-  _0 = copy _2   @186:1
-  gc.leave   @186:1
-  return   @186:1
 }
 
 fn av.std.sync/Mutex(mutex.Held).new(_1: ref %mutex.Held, _2: %fn():mutex.Held) -> ref %std.sync.Mutex(mutex.Held) frame @lib/std/sync.av:132:5 {
@@ -1660,22 +1299,6 @@ bb0:
   return   @132:5
 }
 
-fn av.std.sync/MutexHeal(mutex.Held).new(_1: %fn():mutex.Held) -> ref %std.sync.MutexHeal(mutex.Held) frame @lib/std/sync.av:186:1 {
-  let _0: ref %std.sync.MutexHeal(mutex.Held)
-  let _1 (f): %fn():mutex.Held slot
-  let _2: ref %std.sync.MutexHeal(mutex.Held) slot
-
-bb0:
-  _2 = zero   @186:1
-  gc.enter   @186:1
-  gc.roots _1, _2   @186:1
-  _2 = call avant_alloc(const u64 16, const u32 6) collects fresh   @186:1
-  call av.std.sync/MutexHeal(mutex.Held).initialize(copy _2, copy _1) collects   @186:1
-  _0 = copy _2   @186:1
-  gc.leave   @186:1
-  return   @186:1
-}
-
 fn av.std.sync/Mutex(mutex.Cell).new(_1: %mutex.Cell, _2: %fn():mutex.Cell) -> ref %std.sync.Mutex(mutex.Cell) frame @lib/std/sync.av:132:5 {
   let _0: ref %std.sync.Mutex(mutex.Cell)
   let _1 (value): %mutex.Cell slot
@@ -1694,22 +1317,6 @@ bb0:
   return   @132:5
 }
 
-fn av.std.sync/MutexHeal(mutex.Cell).new(_1: %fn():mutex.Cell) -> ref %std.sync.MutexHeal(mutex.Cell) frame @lib/std/sync.av:186:1 {
-  let _0: ref %std.sync.MutexHeal(mutex.Cell)
-  let _1 (f): %fn():mutex.Cell slot
-  let _2: ref %std.sync.MutexHeal(mutex.Cell) slot
-
-bb0:
-  _2 = zero   @186:1
-  gc.enter   @186:1
-  gc.roots _1, _2   @186:1
-  _2 = call avant_alloc(const u64 16, const u32 8) collects fresh   @186:1
-  call av.std.sync/MutexHeal(mutex.Cell).initialize(copy _2, copy _1) collects   @186:1
-  _0 = copy _2   @186:1
-  gc.leave   @186:1
-  return   @186:1
-}
-
 fn av.std.sync/Mutex(String).new(_1: ref str, _2: %fn():String) -> ref %std.sync.Mutex(String) frame @lib/std/sync.av:132:5 {
   let _0: ref %std.sync.Mutex(String)
   let _1 (value): ref str slot
@@ -1726,22 +1333,6 @@ bb0:
   _0 = copy _3   @132:5
   gc.leave   @132:5
   return   @132:5
-}
-
-fn av.std.sync/MutexHeal(String).new(_1: %fn():String) -> ref %std.sync.MutexHeal(String) frame @lib/std/sync.av:186:1 {
-  let _0: ref %std.sync.MutexHeal(String)
-  let _1 (f): %fn():String slot
-  let _2: ref %std.sync.MutexHeal(String) slot
-
-bb0:
-  _2 = zero   @186:1
-  gc.enter   @186:1
-  gc.roots _1, _2   @186:1
-  _2 = call avant_alloc(const u64 16, const u32 10) collects fresh   @186:1
-  call av.std.sync/MutexHeal(String).initialize(copy _2, copy _1) collects   @186:1
-  _0 = copy _2   @186:1
-  gc.leave   @186:1
-  return   @186:1
 }
 
 fn av.mutex/main#spawn1(_1: ref) -> i64 frame @mutex.av:42:13 {
