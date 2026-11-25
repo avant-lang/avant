@@ -1,0 +1,38 @@
+// Eight byte reads of one string, put together as a little-endian word:
+// one test proves the run in range, the string's representation is tested
+// once, and a read past the end still traps at its own index with its own
+// message, after the words before it were read: index 12 out of bounds
+// (size 12). A view (a slice) reads its own bytes, and a call that
+// allocates between two reads of a string reads the bytes again after it.
+
+fn read64(p: String, i: Int): UInt64 {
+  p[i].to_u64() | (p[i + 1].to_u64() << 8) | (p[i + 2].to_u64() << 16) | (p[i + 3].to_u64() << 24) |
+    (p[i + 4].to_u64() << 32) | (p[i + 5].to_u64() << 40) | (p[i + 6].to_u64() << 48) | (p[i + 7].to_u64() << 56)
+}
+
+fn spread(p: String, i: Int): Int {
+  a = p[i]
+  s = "${i}-${a}"
+  b = p[i + 1]
+  t = "${s}${b}"
+  c = p[i + 2]
+  a + b + c + t.size
+}
+
+fn main {
+  b = Buf.new()
+  for i in 0..12 {
+    b.push_byte(65 + i)
+  }
+  s = b.to_s()
+  v = s[1..11]
+  puts(read64(s, 0))
+  puts(read64(v, 2))
+  acc = 0
+  for i in 0..9 {
+    acc += spread(s, i) + spread(v, i % 7)
+  }
+  puts(acc)
+  puts(read64(s, 4))
+  puts(read64(s, 5))
+}

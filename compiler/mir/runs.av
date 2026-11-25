@@ -591,6 +591,93 @@ fn rn_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
   nx
 }
 
+// A string's size, view test and bytes' address read again in one chain
+// (a block and the blocks only a trap's branch splits from it, as the
+// runs above): a string never changes, so the second read of each is a
+// copy of the first, while the string local keeps its value; the bytes'
+// address only up to a statement that may collect (a collection may move
+// the bytes). Each result is a temporary defined once. Eight byte reads
+// of one string then test its representation once, and LLVM can join
+// the loads the run test proved in range.
+fn rn_str_key(st: MStmt): Int {
+  if st.kind != msk_call() || st.dest < 0 || st.args.size < 1 {
+    return -1
+  }
+  if st.callee == "avant_str_size" || st.callee == "avant_str_view_test" || st.callee == "avant_str_data" {
+    return rn_local(st.args[0])
+  }
+  -1
+}
+
+fn rn_str_reuse(f: MFunc, preds: Array(Array(Int)), cold: Array(Bool)) {
+  defs: Array(Int) = []
+  for i in 0..f.locals.size {
+    defs.push(0)
+  }
+  for blk in f.blocks {
+    for st in blk.stmts {
+      d = mir_stmt_def(st)
+      if d >= 0 && d < defs.size {
+        defs[d] += 1
+      }
+    }
+  }
+  seen = mir_bools(f.blocks.size, false)
+  for b in 0..f.blocks.size {
+    if !seen[b] && (cold.size == 0 || b >= cold.size || !cold[b]) {
+      chain = rn_chain(f, b, preds)
+      names: Array(String) = []
+      keys: Array(Int) = []
+      vals: Array(Int) = []
+      for c in chain {
+        seen[c] = true
+        blk = f.blocks[c]
+        for j in 0..blk.stmts.size {
+          st = blk.stmts[j]
+          k = rn_str_key(st)
+          if k >= 0 && defs[st.dest] == 1 {
+            hit = -1
+            for x in 0..keys.size {
+              if keys[x] == k && names[x] == st.callee && f.locals[vals[x]].ty == f.locals[st.dest].ty {
+                hit = vals[x]
+              }
+            }
+            if hit >= 0 {
+              r = MRvalue.new(mrk_use())
+              r.a = rn_copy_local(hit)
+              blk.stmts[j] = rn_assign(st.loc, st.dest, r)
+            } else {
+              names.push(st.callee)
+              keys.push(k)
+              vals.push(st.dest)
+            }
+          } else {
+            d = mir_stmt_def(st)
+            drop_data = st.kind == msk_call() && st.collects
+            if st.kind != msk_call() && st.kind != msk_assign() && st.kind != msk_check_bounds() {
+              drop_data = true
+            }
+            nn: Array(String) = []
+            nk: Array(Int) = []
+            nv: Array(Int) = []
+            for x in 0..keys.size {
+              gone = keys[x] == d || vals[x] == d || (drop_data && names[x] == "avant_str_data")
+              if !gone {
+                nn.push(names[x])
+                nk.push(keys[x])
+                nv.push(vals[x])
+              }
+            }
+            names = nn
+            keys = nk
+            vals = nv
+          }
+        }
+      }
+    }
+  }
+}
+
 // The blocks of the checked copies loop versioning leaves: the loops
 // whose header a back edge marks cold (loops.av's original loop, run only
 // when the versioning guard fails, with every check in place). A run
@@ -638,12 +725,21 @@ pub fn mir_runs_pass(m: MModule) {
   for f in m.funcs {
     if f.kind == mfk_unset() {
       cold = rn_cold_blocks(f)
+      // Chains are taken from their first block (the work list pops the
+      // lowest block first, a chain's blocks follow its head), so a run
+      // is found whole: started from a later block of the chain, only
+      // its last checks were. A block of a chain already looked at is
+      // not looked at again (its checks are in that chain's run or in
+      // none).
       work: Array(Int) = []
-      for b in 0..f.blocks.size {
-        if cold.size == 0 || !cold[b] {
-          work.push(b)
+      b0 = f.blocks.size - 1
+      while b0 >= 0 {
+        if cold.size == 0 || !cold[b0] {
+          work.push(b0)
         }
+        b0 -= 1
       }
+      seen = mir_bools(f.blocks.size, false)
       budget = 64
       // The predecessors change only where a run is split, so they are
       // computed once and again after each split, not once per block.
@@ -651,7 +747,16 @@ pub fn mir_runs_pass(m: MModule) {
       while work.size > 0 && budget > 0 {
         b = work[work.size - 1]
         work.pop()
+        while seen.size < f.blocks.size {
+          seen.push(false)
+        }
+        if seen[b] {
+          continue
+        }
         chain = rn_chain(f, b, preds)
+        for c in chain {
+          seen[c] = true
+        }
         // The chain's statements as one sequence (each block dominates the
         // next), with each one's block and position.
         flat = MBlock.new(-1)
@@ -672,6 +777,7 @@ pub fn mir_runs_pass(m: MModule) {
           preds = mir_preds(f)
         }
       }
+      rn_str_reuse(f, preds, cold)
     }
   }
 }
