@@ -1147,6 +1147,38 @@ int64_t crash_abort(void) {
   abort();
   return 0;
 }
+/* tests/cases/test_crash_cleanup.av: a crash while a task is starting a
+ * child. crash_fork_hold registers a fork handler that runs in the parent
+ * after each fork, before fork returns to the runtime: the child exists
+ * and the runtime has not yet recorded its pid. The handler counts itself
+ * (crash_fork_held), waits natively for crash_fork_go (twenty seconds at
+ * most), then a second more, and returns; the program crashes right after
+ * crash_fork_go, so the crash comes while each starting thread is held
+ * there. */
+static volatile int crash_fork_n;
+static volatile int crash_fork_go_flag;
+static void crash_fork_parent(void) {
+  struct timespec tick = {0, 1000 * 1000};
+  struct timespec more = {1, 0};
+  int i;
+  avant_gc_native_begin();
+  __atomic_add_fetch(&crash_fork_n, 1, __ATOMIC_SEQ_CST);
+  for (i = 0; i < 20000 && !__atomic_load_n(&crash_fork_go_flag, __ATOMIC_SEQ_CST); i++) {
+    nanosleep(&tick, NULL);
+  }
+  nanosleep(&more, NULL);
+  avant_gc_native_end();
+}
+int64_t crash_fork_hold(void) {
+  return pthread_atfork(NULL, crash_fork_parent, NULL);
+}
+int64_t crash_fork_held(void) {
+  return __atomic_load_n(&crash_fork_n, __ATOMIC_SEQ_CST);
+}
+int64_t crash_fork_go(void) {
+  __atomic_store_n(&crash_fork_go_flag, 1, __ATOMIC_SEQ_CST);
+  return 0;
+}
 int64_t crash_bus(void) {
   char path[4096];
   const char *base = getenv("TMPDIR");
