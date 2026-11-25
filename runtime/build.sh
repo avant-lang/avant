@@ -247,9 +247,11 @@ compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 # slower at equal instructions (its loop and the parser met in the same
 # op-cache sets, which repeat every 2 KiB). K is 9 for the collector's
 # (avant_rt.o) and 5 for the others, so the code that changes most often
-# comes last and moves nothing else. A link without the script (the seed's
-# link of the compiler) keeps each name as a section of its own after the
-# code, unsorted.
+# comes last and moves nothing else. A link without the script (one by
+# mold, as the compiler's own build is, or the seed's link of the
+# compiler) keeps each name as an output section of its own, where that
+# linker puts an unknown code section (mold: before .text, by name), on no
+# page boundary.
 place_hot() {
   while read -r o f; do
     case "$o" in ''|'#'*) continue ;; esac
