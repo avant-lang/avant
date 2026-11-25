@@ -1,0 +1,350 @@
+import std.gc
+
+// Large element buffers of structs that hold references are carded: a
+// store into a mature one marks the cards its element spans, and a young
+// collection scans only the reference words of the marked cards. Young
+// Strings are stored into large old buffers by every path that can put
+// one there (push, an element store, a field store, insert, delete_at,
+// sort, reverse, concat, a hash's struct values and struct keys, and a
+// wide element whose two Strings lie in different cards), with
+// collections between, and every value is checked at the end. The
+// output is the same in every collector mode.
+
+struct Entry {
+  name: String
+  n: Int
+}
+
+// 33 words: wider than a card, so a whole-element store's first and
+// last words lie in different cards.
+struct Span {
+  a: String
+  p0: Int
+  p1: Int
+  p2: Int
+  p3: Int
+  p4: Int
+  p5: Int
+  p6: Int
+  p7: Int
+  p8: Int
+  p9: Int
+  p10: Int
+  p11: Int
+  p12: Int
+  p13: Int
+  p14: Int
+  p15: Int
+  p16: Int
+  p17: Int
+  p18: Int
+  p19: Int
+  p20: Int
+  p21: Int
+  p22: Int
+  p23: Int
+  p24: Int
+  p25: Int
+  p26: Int
+  p27: Int
+  p28: Int
+  p29: Int
+  p30: Int
+  b: String
+}
+
+struct Key {
+  s: String
+  i: Int
+}
+
+fn mk(n: Int): Entry {
+  Entry { name: "k${n}", n: n }
+}
+
+fn span(n: Int): Span {
+  Span { a: "a${n}", p0: n, p1: 0, p2: 0, p3: 0, p4: 0, p5: 0, p6: 0, p7: 0, p8: 0, p9: 0, p10: 0, p11: 0, p12: 0, p13: 0, p14: 0, p15: 0, p16: 0, p17: 0, p18: 0, p19: 0, p20: 0, p21: 0, p22: 0, p23: 0, p24: 0, p25: 0, p26: 0, p27: 0, p28: 0, p29: 0, p30: 0, b: "b${n}" }
+}
+
+// About 5 MB of short-lived storage: a young collection in the default
+// mode, many under the smaller ones.
+fn churn(r: Int): Int {
+  s = 0
+  for i in 0..32 {
+    t = Array(Int).new(20000)
+    t[i] = r + i
+    s += t[i]
+  }
+  for i in 0..200 {
+    w = "c${r}-${i}"
+    s += w.size
+  }
+  s
+}
+
+fn bad_entries(xs: Array(Entry)): Int {
+  bad = 0
+  for e in xs {
+    if e.name != "k${e.n}" {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn sum_n(xs: Array(Entry)): Int {
+  s = 0
+  for e in xs {
+    s += e.n
+  }
+  s
+}
+
+fn arrays: Int {
+  sink = 0
+  xs: Array(Entry) = []
+  for i in 0..3000 {
+    xs.push(mk(i))
+  }
+  gc.collect()
+  gc.collect()
+  // Element stores, then field stores, of young Strings.
+  for j in 0..300 {
+    xs[j * 10] = mk(100000 + j)
+    if j % 50 == 0 {
+      sink += churn(j)
+    }
+  }
+  for j in 0..300 {
+    i = j * 7 + 3
+    xs[i].name = "k${xs[i].n}"
+    if j % 50 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(1)
+  puts("stores ${xs.size} ${bad_entries(xs)} ${sum_n(xs)}")
+  // Pushes into the old buffer, past its capacity too.
+  for j in 0..2000 {
+    xs.push(mk(200000 + j))
+    if j % 400 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(2)
+  puts("pushes ${xs.size} ${bad_entries(xs)} ${sum_n(xs)}")
+  gc.collect()
+  for j in 0..60 {
+    xs.insert(j * 13, mk(300000 + j))
+    if j % 10 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(3)
+  puts("insert ${xs.size} ${bad_entries(xs)} ${sum_n(xs)}")
+  gc.collect()
+  for j in 0..20 {
+    xs[j * 101] = mk(400000 + j)
+  }
+  for j in 0..60 {
+    gone = xs.delete_at(j * 11)
+    sink += gone.n % 7
+    if j % 10 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(4)
+  puts("delete_at ${xs.size} ${bad_entries(xs)} ${sum_n(xs)}")
+  gc.collect()
+  for j in 0..40 {
+    xs[j * 97] = mk(500000 + j)
+  }
+  xs.sort((a, b) { a.n > b.n })
+  sink += churn(5)
+  sorted = 1
+  for i in 1..xs.size {
+    if xs[i - 1].n < xs[i].n {
+      sorted = 0
+    }
+  }
+  puts("sort ${xs.size} ${sorted} ${bad_entries(xs)} ${sum_n(xs)} ${xs[0].name}")
+  gc.collect()
+  for j in 0..40 {
+    xs[j * 89] = mk(600000 + j)
+  }
+  xs.reverse()
+  sink += churn(6)
+  puts("reverse ${xs.size} ${bad_entries(xs)} ${sum_n(xs)} ${xs[xs.size - 1].name}")
+  gc.collect()
+  ys: Array(Entry) = []
+  for j in 0..500 {
+    ys.push(mk(700000 + j))
+  }
+  xs.concat(ys)
+  sink += churn(7)
+  puts("concat ${xs.size} ${bad_entries(xs)} ${sum_n(xs)}")
+  sink
+}
+
+fn bad_spans(ss: Array(Span)): Int {
+  bad = 0
+  for s in ss {
+    if s.a != "a${s.p0}" || s.b != "b${s.p0}" {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn spans: Int {
+  sink = 0
+  ss: Array(Span) = []
+  for i in 0..400 {
+    ss.push(span(i))
+  }
+  gc.collect()
+  gc.collect()
+  for j in 0..100 {
+    ss[j * 4 + 1] = span(1000 + j)
+    if j % 20 == 0 {
+      sink += churn(j)
+    }
+  }
+  for j in 0..100 {
+    i = j * 4 + 2
+    ss[i].b = "b${ss[i].p0}"
+    if j % 20 == 0 {
+      sink += churn(j)
+    }
+  }
+  for j in 0..50 {
+    ss.insert(j * 7, span(2000 + j))
+  }
+  sink += churn(8)
+  t = 0
+  for s in ss {
+    t += s.p0
+  }
+  puts("spans ${ss.size} ${bad_spans(ss)} ${t}")
+  sink
+}
+
+fn hashes: Int {
+  sink = 0
+  h = Hash(Int, Entry).new()
+  for i in 0..4000 {
+    h[i] = mk(i)
+  }
+  gc.collect()
+  gc.collect()
+  for j in 0..400 {
+    h[j * 9] = mk(j * 9)
+    if j % 80 == 0 {
+      sink += churn(j)
+    }
+  }
+  for j in 0..1500 {
+    h.delete(j * 2 + 1)
+  }
+  for j in 0..3000 {
+    h[10000 + j] = mk(10000 + j)
+    if j % 600 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(9)
+  bad = 0
+  t = 0
+  h.each (k, e) {
+    if e.n != k || e.name != "k${k}" {
+      bad += 1
+    }
+    t += k
+  }
+  puts("hash values ${h.size} ${bad} ${t}")
+  sh = Hash(String, Entry).new()
+  for i in 0..3000 {
+    sh["s${i}"] = mk(i)
+  }
+  gc.collect()
+  gc.collect()
+  for j in 0..300 {
+    sh["s${j * 5}"] = mk(j * 5)
+    if j % 60 == 0 {
+      sink += churn(j)
+    }
+  }
+  for j in 0..1000 {
+    sh.delete("s${j * 3 + 2}")
+  }
+  for j in 0..2000 {
+    sh["t${j}"] = mk(j)
+  }
+  sink += churn(10)
+  bad = 0
+  sh.each (k, e) {
+    if e.name != "k${e.n}" {
+      bad += 1
+    }
+  }
+  puts("string keys ${sh.size} ${bad}")
+  kh = Hash(Key, Int).new()
+  for i in 0..3000 {
+    kh[Key { s: "q${i}", i: i }] = i
+  }
+  gc.collect()
+  gc.collect()
+  for j in 0..2000 {
+    kh[Key { s: "r${j}", i: j }] = j * 2
+    if j % 400 == 0 {
+      sink += churn(j)
+    }
+  }
+  sink += churn(11)
+  bad = 0
+  kh.each (k, v) {
+    if k.s != "q${k.i}" && k.s != "r${k.i}" {
+      bad += 1
+    }
+  }
+  found = 0
+  for j in 0..2000 {
+    if v = kh[(Key { s: "r${j}", i: j })] {
+      if v == j * 2 {
+        found += 1
+      }
+    }
+  }
+  puts("struct keys ${kh.size} ${bad} ${found}")
+  sink
+}
+
+// A large old Array(String) whose young String moves to another card:
+// reverse and sort move references with no barrier per slot.
+fn strings: Int {
+  sink = 0
+  xs: Array(String) = []
+  for i in 0..4000 {
+    xs.push("o${i}")
+  }
+  gc.collect()
+  gc.collect()
+  xs[0] = "young-${xs.size}"
+  xs.reverse()
+  sink += churn(12)
+  ok = xs[3999] == "young-4000"
+  xs[1] = "~young-${xs.size}"
+  xs.sort()
+  sink += churn(13)
+  ok = ok && xs[3999] == "~young-4000"
+  puts("strings ${xs.size} ${ok}")
+  sink
+}
+
+fn main {
+  sink = arrays()
+  sink += spans()
+  sink += hashes()
+  sink += strings()
+  puts("churn ${sink}")
+}

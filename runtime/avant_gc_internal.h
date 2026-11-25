@@ -134,7 +134,7 @@
 /* RETAIN_CYCLES: the full collections whose use of memory beyond the live
  * bytes the retention target remembers (GcHeap.cycle_peak). */
 #define RETAIN_CYCLES 4
-/* Card marking for large pointer buffers: a card is
+/* Card marking for large buffers of references (gc_carded): a card is
  * 2^CARD_SHIFT bytes of heap address space, one byte
  * of the side table gc_heap.cards. Settable at build time for a
  * measurement. */
@@ -854,6 +854,15 @@ typedef struct BlockSet {
  * keeps headers). */
 #define TYPE_REFS_MAX 7u
 #define TYPE_REFS_WALK 0xffu
+/* On a TYPE_REFS_WALK entry only (every reader of the list keys on the
+ * low byte): bit 8 says a large object of the type is carded (gc_carded:
+ * AVANT_TYPE_PTRS, and an element buffer, stride > 0, with a reference
+ * word), and the high 32 bits are then the size of one element in bytes
+ * (8 for a pointer buffer), the span the slot barrier marks
+ * (avant_barrier_slot): one load of the word the trace reads anyway
+ * answers both. */
+#define TYPE_REFS_CARD 0x100u
+#define TYPE_REFS_SPAN_SHIFT 32
 
 /* Visit every reference slot of payload P as `void **SLOT`: a small
  * record's by its list, a word past the payload's size skipped as the
@@ -885,11 +894,16 @@ typedef struct BlockSet {
  * avant_barrier_slot_young). */
 _Static_assert((AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | AVANT_FLAG_REM) == 0x8030u, "the inline barrier tests' mask");
 /* Card marking, runtime-internal like REM. A
- * carded object is a large pointer buffer (LARGE and AVANT_TYPE_PTRS,
- * gc_carded): a store into it marks the card of its slot
- * (avant_barrier_slot) and a young collection scans only the slots of
- * its marked cards. The other objects keep object remembering (REM),
- * a hybrid of the two.
+ * carded object is a large buffer of references: a pointer buffer
+ * (AVANT_TYPE_PTRS) or an element buffer of by-value structs or unions
+ * with a reference word (LARGE and the type's TYPE_REFS_CARD,
+ * gc_carded). A store into it marks the cards its element spans from
+ * the slot (avant_barrier_slot) and a young collection scans only the
+ * reference slots of its marked cards. The other objects keep object
+ * remembering (REM), a hybrid of the two. (An element buffer was once
+ * remembered whole: a 100,000-element Array of a struct holding a
+ * String, filled under the full stress mode, had every element scanned
+ * and fixed at each of its 300,000 young collections.)
  * REMC: a carded object is in the remembered set. It is not REM, so the
  * generated code's inline barrier test (HEAP and YOUNG or REM) never
  * skips a store into a mature carded object: every such
@@ -1376,7 +1390,7 @@ typedef enum GcProofWhy {
 
 /* An old holder with more payload than this is not logged: a store into
  * it breaks the proof (PROOF_BIG). 512 bytes: 64 reference words. Every
- * carded buffer (a large pointer buffer) is above it. */
+ * carded buffer (a large object) is above it. */
 #ifndef PROOF_HOLDER_MAX
 #define PROOF_HOLDER_MAX 512
 #endif
@@ -1627,7 +1641,7 @@ typedef struct GcHeap {
   void **fix_extra;
   uint32_t fix_extra_n;
   uint32_t fix_extra_cap;
-  /* The large pointer buffers the running young collection marked, in
+  /* The carded buffers the running young collection marked, in
    * the order it marked them (avant_gc_sticky.c, note_carded):
    * gc_cards_settle's objects. */
   void **carded;
@@ -2832,24 +2846,38 @@ static inline uint8_t *chunk_base(uint64_t c) {
 }
 
 /* A carded object (card marking): a large pointer
- * buffer. */
+ * buffer, or a large element buffer whose element holds a reference
+ * (TYPE_REFS_CARD). The pointer buffer is asked first, by its id, so
+ * that its paths (the slot barrier's above all) read no table. */
 static inline int gc_carded(const AvantHeader *h) {
-  return (h->flags & AVANT_FLAG_LARGE) && h->type_id == AVANT_TYPE_PTRS;
+  return (h->flags & AVANT_FLAG_LARGE) &&
+         (h->type_id == AVANT_TYPE_PTRS || (gc_heap.refs[h->type_id] & TYPE_REFS_CARD));
 }
 
 static inline uint64_t gc_card_index(const void *a) {
   return (uint64_t)((uintptr_t)a - (uintptr_t)gc_heap.base) >> CARD_SHIFT;
 }
 
-/* Visit the slots of carded payload P that lie in its marked cards, as
- * `void **SLOT` (a run of eight clear cards is skipped at once). BODY
- * must not use break or continue. */
-#define EACH_CARD_SLOT(P, SLOT, BODY)                                               \
+/* Visit the reference slots of carded payload P that lie in its marked
+ * cards, as `void **SLOT`, each once (cards partition addresses; a run
+ * of eight clear cards is skipped at once), running CARD once for each
+ * marked card before its slots (ecs_c_ is the card's index there, and
+ * a marked card with no reference slot still runs it). A pointer
+ * buffer's slots are every word of the card; an element buffer's are
+ * the words its element's bitmap names (EACH_REF_SLOT_WALK's reading:
+ * whole elements only, a bit below the stride), found from the element
+ * holding the card's first byte (one division per marked card). BODY
+ * and CARD must not use break or continue. */
+#define EACH_CARD_SLOT_AT(P, SLOT, CARD, BODY)                                      \
   do {                                                                              \
     uint8_t *ecs_lo_ = (uint8_t *)(P);                                              \
-    uint8_t *ecs_hi_ = ecs_lo_ + avant_header(ecs_lo_)->size;                       \
+    const AvantHeader *ecs_h_ = avant_header(ecs_lo_);                              \
+    uint8_t *ecs_hi_ = ecs_lo_ + ecs_h_->size;                                      \
     uint64_t ecs_c_ = gc_card_index(ecs_lo_);                                       \
     uint64_t ecs_e_ = gc_card_index(ecs_hi_ - 1) + 1;                               \
+    const TypeMap *ecs_m_ = ecs_h_->type_id == AVANT_TYPE_PTRS ? NULL : &gc_heap.types[ecs_h_->type_id]; \
+    size_t ecs_sb_ = ecs_m_ ? (size_t)ecs_m_->stride * sizeof(void *) : 0;          \
+    uint8_t *ecs_we_ = ecs_m_ ? ecs_lo_ + ((size_t)ecs_h_->size / ecs_sb_) * ecs_sb_ : ecs_hi_; \
     while (ecs_c_ < ecs_e_) {                                                       \
       if ((ecs_c_ & 7) == 0 && ecs_c_ + 8 <= ecs_e_ &&                              \
           *(const uint64_t *)(gc_heap.cards + ecs_c_) == 0) {                       \
@@ -2863,16 +2891,39 @@ static inline uint64_t gc_card_index(const void *a) {
         if (ecs_a_ < ecs_lo_) {                                                     \
           ecs_a_ = ecs_lo_;                                                         \
         }                                                                           \
-        if (ecs_b_ > ecs_hi_) {                                                     \
-          ecs_b_ = ecs_hi_;                                                         \
+        if (ecs_b_ > ecs_we_) {                                                     \
+          ecs_b_ = ecs_we_;                                                         \
         }                                                                           \
-        for (SLOT = (void **)ecs_a_; SLOT < (void **)ecs_b_; SLOT++) {              \
-          BODY                                                                      \
+        CARD                                                                        \
+        if (!ecs_m_) {                                                              \
+          for (SLOT = (void **)ecs_a_; SLOT < (void **)ecs_b_; SLOT++) {            \
+            BODY                                                                    \
+          }                                                                         \
+        } else if (ecs_a_ < ecs_b_) {                                               \
+          uint8_t *ecs_el_ = ecs_lo_ + ((size_t)(ecs_a_ - ecs_lo_) / ecs_sb_) * ecs_sb_; \
+          for (; ecs_el_ < ecs_b_; ecs_el_ += ecs_sb_) {                            \
+            uint32_t ecs_k_;                                                        \
+            for (ecs_k_ = 0; ecs_k_ < ecs_m_->nchunks; ecs_k_++) {                  \
+              uint64_t ecs_w_ = ecs_m_->words[ecs_k_];                              \
+              while (ecs_w_) {                                                      \
+                size_t ecs_i_ = (size_t)ecs_k_ * 64 + (size_t)__builtin_ctzll(ecs_w_); \
+                ecs_w_ &= ecs_w_ - 1;                                               \
+                if (ecs_i_ < ecs_m_->stride) {                                      \
+                  SLOT = (void **)ecs_el_ + ecs_i_;                                 \
+                  if ((uint8_t *)SLOT >= ecs_a_ && (uint8_t *)SLOT < ecs_b_) {      \
+                    BODY                                                            \
+                  }                                                                 \
+                }                                                                   \
+              }                                                                     \
+            }                                                                       \
+          }                                                                         \
         }                                                                           \
       }                                                                             \
       ecs_c_++;                                                                     \
     }                                                                               \
   } while (0)
+
+#define EACH_CARD_SLOT(P, SLOT, BODY) EACH_CARD_SLOT_AT(P, SLOT, , BODY)
 
 /* Clear every card of carded payload P. */
 static inline void gc_cards_clear(void *p) {

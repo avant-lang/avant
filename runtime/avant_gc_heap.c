@@ -66,8 +66,12 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
 
 /* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT): the list of a
  * small record's reference words, or
- * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
- * AVANT_TYPE_PTRS (gc_init_slow). */
+ * TYPE_REFS_WALK; with TYPE_REFS_CARD and the element's size for a type
+ * whose large objects are carded (a pointer buffer, an element buffer
+ * with a reference word). Called whenever the map of ID changes, and
+ * once for AVANT_TYPE_PTRS (gc_init_slow); every map is registered
+ * before an object of its type is allocated, so no object changes from
+ * remembered whole (REM) to carded (REMC) on its way. */
 void gc_type_refs_update(uint32_t id) {
   uint64_t d = 0;
   unsigned n = 0;
@@ -77,7 +81,7 @@ void gc_type_refs_update(uint32_t id) {
     return;
   }
   if (id == AVANT_TYPE_PTRS) {
-    gc_heap.refs[id] = TYPE_REFS_WALK;
+    gc_heap.refs[id] = TYPE_REFS_WALK | TYPE_REFS_CARD | ((uint64_t)sizeof(void *) << TYPE_REFS_SPAN_SHIFT);
     return;
   }
   if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
@@ -86,7 +90,9 @@ void gc_type_refs_update(uint32_t id) {
   }
   m = &gc_heap.types[id];
   if (m->stride) {
-    gc_heap.refs[id] = TYPE_REFS_WALK;
+    gc_heap.refs[id] = m->nrefs ? TYPE_REFS_WALK | TYPE_REFS_CARD |
+                                      ((uint64_t)m->stride * sizeof(void *) << TYPE_REFS_SPAN_SHIFT)
+                                : TYPE_REFS_WALK;
     return;
   }
   for (c = 0; c < m->nchunks; c++) {
