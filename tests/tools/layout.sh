@@ -87,6 +87,9 @@
 #     64 KB higher in its anonymous peak, run after run (ru_maxrss moves by 0
 #     or 256 KB there; the whole peak moves with the page cache's state of
 #     the program's files too), with its exit status and at least one reading;
+#   peak-forks, peak-threads: tools/la-run.c -p with 300 forked processes (the
+#     peak is the biggest one's) and with eight threads (their pages together),
+#     each stop read, the statm files kept open between them;
 #   run-path: tools/la-run.c starts a program from two directories of
 #     different lengths with the same argv[0] and auxiliary-vector name
 #     (/dev/fd/200), and as one more argv[0] with -n.
@@ -452,7 +455,8 @@ o3=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-exact.tsv" "$lmm/head-exact.t
   && [ $rc3 -eq 0 ] && echo "$o3" | grep -q '^peaks read: exact$' && echo "$o3" | grep -q '^average peak over 3 tasks: .*: lower$'
 say mem-method $? "rc=$rc1/$rc2/$rc3 $(tr '\n' ';' < "$lmm/mixed.out")"
 
-# 11. tools/la-run.c -p: an exact peak, 4 KB per page touched.
+# 11. tools/la-run.c -p: an exact peak, 4 KB per page touched; with forked
+# processes and with threads.
 lp=$w/lp; mkdir -p "$lp"
 cat > "$lp/touch.c" <<'TOUCH'
 #include <stdlib.h>
@@ -475,6 +479,57 @@ for k in 1 2 3; do
 done
 [ $ok -eq 0 ]
 say peak-exact $? "rc=$rc anon/anon+16/readings:$d"
+# The statm file of each thread stays open between stops: the processes a
+# program forks (300 of them, their numbers reused by the cache's slots) and
+# the threads it starts are each read in their own, the largest reading is the
+# largest of any of them (the biggest child's, 550 pages, or all the threads'
+# 1600 pages together), and every stop is read.
+cat > "$lp/many.c" <<'MANY'
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+static pthread_barrier_t bar;
+static void *thread(void *arg) {
+  char *p = mmap(0, 200 * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  for (int i = 0; i < 200; i++) p[i * 4096] = 1;
+  pthread_barrier_wait(&bar);
+  munmap(p, 200 * 4096);
+  return arg;
+}
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "forks") == 0) {
+    for (int k = 0; k < 300; k++) {
+      pid_t c = fork();
+      if (c == 0) {
+        long n = 100 + (k % 10) * 50;
+        char *p = mmap(0, n * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        for (long i = 0; i < n; i++) p[i * 4096] = 1;
+        munmap(p, n * 4096);
+        _exit(0);
+      }
+      waitpid(c, 0, 0);
+    }
+    return 0;
+  }
+  pthread_t t[8];
+  pthread_barrier_init(&bar, 0, 8);
+  for (int i = 0; i < 8; i++) pthread_create(&t[i], 0, thread, 0);
+  for (int i = 0; i < 8; i++) pthread_join(t[i], 0);
+  return 0;
+}
+MANY
+cc -O2 -pthread -o "$lp/many" "$lp/many.c"; rc=$?
+"$lp/la-run" -R -p "$lp/forks.out" "$lp/many" forks < /dev/null; rf=$?
+"$lp/la-run" -R -p "$lp/threads.out" "$lp/many" threads < /dev/null; rt=$?
+read -r fe fm fr fa < "$lp/forks.out"; read -r te tm tr ta < "$lp/threads.out"
+[ $rc -eq 0 ] && [ $rf -eq 0 ] && [ "${fr:-0}" -ge 600 ] && [ "${fa:-0}" -ge 2200 ] && [ "${fa:-0}" -le 2600 ]
+say peak-forks $? "rc=$rc/$rf forks: anon $fa KB (550 pages = 2200 KB and the program's own), $fr readings"
+[ $rc -eq 0 ] && [ $rt -eq 0 ] && [ "${tr:-0}" -ge 8 ] && [ "${ta:-0}" -ge 6400 ] && [ "${ta:-0}" -le 7200 ]
+say peak-threads $? "rc=$rc/$rt threads: anon $ta KB (1600 pages = 6400 KB and the program's own), $tr readings"
 cat > "$lp/names.c" <<'NAMES'
 #include <stdio.h>
 #include <sys/auxv.h>
