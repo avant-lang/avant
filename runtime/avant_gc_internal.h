@@ -880,6 +880,10 @@ typedef struct BlockSet {
   } while (0)
 
 #define AVANT_FLAG_REM 16u
+/* The inline barrier tests read HEAP, YOUNG and REM as 0x8030 (the
+ * generated code's) and YOUNG and REM as 0x30 (avant_gc.h's
+ * avant_barrier_slot_young). */
+_Static_assert((AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | AVANT_FLAG_REM) == 0x8030u, "the inline barrier tests' mask");
 /* Card marking, runtime-internal like REM. A
  * carded object is a large pointer buffer (LARGE and AVANT_TYPE_PTRS,
  * gc_carded): a store into it marks the card of its slot

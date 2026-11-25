@@ -412,12 +412,20 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
 /* avant_barrier_slot with its first test in line: a store into SLOT of
  * OBJ, a heap object's start (not null), needs nothing while OBJ is young
  * (a young object is scanned whole), which is the usual state of a buffer
- * being filled; only an object that is not young makes the call. For
- * the runtime's element stores, which make the barrier call before the
- * store (RC5): with the call skipped for a young buffer the store's
- * operands need not be kept across it. */
+ * being filled, nor while it is in the remembered set (its REM bit, 0x10:
+ * the set's next young collection scans it whole), the two bits the
+ * generated code's inline test reads too; one test of both costs what
+ * the test of YOUNG alone did (the bits are a heap object's only: a
+ * static object makes the call, which returns). Only a mature object not
+ * yet remembered or a carded one (its REMC bit is not REM: each store
+ * marks its card) makes the call. For the runtime's element stores,
+ * which make the barrier call before the store (RC5): with the call
+ * skipped the store's operands need not be kept across it. An element
+ * store into a remembered small buffer took two calls a store
+ * (avant_barrier_slot, then avant_barrier to find the bit): a binary
+ * heap's sift through avant_array_set_ptr spent 15% of its time there. */
 static inline void avant_barrier_slot_young(void *obj, void *slot) {
-  if (!(avant_header(obj)->flags & AVANT_FLAG_YOUNG)) {
+  if (!(avant_header(obj)->flags & 0x30u)) {
     avant_barrier_slot(obj, slot);
   }
 }
