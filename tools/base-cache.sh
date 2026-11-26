@@ -4,6 +4,10 @@
 #
 #   sh tools/base-cache.sh REV        the entry's directory on stdout
 #   sh tools/base-cache.sh --la REV   its LangArena part's directory
+#   sh tools/base-cache.sh --stitched REV
+#                                     its stitched programs, keyed by content
+#   sh tools/base-cache.sh --stitched-of LADIR
+#                                     the same for a LangArena part given
 #   sh tools/base-cache.sh --prune DAYS [--dry-run]
 #                                     remove the entries unread for DAYS
 #                                     days (below), the space freed said
@@ -65,6 +69,18 @@
 #                         compile-failed. The part is complete all the same:
 #                         tools/neutral.sh reads them as not comparable
 #   COMPLETE
+# The stitched programs keyed by content, CACHE/stitched/DIGEST/ (DIGEST:
+# the first 12 hex of the sha256 of the part's stitched programs and
+# compile arguments, with the part's own path written @LA@, and of the
+# harness's helper.av and tasks/): avant/langarena/tmp/ (each stitched
+# program with its `// file:` lines naming this directory instead of the
+# part's), avant/langarena/helper.av and tasks/, args/, and SOURCE (the part
+# it came from). A part's stitched programs name the part's directory,
+# which is under its tree's entry, so the same programs stitched for two
+# trees compile to binaries that differ in those strings alone; compiled
+# from here (as a LADIR of tools/layout-check.sh build or tools/la-count.sh)
+# they are the same bytes whatever tree's part they came from, and a base
+# that is an earlier head's code gives that head's binaries byte for byte.
 # Used by tools/neutral.sh (a base given as an entry), tools/change-check.sh
 # and tools/wave-final.sh (WAVE_BASE). Every compiler and program runs
 # under `timeout`, stdin from /dev/null; the build's output goes to
@@ -75,15 +91,17 @@
 set -u
 
 usage() { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
-la=0 prune="" dry=0
+la=0 prune="" dry=0 stitched="" stitched_of=""
 case "${1:-}" in
   --la) la=1; shift ;;
+  --stitched) la=1; stitched=1; shift ;;
+  --stitched-of) stitched_of=${2:-}; [ -n "$stitched_of" ] || usage; shift 2 ;;
   --prune) prune=${2:-}; shift 2 2>/dev/null || usage
     [ "${1:-}" = --dry-run ] && { dry=1; shift; }
     echo "$prune" | grep -Eq '^([0-9]+\.?[0-9]*|\.[0-9]+)$' && awk -v d="$prune" 'BEGIN { exit !(d > 0) }' \
       || { echo "base-cache.sh: --prune DAYS: DAYS is a number of days above 0" >&2; exit 2; } ;;
 esac
-if [ -n "$prune" ]; then [ $# -eq 0 ] || usage; else [ $# -eq 1 ] || usage; fi
+if [ -n "$prune" ] || [ -n "$stitched_of" ]; then [ $# -eq 0 ] || usage; else [ $# -eq 1 ] || usage; fi
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/.." && pwd -P)
 
@@ -95,6 +113,39 @@ fi
 [ -n "$cache" ] || cache=${HOME:-/nonexistent}/.cache/avant/base-cache
 mkdir -p "$cache" || exit 2
 cache=$(realpath "$cache")
+
+# stitch_canon PART: CACHE/stitched/DIGEST/ for the LangArena part PART, made
+# when missing (under its lock; complete when COMPLETE exists); its path on
+# stdout.
+stitch_canon() {
+  part=$(realpath "$1") || exit 2
+  [ -d "$part/avant/langarena/tmp" ] && [ -d "$part/args" ] || { echo "base-cache.sh: $1 is not a LangArena part (avant/langarena/tmp, args)" >&2; exit 2; }
+  pre=$part/avant/langarena/
+  dg=$({ cd "$part" && find avant/langarena/tmp args -type f \( -name '*.av' -o -path 'args/*' \) | LC_ALL=C sort | while IFS= read -r f; do
+           printf '%s\n' "$f"; sed "s#$pre#@LA@/#g" "$f"
+         done
+         cd "$part/avant/langarena" && find helper.av tasks -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s\n' "$f"; cat "$f"; done
+       } | sha256sum | cut -c1-12)
+  c=$cache/stitched/$dg
+  if [ ! -f "$c/COMPLETE" ]; then
+    mkdir -p "$cache/stitched" || exit 1
+    exec 7> "$c.lock" || exit 1
+    flock 7 || exit 1
+    if [ ! -f "$c/COMPLETE" ]; then
+      rm -rf "$c"; mkdir -p "$c/avant/langarena/tmp" "$c/args" || exit 1
+      cp -r "$part/avant/langarena/helper.av" "$part/avant/langarena/tasks" "$c/avant/langarena/" || exit 1
+      cp "$part"/args/* "$c/args/" || exit 1
+      for f in "$part"/avant/langarena/tmp/*.av; do
+        sed "s#$pre#$c/avant/langarena/#g" "$f" > "$c/avant/langarena/tmp/$(basename "$f")" || exit 1
+      done
+      echo "$part" > "$c/SOURCE"
+      : > "$c/COMPLETE"
+    fi
+    exec 7>&-
+  fi
+  echo "$c"
+}
+if [ -n "$stitched_of" ]; then stitch_canon "$stitched_of"; exit 0; fi
 
 # --prune DAYS: remove the entries unread for DAYS days. An entry's last
 # read is its stamp ENTRY.read (touched by every call that returns it or
@@ -295,4 +346,5 @@ exec 8>&-
 if [ $la -eq 0 ]; then echo "$e"; exit 0; fi
 d=$(la_digest) || exit 2
 ensure "$e/la-$d" build_la
+if [ -n "$stitched" ]; then stitch_canon "$e/la-$d"; exit 0; fi
 echo "$e/la-$d"

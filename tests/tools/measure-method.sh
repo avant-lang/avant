@@ -32,7 +32,13 @@
 #   hold-walls: an earlier walls file's lengths win over the plan's;
 #   hold-fail: a chunk that fails makes the hold exit 1, and the others
 #     still run;
-#   hold-usage: a plan line of another form is refused.
+#   hold-usage: a plan line of another form is refused;
+#   stitched-same: tools/base-cache.sh --stitched-of gives two LangArena
+#     parts whose stitched programs differ only in the part's own path one
+#     directory, whose programs name it instead, with the arguments, the
+#     helper and the task files beside them and SOURCE naming the first;
+#   stitched-other: a part whose programs differ gives another;
+#   stitched-refused: a directory that is not a part is refused.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/measure-method.sh WORK" >&2; exit 2; }
@@ -155,4 +161,28 @@ printf 'chunk x 0.1 echo no separator\n' > "$h/plan3"
 python3 -I -B "$root/tools/hold.py" "$h/plan3" --pin none < /dev/null > "$h/log3" 2>&1; rc=$?
 [ $rc -eq 2 ] && grep -q 'plan3:1: not ' "$h/log3"
 say hold-usage $? "rc=$rc $(cat "$h/log3")"
+# 4. The stitched programs keyed by content (tools/base-cache.sh --stitched-of).
+st=$w/stitched
+part() { # DIR TEXT: a fake LangArena part whose stitched program names DIR
+  mkdir -p "$1/avant/langarena/tmp" "$1/avant/langarena/tasks" "$1/args"
+  printf '// helper\n' > "$1/avant/langarena/helper.av"; printf 'fn task() {}\n' > "$1/avant/langarena/tasks/x.av"
+  printf -- '--release\n--cpu=v3\n' > "$1/args/x"
+  printf '// file: %s/avant/langarena/helper.av\n// file: %s/avant/langarena/tasks/x.av\n%s\n' "$1" "$1" "$2" > "$1/avant/langarena/tmp/x.av"
+}
+part "$st/cache-one/aaaa/la-1" 'fn main() { 1 }'
+part "$st/cache-two/bbbbbbbb/la-22" 'fn main() { 1 }'
+part "$st/cache-two/cccc/la-3" 'fn main() { 2 }'
+c1=$(BASE_CACHE=$st/bc sh "$root/tools/base-cache.sh" --stitched-of "$st/cache-one/aaaa/la-1" < /dev/null 2> "$st/e1"); r1=$?
+c2=$(BASE_CACHE=$st/bc sh "$root/tools/base-cache.sh" --stitched-of "$st/cache-two/bbbbbbbb/la-22" < /dev/null 2> "$st/e2"); r2=$?
+c3=$(BASE_CACHE=$st/bc sh "$root/tools/base-cache.sh" --stitched-of "$st/cache-two/cccc/la-3" < /dev/null 2> "$st/e3"); r3=$?
+[ $r1 -eq 0 ] && [ $r2 -eq 0 ] && [ -n "$c1" ] && [ "$c1" = "$c2" ] && [ -f "$c1/COMPLETE" ] \
+  && grep -qx "// file: $c1/avant/langarena/helper.av" "$c1/avant/langarena/tmp/x.av" && ! grep -q 'cache-one' "$c1/avant/langarena/tmp/x.av" \
+  && [ -f "$c1/args/x" ] && [ -f "$c1/avant/langarena/tasks/x.av" ] && [ "$(cat "$c1/SOURCE")" = "$st/cache-one/aaaa/la-1" ]
+say stitched-same $? "rc=$r1/$r2 '$c1' '$c2' $(cat "$st/e1" "$st/e2")"
+[ $r3 -eq 0 ] && [ -n "$c3" ] && [ "$c3" != "$c1" ]
+say stitched-other $? "rc=$r3 '$c3' '$c1'"
+mkdir -p "$st/notapart"
+BASE_CACHE=$st/bc sh "$root/tools/base-cache.sh" --stitched-of "$st/notapart" < /dev/null > /dev/null 2> "$st/e4"; r4=$?
+[ $r4 -eq 2 ] && grep -q 'is not a LangArena part' "$st/e4"
+say stitched-refused $? "rc=$r4 $(cat "$st/e4")"
 echo done
