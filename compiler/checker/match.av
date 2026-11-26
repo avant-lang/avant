@@ -410,7 +410,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
     } else if d = fnn.params[i].default {
       spliced = clone_expr(d)
       dk = d.kind
-      if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
+      if i > 0 && !(dk == ex_int || dk == ex_float || dk == ex_bool || dk == ex_string || dk == ex_nil) {
         // The call takes a frame only when a default does name an
         // earlier parameter: a number tried here is given back unused.
         fresh = expr.int_bits == 0
@@ -422,7 +422,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
         to: Array(Expr) = []
         for j in 0..i {
           from.push(fnn.params[j].name)
-          ref = Expr.new(ex_name(), d.loc)
+          ref = Expr.new(ex_name, d.loc)
           ref.int_bits = expr.int_bits
           ref.op = j
           to.push(ref)
@@ -700,9 +700,9 @@ pub fn (checker_self: Checker) note_instance_call(inst: Function, generic: Funct
     name = "${generic.owner}.${name}"
   }
   if name.starts_with("__avant_") {
-    name = str_slice(name, 8, name.size)
+    name = name[8..]
   }
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str(name)
   for i in 0..generic.type_params.size {
     if i < subst.size {
@@ -782,7 +782,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   }
   from = sig.node.type_params
   to: Array(TypeName) = []
-  buf = buf_new()
+  buf = Buf.new()
   // Two modules' templates of one name: each one's method instances
   // carry its module.
   if flag = checker_self.resolver.collide.get(sig.owner), sig.node.owner_mod.size > 0 {
@@ -1131,7 +1131,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       }
       if recv_m = checker_self.match_recv, all.size > 0 {
         // A container's method declared on other receivers only.
-        on = buf_new()
+        on = Buf.new()
         fits = false
         for sg in all {
           pat = checker_self.recv_ty_of(sg.node)
@@ -1189,7 +1189,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
 
 pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty? {
   none: Ty? = nil
-  if recv.derived && recv.kind == ex_name() {
+  if recv.derived && recv.kind == ex_name {
     if tn = recv.elem_type {
       // A receiver the typed decode wrote (checker/json_codec.av): its
       // type is carried, pinned.
@@ -1259,7 +1259,7 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
   }
   // Every method call and field read passes here: a bare name is read
   // without building its chain (no allocation).
-  if recv.kind == ex_name() {
+  if recv.kind == ex_name {
     name = recv.ident
     // Most receivers are values: a name no module declares as a type and
     // without a builtin type's capital is one, at the cost of one lookup.
@@ -1284,20 +1284,20 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
     }
     return ""
   }
-  if recv.kind != ex_field() {
+  if recv.kind != ex_field {
     return ""
   }
   // A chain names a type only from a module's name (`mod.T`): find its
   // first name before building it.
   root = recv
-  while root.kind == ex_field() {
+  while root.kind == ex_field {
     if o = root.object {
       root = o
     } else {
       return ""
     }
   }
-  if root.kind != ex_name() {
+  if root.kind != ex_name {
     return ""
   }
   if k = checker_self.known_mods.get(root.ident) {
@@ -1323,7 +1323,7 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
 // A receiver `mod.T` that names another module's type; "" for
 // anything else, cheaply (a bare name is found by check_name's hook).
 pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
-  if recv.kind != ex_field() {
+  if recv.kind != ex_field {
     return ""
   }
   checker_self.type_receiver(recv)
@@ -1332,7 +1332,7 @@ pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
 // The ambiguity of a receiver that is a bare type name two modules (or a
 // module's type and another's function) publish; "" otherwise.
 pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
-  if recv.kind != ex_name() || recv.mod_name.size > 0 {
+  if recv.kind != ex_name || recv.mod_name.size > 0 {
     return ""
   }
   name = recv.ident
@@ -1454,7 +1454,7 @@ pub fn (checker_self: Checker) layout_size_form(expr: Expr): Bool {
     return false
   }
   if obj = expr.object, lt = checker_self.clayout_type_named(obj) {
-    expr.kind = ex_int()
+    expr.kind = ex_int
     expr.int_bits = c_size_of(lt).to_u64()
     expr.object = nil
     return true
@@ -1637,7 +1637,7 @@ pub fn (checker_self: Checker) absorb_method_block(expr: Expr, owner: String) {
   }
   if take {
     if b = expr.block {
-      lam = Expr.new(ex_lambda(), b.loc)
+      lam = Expr.new(ex_lambda, b.loc)
       lam.block = b
       expr.args.push(lam)
       expr.block = nil
@@ -1833,7 +1833,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
 pub fn (checker_self: Checker) field_fn_call(expr: Expr, object: Ty, field_ty: Ty): Ty {
   if recv = expr.receiver {
     checker_self.check_field_visible(object, expr.callee, expr.loc)
-    fa = Expr.new(ex_field(), expr.loc)
+    fa = Expr.new(ex_field, expr.loc)
     fa.object = recv
     fa.ident = expr.callee
     fa.ty = field_ty
@@ -1959,7 +1959,7 @@ pub fn (checker_self: Checker) no_int_literals: Array(Bool) {
 // `add(a: Int, b: Int = ...): Int`, shown under the name the call wrote
 // (`m.add`, `Point.make`, `p.scale`'s `Point.scale`).
 pub fn (checker_self: Checker) sig_text(shown: String, sig: FuncSig): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str(shown)
   b.push_str("(")
   for i in 0..sig.params.size {
@@ -2006,7 +2006,7 @@ pub fn arity_text(fnn: Function): String {
 }
 
 pub fn (checker_self: Checker) arg_types_text(arg_tys: Array(Ty)): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("(")
   for i in 0..arg_tys.size {
     if i > 0 {
@@ -2036,7 +2036,7 @@ pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
   args = checker_self.args_now
   if k < args.size {
     e = args[k]
-    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807 && t.show() == "UInt64" {
+    if e.kind == ex_int && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807 && t.show() == "UInt64" {
       return "${e.int_bits}"
     }
   }
@@ -2083,7 +2083,7 @@ pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: A
       any_count = true
     }
   }
-  list = buf_new()
+  list = Buf.new()
   shown_n = 0
   for s in sigs {
     if shown_n < 6 {

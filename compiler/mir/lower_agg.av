@@ -48,7 +48,7 @@ pub fn (lw: MirLower) note_classes {
     if t = lw.class_ty(cdef) {
       none: Array(Int) = []
       names: Array(String) = []
-      l = lw.lw_b.note_layout(mir_mty(t), mlk_class(), none, names)
+      l = lw.lw_b.note_layout(mir_mty(t), mlk_class, none, names)
       lw.lw_b.type_id(l)
     } else {
       lw.refuse(cdef.loc, "class ${cdef.name} (no resolved type)")
@@ -83,7 +83,7 @@ pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
   // A JoinHandle is the runtime's pinned task object (avant_task.c
   // avant_spawn), a heap reference like a class.
   if t.is_join() {
-    return mt_ref()
+    return mt_ref
   }
   if t.is_fn() {
     l0 = lw.fn_layout(t, loc)
@@ -140,7 +140,7 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
     return lw.lw_m.types.agg(l)
   }
   m = mir_scalar_ty(t)
-  if m >= 0 && m != mt_void() {
+  if m >= 0 && m != mt_void {
     return m
   }
   m = lw.value_agg_ty(t, loc)
@@ -181,7 +181,7 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   lw.lw_busy[name] = 0
   ahead = lw.lw_m.types.layout_named(name)
   if ahead < 0 {
-    return lw.lw_b.note_layout(name, mlk_struct(), fields, names)
+    return lw.lw_b.note_layout(name, mlk_struct, fields, names)
   }
   // Noted ahead by an array of itself: fill it, then every element
   // buffer of it noted while it was empty.
@@ -214,7 +214,7 @@ pub fn (lw: MirLower) struct_ahead(name: String): Int {
   }
   f: Array(Int) = []
   n: Array(String) = []
-  lw.lw_b.note_layout(name, mlk_struct(), f, n)
+  lw.lw_b.note_layout(name, mlk_struct, f, n)
 }
 
 // A union's layout: `i32 tag`, then one payload per non-nil member
@@ -252,7 +252,7 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
     if ahead >= 0 {
       uf: Array(Int) = []
       un: Array(String) = []
-      uf.push(mt_i32())
+      uf.push(mt_i32)
       un.push("tag")
       for j in 0..payloads.size {
         uf.push(payloads[j])
@@ -276,7 +276,7 @@ pub fn (lw: MirLower) union_ahead(name: String): Int {
   }
   f: Array(Int) = []
   n: Array(String) = []
-  lw.lw_b.note_layout(name, mlk_union(), f, n)
+  lw.lw_b.note_layout(name, mlk_union, f, n)
 }
 
 // The element buffers of the struct or union name, noted while it was
@@ -315,7 +315,7 @@ pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m = mir_mty(ot)
   pre = "${mir_module_part(ot.mod_name)}."
   if (ot.is_struct() || ot.is_class()) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && m.starts_with(pre) {
-    return str_slice(m, pre.size, m.size)
+    return m[pre.size..]
   }
   m
 }
@@ -358,7 +358,7 @@ pub fn (lw: MirLower) bind_receiver(fnn: Function, recv: Int) {
 
 // Whether e names a struct method's receiver as a whole.
 pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
-  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && e.ident == lw.lw_self_name
+  lw.lw_self_struct && e.kind == ex_name && !e.implicit_field && e.ident == lw.lw_self_name
 }
 
 // ---- places
@@ -385,14 +385,14 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
 // object's.
 pub fn mir_field_in_element(t: Expr): Bool {
   x = t
-  while x.kind == ex_field() {
+  while x.kind == ex_field {
     if obj = x.object, ot = obj.ty, ot.is_struct() {
       x = obj
     } else {
       return false
     }
   }
-  if x.kind == ex_index() {
+  if x.kind == ex_index {
     if l = x.left, lt = l.ty {
       return lt.is_array()
     }
@@ -411,12 +411,12 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   if mir_ptr_index(e) {
     return lw.ptr_index_place(e)
   }
-  if e.kind == ex_index() {
+  if e.kind == ex_index {
     if arr = e.left, at = arr.ty, at.is_array() || at.is_buf() {
       return lw.index_place(e)
     }
   }
-  if e.kind == ex_name() && !e.fn_ref {
+  if e.kind == ex_name && !e.fn_ref {
     mi = lw.mutex_index(e.ident)
     if mi >= 0 {
       return lw.mutex_place(mi)
@@ -448,7 +448,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
     }
     return b.pl(k)
   }
-  if e.kind == ex_field() && !e.method_call {
+  if e.kind == ex_field && !e.method_call {
     if obj = e.object, ot = obj.ty {
       if ot.is_struct() || ot.is_clayout() {
         p = lw.place_of(obj)
@@ -544,7 +544,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
         return
       }
       lw.at(st.loc)
-      lw.store_place(p0, mt_i32(), lw.enum_to_c(val, et))
+      lw.store_place(p0, mt_i32, lw.enum_to_c(val, et))
     }
     return
   }
@@ -554,7 +554,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
       return
     }
     if v = st.value {
-      if st.op == tk_eq() {
+      if st.op == tk_eq {
         val = lw.lower_coerced(v, ty, tt)
         if lw.failed() {
           return
@@ -627,7 +627,7 @@ pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
   nt = lw.c_scalar_mty(ck)
   if tt = t.ty {
     if v = st.value {
-      if st.op == tk_eq() {
+      if st.op == tk_eq {
         val = lw.lower_coerced(v, vt, tt)
         if lw.failed() {
           return
@@ -787,7 +787,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     // through any path traps (the checker refuses one through the
     // captured name).
     for a in args {
-      if a.kind == ex_lambda() {
+      if a.kind == ex_lambda {
         ci = 0
         while ci < a.cap_names.size && !lw.failed() {
           ct = a.cap_tys[ci]
@@ -853,7 +853,7 @@ pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: Strin
   aty = b.func.locals[h].ty
   slot = lw.tmp(b.types.ptr_to(aty), b.rv_addr_raw(b.pl(h)))
   name = e.callee
-  if e.kind == ex_field() {
+  if e.kind == ex_field {
     name = e.ident
   }
   if rt = recv.ty {
@@ -871,7 +871,7 @@ pub fn (lw: MirLower) held_method_call(e: Expr, recv: Expr, ret: Int, sym: Strin
   lw.at(e.loc)
   v = lw.call_to(ret, sym, all)
   k = -1
-  if ret != mt_void() {
+  if ret != mt_void {
     k = lw.hold(v, ret)
   }
   lw.at(e.loc)
@@ -910,16 +910,16 @@ pub fn (lw: MirLower) send_copy(o: MOperand, aty: Int, t: Ty): MOperand {
   b.call(c, "avant_array_copy", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
   if inner = t.inner, inner.is_array() {
     ity = lw.elem_of(aty)
-    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
+    n = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
     nl = mir_bare_copy(n)
-    i = b.temp(mt_i32())
+    i = b.temp(mt_i32)
     b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
     head = b.block()
     body = b.block()
     exit = b.block()
     b.goto(head)
     b.at(head)
-    more = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
+    more = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(i), b.copy_local(nl)))
     b.branch(more, body, exit)
     b.at(body)
     el = lw.block_elem(c, aty, i)
@@ -1228,7 +1228,7 @@ pub fn mir_handler_method(name: String): Bool {
 pub fn mir_handler_freezes(e: Expr): Bool {
   if recv = e.receiver, rt = recv.ty, mir_is_http_server(rt) && mir_handler_method(e.callee) {
     for a in e.args {
-      if a.kind == ex_lambda() {
+      if a.kind == ex_lambda {
         for ct in a.cap_tys {
           if ct.is_array() || ct.is_hash() {
             return true

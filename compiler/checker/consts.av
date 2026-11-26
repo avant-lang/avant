@@ -27,10 +27,10 @@ import typed_ir
 import checker.names
 import checker
 
-pub fn cv_int: Int { 1 }
-pub fn cv_u64: Int { 2 }
-pub fn cv_float: Int { 3 }
-pub fn cv_bool: Int { 4 }
+pub const cv_int = 1
+pub const cv_u64 = 2
+pub const cv_float = 3
+pub const cv_bool = 4
 
 pub fn const_slot(mod_name: String, name: String): String {
   "${mod_name}.${name}"
@@ -38,41 +38,41 @@ pub fn const_slot(mod_name: String, name: String): String {
 
 fn cv_of_int(v: Int): ConstVal {
   r = ConstVal.new()
-  r.kind = cv_int()
+  r.kind = cv_int
   r.iv = v
   r
 }
 
 fn cv_of_u64(v: UInt64): ConstVal {
   r = ConstVal.new()
-  r.kind = cv_u64()
+  r.kind = cv_u64
   r.uv = v
   r
 }
 
 fn cv_of_float(v: Float64): ConstVal {
   r = ConstVal.new()
-  r.kind = cv_float()
+  r.kind = cv_float
   r.fv = v
   r
 }
 
 fn cv_of_bool(v: Bool): ConstVal {
   r = ConstVal.new()
-  r.kind = cv_bool()
+  r.kind = cv_bool
   r.bv = v
   r
 }
 
 // A constant's value as the program would print it.
 pub fn cv_text(v: ConstVal): String {
-  if v.kind == cv_int() {
+  if v.kind == cv_int {
     return "${v.iv}"
   }
-  if v.kind == cv_u64() {
+  if v.kind == cv_u64 {
     return "${v.uv}"
   }
-  if v.kind == cv_float() {
+  if v.kind == cv_float {
     return "${v.fv}"
   }
   "${v.bv}"
@@ -218,7 +218,7 @@ pub fn (checker_self: Checker) const_named(e: Expr): ConstVal? {
   if checker_self.const_list.size == 0 {
     return nil
   }
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     if e.type_args.size > 0 || e.ident == "self" {
       return nil
     }
@@ -233,8 +233,8 @@ pub fn (checker_self: Checker) const_named(e: Expr): ConstVal? {
     }
     return checker_self.find_const(e.ident, checker_self.current_module, e.loc)
   }
-  if e.kind == ex_field() {
-    if obj = e.object, obj.kind == ex_name() && obj.type_args.size == 0 {
+  if e.kind == ex_field {
+    if obj = e.object, obj.kind == ex_name && obj.type_args.size == 0 {
       if got2 = checker_self.lookup(obj.ident) {
         return nil
       }
@@ -256,7 +256,7 @@ pub fn (checker_self: Checker) inline_const(e: Expr): Bool {
     }
     name = e.ident
     if !checker_self.const_value(cv, e.loc) {
-      e.kind = ex_int()
+      e.kind = ex_int
       e.int_bits = 0
       e.ident = ""
       e.object = nil
@@ -267,21 +267,21 @@ pub fn (checker_self: Checker) inline_const(e: Expr): Bool {
     e.ident = ""
     e.object = nil
     e.int_suffix = ""
-    if cv.kind == cv_bool() {
-      e.kind = ex_bool()
+    if cv.kind == cv_bool {
+      e.kind = ex_bool
       e.bool_val = cv.bv
       return true
     }
-    lit = Expr.new(ex_int(), loc)
+    lit = Expr.new(ex_int, loc)
     neg = false
-    if cv.kind == cv_int() {
+    if cv.kind == cv_int {
       lit.int_bits = int_mag(cv.iv)
       neg = cv.iv < 0
-    } else if cv.kind == cv_u64() {
+    } else if cv.kind == cv_u64 {
       lit.int_bits = cv.uv
       lit.int_suffix = "u64"
     } else {
-      lit.kind = ex_float()
+      lit.kind = ex_float
       v = cv.fv
       if v < 0.0 {
         neg = true
@@ -290,12 +290,12 @@ pub fn (checker_self: Checker) inline_const(e: Expr): Bool {
       lit.float_val = v
       lit.value_str = "${v}"
     }
-    if lit.kind == ex_int() {
+    if lit.kind == ex_int {
       lit.value_str = what
     }
     if neg {
-      e.kind = ex_unary()
-      e.op = tk_minus()
+      e.kind = ex_unary
+      e.op = tk_minus
       e.inner = lit
       return true
     }
@@ -327,7 +327,7 @@ pub fn (checker_self: Checker) refuse_const_write(target: Expr): Bool {
 // an error.
 pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
   k = e.kind
-  if k == ex_int() {
+  if k == ex_int {
     if e.int_suffix == "u64" {
       return cv_of_u64(e.int_bits)
     }
@@ -337,17 +337,17 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
     }
     return cv_of_int(e.int_bits.to_i())
   }
-  if k == ex_float() {
+  if k == ex_float {
     return cv_of_float(e.float_val)
   }
-  if k == ex_bool() {
+  if k == ex_bool {
     return cv_of_bool(e.bool_val)
   }
-  if k == ex_name() || k == ex_field() {
+  if k == ex_name || k == ex_field {
     found: ConstVal? = nil
-    if k == ex_name() {
+    if k == ex_name {
       found = checker_self.find_const(e.ident, m, e.loc)
-    } else if obj = e.object, obj.kind == ex_name() {
+    } else if obj = e.object, obj.kind == ex_name {
       found = checker_self.find_qualified_const(obj.ident, e.ident, m)
     }
     if cv = found {
@@ -356,14 +356,14 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
       }
       return nil
     }
-    if k == ex_name() {
+    if k == ex_name {
       checker_self.fail(e.loc, "a constant's value is computed when compiling, from literals, other constants and operators: ${e.ident} is not a constant")
       return nil
     }
   }
-  if k == ex_unary() {
+  if k == ex_unary {
     if inner = e.inner {
-      if e.op == tk_minus() && inner.kind == ex_int() && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808 {
+      if e.op == tk_minus && inner.kind == ex_int && inner.int_suffix.size == 0 && inner.int_bits == 9223372036854775808 {
         return cv_of_int(0 &- 9223372036854775807 &- 1)
       }
       if v = checker_self.fold_const(inner, m) {
@@ -372,7 +372,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
       return nil
     }
   }
-  if k == ex_binary() {
+  if k == ex_binary {
     if l = e.left, r = e.right {
       if a = checker_self.fold_const(l, m) {
         if b = checker_self.fold_const(r, m) {
@@ -388,30 +388,30 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
 
 pub fn (checker_self: Checker) fold_unary(e: Expr, v: ConstVal): ConstVal? {
   op = e.op
-  if op == tk_minus() {
-    if v.kind == cv_int() {
+  if op == tk_minus {
+    if v.kind == cv_int {
       if v.iv == 0 &- 9223372036854775807 &- 1 {
         checker_self.fail(e.loc, "the constant's value overflows Int")
         return nil
       }
       return cv_of_int(0 - v.iv)
     }
-    if v.kind == cv_float() {
+    if v.kind == cv_float {
       return cv_of_float(0.0 - v.fv)
     }
-    if v.kind == cv_u64() {
+    if v.kind == cv_u64 {
       checker_self.fail(e.loc, "a negative literal does not fit in UInt64")
       return nil
     }
   }
-  if op == tk_bang() && v.kind == cv_bool() {
+  if op == tk_bang && v.kind == cv_bool {
     return cv_of_bool(!v.bv)
   }
-  if op == tk_tilde() {
-    if v.kind == cv_int() {
+  if op == tk_tilde {
+    if v.kind == cv_int {
       return cv_of_int(~v.iv)
     }
-    if v.kind == cv_u64() {
+    if v.kind == cv_u64 {
       return cv_of_u64(~v.uv)
     }
   }
@@ -421,40 +421,40 @@ pub fn (checker_self: Checker) fold_unary(e: Expr, v: ConstVal): ConstVal? {
 
 pub fn (checker_self: Checker) fold_binary(e: Expr, a: ConstVal, b: ConstVal): ConstVal? {
   op = e.op
-  if a.kind == cv_bool() || b.kind == cv_bool() {
+  if a.kind == cv_bool || b.kind == cv_bool {
     if a.kind != b.kind {
       checker_self.fail(e.loc, "the constant's value mixes a Bool and a number")
       return nil
     }
-    if op == tk_amp_amp() {
+    if op == tk_amp_amp {
       return cv_of_bool(a.bv && b.bv)
     }
-    if op == tk_pipe_pipe() {
+    if op == tk_pipe_pipe {
       return cv_of_bool(a.bv || b.bv)
     }
-    if op == tk_eq_eq() {
+    if op == tk_eq_eq {
       return cv_of_bool(a.bv == b.bv)
     }
-    if op == tk_not_eq() {
+    if op == tk_not_eq {
       return cv_of_bool(a.bv != b.bv)
     }
     checker_self.fail(e.loc, "this operator does not apply to Bool")
     return nil
   }
-  if a.kind == cv_float() || b.kind == cv_float() {
+  if a.kind == cv_float || b.kind == cv_float {
     x = checker_self.cv_float_of(a)
     y = checker_self.cv_float_of(b)
     if got = cmp_result(op, x < y, x == y) {
       return got
     }
     r = 0.0
-    if op == tk_plus() {
+    if op == tk_plus {
       r = x + y
-    } else if op == tk_minus() {
+    } else if op == tk_minus {
       r = x - y
-    } else if op == tk_star() {
+    } else if op == tk_star {
       r = x * y
-    } else if op == tk_slash() {
+    } else if op == tk_slash {
       r = x / y
     } else {
       checker_self.fail(e.loc, "this operator does not apply to Float64")
@@ -466,17 +466,17 @@ pub fn (checker_self: Checker) fold_binary(e: Expr, a: ConstVal, b: ConstVal): C
     }
     return cv_of_float(r)
   }
-  if a.kind == cv_u64() || b.kind == cv_u64() {
-    if (a.kind == cv_int() && a.iv < 0) || (b.kind == cv_int() && b.iv < 0) {
+  if a.kind == cv_u64 || b.kind == cv_u64 {
+    if (a.kind == cv_int && a.iv < 0) || (b.kind == cv_int && b.iv < 0) {
       checker_self.fail(e.loc, "a negative literal does not fit in UInt64")
       return nil
     }
     x2 = a.uv
-    if a.kind == cv_int() {
+    if a.kind == cv_int {
       x2 = a.iv.to_u64()
     }
     y2 = b.uv
-    if b.kind == cv_int() {
+    if b.kind == cv_int {
       y2 = b.iv.to_u64()
     }
     return checker_self.fold_u64(e, op, x2, y2)
@@ -485,32 +485,32 @@ pub fn (checker_self: Checker) fold_binary(e: Expr, a: ConstVal, b: ConstVal): C
 }
 
 fn cmp_result(op: Int, lt: Bool, eq: Bool): ConstVal? {
-  if op == tk_eq_eq() {
+  if op == tk_eq_eq {
     return cv_of_bool(eq)
   }
-  if op == tk_not_eq() {
+  if op == tk_not_eq {
     return cv_of_bool(!eq)
   }
-  if op == tk_less() {
+  if op == tk_less {
     return cv_of_bool(lt)
   }
-  if op == tk_less_eq() {
+  if op == tk_less_eq {
     return cv_of_bool(lt || eq)
   }
-  if op == tk_greater() {
+  if op == tk_greater {
     return cv_of_bool(!lt && !eq)
   }
-  if op == tk_greater_eq() {
+  if op == tk_greater_eq {
     return cv_of_bool(!lt)
   }
   nil
 }
 
 pub fn (checker_self: Checker) cv_float_of(v: ConstVal): Float64 {
-  if v.kind == cv_int() {
+  if v.kind == cv_int {
     return v.iv.to_f()
   }
-  if v.kind == cv_u64() {
+  if v.kind == cv_u64 {
     return v.uv.to_f()
   }
   v.fv
@@ -524,17 +524,17 @@ pub fn (checker_self: Checker) fold_int(e: Expr, op: Int, a: Int, b: Int): Const
   min = 0 &- max &- 1
   over = false
   r = 0
-  if op == tk_plus() {
+  if op == tk_plus {
     over = (b > 0 && a > max - b) || (b < 0 && a < min - b)
     if !over {
       r = a + b
     }
-  } else if op == tk_minus() {
+  } else if op == tk_minus {
     over = (b < 0 && a > max + b) || (b > 0 && a < min + b)
     if !over {
       r = a - b
     }
-  } else if op == tk_star() {
+  } else if op == tk_star {
     if a != 0 && b != 0 {
       neg = (a < 0) != (b < 0)
       lim = 9223372036854775807u64
@@ -554,33 +554,33 @@ pub fn (checker_self: Checker) fold_int(e: Expr, op: Int, a: Int, b: Int): Const
         }
       }
     }
-  } else if op == tk_slash() || op == tk_percent() {
+  } else if op == tk_slash || op == tk_percent {
     if b == 0 {
       checker_self.fail(e.loc, "the constant's value divides by zero")
       return nil
     }
     if a == min && b == -1 {
       over = true
-    } else if op == tk_slash() {
+    } else if op == tk_slash {
       r = a / b
     } else {
       r = a % b
     }
-  } else if op == tk_less_less() || op == tk_greater_greater() {
+  } else if op == tk_less_less || op == tk_greater_greater {
     if b < 0 || b > 63 {
       checker_self.fail(e.loc, "shift amount ${b} out of range for Int (0..63)")
       return nil
     }
-    if op == tk_less_less() {
+    if op == tk_less_less {
       r = (a.wrap_u64() << b).wrap_i()
     } else {
       r = a >> b
     }
-  } else if op == tk_amp() {
+  } else if op == tk_amp {
     r = a & b
-  } else if op == tk_pipe() {
+  } else if op == tk_pipe {
     r = a | b
-  } else if op == tk_caret() {
+  } else if op == tk_caret {
     r = a ^ b
   } else {
     checker_self.fail(e.loc, "this operator does not apply to a constant's value")
@@ -600,47 +600,47 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
   max = 18446744073709551615u64
   over = false
   r = 0u64
-  if op == tk_plus() {
+  if op == tk_plus {
     over = a > max - b
     if !over {
       r = a + b
     }
-  } else if op == tk_minus() {
+  } else if op == tk_minus {
     over = b > a
     if !over {
       r = a - b
     }
-  } else if op == tk_star() {
+  } else if op == tk_star {
     if a != 0 && b > max / a {
       over = true
     } else {
       r = a * b
     }
-  } else if op == tk_slash() || op == tk_percent() {
+  } else if op == tk_slash || op == tk_percent {
     if b == 0 {
       checker_self.fail(e.loc, "the constant's value divides by zero")
       return nil
     }
-    if op == tk_slash() {
+    if op == tk_slash {
       r = a / b
     } else {
       r = a % b
     }
-  } else if op == tk_less_less() || op == tk_greater_greater() {
+  } else if op == tk_less_less || op == tk_greater_greater {
     if b > 63 {
       checker_self.fail(e.loc, "shift amount ${b} out of range for UInt64 (0..63)")
       return nil
     }
-    if op == tk_less_less() {
+    if op == tk_less_less {
       r = a << b
     } else {
       r = a >> b
     }
-  } else if op == tk_amp() {
+  } else if op == tk_amp {
     r = a & b
-  } else if op == tk_pipe() {
+  } else if op == tk_pipe {
     r = a | b
-  } else if op == tk_caret() {
+  } else if op == tk_caret {
     r = a ^ b
   } else {
     checker_self.fail(e.loc, "this operator does not apply to a constant's value")
@@ -657,12 +657,12 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
 // constant, which stands for its value as written, so it takes the
 // switch value's type and must fit in it.
 pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bool {
-  ne = Expr.new(ex_name(), label.loc)
+  ne = Expr.new(ex_name, label.loc)
   ne.ident = label.text
   if label.qual.size > 0 {
-    obj = Expr.new(ex_name(), label.loc)
+    obj = Expr.new(ex_name, label.loc)
     obj.ident = label.qual
-    ne = Expr.new(ex_field(), label.loc)
+    ne = Expr.new(ex_field, label.loc)
     ne.object = obj
     ne.ident = label.text
   }
@@ -676,7 +676,7 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
       return false
     }
     if disc.is_bool() {
-      if c.kind != cv_bool() {
+      if c.kind != cv_bool {
         checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not a Bool: a case label of a switch over Bool is ${what}")
         return false
       }
@@ -686,7 +686,7 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
       }
       return true
     }
-    if c.kind == cv_int() {
+    if c.kind == cv_int {
       label.neg = c.iv < 0
       if label.neg {
         label.bits = (0 &- c.iv).wrap_u64()
@@ -694,7 +694,7 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
         label.bits = c.iv.to_u64()
       }
       label.int_val = c.iv
-    } else if c.kind == cv_u64() {
+    } else if c.kind == cv_u64 {
       label.neg = false
       label.bits = c.uv
       label.int_val = c.uv.wrap_i()
@@ -740,11 +740,11 @@ pub fn (checker_self: Checker) check_enum_consts {
           if c = cv {
             if !checker_self.const_value(c, loc) {
               ok = false
-            } else if c.kind == cv_int() && c.iv >= -2147483648 && c.iv <= 2147483647 {
+            } else if c.kind == cv_int && c.iv >= -2147483648 && c.iv <= 2147483647 {
               value = c.iv
-            } else if c.kind == cv_u64() && c.uv <= 2147483647 {
+            } else if c.kind == cv_u64 && c.uv <= 2147483647 {
               value = c.uv.to_i()
-            } else if c.kind == cv_int() || c.kind == cv_u64() {
+            } else if c.kind == cv_int || c.kind == cv_u64 {
               checker_self.fail(loc, "the value of ${decl.names[i]}, the constant ${cname} = ${cv_text(c)}, does not fit in Int32")
               ok = false
             } else {

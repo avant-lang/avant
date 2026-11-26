@@ -20,7 +20,7 @@ import checker
 // The prelude's free functions (checker.av check_call and the builtin
 // helpers it calls), which a method of the same name would shadow.
 pub fn prelude_call_name(name: String): Bool {
-  names = ["argv", "buf_new", "chr", "env_get", "eprint", "eputs", "exit", "file_exists", "fmt_float", "join", "now_ms", "now_us", "panic", "print", "puts", "repeat_byte", "sha256", "spawn", "str_slice", "str_to_f_slice"]
+  names = ["chr", "eprint", "eputs", "exit", "fmt_float", "join", "now_ms", "now_us", "panic", "print", "puts", "repeat_byte", "spawn", "str_to_f_slice"]
   for n in names {
     if n == name {
       return true
@@ -82,7 +82,7 @@ pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: 
       checker_self.fail(expr.loc, "${name} is both a method of ${st.show()} and a function; write ${checker_self.self_name}.${name}(...) for the method, or qualify the function (module.${name}(...))")
       return nil
     }
-    r = Expr.new(ex_name(), expr.loc)
+    r = Expr.new(ex_name, expr.loc)
     r.ident = checker_self.self_name
     return r
   }
@@ -150,7 +150,7 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
   cur = target
   done = false
   while !done {
-    if cur.kind == ex_field() || cur.kind == ex_index() {
+    if cur.kind == ex_field || cur.kind == ex_index {
       if o = cur.object {
         cur = o
       } else if l = cur.left {
@@ -162,7 +162,7 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
       done = true
     }
   }
-  if cur.kind == ex_name() && cur.ident == "self" {
+  if cur.kind == ex_name && cur.ident == "self" {
     checker_self.fail(loc, "a lambda holds a copy of the struct receiver, so this write would change only the copy; write the field outside the lambda, or make the type a class")
   }
 }
@@ -237,10 +237,10 @@ pub fn copy_param_what(name: String, kind: Int): String {
 
 // `p.pos.x` for a target made of a name and fields; "" for anything else.
 pub fn (checker_self: Checker) field_path_text(e: Expr): String {
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     return e.ident
   }
-  if e.kind == ex_field() {
+  if e.kind == ex_field {
     if o = e.object {
       head = checker_self.field_path_text(o)
       if head.size > 0 {
@@ -258,7 +258,7 @@ pub fn (checker_self: Checker) refuse_for_assign(stmt: Stmt): Bool {
   if checker_self.for_names.size == 0 {
     return false
   }
-  if target = stmt.target, target.kind == ex_name() {
+  if target = stmt.target, target.kind == ex_name {
     kind = checker_self.for_var_kind(target.ident)
     if kind == 3 {
       checker_self.fail(stmt.loc, "cannot assign to ${target.ident}: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own")
@@ -292,11 +292,11 @@ pub fn (checker_self: Checker) refuse_for_assign(stmt: Stmt): Bool {
 // refused; neither is a path that passes through a reference (a class,
 // a pointer) or an index. True when it failed.
 pub fn (checker_self: Checker) refuse_for_field_write(target: Expr, loc: Location): Bool {
-  if checker_self.for_names.size == 0 || target.kind != ex_field() {
+  if checker_self.for_names.size == 0 || target.kind != ex_field {
     return false
   }
   cur = target
-  while cur.kind == ex_field() {
+  while cur.kind == ex_field {
     if o = cur.object {
       if ot = o.ty {
         if !ot.is_struct() {
@@ -310,7 +310,7 @@ pub fn (checker_self: Checker) refuse_for_field_write(target: Expr, loc: Locatio
       return false
     }
   }
-  if cur.kind != ex_name() {
+  if cur.kind != ex_name {
     return false
   }
   kind = checker_self.for_var_kind(cur.ident)

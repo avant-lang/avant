@@ -4,18 +4,20 @@ import source
 import loader
 import pipeline
 import manifest
+import std.fs
+import std.process
 
 // git, looked up on PATH as a shell would (an empty PATH entry is the
 // current directory); "" when it is not found.
 pub fn pkg_git_bin: String {
-  path = env_get("PATH") ?? "/usr/local/bin:/usr/bin:/bin"
+  path = process.env("PATH") ?? "/usr/local/bin:/usr/bin:/bin"
   for entry in path.split(":") {
     dir = entry
     if dir.size == 0 {
       dir = "."
     }
     cand = "${dir}/git"
-    if file_exists(cand) && !dir_exists(cand) {
+    if fs.exists(cand) && !fs.is_dir(cand) {
       return cand
     }
   }
@@ -23,7 +25,7 @@ pub fn pkg_git_bin: String {
 }
 
 pub fn pkg_git_missing {
-  diag_puts("avant fetch: git not found on PATH (${env_get("PATH") ?? ""})")
+  diag_puts("avant fetch: git not found on PATH (${process.env("PATH") ?? ""})")
 }
 
 pub fn pkg_git(args: Array(String), what: String, tag: String): Bool {
@@ -36,7 +38,7 @@ pub fn pkg_git(args: Array(String), what: String, tag: String): Bool {
   code = tool_run_out(git, args, log)
   if code != 0 {
     diag_puts("avant fetch: git ${what} failed (${code})")
-    if text = file_read(log) {
+    if text = fs.read(log) {
       t = text.strip()
       if t.size > 0 {
         diag_puts(t)
@@ -57,7 +59,7 @@ pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
   code = tool_run_out(git, args, log)
   if code != 0 {
     diag_puts("avant fetch: git ${what} failed (${code})")
-    if text = file_read(log) {
+    if text = fs.read(log) {
       t = text.strip()
       if t.size > 0 {
         diag_puts(t)
@@ -65,7 +67,7 @@ pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
     }
     return ""
   }
-  if text = file_read(log) {
+  if text = fs.read(log) {
     return text.strip()
   }
   ""
@@ -84,7 +86,7 @@ pub fn pkg_git_ask(args: Array(String), tag: String): String {
   if code != 0 {
     return ""
   }
-  if text = file_read(out) {
+  if text = fs.read(out) {
     return text.strip()
   }
   ""
@@ -110,7 +112,7 @@ pub fn pkg_abs_dir(dir: String): String {
     return cwd
   }
   if dir.starts_with("./") {
-    return "${cwd}/${str_slice(dir, 2, dir.size)}"
+    return "${cwd}/${dir[2..]}"
   }
   "${cwd}/${dir}"
 }
@@ -136,7 +138,7 @@ pub fn pkg_git_source(git: String, manifest_dir: String): String {
   base = pkg_abs_dir(manifest_dir)
   rel = git
   while rel.starts_with("./") {
-    rel = str_slice(rel, 2, rel.size)
+    rel = rel[2..]
   }
   "${base}/${rel}"
 }
@@ -182,7 +184,7 @@ pub class PkgFetched {
 pub fn pkg_fetch(dir: String, update: Bool): Bool {
   manifest_path = pkg_join(dir, "avant.toml")
   text = ""
-  if t = file_read(manifest_path) {
+  if t = fs.read(manifest_path) {
     text = t
   } else {
     diag_puts("avant fetch: cannot read ${manifest_path}")
@@ -200,7 +202,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
   lock = PkgLock.new()
   if !update {
     lock_path = pkg_join(dir, "avant.lock")
-    if lt = file_read(lock_path) {
+    if lt = fs.read(lock_path) {
       lock = pkg_parse_lock(lt)
     }
   }
@@ -258,11 +260,11 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     if ent = lock.find(dep.name), ent.git == dep.git && (ent.rev.size == 0 || ent.rev == dep.rev) {
       locked_sha = ent.sha
     }
-    if file_exists(dest) && !dir_exists(pkg_join(dest, ".git")) {
+    if fs.exists(dest) && !fs.is_dir(pkg_join(dest, ".git")) {
       diag_puts("avant fetch: ${dest} exists and is not a git checkout; move it away, then fetch again")
       return false
     }
-    if dir_exists(pkg_join(dest, ".git")) {
+    if fs.is_dir(pkg_join(dest, ".git")) {
       origin = pkg_git_ask(["-C", dest, "remote", "get-url", "origin"], "${tag}-origin")
       if origin != source {
         // Fetched from another source (a clone that patches the
@@ -274,7 +276,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
         fs_remove_tree(dest)
       }
     }
-    if !dir_exists(pkg_join(dest, ".git")) {
+    if !fs.is_dir(pkg_join(dest, ".git")) {
       if !pkg_git(["clone", "-q", "--no-checkout", source, dest], "clone for ${dep.name}", "clone-${tag}") {
         return false
       }
@@ -317,7 +319,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     sub_path = pkg_join(dest, "avant.toml")
     sub = PkgManifest.new()
     sub.ok = true
-    if st = file_read(sub_path) {
+    if st = fs.read(sub_path) {
       sub = pkg_parse_manifest(st, sub_path)
       if !sub.ok {
         diag_puts("avant fetch: ${sub.err}")
@@ -339,7 +341,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     }
   }
   lock_path2 = pkg_join(dir, "avant.lock")
-  if e = write_failure(file_write(lock_path2, pkg_lock_render(resolved))) {
+  if e = write_failure(fs.write(lock_path2, pkg_lock_render(resolved))) {
     diag_puts("avant fetch: ${e.message()}")
     return false
   }
@@ -351,7 +353,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
 pub fn pkg_status(dest: String, tag: String): String? {
   out = "${tmp_new_dir()}/git-${tag}-status.out"
   code = tool_run_out(pkg_git_bin(), ["-C", dest, "status", "--porcelain"], out)
-  text = (file_read(out) ?? "").strip()
+  text = (fs.read(out) ?? "").strip()
   if code != 0 {
     diag_puts("avant fetch: cannot read the state of ${dest} (git status failed)")
     if text.size > 0 {
@@ -378,7 +380,7 @@ pub fn pkg_clean(dest: String, tag: String): Bool {
 // Every directory of deps/ that is no dependency any more is removed,
 // when it is a clean git checkout; any other is kept and named.
 pub fn pkg_prune(deps_dir: String, fetched: Array(PkgFetched)): Bool {
-  entries = dir_list(deps_dir) ?? []
+  entries = fs.list(deps_dir) ?? []
   for e in entries {
     if e.size == 0 || e[0] == 46 {
       continue
@@ -390,10 +392,10 @@ pub fn pkg_prune(deps_dir: String, fetched: Array(PkgFetched)): Bool {
       }
     }
     path = pkg_join(deps_dir, e)
-    if keep || !dir_exists(path) {
+    if keep || !fs.is_dir(path) {
       continue
     }
-    if !dir_exists(pkg_join(path, ".git")) {
+    if !fs.is_dir(pkg_join(path, ".git")) {
       puts("note: kept ${path}: no dependency names it and it is not a git checkout; the compiler does not read it")
       continue
     }

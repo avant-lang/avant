@@ -57,20 +57,20 @@ fn hd_new_local(f: MFunc, ty: Int): Int {
 }
 
 fn hd_copy_local(local: Int): MOperand {
-  o = MOperand.new(mok_copy(), -1)
+  o = MOperand.new(mok_copy, -1)
   o.place = MPlace.new(local)
   o
 }
 
 fn hd_assign(loc: MLoc, dest: Int, rv: MRvalue): MStmt {
-  st = MStmt.new(msk_assign(), loc)
+  st = MStmt.new(msk_assign, loc)
   st.place = MPlace.new(dest)
   st.rv = rv
   st
 }
 
 fn hd_use(o: MOperand): MRvalue {
-  r = MRvalue.new(mrk_use())
+  r = MRvalue.new(mrk_use)
   r.a = o
   r
 }
@@ -78,9 +78,9 @@ fn hd_use(o: MOperand): MRvalue {
 // `copy (*_a).k`
 fn hd_word(a: Int, k: Int): MOperand {
   p = MPlace.new(a)
-  p.proj.push(MProj.new(mpk_deref(), 0))
-  p.proj.push(MProj.new(mpk_field(), k))
-  o = MOperand.new(mok_copy(), -1)
+  p.proj.push(MProj.new(mpk_deref, 0))
+  p.proj.push(MProj.new(mpk_field, k))
+  o = MOperand.new(mok_copy, -1)
   o.place = p
   o
 }
@@ -114,29 +114,29 @@ fn hd_grow(made: Array(Bool), f: MFunc) {
 }
 
 fn hd_is_array(ts: MTypes, ty: Int): Bool {
-  if ts.kind(ty) != mk_ref() {
+  if ts.kind(ty) != mk_ref {
     return false
   }
   lay = ts.get(ty).layout
-  lay >= 0 && ts.layouts[lay].kind == mlk_array()
+  lay >= 0 && ts.layouts[lay].kind == mlk_array
 }
 
 // The header word a statement reads, `_x = copy (*_a).k` with k the
 // buffer (0) or the size (1): out[0] = _a, out[1] = k; else false.
 fn hd_match(ts: MTypes, f: MFunc, st: MStmt, out: Array(Int)): Bool {
-  if st.kind != msk_assign() || mir_stmt_def(st) < 0 {
+  if st.kind != msk_assign || mir_stmt_def(st) < 0 {
     return false
   }
   rv = st.rv ?? MRvalue.new(0)
-  if rv.kind != mrk_use() {
+  if rv.kind != mrk_use {
     return false
   }
   a = rv.a ?? MOperand.new(0, -1)
-  if a.kind != mok_copy() {
+  if a.kind != mok_copy {
     return false
   }
   p = a.place ?? MPlace.new(-1)
-  if p.local < 0 || p.proj.size != 2 || p.proj[0].kind != mpk_deref() || p.proj[1].kind != mpk_field() {
+  if p.local < 0 || p.proj.size != 2 || p.proj[0].kind != mpk_deref || p.proj[1].kind != mpk_field {
     return false
   }
   if p.proj[1].field != 0 && p.proj[1].field != 1 {
@@ -151,7 +151,7 @@ fn hd_match(ts: MTypes, f: MFunc, st: MStmt, out: Array(Int)): Bool {
 }
 
 fn hd_place_derefs(p: MPlace?, a: Int): Bool {
-  if x = p, x.local == a && x.proj.size > 0 && x.proj[0].kind == mpk_deref() {
+  if x = p, x.local == a && x.proj.size > 0 && x.proj[0].kind == mpk_deref {
     return true
   }
   false
@@ -189,7 +189,7 @@ fn hd_place_writes_header(ts: MTypes, f: MFunc, p: MPlace): Bool {
   ty = f.locals[p.local].ty
   for pr in p.proj {
     mt = ts.get(ty)
-    if pr.kind == mpk_deref() {
+    if pr.kind == mpk_deref {
       if ts.is_refkind(ty) && mt.layout >= 0 {
         ty = ts.agg(mt.layout)
       } else {
@@ -198,12 +198,12 @@ fn hd_place_writes_header(ts: MTypes, f: MFunc, p: MPlace): Bool {
       if ty < 0 {
         return true
       }
-    } else if pr.kind == mpk_field() {
+    } else if pr.kind == mpk_field {
       if mt.layout < 0 {
         return true
       }
       lay = ts.layouts[mt.layout]
-      if lay.kind == mlk_array() && (pr.field == 0 || pr.field == 1) {
+      if lay.kind == mlk_array && (pr.field == 0 || pr.field == 1) {
         return true
       }
       if pr.field >= lay.fields.size {
@@ -211,13 +211,13 @@ fn hd_place_writes_header(ts: MTypes, f: MFunc, p: MPlace): Bool {
       }
       ty = lay.fields[pr.field]
     } else {
-      if mt.kind == mk_agg() && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems() {
+      if mt.kind == mk_agg && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems {
         ty = ts.layouts[mt.layout].fields[0]
       }
     }
   }
   // A whole object stored through a reference: any part of it.
-  p.proj.size > 0 && p.proj[p.proj.size - 1].kind == mpk_deref()
+  p.proj.size > 0 && p.proj[p.proj.size - 1].kind == mpk_deref
 }
 
 // Whether local h holds, at statement j of blk, an allocation made
@@ -227,7 +227,7 @@ fn hd_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
   while k >= 0 {
     st = blk.stmts[k]
     if mir_stmt_def(st) == h {
-      return st.kind == msk_call() && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
+      return st.kind == msk_call && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
     }
     k -= 1
   }
@@ -238,7 +238,7 @@ fn hd_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
 // buffer word (keep: mir_lv_summary).
 fn hd_changes(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
   st = blk.stmts[j]
-  if st.kind == msk_assign() {
+  if st.kind == msk_assign {
     if p = st.place, p.last_deref() >= 0 {
       if !hd_place_writes_header(m.types, f, p) {
         return false
@@ -247,7 +247,7 @@ fn hd_changes(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Boo
     }
     return false
   }
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return false
   }
   if fo = st.indirect {
@@ -268,7 +268,7 @@ fn hd_changes(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Boo
 // (Maze::BFS's four neighbours: +14% instructions).
 fn hd_short(f: MFunc, hb: MBlock, cx: HdCtx): Bool {
   for st in hb.stmts {
-    if r = st.rv, r.kind == mrk_cmp() {
+    if r = st.rv, r.kind == mrk_cmp {
       for o in [r.a, r.b] {
         if x = o {
           c = hd_const_of(f, x, cx)
@@ -285,10 +285,10 @@ fn hd_short(f: MFunc, hb: MBlock, cx: HdCtx): Bool {
 // The value of an operand that is a constant, or a local whose only
 // definition in the function is a constant (a range's end); else -1.
 fn hd_const_of(f: MFunc, o: MOperand, cx: HdCtx): Int {
-  if o.kind == mok_int() {
+  if o.kind == mok_int {
     return o.ival
   }
-  if o.kind != mok_copy() {
+  if o.kind != mok_copy {
     return -1
   }
   p = o.place ?? MPlace.new(-1)
@@ -306,8 +306,8 @@ fn hd_const_of(f: MFunc, o: MOperand, cx: HdCtx): Int {
         d = mir_stmt_def(st)
         if d >= 0 && d < cx.ndef.size {
           cx.ndef[d] += 1
-          if r = st.rv, r.kind == mrk_use() {
-            if a = r.a, a.kind == mok_int() {
+          if r = st.rv, r.kind == mrk_use {
+            if a = r.a, a.kind == mok_int {
               cx.cval[d] = a.ival
             }
           }
@@ -329,7 +329,7 @@ fn hd_addr_taken(f: MFunc): Array(Bool) {
   out = mir_bools(f.locals.size, false)
   for blk in f.blocks {
     for st in blk.stmts {
-      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() {
         out[p.local] = true
       }
     }
@@ -464,7 +464,7 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
   calls = false
   for b in blist {
     for st in f.blocks[b].stmts {
-      if st.kind == msk_call() && !hd_no_call(st.callee) {
+      if st.kind == msk_call && !hd_no_call(st.callee) {
         calls = true
       }
     }
@@ -607,25 +607,25 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
         cur.stmts.push(hd_assign(loc, h, hd_use(hd_word(a, k))))
       } else {
         // _h = zero; if _a != null { _h = (*_a).k }
-        cur.stmts.push(hd_assign(loc, h, MRvalue.new(mrk_zero())))
-        c = hd_new_local(f, mt_bool())
+        cur.stmts.push(hd_assign(loc, h, MRvalue.new(mrk_zero)))
+        c = hd_new_local(f, mt_bool)
         hd_grow(made, f)
-        r = MRvalue.new(mrk_cmp())
-        r.op = mop_ne()
+        r = MRvalue.new(mrk_cmp)
+        r.op = mop_ne
         r.a = hd_copy_local(a)
-        r.b = MOperand.new(mok_null(), f.locals[a].ty)
+        r.b = MOperand.new(mok_null, f.locals[a].ty)
         cur.stmts.push(hd_assign(loc, c, r))
         load = MBlock.new(f.blocks.size)
         f.blocks.push(load)
         join = MBlock.new(f.blocks.size)
         f.blocks.push(join)
-        t = MTerm.new(mtk_branch(), loc)
+        t = MTerm.new(mtk_branch, loc)
         t.cond = hd_copy_local(c)
         t.targets.push(load.id)
         t.targets.push(join.id)
         cur.term = t
         load.stmts.push(hd_assign(loc, h, hd_use(hd_word(a, k))))
-        tl = MTerm.new(mtk_goto(), loc)
+        tl = MTerm.new(mtk_goto, loc)
         tl.targets.push(join.id)
         load.term = tl
         cur = join
@@ -682,7 +682,7 @@ fn hd_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
       blk.stmts = outs
     }
   }
-  tl = MTerm.new(mtk_goto(), loc)
+  tl = MTerm.new(mtk_goto, loc)
   tl.targets.push(hdr)
   cur.term = tl
   for p in preds[hdr] {
@@ -737,7 +737,7 @@ pub fn mir_heads_pass(m: MModule) {
   keep = mir_lv_summary(m)
   coll = mir_lv_collects(m)
   for f in m.funcs {
-    if f.kind == mfk_unset() && f.blocks.size > 1 {
+    if f.kind == mfk_unset && f.blocks.size > 1 {
       hd_func(m, f, keep, coll)
     }
   }

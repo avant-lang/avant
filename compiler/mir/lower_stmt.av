@@ -32,13 +32,13 @@ pub fn (lw: MirLower) lower_body_in(body: Array(Stmt)) {
       return
     }
     st = body[i]
-    if i == body.size - 1 && st.kind == st_if() && st.tail_value && lw.lw_ret != mt_void() {
+    if i == body.size - 1 && st.kind == st_if && st.tail_value && lw.lw_ret != mt_void {
       lw.cov_stmt(st)
       lw.lower_if_general(st, 2, -1, nil)
       return
     }
-    if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
-      if e = st.expr, et = e.ty, et.is_void() && e.kind == ex_switch() {
+    if i == body.size - 1 && st.kind == st_expr && lw.lw_ret != mt_void {
+      if e = st.expr, et = e.ty, et.is_void() && e.kind == ex_switch {
         // A last switch whose every arm leaves: a statement; nothing
         // follows it.
         lw.lower_stmt(st)
@@ -93,7 +93,7 @@ pub fn (lw: MirLower) lower_stmts_in(body: Array(Stmt)) {
 pub fn (lw: MirLower) lower_stmt(st: Stmt) {
   lw.cov_stmt(st)
   k = st.kind
-  if k == st_expr() {
+  if k == st_expr {
     if e = st.expr {
       if lw.hash_delete_stmt(e) {
         return
@@ -102,23 +102,23 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
     }
     return
   }
-  if k == st_assign() {
+  if k == st_assign {
     lw.lower_assign(st)
     return
   }
-  if k == st_return() {
+  if k == st_return {
     lw.lower_return(st)
     return
   }
-  if k == st_if() {
+  if k == st_if {
     lw.lower_if(st)
     return
   }
-  if k == st_while() {
+  if k == st_while {
     lw.lower_while(st)
     return
   }
-  if k == st_break() || k == st_continue() {
+  if k == st_break || k == st_continue {
     if lw.lw_exits.size == 0 {
       lw.refuse(st.loc, "break or next outside a loop")
       return
@@ -128,26 +128,26 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
     if !lw.open_now() {
       return
     }
-    if k == st_break() {
+    if k == st_break {
       lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
     } else {
       lw.lw_b.goto(lw.lw_heads[lw.lw_heads.size - 1])
     }
     return
   }
-  if k == st_pin() {
+  if k == st_pin {
     lw.lower_pin(st)
     return
   }
-  if k == st_hold() {
+  if k == st_hold {
     lw.lower_hold(st)
     return
   }
-  if k == st_defer() {
+  if k == st_defer {
     lw.lower_defer(st)
     return
   }
-  if k == st_release() {
+  if k == st_release {
     lw.lower_release(st)
     return
   }
@@ -161,7 +161,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
     // the loop's copy is not made.
     return
   }
-  if t0 = st.target, t0.kind == ex_name() && t0.ident == "_" {
+  if t0 = st.target, t0.kind == ex_name && t0.ident == "_" {
     // `_ = expr`: computed and dropped.
     if v0 = st.value {
       lw.lower_expr(v0)
@@ -169,20 +169,20 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
     return
   }
   if t = st.target {
-    if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
+    if t.kind == ex_field || (t.kind == ex_name && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
       lw.lower_field_assign(st, t)
       return
     }
-    if t.kind == ex_index() && mir_ptr_index(t) {
+    if t.kind == ex_index && mir_ptr_index(t) {
       // An element through a Ptr is stored as a C layout's field is.
       lw.lower_field_assign(st, t)
       return
     }
-    if t.kind == ex_index() {
+    if t.kind == ex_index {
       lw.lower_index_assign(st, t)
       return
     }
-    if t.kind != ex_name() {
+    if t.kind != ex_name {
       lw.refuse(t.loc, "assignment to this place")
       return
     }
@@ -200,7 +200,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
         return
       }
       if v = st.value {
-        if st.op == tk_eq() {
+        if st.op == tk_eq {
           val = lw.lower_coerced(v, ty, tt)
           if lw.failed() {
             return
@@ -248,7 +248,7 @@ pub fn (lw: MirLower) compound_arith(st: Stmt, ty: Int, cur: MOperand, rhs: MOpe
   // A trap in the operator names the assignment's own position.
   lw.at(st.loc)
   op = compound_op_of(st.op)
-  if op == tk_less_less() || op == tk_greater_greater() {
+  if op == tk_less_less || op == tk_greater_greater {
     return lw.shift(op, ty, lw.ety(v), cur, rhs, st.loc)
   }
   lw.arith(op, ty, cur, rhs, st.proven, st.loc)
@@ -261,7 +261,7 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
   if rt = lw.lw_ret_ty, t = e.ty {
     v = lw.coerce(v, t, rt, e.loc)
   }
-  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed() {
+  if lw.lw_main && lw.lw_ret == mt_int && !lw.failed() {
     return lw.exit_status(v, e.loc)
   }
   v
@@ -274,13 +274,13 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
 pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   lw.at(loc)
-  x = b.temp(mt_int())
+  x = b.temp(mt_int)
   b.assign(b.pl(x), b.rv_use(v))
-  u = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(x), mt_u64()))
-  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u64(255)))
+  u = lw.tmp(mt_u64, b.rv_cast(b.copy_local(x), mt_u64))
+  inside = lw.tmp(mt_bool, b.rv_cmp(mop_le, u, b.c_u64(255)))
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_exit_status", lw.one(b.copy_local(x)), loc)
-  lw.tmp(mt_i32(), b.rv_cast(b.copy_local(x), mt_i32()))
+  lw.tmp(mt_i32, b.rv_cast(b.copy_local(x), mt_i32))
 }
 
 pub fn (lw: MirLower) lower_return(st: Stmt) {
@@ -294,7 +294,7 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
       return
     }
     lw.at(st.loc)
-    if lw.lw_ret != mt_void() {
+    if lw.lw_ret != mt_void {
       lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
     } else if lw.lw_main {
       lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
@@ -489,14 +489,14 @@ pub fn (lw: MirLower) lower_latched(st: Stmt, head: Int, body: Int, exit: Int) {
 // temporary, zeroed first (an arm without a value, or no match without
 // else, leaves the zero).
 pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
-  rty = mt_void()
+  rty = mt_void
   if t = e.ty {
     rty = lw.ty_at(t, e.loc, "a switch value")
   }
   if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
-  if e.op == tk_if() && e.else_body.size == 1 && rty != mt_void() {
+  if e.op == tk_if && e.else_body.size == 1 && rty != mt_void {
     // An `if` used as a value: each branch writes the result
     // temporary.
     dest = lw.lw_b.temp(rty)
@@ -514,7 +514,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if ct1 = c.ty, ct1.is_union() {
       return lw.lower_union_switch(e, cv, ct1, rty)
     }
-    cty = mt_i32()
+    cty = mt_i32
     // A switch over an enum without else names every member (the
     // checker's coverage): no match is a value that is no member, which
     // a cold trap names (never LLVM's unreachable).
@@ -527,16 +527,16 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     lw.at(e.loc)
     // A Bool switch is one branch on the value.
-    on_bool = cty == mt_bool()
+    on_bool = cty == mt_bool
     if on_bool {
-      cty = mt_i32()
+      cty = mt_i32
     }
-    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() && cty != mt_i8() && cty != mt_i16() && cty != mt_u16() {
+    if cty != mt_i32 && cty != mt_i64 && cty != mt_u64 && cty != mt_u32 && cty != mt_u8 && cty != mt_i8 && cty != mt_i16 && cty != mt_u16 {
       lw.refuse(c.loc, "switch on this type")
       return lw.lw_b.c_i32(0)
     }
     dest = -1
-    if rty != mt_void() {
+    if rty != mt_void {
       dest = lw.lw_b.temp(rty)
       lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero())
     }
@@ -567,7 +567,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     wide_bl: Array(Int) = []
     for wc in e.cases {
       for wl in wc.labels {
-        if wl.kind == lb_range() {
+        if wl.kind == lb_range {
           wide_bl.push(lw.lw_b.block())
         }
       }
@@ -590,7 +590,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       j = 0
       while j < e.cases[i].labels.size {
         rl = e.cases[i].labels[j]
-        if rl.kind == lb_range() {
+        if rl.kind == lb_range {
           rt = arm
           if lw.lw_cov.on {
             ren = pre_en[next_en]
@@ -642,9 +642,9 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     lw.at(e.loc)
     for wk in 0..wide_lo.size {
       wb = lw.lw_b
-      w1 = lw.tmp(mt_bool(), wb.rv_cmp(mop_ge(), cv, wb.c_int(cty, wide_lo[wk])))
-      w2 = lw.tmp(mt_bool(), wb.rv_cmp(mop_le(), cv, wb.c_int(cty, wide_hi[wk])))
-      win = lw.tmp(mt_bool(), wb.rv_bin(mop_and(), w1, w2))
+      w1 = lw.tmp(mt_bool, wb.rv_cmp(mop_ge, cv, wb.c_int(cty, wide_lo[wk])))
+      w2 = lw.tmp(mt_bool, wb.rv_cmp(mop_le, cv, wb.c_int(cty, wide_hi[wk])))
+      win = lw.tmp(mt_bool, wb.rv_bin(mop_and, w1, w2))
       wb.branch(win, wide_tg[wk], wide_bl[wk])
       wb.at(wide_bl[wk])
       lw.at(e.loc)
@@ -783,9 +783,9 @@ pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Arr
   cty = mir_scalar_ty(t)
   b.switch_on(cv, vals2, tg2, pre)
   b.at(pre)
-  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), cv, b.c_int(cty, lo)))
-  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), cv, b.c_int(cty, hi)))
-  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  c1 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, cv, b.c_int(cty, lo)))
+  c2 = lw.tmp(mt_bool, b.rv_cmp(mop_le, cv, b.c_int(cty, hi)))
+  inside = lw.tmp(mt_bool, b.rv_bin(mop_and, c1, c2))
   b.branch(inside, arms[last], trap)
 }
 
@@ -810,7 +810,7 @@ pub fn (lw: MirLower) lower_arm_in(body: Array(Stmt), dest: Int, sw: Expr) {
       return
     }
     st = body[i]
-    if i == body.size - 1 && st.kind == st_expr() && !ast_stmt_exits(st) {
+    if i == body.size - 1 && st.kind == st_expr && !ast_stmt_exits(st) {
       if e = st.expr {
         v = lw.lower_expr(e)
         if t = e.ty, want = sw.ty {
@@ -835,7 +835,7 @@ pub fn (lw: MirLower) enum_trap(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
   lw.at(loc)
   args: Array(MOperand) = []
-  args.push(lw.tmp(mt_int(), b.rv_cast(v, mt_int())))
+  args.push(lw.tmp(mt_int, b.rv_cast(v, mt_int)))
   args.push(b.str_const(t.show_bare()))
   b.call(-1, "avant_trap_enum", args)
   b.unreachable()
@@ -848,10 +848,10 @@ pub fn (lw: MirLower) enum_trap(v: MOperand, t: Ty, loc: Location) {
 // matches on the size alone. No match is the else, or nothing.
 pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperand {
   b = lw.lw_b
-  s = b.temp(mt_str())
+  s = b.temp(mt_str)
   b.assign(b.pl(s), b.rv_use(cv))
   dest = -1
-  if rty != mt_void() {
+  if rty != mt_void {
     dest = b.temp(rty)
     b.assign(b.pl(dest), b.rv_zero())
   }
@@ -920,7 +920,7 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
   lw.at(e.loc)
   args0: Array(MOperand) = []
   args0.push(b.copy_local(s))
-  n = lw.call_to(mt_i64(), "avant_str_size", args0)
+  n = lw.call_to(mt_i64, "avant_str_size", args0)
   b.switch_on(n, sizes, size_blocks, other)
   for k in 0..sizes.size {
     b.at(size_blocks[k])
@@ -944,8 +944,8 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
         margs.push(b.copy_local(sd))
         margs.push(b.str_const(lab_text[q]))
         margs.push(b.c_i64(sizes[k]))
-        qv = lw.call_to(mt_i32(), "memcmp", margs)
-        eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), qv, b.c_i32(0)))
+        qv = lw.call_to(mt_i32, "memcmp", margs)
+        eq = lw.tmp(mt_bool, b.rv_cmp(mop_eq, qv, b.c_i32(0)))
         b.branch(eq, target, lab_next[q])
         b.at(lab_next[q])
         lw.at(e.loc)

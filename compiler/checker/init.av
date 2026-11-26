@@ -208,12 +208,12 @@ pub fn (checker_self: Checker) init_stmts(w: InitWalk, stmts: Array(Stmt), start
 // The field a write `self.f = ...` or a bare `f = ...` (an implicit field)
 // sets, or "".
 fn (w: InitWalk) written(target: Expr): String {
-  if target.kind == ex_field() {
-    if obj = target.object, obj.kind == ex_name() && obj.ident == "self", ft = w.ty.field_named(target.ident) {
+  if target.kind == ex_field {
+    if obj = target.object, obj.kind == ex_name && obj.ident == "self", ft = w.ty.field_named(target.ident) {
       return target.ident
     }
   }
-  if target.kind == ex_name() && target.implicit_field {
+  if target.kind == ex_name && target.implicit_field {
     return target.ident
   }
   ""
@@ -221,11 +221,11 @@ fn (w: InitWalk) written(target: Expr): String {
 
 pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(String)): Array(String)? {
   k = st.kind
-  if k == st_assign() {
+  if k == st_assign {
     if target = st.target {
       f = w.written(target)
       if f.size > 0 {
-        if st.op != tk_eq() && st.op != 0 {
+        if st.op != tk_eq && st.op != 0 {
           // A compound write reads the field first.
           checker_self.init_read(w, f, target.loc, set)
         }
@@ -250,7 +250,7 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
     }
     return set
   }
-  if k == st_return() {
+  if k == st_return {
     if e = st.expr {
       checker_self.init_expr(w, e, set, false)
     }
@@ -269,10 +269,10 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
     }
     return nil
   }
-  if k == st_break() || k == st_continue() {
+  if k == st_break || k == st_continue {
     return nil
   }
-  if k == st_if() {
+  if k == st_if {
     for el in st.pre {
       if c0 = el.cond {
         checker_self.init_expr(w, c0, set, false)
@@ -291,7 +291,7 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
     }
     return b
   }
-  if k == st_pin() || k == st_hold() {
+  if k == st_pin || k == st_hold {
     // The body runs once, in order.
     if e2 = st.expr {
       checker_self.init_expr(w, e2, set, false)
@@ -301,9 +301,9 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
     }
     return checker_self.init_stmts(w, st.body, set)
   }
-  if k == st_expr() {
+  if k == st_expr {
     if e3 = st.expr {
-      if e3.kind == ex_switch() {
+      if e3.kind == ex_switch {
         return checker_self.init_switch(w, e3, set)
       }
       checker_self.init_expr(w, e3, set, false)
@@ -338,7 +338,7 @@ pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(Stri
 // An assigned value: what a value `if` or `switch` sets in its branches
 // counts after it, as for the statement forms; any other value is read.
 pub fn (checker_self: Checker) init_value(w: InitWalk, v: Expr, set: Array(String)): Array(String)? {
-  if v.kind == ex_switch() {
+  if v.kind == ex_switch {
     return checker_self.init_switch(w, v, set)
   }
   checker_self.init_expr(w, v, set, false)
@@ -350,7 +350,7 @@ pub fn (checker_self: Checker) init_value(w: InitWalk, v: Expr, set: Array(Strin
 // switch is over an enum or a union, which the checker has made name
 // every member: then only its arms are.
 pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
-  if e.op == tk_if() && e.else_body.size == 1 && e.cases.size == 0 {
+  if e.op == tk_if && e.else_body.size == 1 && e.cases.size == 0 {
     // A value `if` (the checker's form: its one statement is the if,
     // whose branches end in the values).
     return checker_self.init_stmts(w, e.else_body, set)
@@ -448,7 +448,7 @@ pub fn (checker_self: Checker) init_expr(w: InitWalk, e: Expr, set: Array(String
     return
   }
   k = e.kind
-  if k == ex_name() {
+  if k == ex_name {
     if e.ident == "self" {
       checker_self.init_escape(w, e.loc, set, "self is used as a value")
       return
@@ -463,9 +463,9 @@ pub fn (checker_self: Checker) init_expr(w: InitWalk, e: Expr, set: Array(String
     }
     return
   }
-  if k == ex_field() {
+  if k == ex_field {
     if obj = e.object {
-      if obj.kind == ex_name() && obj.ident == "self" {
+      if obj.kind == ex_name && obj.ident == "self" {
         if ft = w.ty.field_named(e.ident) {
           if deferred {
             checker_self.init_escape(w, e.loc, set, "a lambda uses the receiver")
@@ -481,9 +481,9 @@ pub fn (checker_self: Checker) init_expr(w: InitWalk, e: Expr, set: Array(String
     }
     return
   }
-  if k == ex_call() {
+  if k == ex_call {
     if r = e.receiver {
-      if r.kind == ex_name() && r.ident == "self" {
+      if r.kind == ex_name && r.ident == "self" {
         checker_self.init_escape(w, e.loc, set, "a method of self is called")
       } else {
         checker_self.init_expr(w, r, set, deferred)
@@ -499,13 +499,13 @@ pub fn (checker_self: Checker) init_expr(w: InitWalk, e: Expr, set: Array(String
     }
     return
   }
-  if k == ex_lambda() {
+  if k == ex_lambda {
     if b2 = e.block {
       checker_self.init_block(w, b2.body, set, true)
     }
     return
   }
-  if k == ex_switch() {
+  if k == ex_switch {
     dummy = checker_self.init_switch(w, e, set)
     return
   }
@@ -569,7 +569,7 @@ pub fn (checker_self: Checker) init_deferred_stmt(w: InitWalk, st: Stmt, set: Ar
     checker_self.init_expr(w, v, set, true)
   }
   if t = st.target {
-    if t.kind == ex_name() && t.implicit_field {
+    if t.kind == ex_name && t.implicit_field {
       checker_self.init_escape(w, t.loc, set, "a lambda uses the receiver")
     } else {
       checker_self.init_expr(w, t, set, true)

@@ -5,6 +5,8 @@ import manifest
 import source
 import cov_report
 import llvm.glue
+import std.fs
+import std.process
 
 pub class FileRun {
   abs: String = ""
@@ -301,7 +303,7 @@ pub class TestHost {
       self.self_path = absolute_tool(compiler)
     }
     self.tests_compiler = absolute_tool(compiler)
-    if given = env_get("AVANT_COMPILER") {
+    if given = process.env("AVANT_COMPILER") {
       if given.size > 0 {
         self.tests_compiler = absolute_tool(given)
       }
@@ -371,7 +373,7 @@ fn abs_join(dir: String, rel: String): String {
 fn rel_of(cwd: String, abs: String): String {
   prefix = "${cwd}/"
   if abs.starts_with(prefix) {
-    return str_slice(abs, prefix.size, abs.size)
+    return abs[prefix.size..]
   }
   abs
 }
@@ -416,7 +418,7 @@ fn sort_files(files: Array(FileRun)) {
 }
 
 fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
-  names = dir_list(dir) ?? []
+  names = fs.list(dir) ?? []
   i = 0
   nseq = seq
   while i < names.size {
@@ -438,7 +440,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
     } else if !path_is_link(path) {
       // a symbolic link to a directory is not followed: it can lead out
       // of the tree or back into it
-      sub = dir_list(path) ?? []
+      sub = fs.list(path) ?? []
       if sub.size > 0 {
         nseq = walk_tests(path, cwd, into, nseq)
       }
@@ -448,7 +450,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
 }
 
 fn read_text(path: String): String {
-  if text = file_read(path) {
+  if text = fs.read(path) {
     return text
   }
   ""
@@ -514,9 +516,9 @@ fn name_lines(text: String): Array(String) {
   i = 0
   while i <= text.size {
     if i == text.size || text[i] == 10 {
-      line = str_slice(text, start, i)
+      line = text[start..i]
       if line.size > 0 && line[line.size - 1] == 13 {
-        line = str_slice(line, 0, line.size - 1)
+        line = line[..line.size - 1]
       }
       if line.size > 0 {
         out.push(line)
@@ -550,7 +552,7 @@ fn emit_file(host: TestHost, f: FileRun) {
   if f.output.size > 0 {
     text = f.output
     if text[text.size - 1] == 10 {
-      text = str_slice(text, 0, text.size - 1)
+      text = text[..text.size - 1]
     }
     out_puts(text)
   }
@@ -597,7 +599,7 @@ fn check_results(f: FileRun, cmd: JobCmd) {
   if cmd.results.size == 0 {
     return
   }
-  if cmd.code == 0 && !file_exists(cmd.results) {
+  if cmd.code == 0 && !fs.exists(cmd.results) {
     f.ok = false
     if f.why.size == 0 {
       f.why = "${cmd.what} exited 0 and reported no results"
@@ -765,7 +767,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       // listed no parallel body was not selected: no line, not counted,
       // not in the JUnit report.
       if cmd.matches.size > 0 {
-        if cmd.code == 0 && f.ok && f.parallels.size == 0 && !file_exists(cmd.matches) {
+        if cmd.code == 0 && f.ok && f.parallels.size == 0 && !fs.exists(cmd.matches) {
           f.unmatched = true
           f.reported = true
         }
@@ -884,8 +886,8 @@ fn xml_chars(s: String): String {
     return s
   }
   hex = "0123456789abcdef"
-  b = buf_new()
-  b.push_str(str_slice(s, 0, i))
+  b = Buf.new()
+  b.push_str(s[..i])
   while i < s.size {
     n = xml_char_len(s, i)
     if n == 0 {
@@ -894,7 +896,7 @@ fn xml_chars(s: String): String {
       b.push_byte(hex[s[i] % 16])
       i += 1
     } else {
-      b.push_str(str_slice(s, i, i + n))
+      b.push_str(s[i..i + n])
       i += n
     }
   }
@@ -903,7 +905,7 @@ fn xml_chars(s: String): String {
 
 fn xml_escape(text: String): String {
   s = xml_chars(text)
-  b = buf_new()
+  b = Buf.new()
   i = 0
   while i < s.size {
     c = s[i]
@@ -931,12 +933,12 @@ fn xml_escape(text: String): String {
 // cannot carry is written as \xNN first (xml_chars).
 fn cdata_text(text: String): String {
   s = xml_chars(text)
-  b = buf_new()
+  b = Buf.new()
   from = 0
   i = 0
   while i + 2 < s.size {
     if s[i] == 93 && s[i + 1] == 93 && s[i + 2] == 62 {
-      b.push_str(str_slice(s, from, i + 2))
+      b.push_str(s[from..i + 2])
       b.push_str("]]><![CDATA[")
       from = i + 2
       i += 2
@@ -947,7 +949,7 @@ fn cdata_text(text: String): String {
   if from == 0 {
     return s
   }
-  b.push_str(str_slice(s, from, s.size))
+  b.push_str(s[from..])
   b.to_s()
 }
 
@@ -1015,8 +1017,8 @@ fn write_junit(path: String, files: Array(FileRun)) {
   tests = 0
   bad = 0
   total_ms = 0
-  body = buf_new()
-  fb = buf_new()
+  body = Buf.new()
+  fb = Buf.new()
   fb_tests = 0
   fb_bad = 0
   for f in files {
@@ -1071,7 +1073,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
       }
     }
   }
-  b = buf_new()
+  b = Buf.new()
   b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
   b.push_str("<testsuites tests=\"${tests}\" failures=\"${bad}\" time=\"${secs_str(total_ms)}\">\n")
   b.push_str(body.to_s())
@@ -1081,7 +1083,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  if e = write_failure(file_write(path, b.to_s())) {
+  if e = write_failure(fs.write(path, b.to_s())) {
     diag_puts(e.message())
     diag_exit(1)
   }
@@ -1098,9 +1100,9 @@ fn shard_index(spec: String, want_index: Bool): Int {
     return -1
   }
   if want_index {
-    return parse_u(str_slice(spec, 0, slash))
+    return parse_u(spec[..slash])
   }
-  parse_u(str_slice(spec, slash + 1, spec.size))
+  parse_u(spec[slash + 1..])
 }
 
 fn test_fail(message: String) {
@@ -1109,12 +1111,12 @@ fn test_fail(message: String) {
 }
 
 fn is_dir(path: String): Bool {
-  file_exists("${path}/.")
+  fs.exists("${path}/.")
 }
 
 fn require_cov_dir(anchor: String, rel: String, key: String) {
   path = abs_join(anchor, rel)
-  if !file_exists(path) {
+  if !fs.exists(path) {
     test_fail("${key} directory does not exist: ${rel}")
   }
   if !is_dir(path) {
@@ -1125,7 +1127,7 @@ fn require_cov_dir(anchor: String, rel: String, key: String) {
 pub fn driver_test(args: Array(String)) {
   jobs = -1
   file_limit = 900
-  if given_limit = env_get("AVANT_TEST_FILE_LIMIT") {
+  if given_limit = process.env("AVANT_TEST_FILE_LIMIT") {
     if given_limit.size > 0 {
       file_limit = parse_u(given_limit)
       if file_limit < 0 {
@@ -1153,7 +1155,7 @@ pub fn driver_test(args: Array(String)) {
       }
       i += 2
     } else if arg.starts_with("--jobs=") {
-      jobs = parse_u(str_slice(arg, 7, arg.size))
+      jobs = parse_u(arg[7..])
       if jobs < 1 {
         test_fail("--jobs needs an integer greater than 0")
       }
@@ -1165,7 +1167,7 @@ pub fn driver_test(args: Array(String)) {
       shard = args[i + 1]
       i += 2
     } else if arg.starts_with("--shard=") {
-      shard = str_slice(arg, 8, arg.size)
+      shard = arg[8..]
       i += 1
     } else if arg == "--file-limit" || arg.starts_with("--file-limit=") {
       lim_text = ""
@@ -1176,7 +1178,7 @@ pub fn driver_test(args: Array(String)) {
         lim_text = args[i + 1]
         i += 2
       } else {
-        lim_text = str_slice(arg, 13, arg.size)
+        lim_text = arg[13..]
         i += 1
       }
       file_limit = parse_u(lim_text)
@@ -1190,7 +1192,7 @@ pub fn driver_test(args: Array(String)) {
       junit = args[i + 1]
       i += 2
     } else if arg.starts_with("--junit=") {
-      junit = str_slice(arg, 8, arg.size)
+      junit = arg[8..]
       i += 1
     } else if arg == "--name" || arg.starts_with("--name=") {
       pat = ""
@@ -1201,7 +1203,7 @@ pub fn driver_test(args: Array(String)) {
         pat = args[i + 1]
         i += 2
       } else {
-        pat = str_slice(arg, 7, arg.size)
+        pat = arg[7..]
         i += 1
       }
       if pat.size == 0 {
@@ -1257,7 +1259,7 @@ pub fn driver_test(args: Array(String)) {
   cov_exclude: Array(String) = []
   if man_dir.size > 0 {
     man_path = abs_join(man_dir, "avant.toml")
-    if text = file_read(man_path) {
+    if text = fs.read(man_path) {
       m = pkg_parse_manifest(text, man_path)
       if !m.ok {
         test_fail(m.err)
@@ -1295,7 +1297,7 @@ pub fn driver_test(args: Array(String)) {
   if paths.size == 0 {
     if test_entry.size > 0 {
       entry = abs_join(anchor, test_entry)
-      if !file_exists(entry) {
+      if !fs.exists(entry) {
         test_fail("test entry does not exist: ${test_entry}")
       }
       files.push(FileRun.new(entry, rel_of(cwd, entry), tmp_path("bin-1")))
@@ -1303,11 +1305,11 @@ pub fn driver_test(args: Array(String)) {
       root = abs_join(anchor, "tests")
       if test_dir.size > 0 {
         root = abs_join(anchor, test_dir)
-        if !file_exists(root) {
+        if !fs.exists(root) {
           test_fail("test dir does not exist: ${test_dir}")
         }
       }
-      if file_exists(root) {
+      if fs.exists(root) {
         walk_tests(root, cwd, files, 0)
       }
     }
@@ -1316,7 +1318,7 @@ pub fn driver_test(args: Array(String)) {
     seq = 0
     while p < paths.size {
       arg = paths[p]
-      if !file_exists(arg) {
+      if !fs.exists(arg) {
         test_fail("test path does not exist: ${arg}")
       }
       abs = arg
@@ -1438,13 +1440,13 @@ pub fn driver_test(args: Array(String)) {
   }
   run_order = order_first(files, first_abs)
   argv0 = "avant"
-  args0 = argv()
+  args0 = process.args()
   if args0.size > 0 {
     argv0 = args0[0]
   }
   host = TestHost.new(argv0, jobs)
   host.file_limit_s = file_limit
-  if given_progress = env_get("AVANT_TEST_PROGRESS_S") {
+  if given_progress = process.env("AVANT_TEST_PROGRESS_S") {
     if parse_u(given_progress) > 0 {
       host.progress_s = parse_u(given_progress)
     }

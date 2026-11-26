@@ -46,13 +46,13 @@ fn rw_new_local(f: MFunc, ty: Int): Int {
 }
 
 fn rw_copy_local(local: Int): MOperand {
-  o = MOperand.new(mok_copy(), -1)
+  o = MOperand.new(mok_copy, -1)
   o.place = MPlace.new(local)
   o
 }
 
 fn rw_local_of(o: MOperand?): Int {
-  if x = o, x.kind == mok_copy() {
+  if x = o, x.kind == mok_copy {
     if p = x.place, p.proj.size == 0 {
       return p.local
     }
@@ -61,20 +61,20 @@ fn rw_local_of(o: MOperand?): Int {
 }
 
 fn rw_assign(loc: MLoc, dest: Int, rv: MRvalue): MStmt {
-  st = MStmt.new(msk_assign(), loc)
+  st = MStmt.new(msk_assign, loc)
   st.place = MPlace.new(dest)
   st.rv = rv
   st
 }
 
 fn rw_use(o: MOperand): MRvalue {
-  r = MRvalue.new(mrk_use())
+  r = MRvalue.new(mrk_use)
   r.a = o
   r
 }
 
 fn rw_cmp(op: Int, a: MOperand, b: MOperand): MRvalue {
-  r = MRvalue.new(mrk_cmp())
+  r = MRvalue.new(mrk_cmp)
   r.op = op
   r.a = a
   r.b = b
@@ -83,16 +83,16 @@ fn rw_cmp(op: Int, a: MOperand, b: MOperand): MRvalue {
 
 // Whether ty is a reference to an Array header.
 fn rw_is_array(ts: MTypes, ty: Int): Bool {
-  if ts.kind(ty) != mk_ref() {
+  if ts.kind(ty) != mk_ref {
     return false
   }
   lay = ts.get(ty).layout
-  lay >= 0 && ts.layouts[lay].kind == mlk_array()
+  lay >= 0 && ts.layouts[lay].kind == mlk_array
 }
 
 // Whether ty can be a row: an Array reference or a string.
 fn rw_row_type(ts: MTypes, ty: Int): Bool {
-  ty == mt_str() || rw_is_array(ts, ty)
+  ty == mt_str || rw_is_array(ts, ty)
 }
 
 // What place p writes: out[0] the element type when its last projection
@@ -112,7 +112,7 @@ fn rw_place_target(ts: MTypes, f: MFunc, p: MPlace, out: Array(Int)) {
   last = -1
   for pr in p.proj {
     mt = ts.get(ty)
-    if pr.kind == mpk_deref() {
+    if pr.kind == mpk_deref {
       holder = ty
       if ts.is_refkind(ty) && mt.layout >= 0 {
         ty = ts.agg(mt.layout)
@@ -126,14 +126,14 @@ fn rw_place_target(ts: MTypes, f: MFunc, p: MPlace, out: Array(Int)) {
         return
       }
       last = 0
-    } else if pr.kind == mpk_field() {
+    } else if pr.kind == mpk_field {
       if mt.layout < 0 || pr.field >= ts.layouts[mt.layout].fields.size {
         out[0] = -2
         out[1] = -2
         out[2] = -2
         return
       }
-      if ts.layouts[mt.layout].kind == mlk_array() {
+      if ts.layouts[mt.layout].kind == mlk_array {
         out[1] = holder
       } else {
         out[1] = -1
@@ -144,7 +144,7 @@ fn rw_place_target(ts: MTypes, f: MFunc, p: MPlace, out: Array(Int)) {
       out[0] = -1
       last = 1
     } else {
-      if mt.kind == mk_agg() && mt.layout >= 0 && (ts.layouts[mt.layout].kind == mlk_elems() || ts.layouts[mt.layout].kind == mlk_carray()) {
+      if mt.kind == mk_agg && mt.layout >= 0 && (ts.layouts[mt.layout].kind == mlk_elems || ts.layouts[mt.layout].kind == mlk_carray) {
         ty = ts.layouts[mt.layout].fields[0]
       }
       out[0] = ty
@@ -238,11 +238,11 @@ fn rw_summary(m: MModule): Array(Bool) {
         for blk in f.blocks {
           for st in blk.stmts {
             if ok {
-              if st.kind == msk_assign() {
+              if st.kind == msk_assign {
                 if p = st.place, rw_store_changes(m.types, f, p, -1, -1, true) {
                   ok = false
                 }
-              } else if st.kind == msk_call() {
+              } else if st.kind == msk_call {
                 if !rw_call_keeps(m, st, keep) {
                   ok = false
                 }
@@ -264,7 +264,7 @@ fn rw_addr_taken(f: MFunc): Array(Bool) {
   out = mir_bools(f.locals.size, false)
   for blk in f.blocks {
     for st in blk.stmts {
-      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() {
         out[p.local] = true
       }
     }
@@ -391,11 +391,11 @@ fn rw_loop_keeps(m: MModule, lp: RwLoop, rt: Int, gt: Int, keep: Array(Bool)): B
   for b in 0..lp.body.size {
     if lp.body[b] {
       for st in f.blocks[b].stmts {
-        if st.kind == msk_assign() {
+        if st.kind == msk_assign {
           if p = st.place, rw_store_changes(m.types, f, p, rt, gt, false) {
             return false
           }
-        } else if st.kind == msk_call() {
+        } else if st.kind == msk_call {
           if !rw_call_keeps(m, st, keep) {
             return false
           }
@@ -413,7 +413,7 @@ fn rw_match(m: MModule, lp: RwLoop, blk: MBlock, j: Int, out: Array(Int)): Bool 
   f = lp.f
   ts = m.types
   st = blk.stmts[j]
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return false
   }
   r = mir_stmt_def(st)
@@ -421,21 +421,21 @@ fn rw_match(m: MModule, lp: RwLoop, blk: MBlock, j: Int, out: Array(Int)): Bool 
     return false
   }
   rv = st.rv ?? MRvalue.new(0)
-  if rv.kind != mrk_use() {
+  if rv.kind != mrk_use {
     return false
   }
   a = rv.a ?? MOperand.new(0, -1)
-  if a.kind != mok_copy() {
+  if a.kind != mok_copy {
     return false
   }
   p = a.place ?? MPlace.new(-1)
-  if p.local < 0 || p.proj.size != 2 || p.proj[0].kind != mpk_deref() || p.proj[1].kind != mpk_index() {
+  if p.local < 0 || p.proj.size != 2 || p.proj[0].kind != mpk_deref || p.proj[1].kind != mpk_index {
     return false
   }
   bl = p.local
   y = -1
   if io = p.proj[1].index {
-    if io.kind == mok_int() {
+    if io.kind == mok_int {
       y = -1
     } else {
       y = rw_local_of(io)
@@ -452,16 +452,16 @@ fn rw_match(m: MModule, lp: RwLoop, blk: MBlock, j: Int, out: Array(Int)): Bool 
     d = mir_stmt_def(blk.stmts[k])
     if d == bl {
       bs = blk.stmts[k]
-      if bs.kind != msk_assign() {
+      if bs.kind != msk_assign {
         return false
       }
       brv = bs.rv ?? MRvalue.new(0)
-      if brv.kind != mrk_use() {
+      if brv.kind != mrk_use {
         return false
       }
       ba = brv.a ?? MOperand.new(0, -1)
       bp = ba.place ?? MPlace.new(-1)
-      if ba.kind != mok_copy() || bp.local < 0 || bp.proj.size != 2 || bp.proj[0].kind != mpk_deref() || bp.proj[1].kind != mpk_field() || bp.proj[1].field != 0 {
+      if ba.kind != mok_copy || bp.local < 0 || bp.proj.size != 2 || bp.proj[0].kind != mpk_deref || bp.proj[1].kind != mpk_field || bp.proj[1].field != 0 {
         return false
       }
       g = bp.local
@@ -488,60 +488,60 @@ fn rw_build(f: MFunc, loc: MLoc, cur: MBlock, g: Int, yo: MOperand, bt: Int, nr:
   // _R = null; if _g != null && 0 <= _y < size(_g) { _R = _g's element _y }.
   join = MBlock.new(f.blocks.size)
   f.blocks.push(join)
-  cur.stmts.push(rw_assign(loc, nr, rw_use(MOperand.new(mok_null(), rt))))
-  c1 = rw_new_local(f, mt_bool())
-  cur.stmts.push(rw_assign(loc, c1, rw_cmp(mop_ne(), rw_copy_local(g), MOperand.new(mok_null(), f.locals[g].ty))))
+  cur.stmts.push(rw_assign(loc, nr, rw_use(MOperand.new(mok_null, rt))))
+  c1 = rw_new_local(f, mt_bool)
+  cur.stmts.push(rw_assign(loc, c1, rw_cmp(mop_ne, rw_copy_local(g), MOperand.new(mok_null, f.locals[g].ty))))
   b2 = rw_test_block(f, loc, cur, c1, join.id)
-  s32 = rw_new_local(f, mt_i32())
+  s32 = rw_new_local(f, mt_i32)
   sp = MPlace.new(g)
-  sp.proj.push(MProj.new(mpk_deref(), 0))
-  sp.proj.push(MProj.new(mpk_field(), 1))
-  so = MOperand.new(mok_copy(), -1)
+  sp.proj.push(MProj.new(mpk_deref, 0))
+  sp.proj.push(MProj.new(mpk_field, 1))
+  so = MOperand.new(mok_copy, -1)
   so.place = sp
   b2.stmts.push(rw_assign(loc, s32, rw_use(so)))
-  s64 = rw_new_local(f, mt_i64())
-  b2.stmts.push(rw_assign(loc, s64, rw_cast(rw_copy_local(s32), mt_i64())))
-  y64 = rw_new_local(f, mt_i64())
+  s64 = rw_new_local(f, mt_i64)
+  b2.stmts.push(rw_assign(loc, s64, rw_cast(rw_copy_local(s32), mt_i64)))
+  y64 = rw_new_local(f, mt_i64)
   yty = yo.ty
   if yl = yo.place {
     yty = f.locals[yl.local].ty
   }
-  if yty == mt_i64() {
+  if yty == mt_i64 {
     b2.stmts.push(rw_assign(loc, y64, rw_use(yo)))
   } else {
-    b2.stmts.push(rw_assign(loc, y64, rw_cast(yo, mt_i64())))
+    b2.stmts.push(rw_assign(loc, y64, rw_cast(yo, mt_i64)))
   }
-  c2 = rw_new_local(f, mt_bool())
-  zero = MOperand.new(mok_int(), mt_i64())
+  c2 = rw_new_local(f, mt_bool)
+  zero = MOperand.new(mok_int, mt_i64)
   zero.ival = 0
-  b2.stmts.push(rw_assign(loc, c2, rw_cmp(mop_ge(), rw_copy_local(y64), zero)))
+  b2.stmts.push(rw_assign(loc, c2, rw_cmp(mop_ge, rw_copy_local(y64), zero)))
   b3 = rw_test_block(f, loc, b2, c2, join.id)
-  c3 = rw_new_local(f, mt_bool())
-  b3.stmts.push(rw_assign(loc, c3, rw_cmp(mop_lt(), rw_copy_local(y64), rw_copy_local(s64))))
+  c3 = rw_new_local(f, mt_bool)
+  b3.stmts.push(rw_assign(loc, c3, rw_cmp(mop_lt, rw_copy_local(y64), rw_copy_local(s64))))
   b4 = rw_test_block(f, loc, b3, c3, join.id)
   bufp = MPlace.new(g)
-  bufp.proj.push(MProj.new(mpk_deref(), 0))
-  bufp.proj.push(MProj.new(mpk_field(), 0))
-  bo = MOperand.new(mok_copy(), -1)
+  bufp.proj.push(MProj.new(mpk_deref, 0))
+  bufp.proj.push(MProj.new(mpk_field, 0))
+  bo = MOperand.new(mok_copy, -1)
   bo.place = bufp
   bl = rw_new_local(f, bt)
   b4.stmts.push(rw_assign(loc, bl, rw_use(bo)))
   ep = MPlace.new(bl)
-  ep.proj.push(MProj.new(mpk_deref(), 0))
-  ix = MProj.new(mpk_index(), 0)
+  ep.proj.push(MProj.new(mpk_deref, 0))
+  ix = MProj.new(mpk_index, 0)
   ix.index = yo
   ep.proj.push(ix)
-  eo = MOperand.new(mok_copy(), -1)
+  eo = MOperand.new(mok_copy, -1)
   eo.place = ep
   b4.stmts.push(rw_assign(loc, nr, rw_use(eo)))
-  t4 = MTerm.new(mtk_goto(), loc)
+  t4 = MTerm.new(mtk_goto, loc)
   t4.targets.push(join.id)
   b4.term = t4
   join
 }
 
 fn rw_cast(a: MOperand, ty: Int): MRvalue {
-  r = MRvalue.new(mrk_cast())
+  r = MRvalue.new(mrk_cast)
   r.a = a
   r.ty = ty
   r
@@ -551,7 +551,7 @@ fn rw_cast(a: MOperand, ty: Int): MRvalue {
 fn rw_test_block(f: MFunc, loc: MLoc, blk: MBlock, c: Int, fail: Int): MBlock {
   nx = MBlock.new(f.blocks.size)
   f.blocks.push(nx)
-  t = MTerm.new(mtk_branch(), loc)
+  t = MTerm.new(mtk_branch, loc)
   t.cond = rw_copy_local(c)
   t.targets.push(nx.id)
   t.targets.push(fail)
@@ -577,7 +577,7 @@ fn rw_defs_in(f: MFunc, body: Array(Bool), n0: Int): Array(Bool) {
 // The key of a hoisted row: the array and the index (a local or a
 // constant).
 fn rw_key(g: Int, yo: MOperand): String {
-  if yo.kind == mok_int() {
+  if yo.kind == mok_int {
     return "r ${g} c${yo.ival}"
   }
   "r ${g} l${rw_local_of(yo)}"
@@ -617,7 +617,7 @@ fn rw_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
         r = -1
         kind = 0
         g = -1
-        yo = MOperand.new(mok_int(), mt_i64())
+        yo = MOperand.new(mok_int, mt_i64)
         bt = -1
         if rw_match(m, lp, blk, j, out) && rw_loop_keeps(m, lp, f.locals[out[2]].ty, f.locals[out[0]].ty, keep) {
           if a = st.rv, ao = a.a, p = ao.place, io = p.proj[1].index {
@@ -681,7 +681,7 @@ fn rw_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, keep: Array(B
   if moved == 0 {
     return false
   }
-  tl = MTerm.new(mtk_goto(), loc)
+  tl = MTerm.new(mtk_goto, loc)
   tl.targets.push(hdr)
   cur.term = tl
   preds = mir_preds(f)
@@ -721,7 +721,7 @@ fn rw_func(m: MModule, f: MFunc, keep: Array(Bool)) {
 pub fn mir_rows_pass(m: MModule) {
   keep = rw_summary(m)
   for f in m.funcs {
-    if f.kind == mfk_unset() && f.blocks.size > 1 {
+    if f.kind == mfk_unset && f.blocks.size > 1 {
       rw_func(m, f, keep)
     }
   }

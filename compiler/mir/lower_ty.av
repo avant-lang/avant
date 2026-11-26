@@ -13,35 +13,35 @@ import mir.types
 // and Bytes `ref str` (a literal's constant or a heap string).
 pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int() {
-    return mt_i64()
+    return mt_i64
   }
   if t.is_enum() {
     return mir_enum_ty(t)
   }
   if t.is_int32() {
-    return mt_i32()
+    return mt_i32
   }
   if t.is_uint32() {
-    return mt_u32()
+    return mt_u32
   }
   if t.is_uint64() {
-    return mt_u64()
+    return mt_u64
   }
   if t.is_bool() {
-    return mt_bool()
+    return mt_bool
   }
   if t.is_float() {
-    return mt_f64()
+    return mt_f64
   }
   if t.is_void() {
-    return mt_void()
+    return mt_void
   }
   if t.is_string() || t.is_bytes() {
-    return mt_str()
+    return mt_str
   }
   if t.is_hasher() {
     // The runtime's hasher on the C stack: a raw pointer, not traced.
-    return mt_ptr()
+    return mt_ptr
   }
   -1
 }
@@ -55,7 +55,7 @@ pub fn mir_enum_narrow: Bool { true }
 
 pub fn mir_enum_ty(t: Ty): Int {
   if !mir_enum_narrow() || t.enum_c_int() {
-    return mt_i32()
+    return mt_i32
   }
   lo = 0
   hi = 0
@@ -68,18 +68,18 @@ pub fn mir_enum_ty(t: Ty): Int {
     }
   }
   if lo >= 0 && hi <= 255 {
-    return mt_u8()
+    return mt_u8
   }
   if lo >= -128 && hi <= 127 {
-    return mt_i8()
+    return mt_i8
   }
   if lo >= 0 && hi <= 65535 {
-    return mt_u16()
+    return mt_u16
   }
   if lo >= -32768 && hi <= 32767 {
-    return mt_i16()
+    return mt_i16
   }
-  mt_i32()
+  mt_i32
 }
 
 // An optional reference is its reference's one pointer, `nil` the null
@@ -151,7 +151,7 @@ pub fn mir_str_builtin_arity(c: String): Int {
   if c == "repeat_byte" || c == "fmt_float" {
     return 2
   }
-  if c == "str_slice" || c == "str_to_f_slice" {
+  if c == "#str_slice" || c == "str_to_f_slice" {
     return 3
   }
   -1
@@ -185,7 +185,7 @@ pub fn mir_mty(t: Ty): String {
     // `main.Pair(Int,String)` (resolve.av instantiate_template: origin and
     // ty_args).
     if t.origin.size > 0 && t.ty_args.size > 0 {
-      buf0 = buf_new()
+      buf0 = Buf.new()
       buf0.push_str("${mir_module_part(t.mod_name)}.${t.origin}(")
       for j in 0..t.ty_args.size {
         if j > 0 {
@@ -237,7 +237,7 @@ pub fn mir_mty(t: Ty): String {
     return t.name
   }
   if t.is_union() {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("(")
     i = 0
     while i < t.members.size {
@@ -252,7 +252,7 @@ pub fn mir_mty(t: Ty): String {
   }
   // `fn(A,B):R`, a missing result is Void.
   if t.is_fn() {
-    buf2 = buf_new()
+    buf2 = Buf.new()
     buf2.push_str("fn(")
     fk = 0
     while fk < t.members.size {
@@ -320,7 +320,7 @@ pub fn mir_module_part(name: String): String {
   if name.size == 0 {
     return "main"
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < name.size {
     c = name[i]
@@ -383,18 +383,18 @@ pub fn mir_f64_bits(v: Float64): Int {
 // The type of a C scalar's Avant view: Float64 for Float32, Int (i64)
 // for the others (UInt32 is an everyday type).
 pub fn mir_c_view_mty(k: Int): Int {
-  if k == cs_uint32() {
-    return mt_u32()
+  if k == cs_uint32 {
+    return mt_u32
   }
-  if k == cs_float32() {
-    return mt_f64()
+  if k == cs_float32 {
+    return mt_f64
   }
-  mt_i64()
+  mt_i64
 }
 
 // Whether e is `p[i]` through a Ptr, or an element of a C array field.
 pub fn mir_ptr_index(e: Expr): Bool {
-  if e.kind == ex_index() {
+  if e.kind == ex_index {
     if l = e.left, lt = l.ty {
       return lt.is_ptr() || lt.is_carray()
     }

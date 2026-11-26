@@ -61,7 +61,7 @@ pub class MVerr {
 }
 
 pub fn mir_rule_runs(rule: Int, stage: Int): Bool {
-  if stage == mst_final() {
+  if stage == mst_final {
     return rule != 9
   }
   rule <= 10 || rule == 13 || rule == 14 || rule == 18 || rule == 20 || rule == 21
@@ -136,22 +136,22 @@ pub class MVerifier {
     while k < p.proj.size {
       pr = p.proj[k]
       mt = self.ts.get(ty)
-      if pr.kind == mpk_deref() {
+      if pr.kind == mpk_deref {
         if self.ts.is_refkind(ty) && mt.layout >= 0 {
           ty = self.ts.agg(mt.layout)
           self.via_ptr = false
-        } else if mt.kind == mk_ptr() && mt.pointee >= 0 && mt.pointee != mt_void() {
+        } else if mt.kind == mk_ptr && mt.pointee >= 0 && mt.pointee != mt_void {
           ty = mt.pointee
           self.via_ptr = true
-        } else if mt.kind == mk_addr() && mt.pointee >= 0 {
+        } else if mt.kind == mk_addr && mt.pointee >= 0 {
           ty = mt.pointee
           self.via_ptr = false
         } else {
           err(4, b, i, loc, "cannot deref _${p.local} of type ${mt.text}")
           return -1
         }
-      } else if pr.kind == mpk_field() {
-        if mt.kind != mk_agg() || self.ts.layouts[mt.layout].kind == mlk_elems() {
+      } else if pr.kind == mpk_field {
+        if mt.kind != mk_agg || self.ts.layouts[mt.layout].kind == mlk_elems {
           err(4, b, i, loc, "field ${pr.field} of non-layout type ${mt.text}")
           return -1
         }
@@ -168,14 +168,14 @@ pub class MVerifier {
           vp = self.via_ptr
           it = op_ty(o, b, i, loc)
           self.via_ptr = vp
-          if it >= 0 && it != mt_i32() && it != mt_i64() {
+          if it >= 0 && it != mt_i32 && it != mt_i64 {
             err(4, b, i, loc, "index operand of type ${tx(it)}")
             return -1
           }
         }
-        if mt.kind == mk_agg() && (self.ts.layouts[mt.layout].kind == mlk_elems() || self.ts.layouts[mt.layout].kind == mlk_carray()) {
+        if mt.kind == mk_agg && (self.ts.layouts[mt.layout].kind == mlk_elems || self.ts.layouts[mt.layout].kind == mlk_carray) {
           ty = self.ts.layouts[mt.layout].fields[0]
-        } else if !(k > 0 && p.proj[k - 1].kind == mpk_deref() && self.via_ptr) {
+        } else if !(k > 0 && p.proj[k - 1].kind == mpk_deref && self.via_ptr) {
           err(4, b, i, loc, "index on ${mt.text}")
           return -1
         }
@@ -189,27 +189,27 @@ pub class MVerifier {
     if p = o.place {
       return place_ty(p, b, i, loc)
     }
-    if o.kind == mok_str() {
+    if o.kind == mok_str {
       if o.sid < 0 || o.sid >= self.m.strs.size {
         err(20, b, i, loc, "const str.${o.sid} does not exist")
         return -1
       }
-      return mt_str()
+      return mt_str
     }
-    if o.kind == mok_fn() {
+    if o.kind == mok_fn {
       if g = self.m.func(o.text) {
         return self.ts.code(g.sig)
       }
       err(20, b, i, loc, "const fn ${o.text} names no function")
       return -1
     }
-    if o.kind == mok_global() {
+    if o.kind == mok_global {
       for g in self.m.globals {
         if g.symbol == o.text {
           // Its address, or the same as a raw pointer for the runtime
           // (avant_const_ready).
-          if o.ty == mt_ptr() {
-            return mt_ptr()
+          if o.ty == mt_ptr {
+            return mt_ptr
           }
           return self.ts.addr_of(g.ty)
         }
@@ -217,12 +217,12 @@ pub class MVerifier {
       err(20, b, i, loc, "const global ${o.text} names no global")
       return -1
     }
-    if o.kind == mok_null() {
+    if o.kind == mok_null {
       if !self.ts.is_refkind(o.ty) && !self.ts.is_ptr(o.ty) {
         err(6, b, i, loc, "null constant of type ${tx(o.ty)}")
         return -1
       }
-    } else if o.kind == mok_int() && !self.ts.is_int(o.ty) {
+    } else if o.kind == mok_int && !self.ts.is_int(o.ty) {
       err(6, b, i, loc, "integer constant of type ${tx(o.ty)}")
       return -1
     }
@@ -240,60 +240,60 @@ pub class MVerifier {
   // ---- rvalues (V6); returns the rvalue's type or -1
   pub fn rv_ty(r: MRvalue, pt: Int, b: Int, i: Int, loc: MLoc): Int {
     k = r.kind
-    if k == mrk_use() {
+    if k == mrk_use {
       return opt_ty(r.a, b, i, loc)
     }
-    if k == mrk_zero() {
+    if k == mrk_zero {
       return pt
     }
-    if k == mrk_unary() {
+    if k == mrk_unary {
       ta = opt_ty(r.a, b, i, loc)
       if ta < 0 {
         return -1
       }
       ok = false
-      if r.op == mop_neg() {
-        ok = self.ts.is_int(ta) || ta == mt_f64()
-      } else if r.op == mop_not() {
-        ok = self.ts.is_int(ta) || ta == mt_bool()
-      } else if r.op == mop_neg_chk() {
+      if r.op == mop_neg {
+        ok = self.ts.is_int(ta) || ta == mt_f64
+      } else if r.op == mop_not {
+        ok = self.ts.is_int(ta) || ta == mt_bool
+      } else if r.op == mop_neg_chk {
         ok = self.ts.is_signed_int(ta)
       }
       return check6(ok, ta, b, i, loc, "${mop_name(r.op)} of ${tx(ta)}")
     }
-    if k == mrk_binary() || k == mrk_checked() || k == mrk_cmp() {
+    if k == mrk_binary || k == mrk_checked || k == mrk_cmp {
       ta = opt_ty(r.a, b, i, loc)
       tb = opt_ty(r.b, b, i, loc)
       if ta < 0 || tb < 0 {
         return -1
       }
       what = "${mop_name(r.op)} of ${tx(ta)} and ${tx(tb)}"
-      if k == mrk_cmp() {
+      if k == mrk_cmp {
         same = ta == tb || (self.ts.is_refkind(ta) && self.ts.is_refkind(tb)) || (self.ts.is_ptr(ta) && self.ts.is_ptr(tb))
         kd = self.ts.kind(ta)
-        ok = same && r.op >= mop_eq() && r.op <= mop_ge() && kd != mk_void() && kd != mk_agg() && kd != mk_addr() && kd != mk_code()
-        return check6(ok, mt_bool(), b, i, loc, what)
+        ok = same && r.op >= mop_eq && r.op <= mop_ge && kd != mk_void && kd != mk_agg && kd != mk_addr && kd != mk_code
+        return check6(ok, mt_bool, b, i, loc, what)
       }
-      ok = ta == tb && r.op >= mop_add() && r.op <= mop_shr()
-      if ok && k == mrk_checked() {
-        ok = self.ts.is_int(ta) && r.op <= mop_rem()
-      } else if ok && r.op <= mop_rem() {
-        ok = self.ts.is_int(ta) || ta == mt_f64()
-      } else if ok && r.op <= mop_xor() {
-        ok = self.ts.is_int(ta) || ta == mt_bool()
+      ok = ta == tb && r.op >= mop_add && r.op <= mop_shr
+      if ok && k == mrk_checked {
+        ok = self.ts.is_int(ta) && r.op <= mop_rem
+      } else if ok && r.op <= mop_rem {
+        ok = self.ts.is_int(ta) || ta == mt_f64
+      } else if ok && r.op <= mop_xor {
+        ok = self.ts.is_int(ta) || ta == mt_bool
       } else if ok {
         ok = self.ts.is_int(ta)
       }
       return check6(ok, ta, b, i, loc, what)
     }
-    if k == mrk_cast() {
+    if k == mrk_cast {
       ta = opt_ty(r.a, b, i, loc)
       if ta < 0 {
         return -1
       }
       return check6(cast_ok(ta, r.ty), r.ty, b, i, loc, "cast of ${tx(ta)} to ${tx(r.ty)}")
     }
-    if k == mrk_addr() || k == mrk_addr_raw() {
+    if k == mrk_addr || k == mrk_addr_raw {
       if p = r.place {
         t = place_ty(p, b, i, loc)
         if t < 0 {
@@ -302,7 +302,7 @@ pub class MVerifier {
         if self.via_ptr {
           return self.ts.ptr_to(t)
         }
-        if k == mrk_addr() {
+        if k == mrk_addr {
           return self.ts.addr_of(t)
         }
         if p.frame_local() {
@@ -326,24 +326,24 @@ pub class MVerifier {
 
   pub fn cast_ok(src: Int, dst: Int): Bool {
     tys = self.ts
-    if tys.is_int(src) && (tys.is_int(dst) || dst == mt_f64()) {
+    if tys.is_int(src) && (tys.is_int(dst) || dst == mt_f64) {
       return true
     }
-    if src == mt_f64() && tys.is_int(dst) {
+    if src == mt_f64 && tys.is_int(dst) {
       return true
     }
     // A Float32 at the C boundary: f64 <-> f32 only.
-    if (src == mt_f64() && tys.is_f32(dst)) || (tys.is_f32(src) && dst == mt_f64()) {
+    if (src == mt_f64 && tys.is_f32(dst)) || (tys.is_f32(src) && dst == mt_f64) {
       return true
     }
-    if src == mt_bool() && tys.is_int(dst) {
+    if src == mt_bool && tys.is_int(dst) {
       return true
     }
     if tys.is_refkind(src) && tys.is_refkind(dst) {
-      return src == mt_ref() || dst == mt_ref()
+      return src == mt_ref || dst == mt_ref
     }
     if tys.is_ptr(src) && tys.is_ptr(dst) {
-      return src == mt_ptr() || dst == mt_ptr()
+      return src == mt_ptr || dst == mt_ptr
     }
     tys.is_refkind(src) && tys.is_ptr(dst)
   }
@@ -351,13 +351,13 @@ pub class MVerifier {
   // struct, union, fnval rvalues.
   fn agg_ty(r: MRvalue, b: Int, i: Int, loc: MLoc): Int {
     lay = self.ts.layout_of(r.ty)
-    if self.ts.kind(r.ty) != mk_agg() || lay < 0 {
+    if self.ts.kind(r.ty) != mk_agg || lay < 0 {
       err(6, b, i, loc, "aggregate rvalue of type ${tx(r.ty)}")
       return -1
     }
     l = self.ts.layouts[lay]
-    if r.kind == mrk_struct() {
-      ok = (l.kind == mlk_struct() || l.kind == mlk_clayout() || l.kind == mlk_record()) && r.ops.size == l.fields.size
+    if r.kind == mrk_struct {
+      ok = (l.kind == mlk_struct || l.kind == mlk_clayout || l.kind == mlk_record) && r.ops.size == l.fields.size
       k = 0
       while ok && k < r.ops.size {
         t = op_ty(r.ops[k], b, i, loc)
@@ -369,12 +369,12 @@ pub class MVerifier {
       }
       return check6(ok, r.ty, b, i, loc, "struct %${l.name}")
     }
-    if r.kind == mrk_union() {
+    if r.kind == mrk_union {
       members = l.fields.size - 1
       if l.nil_tag >= 0 {
         members += 1
       }
-      ok = l.kind == mlk_union() && r.op >= 0 && r.op < members
+      ok = l.kind == mlk_union && r.op >= 0 && r.op < members
       if ok && r.op == l.nil_tag {
         if x = r.a {
           ok = false
@@ -397,7 +397,7 @@ pub class MVerifier {
     if te < 0 || tc < 0 {
       return -1
     }
-    ok = l.kind == mlk_fnval() && l.fields.size == 2 && self.ts.is_refkind(te) && tc == l.fields[1]
+    ok = l.kind == mlk_fnval && l.fields.size == 2 && self.ts.is_refkind(te) && tc == l.fields[1]
     check6(ok, r.ty, b, i, loc, "fnval %${l.name}")
   }
 
@@ -506,7 +506,7 @@ pub class MVerifier {
     st = blk.stmts[j]
     loc = st.loc
     k = st.kind
-    if k == msk_assign() {
+    if k == msk_assign {
       p = self.no_place
       if x = st.place {
         p = x
@@ -526,9 +526,9 @@ pub class MVerifier {
           }
         }
       }
-    } else if k == msk_call() {
+    } else if k == msk_call {
       call_rule(st, b, j)
-    } else if k == msk_barrier() || k == msk_barrier_at() || k == msk_check_bounds() {
+    } else if k == msk_barrier || k == msk_barrier_at || k == msk_check_bounds {
       operand_stmt_rule(st, b, j)
     }
   }
@@ -537,7 +537,7 @@ pub class MVerifier {
   // check.bounds (two i32) operands: typed like rvalue operands (V6).
   fn operand_stmt_rule(st: MStmt, b: Int, j: Int) {
     n = 2
-    if st.kind != msk_check_bounds() {
+    if st.kind != msk_check_bounds {
       n = 1
     }
     if st.args.size != n {
@@ -548,15 +548,15 @@ pub class MVerifier {
     if t0 < 0 {
       return
     }
-    if st.kind == msk_check_bounds() {
+    if st.kind == msk_check_bounds {
       t1 = op_ty(st.args[1], b, j, st.loc)
-      if t1 >= 0 && (t0 != t1 || (t0 != mt_i32() && t0 != mt_i64())) {
+      if t1 >= 0 && (t0 != t1 || (t0 != mt_i32 && t0 != mt_i64)) {
         err(6, b, j, st.loc, "check.bounds of ${tx(t0)} and ${tx(t1)}")
       }
       return
     }
     ok = mir_bare_local(st.args[0]) >= 0
-    if st.kind == msk_barrier() {
+    if st.kind == msk_barrier {
       ok = ok && self.ts.is_refkind(t0)
     } else {
       ok = ok && self.ts.is_addr(t0)
@@ -585,21 +585,21 @@ pub class MVerifier {
       prev = blk.stmts[j - 1]
       pk = prev.kind
       if self.ts.is_refkind(ht) {
-        ok = pk == msk_barrier() && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
+        ok = pk == msk_barrier && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
       } else if self.ts.is_addr(ht) {
-        ok = pk == msk_barrier_at() && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
-        if !ok && pk == msk_call() && prev.dest == h {
+        ok = pk == msk_barrier_at && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
+        if !ok && pk == msk_call && prev.dest == h {
           if e = self.m.ext(prev.callee) {
             ok = e.slot_row
           }
         }
-      } else if self.ts.is_ptr(ht) && pk == msk_call() && prev.callee == "avant_pin" && prev.args.size == 1 {
+      } else if self.ts.is_ptr(ht) && pk == msk_call && prev.callee == "avant_pin" && prev.args.size == 1 {
         if a = r.a {
-          ok = r.kind == mrk_use() && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[0])
+          ok = r.kind == mrk_use && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[0])
         }
-      } else if self.ts.is_ptr(ht) && pk == msk_call() && prev.callee == "avant_pin_field" && prev.args.size == 2 {
+      } else if self.ts.is_ptr(ht) && pk == msk_call && prev.callee == "avant_pin_field" && prev.args.size == 2 {
         if a = r.a {
-          ok = r.kind == mrk_use() && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[1])
+          ok = r.kind == mrk_use && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[1])
         }
       }
     }
@@ -621,7 +621,7 @@ pub class MVerifier {
         return
       }
       lay = self.ts.layout_of(t)
-      if self.ts.kind(t) == mk_agg() && self.ts.layouts[lay].kind == mlk_fnval() && self.ts.layouts[lay].fields.size == 2 {
+      if self.ts.kind(t) == mk_agg && self.ts.layouts[lay].kind == mlk_fnval && self.ts.layouts[lay].fields.size == 2 {
         sig = self.ts.get(self.ts.layouts[lay].fields[1]).sig
         env = 1
       } else {
@@ -630,7 +630,7 @@ pub class MVerifier {
       }
     } else if g = self.m.func(st.callee) {
       sig = g.sig
-      want = g.kind != mfk_leaf()
+      want = g.kind != mfk_leaf
     } else if e = self.m.ext(st.callee) {
       sig = e.sig
       if st.sig >= 0 {
@@ -658,14 +658,14 @@ pub class MVerifier {
           if !self.ts.compat(t, s.params[k + env], false) {
             err(7, b, j, loc, "argument ${k + 1} is ${tx(t)}, the callee takes ${tx(s.params[k + env])}")
           }
-        } else if !(t == mt_i32() || t == mt_u32() || t == mt_i64() || t == mt_u64() || t == mt_f64() || self.ts.is_refkind(t) || self.ts.is_ptr(t)) {
+        } else if !(t == mt_i32 || t == mt_u32 || t == mt_i64 || t == mt_u64 || t == mt_f64 || self.ts.is_refkind(t) || self.ts.is_ptr(t)) {
           err(7, b, j, loc, "variadic argument ${k + 1} of type ${tx(t)}")
         }
       }
     }
     if st.dest >= 0 {
       dt = local_ty(st.dest)
-      if s.ret == mt_void() {
+      if s.ret == mt_void {
         err(7, b, j, loc, "a void call has a destination")
       } else if dt >= 0 && !self.ts.compat(s.ret, dt, true) {
         err(7, b, j, loc, "result ${tx(s.ret)} into _${st.dest} of type ${tx(dt)}")
@@ -680,19 +680,19 @@ pub class MVerifier {
     }
     a0 = st.args[0]
     a1 = st.args[1]
-    if a0.kind != mok_int() || a1.kind != mok_int() {
+    if a0.kind != mok_int || a1.kind != mok_int {
       return
     }
     dt = local_ty(st.dest)
     lay = self.ts.layout_of(dt)
-    if dt < 0 || self.ts.kind(dt) != mk_ref() || lay < 0 {
+    if dt < 0 || self.ts.kind(dt) != mk_ref || lay < 0 {
       return
     }
     l = self.ts.layouts[lay]
     // An element buffer: any whole number of elements, with the
     // buffer's id.
     size_ok = a0.ival == l.size.to_i()
-    if l.kind == mlk_elems() {
+    if l.kind == mlk_elems {
       size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i() == 0) || a0.ival == 0
     }
     if !size_ok || a1.ival != l.type_id.to_i() {
@@ -702,13 +702,13 @@ pub class MVerifier {
 
   // V8.
   fn term_rule(t: MTerm, b: Int) {
-    if t.kind == mtk_branch() || t.kind == mtk_switch() {
+    if t.kind == mtk_branch || t.kind == mtk_switch {
       ct = opt_ty(t.cond, b, -1, t.loc)
       if ct < 0 {
         return
       }
-      if t.kind == mtk_branch() {
-        if ct != mt_bool() || t.targets.size != 2 {
+      if t.kind == mtk_branch {
+        if ct != mt_bool || t.targets.size != 2 {
           err(8, b, -1, t.loc, "branch on ${tx(ct)}")
         }
         return

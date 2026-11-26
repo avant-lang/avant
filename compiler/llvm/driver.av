@@ -20,6 +20,8 @@ import mir.verify_core
 import mir.verify
 import llvm.glue
 import llvm.emit
+import std.fs
+import std.process
 
 pub class LlvmJob {
   pub codegen: String = "debug"
@@ -48,7 +50,7 @@ pub class LlvmJob {
 // them over the whole corpus there. Stage lowered's checks run on every
 // compile (mir/lower.av), and `__emit-ll` verifies at stage final always.
 pub fn llvm_verify_mode: Bool {
-  if v = env_get("AVANT_VERIFY"), v == "1" {
+  if v = process.env("AVANT_VERIFY"), v == "1" {
     return true
   }
   false
@@ -57,11 +59,11 @@ pub fn llvm_verify_mode: Bool {
 // The verifier at stage final: "" or every error in the compiler's
 // diagnostic form (error[V<n>] ... --> file:line:col), one after another.
 pub fn llvm_verify(m: MModule): String {
-  errs = mir_verify_errors(m, mst_final())
+  errs = mir_verify_errors(m, mst_final)
   if errs.size == 0 {
     return ""
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < errs.size {
     if i > 0 {
@@ -69,7 +71,7 @@ pub fn llvm_verify(m: MModule): String {
     }
     r = errs[i].render(m)
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     buf.push_str(r)
     i += 1
@@ -148,7 +150,7 @@ pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
   name = r.name
   r = LlvmText.new()
   if job.keep_ll.size > 0 {
-    if e = write_failure(file_write(job.keep_ll, text)) {
+    if e = write_failure(fs.write(job.keep_ll, text)) {
       return e.message()
     }
   }
@@ -176,7 +178,7 @@ pub fn llvm_emit_ll(box: IrBox, inline_fast: Bool, ll_path: String): String {
   if r.err.size > 0 {
     return r.err
   }
-  if e = write_failure(file_write(ll_path, r.text)) {
+  if e = write_failure(fs.write(ll_path, r.text)) {
     return e.message()
   }
   ""
@@ -209,7 +211,7 @@ pub fn llvm_out_parent(out_path: String): String {
   i = out_path.size - 1
   while i > 0 {
     if out_path[i] == 47 {
-      return str_slice(out_path, 0, i)
+      return out_path[..i]
     }
     i -= 1
   }
@@ -230,10 +232,10 @@ pub fn llvm_hot_script: String {
 
 // pipeline.run_cc with the output to log.
 pub fn llvm_run_cc_out(args: Array(String), log: String): Int {
-  if v = env_get("CC"), file_exists(v) {
+  if v = process.env("CC"), fs.exists(v) {
     return tool_run_out(v, args, log)
   }
-  if file_exists("/usr/bin/cc") {
+  if fs.exists("/usr/bin/cc") {
     return tool_run_out("/usr/bin/cc", args, log)
   }
   wrapped: Array(String) = []
@@ -249,7 +251,7 @@ pub fn llvm_link_resolved(path: String): String {
   for hop in 0..16 {
     t = path_link_target(p)
     if t.size == 0 {
-      if file_exists(p) {
+      if fs.exists(p) {
         return p
       }
       return ""
@@ -290,12 +292,12 @@ pub fn llvm_linker_name_reads(path: String): Int {
 // more with it).
 pub fn llvm_linker_reads_script(flags: Array(String), log: String): Bool {
   probe = false
-  if v = env_get("CC") {
+  if v = process.env("CC") {
     probe = v.size > 0
   }
   for f in flags {
     if f.starts_with("-fuse-ld=") {
-      u = str_slice(f, 9, f.size)
+      u = f[9..f.size]
       if u == "bfd" || u == "lld" {
         return true
       }
@@ -335,7 +337,7 @@ pub fn llvm_linker_reads_script(flags: Array(String), log: String): Bool {
   args.push("-Wl,--version")
   ok = false
   if llvm_run_cc_out(args, log) == 0 {
-    text = file_read(log) ?? ""
+    text = fs.read(log) ?? ""
     // The linker's own version line (cc prints its command lines too;
     // mold's line says it is compatible with GNU ld, so the start of the
     // line decides).
@@ -360,11 +362,7 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   root = avant_root()
   rt = runtime_objects(root)
   args.concat(rt)
-  for o in job.objects {
-    if !is_runtime_tls_object(o) {
-      args.push(o)
-    }
-  }
+  args.concat(job.objects)
   args.push(runtime_tls_object(root))
   extra = job.flags
   line = linker_flags_s(extra)
@@ -382,7 +380,7 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   script = ""
   if llvm_linker_reads_script(flags, "${dir}/linker.txt") {
     script = "${dir}/avant_hot.ld"
-    if e = write_failure(file_write(script, llvm_hot_script())) {
+    if e = write_failure(fs.write(script, llvm_hot_script())) {
       return e.message()
     }
     args.push("-Wl,-T,${script}")

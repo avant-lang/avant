@@ -325,8 +325,8 @@ pub class TypeResolver {
   // A type name that several of the modules a use sees declare: each
   // module, and the qualified spellings that pick one.
   pub fn owners_clash_text(name: String, owners: Array(String)): String {
-    what = buf_new()
-    spell = buf_new()
+    what = Buf.new()
+    spell = Buf.new()
     for i in 0..owners.size {
       if i > 0 {
         if i == owners.size - 1 {
@@ -420,7 +420,7 @@ pub class TypeResolver {
     i = owner.size - 1
     while i >= 0 {
       if owner[i] == 46 {
-        last = str_slice(owner, i + 1, owner.size)
+        last = owner[i + 1..]
         break
       }
       i -= 1
@@ -520,7 +520,7 @@ pub class TypeResolver {
     if have = get_opaque_in(mod_name, name) {
       return
     }
-    opq = ty_named(tyk_opaque(), name)
+    opq = ty_named(tyk_opaque, name)
     opq.mod_name = mod_name
     id = intern(opq)
     self.opaques[type_key(mod_name, name)] = id
@@ -902,7 +902,7 @@ pub class TypeResolver {
   }
 
   pub fn format_app(origin: String, args: Array(Ty)): String {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str(origin)
     buf.push_str("(")
     i = 0
@@ -918,7 +918,7 @@ pub class TypeResolver {
   }
 
   pub fn inst_key(origin: String, args: Array(Ty)): String {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str(origin)
     for arg in args {
       buf.push_str("__")
@@ -1444,7 +1444,7 @@ pub class TypeResolver {
 
   pub fn instantiate_template(tn: TypeName): Ty {
     is_struct = false
-    kind = tyk_class()
+    kind = tyk_class
     params: Array(String) = []
     src_fields: Array(Field) = []
     src_methods: Array(Function) = []
@@ -1453,7 +1453,7 @@ pub class TypeResolver {
     loc = tn.loc
     if sdef = find_struct_template(tn.name, tn.mod_name) {
       is_struct = true
-      kind = tyk_struct()
+      kind = tyk_struct
       params = sdef.type_params
       src_fields = sdef.fields
       src_methods = sdef.methods
@@ -1462,7 +1462,7 @@ pub class TypeResolver {
       loc = sdef.loc
     } else {
       if cdef = find_class_template(tn.name, tn.mod_name) {
-        kind = tyk_class()
+        kind = tyk_class
         params = cdef.type_params
         src_fields = cdef.fields
         src_methods = cdef.methods
@@ -1775,7 +1775,7 @@ pub fn c_field_ok(ty: Ty): Bool {
 // error.
 pub fn clayout_count(resolver: TypeResolver, cx: Expr, mod_name: String): Int {
   lit = cx
-  if cx.kind == ex_name() {
+  if cx.kind == ex_name {
     found = false
     if p = resolver.program {
       for cd in p.consts {
@@ -1790,7 +1790,7 @@ pub fn clayout_count(resolver: TypeResolver, cx: Expr, mod_name: String): Int {
       return 0
     }
   }
-  if lit.kind != ex_int() {
+  if lit.kind != ex_int {
     resolver.fail(cx.loc, "a C array's length is an integer literal or a module constant whose value is one")
     return 0
   }
@@ -1920,10 +1920,10 @@ pub fn load_types(program: Program): TypeResolver {
     if sdef.type_params.size > 0 {
       resolver.check_type_params(sdef.loc, sdef.name, sdef.type_params)
     }
-    sty = ty_named(tyk_struct(), sdef.name)
+    sty = ty_named(tyk_struct, sdef.name)
     if decl = sdef.enum_of {
       // An enum: its own type kind, with its members.
-      sty = ty_named(tyk_enum(), sdef.name)
+      sty = ty_named(tyk_enum, sdef.name)
       info = TyEnum.new()
       info.names = decl.names
       info.vals = decl.vals
@@ -1948,7 +1948,7 @@ pub fn load_types(program: Program): TypeResolver {
     if cdef.type_params.size > 0 {
       resolver.check_type_params(cdef.loc, cdef.name, cdef.type_params)
     }
-    cty = ty_named(tyk_class(), cdef.name)
+    cty = ty_named(tyk_class, cdef.name)
     cty.error_mark = error_opted(cdef.opt_ins)
     if cdef.type_params.size > 0 {
       cty.template = true
@@ -1967,7 +1967,7 @@ pub fn load_types(program: Program): TypeResolver {
     if idef.type_params.size > 0 {
       resolver.check_type_params(idef.loc, idef.name, idef.type_params)
     }
-    ity = ty_named(tyk_iface(), idef.name)
+    ity = ty_named(tyk_iface, idef.name)
     if idef.type_params.size > 0 {
       ity.template = true
     }
@@ -1979,7 +1979,7 @@ pub fn load_types(program: Program): TypeResolver {
         resolver.fail(lay.loc, "${lay.name} is already defined")
         continue
       }
-      resolver.bind_type(lib_def.mod_name, lay.name, ty_named(tyk_clayout(), lay.name))
+      resolver.bind_type(lib_def.mod_name, lay.name, ty_named(tyk_clayout, lay.name))
     }
   }
   for lib_def in program.libs {

@@ -133,9 +133,9 @@ pub class ReceiverWrites {
 
   fn stmt_writes(st: Stmt): Bool {
     hit = false
-    if st.kind == st_assign() {
+    if st.kind == st_assign {
       if t = st.target {
-        if rw_self_place(t, self.recv) && t.kind != ex_name() {
+        if rw_self_place(t, self.recv) && t.kind != ex_name {
           hit = true
         }
         if self.expr_writes(t) {
@@ -162,16 +162,16 @@ pub class ReceiverWrites {
   // Whether e (or a node inside it) writes self; the calls on self's
   // places are noted for writes.
   fn expr_writes(e: Expr): Bool {
-    if e.kind == ex_lambda() {
+    if e.kind == ex_lambda {
       return false
     }
     hit = false
-    if e.kind == ex_call() && e.resolved.size > 0 {
+    if e.kind == ex_call && e.resolved.size > 0 {
       if r = e.receiver, rt = r.ty, rt.is_struct(), rw_self_place(r, self.recv) {
         self.calls.push(e.resolved)
       }
     }
-    if e.kind == ex_field() && e.method_call && e.resolved.size > 0 {
+    if e.kind == ex_field && e.method_call && e.resolved.size > 0 {
       if o = e.object, ot = o.ty, ot.is_struct(), rw_self_place(o, self.recv) {
         self.calls.push(e.resolved)
       }
@@ -226,28 +226,28 @@ pub class ReceiverWrites {
 // implicit field `pos`).
 pub fn rw_self_place(e: Expr, recv: String): Bool {
   x = e
-  while x.kind == ex_field() && !x.method_call {
+  while x.kind == ex_field && !x.method_call {
     if o = x.object, ot = o.ty, ot.is_struct() {
       x = o
     } else {
       return false
     }
   }
-  x.kind == ex_name() && (x.ident == recv || x.implicit_field)
+  x.kind == ex_name && (x.ident == recv || x.implicit_field)
 }
 
 // Whether e is a place inside an Array's element through struct fields
 // only (`xs[i]`, `xs[i].pos`): a write there changes the array's buffer.
 pub fn rw_element_place(e: Expr): Bool {
   x = e
-  while x.kind == ex_field() && !x.method_call {
+  while x.kind == ex_field && !x.method_call {
     if o = x.object, ot = o.ty, ot.is_struct() {
       x = o
     } else {
       return false
     }
   }
-  if x.kind == ex_index() {
+  if x.kind == ex_index {
     if l = x.left, lt = l.ty {
       return lt.is_array()
     }
@@ -259,14 +259,14 @@ pub fn rw_element_place(e: Expr): Bool {
 // `xs[i].pos`, `a.bs[0].cs[j]`: the innermost index), or nil.
 pub fn rw_element_array(e: Expr): Ty? {
   x = e
-  while x.kind == ex_field() && !x.method_call {
+  while x.kind == ex_field && !x.method_call {
     if o = x.object, ot = o.ty, ot.is_struct() {
       x = o
     } else {
       return nil
     }
   }
-  if x.kind == ex_index() {
+  if x.kind == ex_index {
     if l = x.left, lt = l.ty, lt.is_array() {
       return lt
     }

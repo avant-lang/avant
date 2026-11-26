@@ -385,7 +385,6 @@ char *avant_zlib_uncompress(const char *s);
 avant_int avant_zlib_compress_into(const char *s, void *buf);
 avant_int avant_zlib_uncompress_into(const char *s, void *buf);
 avant_int avant_zlib_take_status(void);
-char *avant_sha256(const char *s);
 
 void *avant_re_compile(const char *pat, int32_t flags);
 int32_t avant_re_find(void *re, const char *s, int32_t from);
