@@ -1151,23 +1151,38 @@ int64_t crash_abort(void) {
  * child. crash_fork_hold registers a fork handler that runs in the parent
  * after each fork, before fork returns to the runtime: the child exists
  * and the runtime has not yet recorded its pid. The handler counts itself
- * (crash_fork_held), waits natively for crash_fork_go (twenty seconds at
- * most), then a second more, and returns; the program crashes right after
- * crash_fork_go, so the crash comes while each starting thread is held
- * there. */
+ * (crash_fork_held) and waits natively for crash_fork_go (twenty seconds
+ * at most); it then leaves native, says it is ready, stays a while
+ * longer (crash_fork_stay) and returns. crash_fork_go waits, in C, until
+ * both handlers are ready, and the program crashes as soon as it returns:
+ * from the go to the crash no thread allocates, so no collection is
+ * requested while a handler leaves native (a handler that left native
+ * while a collection waited for the crashing thread would never return,
+ * and its child would be recorded after the program ended). A crash in a
+ * task comes from crash_fork_null_on_fire, which the task calls before
+ * the go: it waits natively for crash_fork_fire, leaves native and
+ * writes through a null pointer; the main thread then waits natively in
+ * crash_fork_wait until the process ends. */
 static volatile int crash_fork_n;
+static volatile int crash_fork_ready_n;
 static volatile int crash_fork_go_flag;
-static void crash_fork_parent(void) {
-  struct timespec tick = {0, 1000 * 1000};
-  struct timespec more = {1, 0};
+static volatile int crash_fork_fire_flag;
+static volatile int crash_fork_armed_flag;
+static const struct timespec crash_fork_tick = {0, 1000 * 1000};
+static const struct timespec crash_fork_stay = {0, 500 * 1000 * 1000};
+static void crash_fork_until(volatile int *flag, int want) {
   int i;
+  for (i = 0; i < 20000 && __atomic_load_n(flag, __ATOMIC_SEQ_CST) < want; i++) {
+    nanosleep(&crash_fork_tick, NULL);
+  }
+}
+static void crash_fork_parent(void) {
   avant_gc_native_begin();
   __atomic_add_fetch(&crash_fork_n, 1, __ATOMIC_SEQ_CST);
-  for (i = 0; i < 20000 && !__atomic_load_n(&crash_fork_go_flag, __ATOMIC_SEQ_CST); i++) {
-    nanosleep(&tick, NULL);
-  }
-  nanosleep(&more, NULL);
+  crash_fork_until(&crash_fork_go_flag, 1);
   avant_gc_native_end();
+  __atomic_add_fetch(&crash_fork_ready_n, 1, __ATOMIC_SEQ_CST);
+  nanosleep(&crash_fork_stay, NULL);
 }
 int64_t crash_fork_hold(void) {
   return pthread_atfork(NULL, crash_fork_parent, NULL);
@@ -1177,6 +1192,27 @@ int64_t crash_fork_held(void) {
 }
 int64_t crash_fork_go(void) {
   __atomic_store_n(&crash_fork_go_flag, 1, __ATOMIC_SEQ_CST);
+  crash_fork_until(&crash_fork_ready_n, 2);
+  return 0;
+}
+int64_t crash_fork_null_on_fire(void) {
+  avant_gc_native_begin();
+  __atomic_store_n(&crash_fork_armed_flag, 1, __ATOMIC_SEQ_CST);
+  crash_fork_until(&crash_fork_fire_flag, 1);
+  avant_gc_native_end();
+  return crash_write_null(0);
+}
+int64_t crash_fork_armed(void) {
+  return __atomic_load_n(&crash_fork_armed_flag, __ATOMIC_SEQ_CST);
+}
+int64_t crash_fork_fire(void) {
+  __atomic_store_n(&crash_fork_fire_flag, 1, __ATOMIC_SEQ_CST);
+  return 0;
+}
+int64_t crash_fork_wait(void) {
+  avant_gc_native_begin();
+  crash_fork_until(&crash_fork_go_flag, 2);
+  avant_gc_native_end();
   return 0;
 }
 int64_t crash_bus(void) {

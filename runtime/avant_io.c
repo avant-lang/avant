@@ -1596,15 +1596,17 @@ static void tmp_finish(void) {
  * calls only. It first marks the program as stopping, so no thread
  * starts a child after the slots are read, then reads the waited pids
  * and the jobs once, before the first kill; a slot or a job another
- * thread is starting a child for (WAIT_STARTING) is waited for, about two
- * seconds at most, until it holds the pid (that thread has the handler's
- * signals blocked and is between its fork and its next store). */
-static pid_t start_settled(volatile pid_t *at) {
+ * thread is starting a child for (WAIT_STARTING) is waited for until it
+ * holds the pid (that thread has the handler's signals blocked and is
+ * between its fork and its next store): about two seconds at most for
+ * all such slots together, so a crash with many tasks starting children
+ * ends as soon as one with a single task does. */
+static pid_t start_settled(volatile pid_t *at, int *rounds) {
   struct timespec pause = {0, 1000 * 1000};
-  int round;
   pid_t p = __atomic_load_n(at, __ATOMIC_SEQ_CST);
-  for (round = 0; p == WAIT_STARTING && round < 2000; round++) {
+  while (p == WAIT_STARTING && *rounds < 2000) {
     nanosleep(&pause, NULL);
+    (*rounds)++;
     p = __atomic_load_n(at, __ATOMIC_SEQ_CST);
   }
   return p;
@@ -1620,12 +1622,13 @@ static void tmp_stop_children(void) {
   int32_t hi;
   int32_t nj;
   int round;
+  int settle = 0;
   __atomic_store_n(&g_stopping, 1, __ATOMIC_SEQ_CST);
   hi = __atomic_load_n(&g_waits_hi, __ATOMIC_SEQ_CST);
   for (i = 0; i < hi && i < WAIT_MAX; i++) {
     pid_t p = __atomic_load_n(&g_waits[i], __ATOMIC_SEQ_CST);
     if (p == WAIT_STARTING && i != t_wait_slot) {
-      p = start_settled(&g_waits[i]);
+      p = start_settled(&g_waits[i], &settle);
     }
     if (p > 0) {
       kids[nk++] = p;
@@ -1633,7 +1636,7 @@ static void tmp_stop_children(void) {
   }
   nj = __atomic_load_n(&g_njobs, __ATOMIC_SEQ_CST);
   for (i = 0; i < nj && i < JOB_MAX; i++) {
-    pid_t p = t_job_starting ? __atomic_load_n(&g_jobs[i], __ATOMIC_SEQ_CST) : start_settled(&g_jobs[i]);
+    pid_t p = t_job_starting ? __atomic_load_n(&g_jobs[i], __ATOMIC_SEQ_CST) : start_settled(&g_jobs[i], &settle);
     if (p > 0) {
       jobs[n++] = p;
     }
