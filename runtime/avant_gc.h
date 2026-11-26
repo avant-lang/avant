@@ -202,7 +202,6 @@
  *                                                  from its own pool)
  *     copy_str (avant_json.c)                      C
  *     base64 encode/decode, zlib                   C
- *     sha256 (avant_codec.c)                       N (digest in C)
  *     avant_argv, avant_sys_list                   C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)

@@ -1278,17 +1278,15 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 
 // The builtins of the old back end that need no FFI and are neither
 // string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
-// `argv`, `file_exists`, `env_get`, `sha256` (the compiler's own
-// sources only); nil when c is not one of them.
+// `argv`, `file_exists`, `env_get` (the compiler's own sources only);
+// nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   if c == "env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
   }
   f = ""
-  if c == "sha256" && e.args.size == 1 && e.resolved.size == 0 {
-    f = "avant_sha256"
-  } else if c == "#gc.collect" && e.args.size == 0 {
+  if c == "#gc.collect" && e.args.size == 0 {
     // std.gc's `gc.collect()` (checker/visibility.av check_gc_call): the
     // runtime's complete collection.
     f = "avant_gc_collect"

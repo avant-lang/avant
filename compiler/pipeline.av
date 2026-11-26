@@ -32,6 +32,7 @@ import mir.lower_sort
 import mir.lower_ffi
 import mir.lower_task
 import mir.lower_cov
+import std.digest
 
 pub class IrBox {
   pub ok: Bool = false
@@ -340,8 +341,6 @@ pub fn runtime_object_names: Array(String) {
   names.push("avant_hash.o")
   names.push("avant_array.o")
   names.push("avant_task.o")
-  names.push("avant_wide.o")
-  names.push("avant_codec.o")
   names.push("avant_io.o")
   names.push("avant_cov.o")
   names
@@ -364,13 +363,6 @@ pub fn runtime_objects(root: String): Array(String) {
 // linker.
 pub fn runtime_tls_object(root: String): String {
   "${root}/runtime/build/avant_tls.o"
-}
-
-// Whether a link argument names a runtime's avant_tls.o (an older compiler
-// is handed it as an object: tools/letters.sh's B), which the link then
-// places last itself instead of linking it twice.
-pub fn is_runtime_tls_object(path: String): Bool {
-  path == "runtime/build/avant_tls.o" || path.ends_with("/runtime/build/avant_tls.o")
 }
 
 pub fn linker_flags_s(extra: Array(String)): String {
@@ -818,7 +810,7 @@ pub fn pkg_c_headers(unit: PkgCUnit): String {
     for n in names {
       if n.ends_with(".h") {
         text = file_read(join_dir(full, n)) ?? ""
-        b.push_str("${d}/${n} ${sha256(text)}\n")
+        b.push_str("${d}/${n} ${digest.sha256_hex(text.bytes)}\n")
       }
     }
   }
@@ -842,14 +834,14 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
     for src in unit.sources {
       full = join_dir(unit.dir, src)
       if text = file_read(full) {
-        key_text.push_str("source ${src} ${sha256(text)}\n")
+        key_text.push_str("source ${src} ${digest.sha256_hex(text.bytes)}\n")
       } else {
         diag_puts("package ${unit.name}: its C source ${src} is missing (${full})")
         return false
       }
     }
     key_text.push_str(pkg_c_headers(unit))
-    key = sha256(key_text.to_s())
+    key = digest.sha256_hex(key_text.to_s().bytes)
     cache = avant_cache_dir()
     dest = ""
     if cache.size > 0 {
