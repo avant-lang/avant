@@ -23,7 +23,16 @@
 #     or slow in turn, the base slow first and the head fast first) leaves the rotation after round 2 of 4, and is
 #     named; a task whose head is far slower runs every round;
 #   stop-exempt: --stop-exempt keeps the meeting task every round;
-#   stop-needs-two: --stop-settled with one side is refused.
+#   stop-needs-two: --stop-settled with one side is refused;
+#   hold-longest-first: tools/hold.py on two nodes, unpinned, takes the
+#     chunks longest first as nodes come free (by the plan's lengths), runs
+#     each with LEDGER_NODE set, and logs each in the walls form;
+#   hold-after: the after steps run once every chunk has ended, logged
+#     node=all;
+#   hold-walls: an earlier walls file's lengths win over the plan's;
+#   hold-fail: a chunk that fails makes the hold exit 1, and the others
+#     still run;
+#   hold-usage: a plan line of another form is refused.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/measure-method.sh WORK" >&2; exit 2; }
@@ -117,4 +126,33 @@ say stop-exempt $? "rc=$rc meets $(cat "$lp/base.meets" 2>/dev/null | wc -l)"
 $R langarena --rounds 2 --run-js "$lp/run.js" --out "$lp/one" --side base="$lp/base" --layouts 0 --allow-governor --stop-settled < /dev/null > "$lp/one.log" 2>&1; rc=$?
 [ $rc -ne 0 ] && grep -q 'stop-settled needs two sides' "$lp/one.log"
 say stop-needs-two $? "rc=$rc $(cat "$lp/one.log")"
+# 3. The hold.
+h=$w/hold; mkdir -p "$h"
+cat > "$h/plan" <<PLAN
+# two nodes, four chunks and one step after them
+chunk a 0.1 -- echo "start a \$LEDGER_NODE" >> $h/order; sleep 0.1
+chunk b 0.4 -- echo "start b \$LEDGER_NODE" >> $h/order; sleep 0.4
+chunk c 0.2 -- echo "start c \$LEDGER_NODE" >> $h/order; sleep 0.2
+chunk d 0.3 -- echo "start d \$LEDGER_NODE" >> $h/order; sleep 0.3
+after t16 -- echo "after \${LEDGER_NODE:-none}" >> $h/order
+PLAN
+python3 -I -B "$root/tools/hold.py" "$h/plan" --nodes 0,1 --pin none --log "$h/walls" < /dev/null > "$h/log" 2>&1; rc=$?
+first=$(head -2 "$h/order" | awk '{ print $2 }' | sort | tr '\n' ' ')
+[ $rc -eq 0 ] && [ "$first" = "b d " ] && [ "$(sed -n 3p "$h/order" | awk '{ print $2 }')" = c ] && [ "$(sed -n 4p "$h/order" | awk '{ print $2 }')" = a ] \
+  && [ "$(grep -c ' node=[01] wall=[0-9]*s rc=0$' "$h/walls")" = 4 ] && grep -q '^start [ab] [01]$' "$h/order"
+say hold-longest-first $? "rc=$rc order $(tr '\n' ';' < "$h/order") walls $(tr '\n' ';' < "$h/walls")"
+[ "$(tail -1 "$h/order")" = "after none" ] && grep -q '^t16 node=all wall=0s rc=0$' "$h/walls"
+say hold-after $? "$(tail -1 "$h/order"); $(grep t16 "$h/walls")"
+printf 'layouts a node=2 wall=900s rc=0\nb node=1 wall=0s rc=0\n' > "$h/prev"
+python3 -I -B "$root/tools/hold.py" "$h/plan" --walls "$h/prev" --dry-run < /dev/null > "$h/dry" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ "$(head -1 "$h/dry")" = "a	900	walls" ] && [ "$(sed -n 2p "$h/dry" | cut -f1,3)" = "d	plan" ] && grep -q '^b	0	walls$' "$h/dry" && grep -q '^estimate: ' "$h/dry"
+say hold-walls $? "rc=$rc $(tr '\n' ';' < "$h/dry")"
+printf 'chunk ok -- echo ran >> %s/ran\nchunk bad -- exit 3\nafter post -- echo post >> %s/ran\n' "$h" "$h" > "$h/plan2"
+python3 -I -B "$root/tools/hold.py" "$h/plan2" --nodes 0 --pin none --log "$h/walls2" < /dev/null > "$h/log2" 2>&1; rc=$?
+[ $rc -eq 1 ] && [ "$(cat "$h/ran" | tr '\n' ' ')" = "ran post " ] && grep -q '^bad node=0 wall=0s rc=3$' "$h/walls2" && grep -q 'not 0: bad' "$h/log2"
+say hold-fail $? "rc=$rc $(cat "$h/ran" 2>/dev/null | tr '\n' ' '); $(cat "$h/log2")"
+printf 'chunk x 0.1 echo no separator\n' > "$h/plan3"
+python3 -I -B "$root/tools/hold.py" "$h/plan3" --pin none < /dev/null > "$h/log3" 2>&1; rc=$?
+[ $rc -eq 2 ] && grep -q 'plan3:1: not ' "$h/log3"
+say hold-usage $? "rc=$rc $(cat "$h/log3")"
 echo done
