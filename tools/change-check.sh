@@ -72,6 +72,28 @@
 #             once, about 17 minutes a pass for one program alone).
 #             CC_SEEDS=N forces N seeds (1 to 12) on every commit, CC_SEEDS=0
 #             seed 0 alone; cache.txt says which commits
+#   static    the gate's checks that take seconds, with the commit's own
+#             tools and C' (tools/gate.sh runs them all again): no tracked
+#             file names a planning-note identifier (tools/no-ledger-refs.sh),
+#             the runtime-C rooting lint (tools/gc-lint.sh), every source
+#             canonical for `avant format` (tools/format-check.sh, with the
+#             gate's FORMAT_SKIP), and, when the commit changes a .md file,
+#             the links of README.md, CONTRIBUTING.md, DESIGN.md and
+#             BENCHMARKS.md (tools/readme-links.sh); the cell reads `ok`, or
+#             `RED:` with each red check's last line (OUT/NN-SHORT/
+#             static-*.log), and a red one makes the status 1. A check the
+#             commit's tree does not have is left out, `-` when none is
+#
+# A green row (its tests, counts and static checks green) is kept in the
+# base cache entry's rows/ (CC_ROWS names another directory), keyed by every
+# input it is a function of: the commit's and its parent's trees, the tree
+# the work tree's C' was built from, the state it starts from (the corpus,
+# LangArena and count tables), the seeds, the test map, the seed compiler,
+# bin/re2c and this script and the tools it runs. A later run whose row has
+# the same key takes it, the Time cell reading `reused` and cache.txt naming
+# the run that computed it: the same inputs give the same row, and running
+# a green row's tests again would only test for flakiness. CC_REUSE=0
+# computes every row.
 #
 # One line per commit in OUT/table.md (and on stdout), the details in
 # OUT/NN-SHORT/ (changed.txt, tests.txt and the suite's log, corpus.txt and
@@ -80,7 +102,9 @@
 # when missing: its C', its corpus digests, its LangArena digests and
 # counts); every later commit is compared with the one before it, from
 # what this run computed. What did not change is reused: C' is rebuilt only
-# when compiler/, lib/ or runtime/ (or the build's own scripts) changed,
+# when compiler/, lib/ or runtime/ (or the build's own scripts) changed, the
+# runtime's objects only when runtime/ (or tools/bind.c, tools/build-llvm.sh)
+# did,
 # and then every program is compiled again; otherwise only the corpus
 # programs the commit changed are. A count is deterministic for a binary,
 # so a program whose .ll did not move keeps its count.
@@ -102,6 +126,31 @@
 # Status 0 when every commit's tests passed and every counted program kept
 # its output, 1 otherwise, 2 on a usage error.
 set -u
+
+# --static WORK DIR: the static column of one commit, run in its work tree
+# (one shared run through the runner); prints `ok`, `-` or `RED: ...`.
+if [ "${1:-}" = --static ]; then
+  work=$2 d=$3 red="" ran=0
+  one() { # NAME CMD...: CMD in the work tree, its output in DIR/static-NAME.log
+    n=$1; shift; ran=1
+    (cd "$work" && "$@") < /dev/null > "$d/static-$n.log" 2>&1 || red="$red${red:+; }$n: $(tail -n 1 "$d/static-$n.log" | cut -c1-160)"
+  }
+  [ -f "$work/tools/no-ledger-refs.sh" ] && one no-ledger-refs sh tools/no-ledger-refs.sh
+  [ -f "$work/tools/gc-lint.sh" ] && one gc-lint sh tools/gc-lint.sh
+  if [ -f "$work/tools/format-check.sh" ] && [ -x "$work/bin/avant-c-llvm" ]; then
+    fskip=$(sed -n 's/^FORMAT_SKIP="\(.*\)"$/\1/p' "$work/tools/gate.sh" 2> /dev/null | head -n 1)
+    # shellcheck disable=SC2086
+    one format env -u AVANT_BACKEND AVANT_COMPILER="$work/bin/avant-c-llvm" sh tools/format-check.sh $fskip
+  fi
+  if [ -f "$work/tools/readme-links.sh" ] && grep -q '\.md$' "$d/changed.txt"; then
+    for m in README.md CONTRIBUTING.md DESIGN.md BENCHMARKS.md; do
+      [ -f "$work/$m" ] && one "links $m" sh tools/readme-links.sh "$m"
+    done
+  fi
+  if [ -n "$red" ]; then echo "RED: $red"; exit 1; fi
+  [ $ran = 1 ] && echo ok || echo -
+  exit 0
+fi
 
 [ $# -eq 3 ] || { sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
@@ -194,6 +243,12 @@ fi
 if [ -n "$tmap" ] && [ -f "$tmap/COMPLETE" ]; then echo "test map: $tmap (tree $(sed -n 's/^tree: //p' "$tmap/MANIFEST"))" >> "$out/cache.txt"
 else tmap=""; echo "test map: $tmwhy" >> "$out/cache.txt"; fi
 cp "$blap/ll.tsv" "$out/state/la.tsv"
+# The green rows of earlier runs from this base (OUT/../ of any run): in the
+# base cache entry, beside what the entry holds; CC_ROWS names another
+# directory, CC_REUSE=0 computes every row.
+rows=${CC_ROWS:-$e/rows}
+mkdir -p "$rows" 2> /dev/null || rows=$out/rows-local
+mkdir -p "$rows"
 cp "$blap/ins.tsv" "$out/state/ins.tsv"
 
 # The work tree, its seed and re2c as this checkout's.
@@ -202,6 +257,7 @@ git worktree add -q --detach "$work" "$first^" > /dev/null 2>> "$log" < /dev/nul
 cleanup() { git -C "$root" worktree remove --force "$work" > /dev/null 2>&1; rm -rf "$out/work"; }
 trap 'cleanup; exit 130' INT TERM HUP
 seed=$(sed -n 's/^default_seed=//p' tools/letters.sh | head -n 1); seed=${seed%/}
+seed_abs=$seed; case "$seed" in /*) ;; *) seed_abs=$root/$seed ;; esac
 mkdir -p "$work/bin"
 case "$seed" in /*|"") ;; *) [ -e "$root/$seed" ] && mkdir -p "$work/$(dirname "$seed")" && ln -s "$(realpath "$root/$seed")" "$work/$seed" ;; esac
 [ -f bin/re2c ] && cp bin/re2c "$work/bin/re2c"
@@ -213,7 +269,10 @@ for x in avant-b avant-c-llvm; do
   cp -a "$e/avant/bin/$x" "$work/bin/$x"
   sed "s#^lib: .*#lib: $(cd "$work" && pwd -P)/lib#" "$e/avant/bin/$x.versions.txt" > "$work/bin/$x.versions.txt"
 done
-ptree=$(git rev-parse "$first^^{tree}")
+ptree=$(git rev-parse "$first^^{tree}"); pcommit=$(git rev-parse "$first^")
+# vtree, vcommit: the build the rows so far left (ptree, pcommit, the work
+# tree's actual C', fall behind it after a reused row).
+vtree=$ptree; vcommit=$pcommit
 
 touched() { # the changed paths on stdin -> test files of the work tree
   while IFS= read -r p; do
@@ -251,7 +310,7 @@ touched() { # the changed paths on stdin -> test files of the work tree
   done | grep -E '^tests/cases/test_[^/]*\.av$' | LC_ALL=C sort -u
 }
 
-printf '| Commit | Subject | Files | C'"'"' | Tests | Corpus moved | LangArena moved | Instructions (new/old) | Time |\n| --- | --- | ---: | --- | --- | --- | --- | --- | ---: |\n' > "$out/table.md"
+printf '| Commit | Subject | Files | C'"'"' | Tests | Corpus moved | LangArena moved | Instructions (new/old) | Static | Time |\n| --- | --- | ---: | --- | --- | --- | --- | --- | --- | ---: |\n' > "$out/table.md"
 i=0
 for c in $commits; do
   i=$((i + 1)); t0=$(now)
@@ -265,6 +324,33 @@ for c in $commits; do
   elif [ -n "$(git diff --name-only "$c^" "$c" -- $hash_files)" ]; then seeds=12
   else seeds=0; fi
   seedenv=""; [ "$seeds" -gt 0 ] && seedenv="env LA_SEEDS=$seeds"
+  rowbad=0
+  # A green row of identical inputs is reused (rows/ above): the key holds
+  # the commit's and its parent's trees, the tree the work tree's C' was
+  # built from, the state the row starts from, the seeds, the test map, the
+  # seed compiler and the tools that compute it.
+  ctree=$(git rev-parse "$c^{tree}")
+  rkey=$({ echo "change-check row 1"; echo "$ctree"; git rev-parse "$c^^{tree}"; echo "$vtree"; echo "seeds $seeds"
+    echo "map ${tmap:-none} $(sed -n 's/^tree: //p' "${tmap:-/nonexistent}/MANIFEST" 2> /dev/null)"; echo "la $lap $blap"
+    cat "$out/state/corpus.tsv" "$out/state/la.tsv" "$out/state/ins.tsv" | sha256sum
+    for x in change-check.sh la-count.sh ll-digests.sh test-map.sh la-run.c letters.sh; do sha256sum < "$here/$x" 2> /dev/null; done
+    sha256sum < "$seed_abs/avant" 2> /dev/null; sha256sum < "$root/bin/re2c" 2> /dev/null; } | sha256sum | cut -c1-64)
+  if [ "${CC_REUSE:-1}" != 0 ] && [ -f "$rows/$rkey/row.txt" ] && [ -f "$rows/$rkey/after.txt" ] && [ -d "$rows/$rkey/state" ]; then
+    cp -a "$rows/$rkey/d/." "$d/" && cp "$rows/$rkey/state/"*.tsv "$out/state/" && read -r vtree vcommit < "$rows/$rkey/after.txt" || { echo "change-check.sh: the reused row $rkey could not be read" >&2; cleanup; exit 1; }
+    line="$(cat "$rows/$rkey/row.txt") reused |"
+    echo "row $short: reused ($rows/$rkey, first computed by $(cat "$rows/$rkey/from.txt" 2> /dev/null))" >> "$out/cache.txt"
+    echo "$line" >> "$out/table.md"
+    echo "$line"
+    continue
+  fi
+  # After reused rows the work tree's C' is older than the build those rows
+  # left: built now from that commit, so this row starts where it did.
+  if [ "$ptree" != "$vtree" ]; then
+    git -C "$work" checkout -q --detach "$vcommit" < /dev/null 2>> "$log" || { echo "change-check.sh: checkout of $vcommit failed" >&2; cleanup; exit 1; }
+    rn "$short previous build" sh -c 'cd "$1" && exec timeout -k 10 1500 sh tools/letters.sh runtime b c-llvm' cc-build "$work" < /dev/null > "$d/letters-previous.log" 2>&1 \
+      || { echo "| $short | $subj | $(wc -l < "$d/changed.txt") | build failed (the reused rows' last build) | | | | | | |" >> "$out/table.md"; bad=1; break; }
+    ptree=$vtree; pcommit=$vcommit
+  fi
   # Under seeds the commit before is counted again under the same seeds, now,
   # while the work tree still holds its C' (the rebuild for this commit
   # overwrites it): every program of the harness, as the commit may move any
@@ -277,11 +363,16 @@ for c in $commits; do
   fi
   git -C "$work" checkout -q --detach "$c" < /dev/null 2>> "$log" || { echo "change-check.sh: checkout of $c failed" >&2; cleanup; exit 1; }
   # Rebuild when the compiler's inputs changed since the letters in bin/.
-  ctree=$(git rev-parse "$c^{tree}")
   if [ -n "$(git diff --name-only "$ptree" "$ctree" -- compiler lib runtime tools/letters.sh tools/build-llvm.sh)" ]; then
     rebuilt=yes
-    rn "$short build" sh -c 'cd "$1" && exec timeout -k 10 1500 sh tools/letters.sh runtime b c-llvm' cc-build "$work" < /dev/null > "$d/letters.log" 2>&1 || { echo "| $short | $subj | $(wc -l < "$d/changed.txt") | build failed | | | | | |" >> "$out/table.md"; bad=1; break; }
-    ptree=$ctree
+    # The runtime's objects in the work tree are those of the last build's
+    # sources: built again only when runtime/ (or the helpers its build
+    # runs) changed since, so a compiler-only commit builds B and C' alone.
+    rsteps="b c-llvm"
+    [ -n "$(git diff --name-only "$ptree" "$ctree" -- runtime tools/bind.c tools/build-llvm.sh)" ] && rsteps="runtime b c-llvm"
+    echo "letters: $rsteps" > "$d/letters.log"
+    rn "$short build" sh -c 'cd "$1" && shift && exec timeout -k 10 1500 sh tools/letters.sh "$@"' cc-build "$work" $rsteps < /dev/null >> "$d/letters.log" 2>&1 || { echo "| $short | $subj | $(wc -l < "$d/changed.txt") | build failed | | | | | | |" >> "$out/table.md"; bad=1; break; }
+    ptree=$ctree; pcommit=$c
   else rebuilt=no; fi
   runtime_moved=no
   grep -q '^runtime/' "$d/changed.txt" && runtime_moved=yes
@@ -342,7 +433,7 @@ for c in $commits; do
         o = (!($1 in n) || $3 == m[$1] || n[$1] == "compile-failed") ? "" : " OUTPUT CHANGED"
         s = s (s == "" ? "" : ", ") $1 " " r sr[$1] o }
       END { print s }' "$d/seed-ranges.tsv" "$d/old-ins.tsv" "$d/ins.tsv")
-    grep -q 'OUTPUT CHANGED\| ?' <<EOF && bad=1
+    grep -q 'OUTPUT CHANGED\| ?' <<EOF && rowbad=1
 $ins
 EOF
     # The state moves to this commit's counts, always at seed 0: the counts
@@ -375,16 +466,30 @@ EOF
     sn() { if [ -s "$1" ]; then sed 's#tests/cases/##; s#\.av$##' "$1" | tr '\n' ' ' | sed 's/ $//'; else echo -; fi; }
     tests="$(grep -E '^[0-9]+ failed, [0-9]+ passed' "$d/tests.log" | tail -n 1): $(sn "$d/tests-name.txt")"
     [ -n "$tmap" ] && tests="$tests; by the map, $(wc -l < "$d/tests-map.txt") ($(wc -l < "$d/tests-maponly.txt") more): $(sn "$d/tests-maponly.txt")"
-    [ $trc -eq 0 ] || { bad=1; tests="FAILED (rc=$trc) $tests"; }
+    [ $trc -eq 0 ] || { rowbad=1; tests="FAILED (rc=$trc) $tests"; }
   fi
   names() { # FILE: "N: a, b" (at most 6 names)
     n=$(wc -l < "$1")
     if [ "$n" -eq 0 ]; then echo 0; else echo "$n: $(head -n 6 "$1" | sed 's/^changed .*) //; s/^[^ ]* //; s/^[^ ]*->[^ ]* //' | tr '\n' ',' | sed 's/,$//; s/,/, /g')$([ "$n" -gt 6 ] && echo ", ...")"; fi
   }
+  # The gate's static checks (above), with this commit's tools and C'.
+  static=$(rn "$short static" sh "$here/change-check.sh" --static "$work" "$d" < /dev/null 2>> "$log") || rowbad=1
+  [ -n "$static" ] || static="? (run.log)"
   la_col=$( [ $rebuilt = yes ] && names "$d/la.txt" || echo "- (no rebuild)")
-  line="| $short | $subj | $(wc -l < "$d/changed.txt") | $([ $rebuilt = yes ] && echo rebuilt || echo kept) | $tests | $(names "$d/corpus.txt") | $la_col | $ins | $(secs "$t0" "$(now)") s |"
+  cells="| $short | $subj | $(wc -l < "$d/changed.txt") | $([ $rebuilt = yes ] && echo rebuilt || echo kept) | $tests | $(names "$d/corpus.txt") | $la_col | $ins | $static |"
+  line="$cells $(secs "$t0" "$(now)") s |"
   echo "$line" >> "$out/table.md"
   echo "$line"
+  vtree=$ptree; vcommit=$pcommit
+  if [ $rowbad = 1 ]; then bad=1
+  elif [ "${CC_REUSE:-1}" != 0 ]; then
+    # A green row is kept for a later run of identical inputs.
+    rt=$rows/.new.$$.$i
+    rm -rf "$rt"; mkdir -p "$rt/d" "$rt/state" \
+      && (cd "$d" && find . -maxdepth 1 -type f -exec cp {} "$rt/d/" \;) \
+      && cp "$out/state/"*.tsv "$rt/state/" && echo "$cells" > "$rt/row.txt" && echo "$out" > "$rt/from.txt" && echo "$ptree $pcommit" > "$rt/after.txt" \
+      && { mv "$rt" "$rows/$rkey" 2> /dev/null || rm -rf "$rt"; }
+  fi
 done
 cleanup
 trap - INT TERM HUP

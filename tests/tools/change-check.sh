@@ -126,7 +126,10 @@ set -u
 # count (a caller's change-check started with CC_SEEDS=0, or 12 over a
 # range that changes the hash code) would turn the fake's seeds off or on
 # and add its seed range to every cell.
-unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP CC_SEEDS LA_SEEDS
+unset CC_RUNNER CC_BASE_LANGARENA TEST_MAP CC_SEEDS LA_SEEDS CC_ROWS
+# Each check below computes its rows; the reuse of green rows is checked
+# on its own (check-reuse), with CC_REUSE set there.
+CC_REUSE=0; export CC_REUSE
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 w=$(realpath -m "$1")
 mkdir -p "$w"
@@ -190,8 +193,10 @@ cat > "$r/tools/letters.sh" <<'STUB'
 default_seed=bin/seed
 [ -x bin/seed/avant ] || { echo "no seed"; exit 1; }
 [ -n "${STUB_BUILDS:-}" ] && echo build >> "$STUB_BUILDS"
+steps=${*:-runtime b c-llvm}
+[ -n "${STUB_STEPS:-}" ] && echo "$steps" >> "$STUB_STEPS"
 mkdir -p bin runtime/build
-cp runtime/rt.txt runtime/build/avant_rt.o
+case " $steps " in *" runtime "*) cp runtime/rt.txt runtime/build/avant_rt.o ;; esac
 { echo '#!/bin/sh'; echo "V='$(cat compiler/main.av)'"; cat tools/stub-avc; } > bin/avant-c-llvm
 chmod +x bin/avant-c-llvm; cp bin/avant-c-llvm bin/avant-b
 for x in avant-b avant-c-llvm; do printf 'commit: stub\nlib: %s/lib\n' "$(pwd -P)" > "bin/$x.versions.txt"; done
@@ -478,8 +483,8 @@ t=$w/cc6/table.md
   && grep -q '^test map: built for the base, the range changing compiler/ or lib/ ' "$w/cc6/cache.txt"
 say check-map-auto $? "rc=$rc maps=$(wc -l < "$w/maps") $(row 'the compiler once more') $(tr '\n' ';' < "$w/cc6/cache.txt" 2>/dev/null) $(tail -n 3 "$w/cc6.log" | tr '\n' ';')"
 s6=$(git -C "$r" rev-parse --short=8 HEAD)
-printf 'shared\tchange-check: base cache\nshared\tchange-check: base cache\nshared\tchange-check: test map build\nshared\tchange-check: %s build\nshared\tchange-check: %s corpus\nshared\tchange-check: %s langarena\nshared\tchange-check: %s counts\nshared\tchange-check: %s tests\n' \
-  "$s6" "$s6" "$s6" "$s6" "$s6" > "$w/runner.want"
+printf 'shared\tchange-check: base cache\nshared\tchange-check: base cache\nshared\tchange-check: test map build\nshared\tchange-check: %s build\nshared\tchange-check: %s corpus\nshared\tchange-check: %s langarena\nshared\tchange-check: %s counts\nshared\tchange-check: %s tests\nshared\tchange-check: %s static\n' \
+  "$s6" "$s6" "$s6" "$s6" "$s6" "$s6" > "$w/runner.want"
 cmp -s "$w/runner.want" "$w/runner.log"
 say check-runner $? "$(tr '\n' ';' < "$w/runner.log" 2>/dev/null)"
 
@@ -579,4 +584,49 @@ say check-hash-seeds-scope $? "$(grep 'hash seeds' "$w/cc19/cache.txt" | cut -c1
 (cd "$r" && CC_SEEDS=2 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc19b" < /dev/null > "$w/cc19b.log" 2>&1)
 [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc19b/01-"*/ins.seeds.tsv "$w/cc19b/02-"*/ins.seeds.tsv | sort -u)" = 2 ] && grep -q '^hash seeds: every commit under 2 seeds' "$w/cc19b/cache.txt"
 say check-hash-seeds-forced $? "$(grep 'hash seeds' "$w/cc19b/cache.txt" | cut -c1-120)"
+
+# 20. The static column: the gate's seconds-long checks with the commit's own
+# tools (here tools/no-ledger-refs.sh alone; the others are not in the fake).
+cp "$root/tools/no-ledger-refs.sh" "$r/tools/"; grep '^\* -O' "$root/tools/no-ledger-refs.allow" > "$r/tools/no-ledger-refs.allow"
+g add -A && g commit -q -m 'static: the tool'
+printf 'the reason is in D%s\n' 123 > "$r/examples/label.txt"; g add -A && g commit -q -m 'static: a planning label'
+rm "$r/examples/label.txt"; g add -A && g commit -q -m 'static: the label removed'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc20" < /dev/null > "$w/cc20.log" 2>&1); rc=$?
+t=$w/cc20/table.md
+row 'static: the tool' | grep -q '| ok | [0-9]* s |$' && row 'static: the label removed' | grep -q '| ok | [0-9]* s |$'
+say check-static-ok $? "$(row 'static: the tool' | cut -c1-300); $(row 'static: the label removed' | cut -c1-300)"
+[ $rc -eq 1 ] && row 'static: a planning label' | grep -q '| RED: no-ledger-refs: ' && [ -s "$(ls -d "$w/cc20/02-"*)/static-no-ledger-refs.log" ]
+say check-static-red $? "rc=$rc $(row 'static: a planning label' | cut -c1-300)"
+
+# 21. A commit that changes the compiler and not the runtime builds B and C'
+# alone; one that changes the runtime builds its objects too.
+echo 'v5' > "$r/compiler/main.av"; g add -A && g commit -q -m 'skip: the compiler'
+echo 'r5' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'skip: the runtime'
+: > "$w/steps"
+(cd "$r" && STUB_STEPS="$w/steps" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc21" < /dev/null > "$w/cc21.log" 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$(tail -n 2 "$w/steps" | tr '\n' ';')" = 'b c-llvm;runtime b c-llvm;' ] \
+  && grep -q '^letters: b c-llvm$' "$(ls -d "$w/cc21/01-"*)/letters.log" && grep -q '^letters: runtime b c-llvm$' "$(ls -d "$w/cc21/02-"*)/letters.log"
+say check-runtime-skipped $? "rc=$rc steps=$(tr '\n' ';' < "$w/steps") $(tail -n 2 "$w/cc21.log" | tr '\n' ';')"
+
+# 22. A second run over the same range takes the first run's green rows: no
+# build, the same cells, `reused` for the time; CC_REUSE=0 computes them.
+: > "$w/steps22"
+(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22a" < /dev/null > "$w/cc22a.log" 2>&1); ra=$?
+(cd "$r" && CC_REUSE=1 STUB_STEPS="$w/steps22" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22b" < /dev/null > "$w/cc22b.log" 2>&1); rb=$?
+cells() { sed -n '3,$p' "$1" | sed 's/| [^|]* |$//'; }
+[ $ra -eq 0 ] && [ $rb -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22b/table.md")" = 2 ] && [ "$(cells "$w/cc22a/table.md")" = "$(cells "$w/cc22b/table.md")" ] \
+  && [ ! -s "$w/steps22" ] && [ "$(grep -c '^row .*: reused' "$w/cc22b/cache.txt")" = 2 ] && cmp -s "$w/cc22a/state/ins.tsv" "$w/cc22b/state/ins.tsv"
+say check-reuse $? "ra=$ra rb=$rb $(tr '\n' ';' < "$w/cc22b/table.md" | cut -c1-500) builds=$(wc -l < "$w/steps22")"
+(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22c" < /dev/null > "$w/cc22c.log" 2>&1)
+! grep -q 'reused' "$w/cc22c/table.md"
+say check-reuse-off $? "$(tr '\n' ';' < "$w/cc22c/table.md" | cut -c1-300)"
+# A later commit after reused rows: the work tree is built again from the
+# reused rows' last build, and the new row reads as a run without reuse.
+echo 'v6' > "$r/compiler/main.av"; g add -A && g commit -q -m 'reuse: a third'
+(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22d" < /dev/null > "$w/cc22d.log" 2>&1); rd=$?
+(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22e" < /dev/null > "$w/cc22e.log" 2>&1)
+third() { grep -F '| reuse: a third |' "$1" | cut -d'|' -f3-8; }
+[ $rd -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22d/table.md")" = 2 ] && [ -n "$(third "$w/cc22d/table.md")" ] && [ "$(third "$w/cc22d/table.md")" = "$(third "$w/cc22e/table.md")" ] \
+  && [ -e "$(ls -d "$w/cc22d/03-"*)/letters-previous.log" ]
+say check-reuse-then-new $? "rd=$rd $(third "$w/cc22d/table.md") / $(third "$w/cc22e/table.md")"
 echo done
