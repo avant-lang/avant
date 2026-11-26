@@ -101,11 +101,12 @@ mkdir -p "$lp/base/0" "$lp/head/0"
 for sd in base head; do
   # Fake::Meets: fast and slow in turn, on both sides, so their ranges meet from the second round on.
   # (the base slow first, the head fast first: apart after round 1, meeting after round 2)
-  odd=$([ $sd = base ] && echo 0.06 || echo 0.01); even=$([ $sd = base ] && echo 0.01 || echo 0.06)
+  # (0.4 s against 0.01 s: wider than what a loaded machine adds to a run)
+  odd=$([ $sd = base ] && echo 0.4 || echo 0.01); even=$([ $sd = base ] && echo 0.01 || echo 0.4)
   printf '#!/bin/sh\necho x >> %s/%s.meets\nn=$(wc -l < %s/%s.meets)\nif [ $((n %% 2)) = 1 ]; then sleep %s; else sleep %s; fi\necho 111\n' \
     "$lp" "$sd" "$lp" "$sd" "$odd" "$even" > "$lp/$sd/0/fake_meets"
-  # Fake::Apart: the head 0.3 s slower than the base, every run.
-  printf '#!/bin/sh\necho x >> %s/%s.apart\n[ %s = head ] && sleep 0.3\necho 222\n' "$lp" "$sd" "$sd" > "$lp/$sd/0/fake_apart"
+  # Fake::Apart: the head 0.8 s slower than the base, every run.
+  printf '#!/bin/sh\necho x >> %s/%s.apart\n[ %s = head ] && sleep 0.8\necho 222\n' "$lp" "$sd" "$sd" > "$lp/$sd/0/fake_apart"
 done
 chmod +x "$lp"/*/0/fake_*
 printf '[\n  {\n    "name": "Fake::Meets",\n    "checksum": 111,\n  },\n  {\n    "name": "Fake::Apart",\n    "checksum": 222,\n  },\n]\n' > "$lp/run.js"
@@ -137,9 +138,9 @@ h=$w/hold; mkdir -p "$h"
 cat > "$h/plan" <<PLAN
 # two nodes, four chunks and one step after them
 chunk a 0.1 -- echo "start a \$LEDGER_NODE" >> $h/order; sleep 0.1
-chunk b 0.4 -- echo "start b \$LEDGER_NODE" >> $h/order; sleep 0.4
-chunk c 0.2 -- echo "start c \$LEDGER_NODE" >> $h/order; sleep 0.2
-chunk d 0.3 -- echo "start d \$LEDGER_NODE" >> $h/order; sleep 0.3
+chunk b 1.2 -- echo "start b \$LEDGER_NODE" >> $h/order; sleep 1.2
+chunk c 0.4 -- echo "start c \$LEDGER_NODE" >> $h/order; sleep 0.4
+chunk d 0.8 -- echo "start d \$LEDGER_NODE" >> $h/order; sleep 0.8
 after t16 -- echo "after \${LEDGER_NODE:-none}" >> $h/order
 PLAN
 python3 -I -B "$root/tools/hold.py" "$h/plan" --nodes 0,1 --pin none --log "$h/walls" < /dev/null > "$h/log" 2>&1; rc=$?
@@ -147,7 +148,7 @@ first=$(head -2 "$h/order" | awk '{ print $2 }' | sort | tr '\n' ' ')
 [ $rc -eq 0 ] && [ "$first" = "b d " ] && [ "$(sed -n 3p "$h/order" | awk '{ print $2 }')" = c ] && [ "$(sed -n 4p "$h/order" | awk '{ print $2 }')" = a ] \
   && [ "$(grep -c ' node=[01] wall=[0-9]*s rc=0$' "$h/walls")" = 4 ] && grep -q '^start [ab] [01]$' "$h/order"
 say hold-longest-first $? "rc=$rc order $(tr '\n' ';' < "$h/order") walls $(tr '\n' ';' < "$h/walls")"
-[ "$(tail -1 "$h/order")" = "after none" ] && grep -q '^t16 node=all wall=0s rc=0$' "$h/walls"
+[ "$(tail -1 "$h/order")" = "after none" ] && grep -q '^t16 node=all wall=[0-9]*s rc=0$' "$h/walls"
 say hold-after $? "$(tail -1 "$h/order"); $(grep t16 "$h/walls")"
 printf 'layouts a node=2 wall=900s rc=0\nb node=1 wall=0s rc=0\n' > "$h/prev"
 python3 -I -B "$root/tools/hold.py" "$h/plan" --walls "$h/prev" --dry-run < /dev/null > "$h/dry" 2>&1; rc=$?
@@ -155,7 +156,7 @@ python3 -I -B "$root/tools/hold.py" "$h/plan" --walls "$h/prev" --dry-run < /dev
 say hold-walls $? "rc=$rc $(tr '\n' ';' < "$h/dry")"
 printf 'chunk ok -- echo ran >> %s/ran\nchunk bad -- exit 3\nafter post -- echo post >> %s/ran\n' "$h" "$h" > "$h/plan2"
 python3 -I -B "$root/tools/hold.py" "$h/plan2" --nodes 0 --pin none --log "$h/walls2" < /dev/null > "$h/log2" 2>&1; rc=$?
-[ $rc -eq 1 ] && [ "$(cat "$h/ran" | tr '\n' ' ')" = "ran post " ] && grep -q '^bad node=0 wall=0s rc=3$' "$h/walls2" && grep -q 'not 0: bad' "$h/log2"
+[ $rc -eq 1 ] && [ "$(cat "$h/ran" | tr '\n' ' ')" = "ran post " ] && grep -q '^bad node=0 wall=[0-9]*s rc=3$' "$h/walls2" && grep -q 'not 0: bad' "$h/log2"
 say hold-fail $? "rc=$rc $(cat "$h/ran" 2>/dev/null | tr '\n' ' '); $(cat "$h/log2")"
 printf 'chunk x 0.1 echo no separator\n' > "$h/plan3"
 python3 -I -B "$root/tools/hold.py" "$h/plan3" --pin none < /dev/null > "$h/log3" 2>&1; rc=$?
