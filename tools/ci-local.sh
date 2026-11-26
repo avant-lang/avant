@@ -23,7 +23,9 @@
 # CI_LOCAL_CPUS=N), and the host network (apt, LLVM's release, the seed's
 # download). The image is the runner's base with what a hosted runner has
 # and the base image lacks (sudo, ca-certificates, curl, git, xz-utils,
-# gnupg, python3, file, bc): built once as avant-ci-local:VERSION-HASH.
+# gnupg, python3, file, bc, and build-essential: a hosted runner has a C
+# compiler, which the install check's smoke test links with): built once as
+# avant-ci-local:VERSION-HASH.
 # LLVM's 630 MB cache is kept across rehearsals in CI_LOCAL_CACHE (default
 # ~/.cache/avant-ci-local). DOCKER names the client (default docker; `sudo
 # docker` where the socket is root's).
@@ -39,7 +41,8 @@
 #
 # Environment: CI_LOCAL_REF, CI_LOCAL_CPUS, CI_LOCAL_CACHE, CI_LOCAL_TAG
 # (release: the tag, default v and avant.toml's version), CI_LOCAL_TIMEOUT
-# (seconds a job may take, default 5400), DOCKER, CI_LOCAL_DRY=1 (write every
+# (seconds a job may take, default 5400), DOCKER, CI_LOCAL_FROM (an earlier
+# rehearsal's OUT of the same commit: its green jobs and artifacts reused), CI_LOCAL_DRY=1 (write every
 # job's script and the plan, run nothing: its test, and a check that a
 # workflow holds nothing the rehearsal cannot do).
 # Status 0 when every job is green, 1 otherwise, 2 on a usage error.
@@ -61,7 +64,20 @@ tag=${CI_LOCAL_TAG:-v$version}
 [ $# -gt 0 ] || set -- seed
 mkdir -p "$out/jobs" "$out/artifacts" "$cache" || exit 2
 : > "$out/summary.txt"
+# CI_LOCAL_FROM=OUT of an earlier rehearsal of the same commit: its green jobs count as green here and its artifacts
+# are copied, so a later job is rehearsed again alone
+if [ -n "${CI_LOCAL_FROM:-}" ]; then
+  grep -q "^ci-local: commit $(git rev-parse --verify "$ref^{commit}") " "$CI_LOCAL_FROM/summary.txt" 2> /dev/null \
+    || { echo "ci-local.sh: $CI_LOCAL_FROM is not a rehearsal of $ref" >&2; exit 2; }
+  cp -a "$CI_LOCAL_FROM/artifacts/." "$out/artifacts/" && grep -E '^[a-z-]+:[a-z-]+: green' "$CI_LOCAL_FROM/summary.txt" | sed 's/: green (/: green (from an earlier rehearsal: /' >> "$out/summary.txt"
+fi
 echo "ci-local: commit $commit (tree $(git rev-parse "$commit^{tree}")), $ncpu CPUs" >> "$out/summary.txt"
+# The commit as actions/checkout leaves it: a shallow clone, HEAD detached at it, so the steps that read git (the
+# archive's commit time, the build record's commit) see what they see on GitHub. The workflows are read from it too,
+# not from this checkout's working tree.
+{ mkdir -p "$out/commit" && git -C "$out/commit" init -q && \
+  git -C "$out/commit" fetch -q --depth 1 "file://$root" "$commit" && git -C "$out/commit" checkout -q --detach FETCH_HEAD; } \
+  > "$out/checkout.log" 2>&1 || { echo "ci-local.sh: the checkout of $commit failed ($out/checkout.log)" >&2; exit 2; }
 
 # The container's CPUs: the first $ncpu of those this process may use.
 allowed=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status)
@@ -80,7 +96,7 @@ image() {
   cat > "$d/Dockerfile" << EOF
 FROM $base
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-      sudo ca-certificates curl git xz-utils gnupg python3 file bc \\
+      sudo ca-certificates curl git xz-utils gnupg python3 file bc build-essential \\
     && rm -rf /var/lib/apt/lists/*
 RUN (getent passwd $(id -u) | cut -d: -f1 | xargs -r userdel -r 2> /dev/null || true) \\
     && useradd -m -u $(id -u) -s /bin/bash runner \\
@@ -100,7 +116,7 @@ EOF
 # The jobs to run, in order: each argument's jobs (default all but publish), each after the jobs it needs.
 plan=""
 for arg in "$@"; do
-  wf=${arg%%:*}; f=.github/workflows/$wf.yml
+  wf=${arg%%:*}; f=$out/commit/.github/workflows/$wf.yml
   [ -f "$f" ] || { echo "ci-local.sh: no workflow $f" >&2; exit 2; }
   case "$arg" in
     *:*) jobs=$(printf '%s' "${arg#*:}" | tr ',' ' ') ;;
@@ -112,7 +128,7 @@ done
 bad=0
 for wj in $plan; do
   wf=${wj%%:*}; j=${wj#*:}; jd="$out/jobs/$wf-$j"; mkdir -p "$jd" "$out/out-$wf-$j"
-  meta=$(python3 -I tools/ci-local.py ".github/workflows/$wf.yml" "$j" "$jd" "github.ref=refs/tags/$tag" "github.ref_name=$tag") \
+  meta=$(python3 -I tools/ci-local.py "$out/commit/.github/workflows/$wf.yml" "$j" "$jd" "github.ref=refs/tags/$tag" "github.ref_name=$tag") \
     || { echo "$wf:$j: cannot rehearse (see above)" >> "$out/summary.txt"; bad=$((bad + 1)); continue; }
   for n in $(printf '%s\n' "$meta" | sed -n 's/^needs //p'); do
     grep -q "^$wf:$n: green" "$out/summary.txt" || { echo "$wf:$j: skipped: it needs $n, which is not green" >> "$out/summary.txt"; bad=$((bad + 1)); continue 2; }
@@ -121,11 +137,8 @@ for wj in $plan; do
     echo "$wf:$j: green (dry: written, not run; runs-on $(printf '%s\n' "$meta" | sed -n 's/^runs-on //p'))" >> "$out/summary.txt"; continue
   fi
   img=$(image "$(printf '%s\n' "$meta" | sed -n 's/^runs-on //p')") || { bad=$((bad + 1)); continue; }
-  # the workspace as actions/checkout leaves it: a shallow clone of the commit, HEAD detached at it, so the steps that
-  # read git (the archive's commit time, the build record's commit) see what they see on GitHub
-  src="$out/src-$wf-$j"; mkdir -p "$src"
-  { git -C "$src" init -q && git -C "$src" fetch -q --depth 1 "file://$root" "$commit" && git -C "$src" checkout -q --detach FETCH_HEAD; } \
-    > "$out/checkout-$wf-$j.log" 2>&1 || { echo "ci-local.sh: the checkout of $commit failed ($out/checkout-$wf-$j.log)" >&2; exit 2; }
+  # the workspace as actions/checkout leaves it, a copy of the commit's shallow clone
+  src="$out/src-$wf-$j"; cp -a "$out/commit" "$src" || exit 2
   echo "ci-local: $wf:$j in $img" >> "$out/summary.txt"
   echo "ci-local: $wf:$j in $img (log $out/$wf-$j.log)"
   t0=$(date +%s)
