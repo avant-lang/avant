@@ -1259,17 +1259,6 @@ int avant_is_heap(void *payload) {
 uint64_t avant_gc_heap_lo;
 uint64_t avant_gc_heap_len;
 
-/* avant_gc.h. One compare for every address outside the committed heap
- * (before the heap exists its base and committed size are zero, and no
- * address passes). */
-__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
-  uintptr_t off;
-  if (!heap_offset(p, &off)) {
-    return 0;
-  }
-  return !gc_is_heap_payload((void *)(uintptr_t)p, NULL, NULL);
-}
-
 /* The contract (ABI name kept): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+

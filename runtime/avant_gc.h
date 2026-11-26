@@ -382,14 +382,6 @@ __attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t 
 static inline void *avant_alloc_bytes_room(uint64_t nbytes) {
   return nbytes >= AVANT_GC_BYTES_LARGE ? avant_alloc_unzeroed(nbytes, 0) : avant_alloc(nbytes, 0);
 }
-/* 1 when P lies in the collected heap and is not the exact start of a
- * heap object (an address inside an object, or one where no object
- * lives); 0 for null, for an address outside the heap (C's own memory, a
- * static object) and for an object's start. The test of a C function's
- * `String` result (avant_c_str, avant_str.c): only such an address may
- * not be stored in a reference-typed
- * field (the field rule, avant_gc_internal.h). Never collects. */
-__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p);
 /* A helper that owns a large Bytes object keeps only its first NEW_SIZE
  * bytes; the run's pages past them go back now (avant_gc_los.c). 1 when
  * trimmed, 0 when PAYLOAD is not a large unpinned
