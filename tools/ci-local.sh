@@ -7,8 +7,10 @@
 # in a clean container of its runner's image (ubuntu-26.04 → ubuntu:26.04,
 # ubuntu-24.04 → ubuntu:24.04), as an unprivileged user `runner` with
 # passwordless sudo and none of this machine's tools (no perf, no LLVM, no
-# seed in bin/), on `git archive` of the commit (CI_LOCAL_REF, default HEAD)
-# at the runner's workspace path. tools/ci-local.py turns the job into a
+# seed in bin/), on a shallow clone of the commit (CI_LOCAL_REF, default HEAD;
+# HEAD detached at it, as actions/checkout leaves it) at the runner's
+# workspace path, with no system-call filter of the container's own (a
+# hosted runner is a virtual machine). tools/ci-local.py turns the job into a
 # script of its `run:` steps, its expressions and the few actions the
 # workflows take (checkout, cache, upload and download of artifacts;
 # Codecov's uploads are skipped); a step or an expression it cannot rehearse
@@ -59,7 +61,6 @@ tag=${CI_LOCAL_TAG:-v$version}
 [ $# -gt 0 ] || set -- seed
 mkdir -p "$out/jobs" "$out/artifacts" "$cache" || exit 2
 : > "$out/summary.txt"
-[ "${CI_LOCAL_DRY:-0}" = 1 ] || git archive --format=tar -o "$out/src.tar" "$commit" || exit 2
 echo "ci-local: commit $commit (tree $(git rev-parse "$commit^{tree}")), $ncpu CPUs" >> "$out/summary.txt"
 
 # The container's CPUs: the first $ncpu of those this process may use.
@@ -120,11 +121,17 @@ for wj in $plan; do
     echo "$wf:$j: green (dry: written, not run; runs-on $(printf '%s\n' "$meta" | sed -n 's/^runs-on //p'))" >> "$out/summary.txt"; continue
   fi
   img=$(image "$(printf '%s\n' "$meta" | sed -n 's/^runs-on //p')") || { bad=$((bad + 1)); continue; }
-  src="$out/src-$wf-$j"; mkdir -p "$src" && tar -C "$src" -xf "$out/src.tar" || exit 2
+  # the workspace as actions/checkout leaves it: a shallow clone of the commit, HEAD detached at it, so the steps that
+  # read git (the archive's commit time, the build record's commit) see what they see on GitHub
+  src="$out/src-$wf-$j"; mkdir -p "$src"
+  { git -C "$src" init -q && git -C "$src" fetch -q --depth 1 "file://$root" "$commit" && git -C "$src" checkout -q --detach FETCH_HEAD; } \
+    > "$out/checkout-$wf-$j.log" 2>&1 || { echo "ci-local.sh: the checkout of $commit failed ($out/checkout-$wf-$j.log)" >&2; exit 2; }
   echo "ci-local: $wf:$j in $img" >> "$out/summary.txt"
   echo "ci-local: $wf:$j in $img (log $out/$wf-$j.log)"
   t0=$(date +%s)
-  timeout -k 30 "$limit" $docker run --rm --network host --cpuset-cpus "$cpuset" \
+  # seccomp unconfined: a hosted runner is a virtual machine, with no container's system-call filter (tools/la-run.c
+  # installs a seccomp filter of its own, which the container's default profile refuses)
+  timeout -k 30 "$limit" $docker run --rm --network host --cpuset-cpus "$cpuset" --security-opt seccomp=unconfined \
     -v "$jd:/ci/job:ro" -v "$out/artifacts:/ci/artifacts" -v "$cache:/ci/cache" -v "$out/out-$wf-$j:/ci/out" \
     -v "$src:/home/runner/work/avant/avant" -w /home/runner/work/avant/avant "$img" bash /ci/job/job.sh \
     > "$out/$wf-$j.log" 2>&1 < /dev/null
