@@ -1561,8 +1561,7 @@ fn main {
 fn main {
   out = Buf.new()
   for i in 1..4 {
-    out.push_str("item ")
-    out.push_fmt_i(i)
+    out.push_str("item ${i}")       // written straight into out
     out.push_byte(10)               // a newline
   }
   text = out.to_s()
@@ -1603,7 +1602,7 @@ fn main {
 | `Buf.new(n, byte)` | `n` bytes, each `byte` (`Buf.new(n, 0)` is `n` zero bytes, writable by `buf[i] = x`; a negative `n` or a `byte` outside `0..255` traps) |
 | `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
-| `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |
+| `push_str("${n}")`, `push_fmt_f(x, digits)` | append an integer's text (an interpolation is written straight into the buffer), or a float with `digits` decimals |
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
 | `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
 | `buf.is_empty()` | `buf.size == 0` |

@@ -212,6 +212,7 @@ fn builtin_name_cases: Array(FCase) {
   xs.push(refused("twin-buf-new", "fn main {\n  b = buf_new()\n  puts(b.size)\n}\n", "buf_new is gone: write Buf.new()"))
   xs.push(refused("twin-sha256", "fn main {\n  puts(sha256(\"abc\"))\n}\n", "sha256 is gone: write digest.sha256_hex(s.bytes) (import std.digest)"))
   xs.push(accepted("twin-own-fn", "fn buf_new: Int {\n  1\n}\nfn str_slice(s: String, n: Int): String {\n  \"\${s}/\${n}\"\n}\nfn sha256(n: Int): Int {\n  n * 2\n}\nfn main {\n  puts(buf_new())\n  puts(str_slice(\"a\", 2))\n  puts(sha256(3))\n  b = Buf.new()\n  b.push_str(\"abcd\"[1..3])\n  puts(b.to_s())\n}\n", "1\na/2\n6\nbc\n"))
+  xs.push(refused("push-fmt-i-gone", "fn main {\n  b = Buf.new()\n  b.push_fmt_i(3)\n  puts(b.to_s())\n}\n", "push_fmt_i is gone: write b.push_str(\"\${n}\")"))
   xs.push(accepted("builtin-join-free", "fn join(xs: Array(String)): String {\n  xs.join(\"+\")\n}\nfn main {\n  puts(join([\"a\", \"b\"]))\n}\n", "a+b\n"))
   xs.push(accepted("builtin-method-name", "class Log {\n  pub lines: Array(String) = []\n  fn puts(s: String) {\n    lines.push(s)\n  }\n}\nfn main {\n  l = Log.new()\n  l.puts(\"a\")\n  puts(l.lines.size)\n}\n", "1\n"))
   xs
