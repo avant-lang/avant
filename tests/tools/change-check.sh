@@ -362,6 +362,144 @@ TMPDIR="$w/tmp" sh "$r/tools/neutral.sh" "$e2/avant" "$r" "$w/neutral2" < /dev/n
 grep -q '^langarena: files 2 ll-same 2 LL-DIFF 0 ' "$w/neutral2/summary.txt" && [ -z "$(ls "$w/tmp")" ]
 say neutral-default-la $? "$(grep '^langarena' "$w/neutral2/summary.txt" 2>/dev/null); left in TMPDIR: $(ls "$w/tmp" | tr '\n' ' ')"
 
+# Sections 16 to 22 need none of 6 to 15's commits: they run at once beside
+# them, in a copy of the fake repository as it stands here with a cache of its
+# own, their lines printed after these.
+cp -a "$w/repo" "$w/repo-b" && mkdir -p "$w/cache-b"
+(
+r=$w/repo-b/avant
+BASE_CACHE="$w/cache-b" STUB_BUILDS="$w/builds-b"; export BASE_CACHE STUB_BUILDS
+row() { grep -F "| $1 |" "$t" 2>/dev/null; }
+# 16. la-count.sh with LA_RUNNER: the programs go in groups of LA_GROUP,
+# each its own runner call named `STEP group K/N`, and the table is the
+# one a single run writes.
+cat > "$w/lrunner" <<'STUB'
+#!/bin/sh
+step="" side=shared
+while [ $# -gt 0 ] && [ "$1" != -- ]; do
+  case $1 in --step) step=$2; shift ;; --timed) side=timed ;; esac
+  shift
+done
+shift
+echo "$side	$step" >> "$RUNNER_LOG"
+exec "$@"
+STUB
+chmod +x "$w/lrunner"
+: > "$w/lrunner.log"
+(cd "$r" && sh tools/letters.sh > /dev/null 2>&1 < /dev/null)
+lap=$(cd "$r" && sh tools/base-cache.sh --la HEAD 2> "$w/la16.err" < /dev/null)
+(cd "$r" && sh tools/la-count.sh . "$lap" "$w/lc-plain.tsv" < /dev/null > /dev/null 2>&1)
+(cd "$r" && RUNNER_LOG="$w/lrunner.log" LA_RUNNER="$w/lrunner" LA_STEP="count" LA_GROUP=1 sh tools/la-count.sh . "$lap" "$w/lc-grouped.tsv" < /dev/null > /dev/null 2>&1)
+[ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count la-run;shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
+say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w/lc-grouped.tsv" 2>/dev/null | tr '\n' ';')"
+(cd "$r" && LA_MEM_RUNS=3 sh tools/la-count.sh . "$lap" "$w/lc-mem.tsv" < /dev/null > /dev/null 2>&1)
+(cd "$r" && LA_MEM_RUNS=3 LA_MEM_PARALLEL=0 LA_MEM_METHOD=maxrss sh tools/la-count.sh . "$lap" "$w/lc-mem0.tsv" < /dev/null > /dev/null 2>&1)
+memok() { awk -F'\t' -v m="$2" 'NR == 1 { if ($0 != "# peak: " m) bad = 1; next } { n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 3) }' "$1"; }
+memok "$w/lc-mem.mem.tsv" exact && memok "$w/lc-mem.maxrss.tsv" maxrss && memok "$w/lc-mem.anon.tsv" exact-anon && memok "$w/lc-mem0.mem.tsv" maxrss && [ ! -e "$w/lc-mem0.maxrss.tsv" ] && [ ! -e "$w/lc-mem0.anon.tsv" ]
+say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';'); $(cat "$w/lc-mem0.mem.tsv" 2>/dev/null | tr '\n' ';')"
+
+# 17. Hash seeds: LA_SEEDS=3 counts each program under the list's first
+# three seeds, its count their mean, OUT.seeds.tsv the counts with their
+# mean, min and max; LA_SEEDS=13 is refused.
+(cd "$r" && LA_SEEDS=3 sh tools/la-count.sh . "$lap" "$w/lc-seeds.tsv" < /dev/null > /dev/null 2>&1); rc=$?
+(cd "$r" && LA_SEEDS=13 sh tools/la-count.sh . "$lap" "$w/lc-seeds13.tsv" < /dev/null > /dev/null 2>&1); rc13=$?
+[ $rc = 0 ] && [ $rc13 = 2 ] && awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; next }
+  { k = split($6, c, ","); s = 0; lo = c[1]; hi = c[1]; for (i = 1; i <= k; i++) { s += c[i]; if (c[i] < lo) lo = c[i]; if (c[i] > hi) hi = c[i] }
+    if (k != 3 || n[$1] != sprintf("%.0f", s / k) || $2 != n[$1] || $3 != lo || $4 != hi || lo >= hi) bad = 1 }
+  END { exit bad + (NR != 4) }' "$w/lc-seeds.tsv" "$w/lc-seeds.seeds.tsv"
+say la-count-seeds $? "rc=$rc rc13=$rc13; $(tr '\n' ';' < "$w/lc-seeds.tsv" 2>/dev/null); $(tr '\n' ';' < "$w/lc-seeds.seeds.tsv" 2>/dev/null)"
+
+# 17b. A program starts through a link whose path has one length whatever
+# OUT is (its argv[0] is copied to the heap, and a path of another length
+# moved a collection): the stub programs print the length of their $0, so
+# two runs from OUT directories of different lengths agree in every
+# program's output only when the lengths were equal.
+mkdir -p "$w/lc-short" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper" "$w/lc-run"
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-short/a.tsv" < /dev/null > /dev/null 2>&1); rc1=$?
+(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" < /dev/null > /dev/null 2>&1); rc2=$?
+[ $rc1 = 0 ] && [ $rc2 = 0 ] && [ -s "$w/lc-short/a.tsv" ] && [ "$(cut -f1,3 "$w/lc-short/a.tsv")" = "$(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv")" ] \
+  && [ -z "$(ls -A "$w/lc-run")" ]
+say la-count-fixed-path $? "rc=$rc1,$rc2; $(cut -f1,3 "$w/lc-short/a.tsv" 2>/dev/null | tr '\n' ';'); $(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" 2>/dev/null | tr '\n' ';'); left: $(ls -A "$w/lc-run" | tr '\n' ' ')"
+
+# 18. change-check turns the seeds on for a range that changes a hash file
+# (runtime/avant_hash.c), both sides counted under the 12, the cell with the
+# per-seed range; another range keeps seed 0.
+echo 'hash v1' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash table file'
+echo 'hash v2' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash probing'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18" < /dev/null > "$w/cc18.log" 2>&1)
+echo 'r3' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'another runtime file'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18b" < /dev/null > "$w/cc18b.log" 2>&1)
+grep -q '^hash seeds: the commits that change runtime/avant_hash.c compiler/mir/lower_hash.av compiler/mir/upsert.av ([0-9a-f]*) count under 12 seeds of tools/la-count.sh, both sides; the others at seed 0$' "$w/cc18/cache.txt" \
+  && grep 'the hash probing' "$w/cc18/table.md" | grep -q ' [0-9][.][0-9]* (12 seeds: [0-9.]*-[0-9.]*)' \
+  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc18/01-"*/ins.seeds.tsv | sort -u)" = 12 ] \
+  && grep -q '^hash seeds: seed 0 alone' "$w/cc18b/cache.txt" && ! grep -q 'seeds:' "$w/cc18b/table.md"
+say check-hash-seeds $? "$(grep 'hash seeds' "$w/cc18/cache.txt" "$w/cc18b/cache.txt" 2>/dev/null | tr '\n' ';'); $(grep 'the hash probing' "$w/cc18/table.md" | cut -c1-400)"
+
+# 19. The scope: three commits, only the hash one under the seeds, the last
+# compared with the hash commit's seed-0 count.
+echo 'rt a' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: a runtime change'
+echo 'hash v3' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'scope: the hash change'
+echo 'rt b' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: another runtime change'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc19" < /dev/null > "$w/cc19.log" 2>&1)
+d1=$(ls -d "$w/cc19/01-"*); d2=$(ls -d "$w/cc19/02-"*); d3=$(ls -d "$w/cc19/03-"*)
+[ ! -e "$d1/ins.seeds.tsv" ] && [ ! -s "$d1/prev-ins.seeds.tsv" ] \
+  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/ins.seeds.tsv" | sort -u)" = 12 ] && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/prev-ins.seeds.tsv" | sort -u)" = 12 ] \
+  && [ ! -e "$d3/ins.seeds.tsv" ] && [ ! -s "$d3/prev-ins.seeds.tsv" ] \
+  && [ "$(grep -c ' [0-9][.][0-9]* (12 seeds: ' "$w/cc19/table.md")" = 1 ] && grep 'scope: the hash change' "$w/cc19/table.md" | grep -q '(12 seeds: ' \
+  && ! grep 'scope: a runtime change\|scope: another runtime change' "$w/cc19/table.md" | grep -q 'seeds: ' \
+  && grep -q '^hash seeds: the commits that change .* count under 12 seeds' "$w/cc19/cache.txt"
+say check-hash-seeds-scope $? "$(grep 'hash seeds' "$w/cc19/cache.txt" | cut -c1-120); $(grep 'scope' "$w/cc19/table.md" | cut -d'|' -f3,9 | cut -c1-200 | tr '\n' ';')"
+(cd "$r" && CC_SEEDS=2 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc19b" < /dev/null > "$w/cc19b.log" 2>&1)
+[ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc19b/01-"*/ins.seeds.tsv "$w/cc19b/02-"*/ins.seeds.tsv | sort -u)" = 2 ] && grep -q '^hash seeds: every commit under 2 seeds' "$w/cc19b/cache.txt"
+say check-hash-seeds-forced $? "$(grep 'hash seeds' "$w/cc19b/cache.txt" | cut -c1-120)"
+
+# 20. The static column: the gate's seconds-long checks with the commit's own
+# tools (here tools/no-ledger-refs.sh alone; the others are not in the fake).
+cp "$root/tools/no-ledger-refs.sh" "$r/tools/"; grep '^\* -O' "$root/tools/no-ledger-refs.allow" > "$r/tools/no-ledger-refs.allow"
+g add -A && g commit -q -m 'static: the tool'
+printf 'the reason is in D%s\n' 123 > "$r/examples/label.txt"; g add -A && g commit -q -m 'static: a planning label'
+rm "$r/examples/label.txt"; g add -A && g commit -q -m 'static: the label removed'
+(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc20" < /dev/null > "$w/cc20.log" 2>&1); rc=$?
+t=$w/cc20/table.md
+row 'static: the tool' | grep -q '| ok | [0-9]* s |$' && row 'static: the label removed' | grep -q '| ok | [0-9]* s |$'
+say check-static-ok $? "$(row 'static: the tool' | cut -c1-300); $(row 'static: the label removed' | cut -c1-300)"
+[ $rc -eq 1 ] && row 'static: a planning label' | grep -q '| RED: no-ledger-refs: ' && [ -s "$(ls -d "$w/cc20/02-"*)/static-no-ledger-refs.log" ]
+say check-static-red $? "rc=$rc $(row 'static: a planning label' | cut -c1-300)"
+
+# 21. A commit that changes the compiler and not the runtime builds B and C'
+# alone; one that changes the runtime builds its objects too.
+echo 'v5' > "$r/compiler/main.av"; g add -A && g commit -q -m 'skip: the compiler'
+echo 'r5' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'skip: the runtime'
+: > "$w/steps"
+(cd "$r" && STUB_STEPS="$w/steps" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc21" < /dev/null > "$w/cc21.log" 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$(tail -n 2 "$w/steps" | tr '\n' ';')" = 'b c-llvm;runtime b c-llvm;' ] \
+  && grep -q '^letters: b c-llvm$' "$(ls -d "$w/cc21/01-"*)/letters.log" && grep -q '^letters: runtime b c-llvm$' "$(ls -d "$w/cc21/02-"*)/letters.log"
+say check-runtime-skipped $? "rc=$rc steps=$(tr '\n' ';' < "$w/steps") $(tail -n 2 "$w/cc21.log" | tr '\n' ';')"
+
+# 22. A second run over the same range takes the first run's green rows: no
+# build, the same cells, `reused` for the time; CC_REUSE=0 computes them.
+: > "$w/steps22"
+(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22a" < /dev/null > "$w/cc22a.log" 2>&1); ra=$?
+(cd "$r" && CC_REUSE=1 STUB_STEPS="$w/steps22" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22b" < /dev/null > "$w/cc22b.log" 2>&1); rb=$?
+cells() { sed -n '3,$p' "$1" | sed 's/| [^|]* |$//'; }
+[ $ra -eq 0 ] && [ $rb -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22b/table.md")" = 2 ] && [ "$(cells "$w/cc22a/table.md")" = "$(cells "$w/cc22b/table.md")" ] \
+  && [ ! -s "$w/steps22" ] && [ "$(grep -c '^row .*: reused' "$w/cc22b/cache.txt")" = 2 ] && cmp -s "$w/cc22a/state/ins.tsv" "$w/cc22b/state/ins.tsv"
+say check-reuse $? "ra=$ra rb=$rb $(tr '\n' ';' < "$w/cc22b/table.md" | cut -c1-500) builds=$(wc -l < "$w/steps22")"
+(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22c" < /dev/null > "$w/cc22c.log" 2>&1)
+! grep -q 'reused' "$w/cc22c/table.md"
+say check-reuse-off $? "$(tr '\n' ';' < "$w/cc22c/table.md" | cut -c1-300)"
+# A later commit after reused rows: the work tree is built again from the
+# reused rows' last build, and the new row reads as a run without reuse.
+echo 'v6' > "$r/compiler/main.av"; g add -A && g commit -q -m 'reuse: a third'
+(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22d" < /dev/null > "$w/cc22d.log" 2>&1); rd=$?
+(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22e" < /dev/null > "$w/cc22e.log" 2>&1)
+third() { grep -F '| reuse: a third |' "$1" | cut -d'|' -f3-8; }
+[ $rd -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22d/table.md")" = 2 ] && [ -n "$(third "$w/cc22d/table.md")" ] && [ "$(third "$w/cc22d/table.md")" = "$(third "$w/cc22e/table.md")" ] \
+  && [ -e "$(ls -d "$w/cc22d/03-"*)/letters-previous.log" ]
+say check-reuse-then-new $? "rd=$rd $(third "$w/cc22d/table.md") / $(third "$w/cc22e/table.md")"
+) > "$w/part-b.out" 2>&1 &
+part_b=$!
+
 # 6. change-check over five commits after the third.
 b=$(git -C "$r" rev-parse HEAD)
 echo '# a note' >> "$r/tools/gcstats.sh"; g add -A && g commit -q -m 'a tool changed'
@@ -502,131 +640,6 @@ t=$w/cc7/table.md
 row 'the ffi lowering' | grep -q '| 0 failed, 2 passed: test_ffi test_ffi_llvm |' && ! row 'a library file of that name' | grep -q 'test_ffi'
 say check-stem-prefix $? "$(row 'the ffi lowering'); $(row 'a library file of that name')"
 
-# 16. la-count.sh with LA_RUNNER: the programs go in groups of LA_GROUP,
-# each its own runner call named `STEP group K/N`, and the table is the
-# one a single run writes.
-cat > "$w/lrunner" <<'STUB'
-#!/bin/sh
-step="" side=shared
-while [ $# -gt 0 ] && [ "$1" != -- ]; do
-  case $1 in --step) step=$2; shift ;; --timed) side=timed ;; esac
-  shift
-done
-shift
-echo "$side	$step" >> "$RUNNER_LOG"
-exec "$@"
-STUB
-chmod +x "$w/lrunner"
-: > "$w/lrunner.log"
-(cd "$r" && sh tools/letters.sh > /dev/null 2>&1 < /dev/null)
-lap=$(cd "$r" && sh tools/base-cache.sh --la HEAD 2> "$w/la16.err" < /dev/null)
-(cd "$r" && sh tools/la-count.sh . "$lap" "$w/lc-plain.tsv" < /dev/null > /dev/null 2>&1)
-(cd "$r" && RUNNER_LOG="$w/lrunner.log" LA_RUNNER="$w/lrunner" LA_STEP="count" LA_GROUP=1 sh tools/la-count.sh . "$lap" "$w/lc-grouped.tsv" < /dev/null > /dev/null 2>&1)
-[ "$(tr '\n' ';' < "$w/lrunner.log")" = "shared	count la-run;shared	count group 1/2;shared	count group 2/2;" ] && [ "$(cut -f1,3-5 "$w/lc-plain.tsv")" = "$(cut -f1,3-5 "$w/lc-grouped.tsv")" ] && awk -F'\t' '$2 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$w/lc-grouped.tsv" && [ "$(wc -l < "$w/lc-plain.tsv")" = 2 ]
-say la-count-groups $? "$(tr '\n' ';' < "$w/lrunner.log" 2>/dev/null); $(cat "$w/lc-grouped.tsv" 2>/dev/null | tr '\n' ';')"
-(cd "$r" && LA_MEM_RUNS=3 sh tools/la-count.sh . "$lap" "$w/lc-mem.tsv" < /dev/null > /dev/null 2>&1)
-(cd "$r" && LA_MEM_RUNS=3 LA_MEM_PARALLEL=0 LA_MEM_METHOD=maxrss sh tools/la-count.sh . "$lap" "$w/lc-mem0.tsv" < /dev/null > /dev/null 2>&1)
-memok() { awk -F'\t' -v m="$2" 'NR == 1 { if ($0 != "# peak: " m) bad = 1; next } { n = split($5, v, ","); if (n != 3 || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad + (NR != 3) }' "$1"; }
-memok "$w/lc-mem.mem.tsv" exact && memok "$w/lc-mem.maxrss.tsv" maxrss && memok "$w/lc-mem.anon.tsv" exact-anon && memok "$w/lc-mem0.mem.tsv" maxrss && [ ! -e "$w/lc-mem0.maxrss.tsv" ] && [ ! -e "$w/lc-mem0.anon.tsv" ]
-say la-count-mem-parallel $? "$(cat "$w/lc-mem.mem.tsv" 2>/dev/null | tr '\n' ';'); $(cat "$w/lc-mem0.mem.tsv" 2>/dev/null | tr '\n' ';')"
-
-# 17. Hash seeds: LA_SEEDS=3 counts each program under the list's first
-# three seeds, its count their mean, OUT.seeds.tsv the counts with their
-# mean, min and max; LA_SEEDS=13 is refused.
-(cd "$r" && LA_SEEDS=3 sh tools/la-count.sh . "$lap" "$w/lc-seeds.tsv" < /dev/null > /dev/null 2>&1); rc=$?
-(cd "$r" && LA_SEEDS=13 sh tools/la-count.sh . "$lap" "$w/lc-seeds13.tsv" < /dev/null > /dev/null 2>&1); rc13=$?
-[ $rc = 0 ] && [ $rc13 = 2 ] && awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; next }
-  { k = split($6, c, ","); s = 0; lo = c[1]; hi = c[1]; for (i = 1; i <= k; i++) { s += c[i]; if (c[i] < lo) lo = c[i]; if (c[i] > hi) hi = c[i] }
-    if (k != 3 || n[$1] != sprintf("%.0f", s / k) || $2 != n[$1] || $3 != lo || $4 != hi || lo >= hi) bad = 1 }
-  END { exit bad + (NR != 4) }' "$w/lc-seeds.tsv" "$w/lc-seeds.seeds.tsv"
-say la-count-seeds $? "rc=$rc rc13=$rc13; $(tr '\n' ';' < "$w/lc-seeds.tsv" 2>/dev/null); $(tr '\n' ';' < "$w/lc-seeds.seeds.tsv" 2>/dev/null)"
-
-# 17b. A program starts through a link whose path has one length whatever
-# OUT is (its argv[0] is copied to the heap, and a path of another length
-# moved a collection): the stub programs print the length of their $0, so
-# two runs from OUT directories of different lengths agree in every
-# program's output only when the lengths were equal.
-mkdir -p "$w/lc-short" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper" "$w/lc-run"
-(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-short/a.tsv" < /dev/null > /dev/null 2>&1); rc1=$?
-(cd "$r" && LA_RUN_DIR="$w/lc-run" sh tools/la-count.sh . "$lap" "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" < /dev/null > /dev/null 2>&1); rc2=$?
-[ $rc1 = 0 ] && [ $rc2 = 0 ] && [ -s "$w/lc-short/a.tsv" ] && [ "$(cut -f1,3 "$w/lc-short/a.tsv")" = "$(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv")" ] \
-  && [ -z "$(ls -A "$w/lc-run")" ]
-say la-count-fixed-path $? "rc=$rc1,$rc2; $(cut -f1,3 "$w/lc-short/a.tsv" 2>/dev/null | tr '\n' ';'); $(cut -f1,3 "$w/lc-a-much-longer-directory-name-for-the-second-side/and/deeper/a.tsv" 2>/dev/null | tr '\n' ';'); left: $(ls -A "$w/lc-run" | tr '\n' ' ')"
-
-# 18. change-check turns the seeds on for a range that changes a hash file
-# (runtime/avant_hash.c), both sides counted under the 12, the cell with the
-# per-seed range; another range keeps seed 0.
-echo 'hash v1' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash table file'
-echo 'hash v2' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'the hash probing'
-(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18" < /dev/null > "$w/cc18.log" 2>&1)
-echo 'r3' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'another runtime file'
-(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~1 HEAD "$w/cc18b" < /dev/null > "$w/cc18b.log" 2>&1)
-grep -q '^hash seeds: the commits that change runtime/avant_hash.c compiler/mir/lower_hash.av compiler/mir/upsert.av ([0-9a-f]*) count under 12 seeds of tools/la-count.sh, both sides; the others at seed 0$' "$w/cc18/cache.txt" \
-  && grep 'the hash probing' "$w/cc18/table.md" | grep -q ' [0-9][.][0-9]* (12 seeds: [0-9.]*-[0-9.]*)' \
-  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc18/01-"*/ins.seeds.tsv | sort -u)" = 12 ] \
-  && grep -q '^hash seeds: seed 0 alone' "$w/cc18b/cache.txt" && ! grep -q 'seeds:' "$w/cc18b/table.md"
-say check-hash-seeds $? "$(grep 'hash seeds' "$w/cc18/cache.txt" "$w/cc18b/cache.txt" 2>/dev/null | tr '\n' ';'); $(grep 'the hash probing' "$w/cc18/table.md" | cut -c1-400)"
-
-# 19. The scope: three commits, only the hash one under the seeds, the last
-# compared with the hash commit's seed-0 count.
-echo 'rt a' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: a runtime change'
-echo 'hash v3' > "$r/runtime/avant_hash.c"; g add -A && g commit -q -m 'scope: the hash change'
-echo 'rt b' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'scope: another runtime change'
-(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc19" < /dev/null > "$w/cc19.log" 2>&1)
-d1=$(ls -d "$w/cc19/01-"*); d2=$(ls -d "$w/cc19/02-"*); d3=$(ls -d "$w/cc19/03-"*)
-[ ! -e "$d1/ins.seeds.tsv" ] && [ ! -s "$d1/prev-ins.seeds.tsv" ] \
-  && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/ins.seeds.tsv" | sort -u)" = 12 ] && [ "$(awk -F'\t' '{ print split($6, c, ",") }' "$d2/prev-ins.seeds.tsv" | sort -u)" = 12 ] \
-  && [ ! -e "$d3/ins.seeds.tsv" ] && [ ! -s "$d3/prev-ins.seeds.tsv" ] \
-  && [ "$(grep -c ' [0-9][.][0-9]* (12 seeds: ' "$w/cc19/table.md")" = 1 ] && grep 'scope: the hash change' "$w/cc19/table.md" | grep -q '(12 seeds: ' \
-  && ! grep 'scope: a runtime change\|scope: another runtime change' "$w/cc19/table.md" | grep -q 'seeds: ' \
-  && grep -q '^hash seeds: the commits that change .* count under 12 seeds' "$w/cc19/cache.txt"
-say check-hash-seeds-scope $? "$(grep 'hash seeds' "$w/cc19/cache.txt" | cut -c1-120); $(grep 'scope' "$w/cc19/table.md" | cut -d'|' -f3,9 | cut -c1-200 | tr '\n' ';')"
-(cd "$r" && CC_SEEDS=2 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc19b" < /dev/null > "$w/cc19b.log" 2>&1)
-[ "$(awk -F'\t' '{ print split($6, c, ",") }' "$w/cc19b/01-"*/ins.seeds.tsv "$w/cc19b/02-"*/ins.seeds.tsv | sort -u)" = 2 ] && grep -q '^hash seeds: every commit under 2 seeds' "$w/cc19b/cache.txt"
-say check-hash-seeds-forced $? "$(grep 'hash seeds' "$w/cc19b/cache.txt" | cut -c1-120)"
-
-# 20. The static column: the gate's seconds-long checks with the commit's own
-# tools (here tools/no-ledger-refs.sh alone; the others are not in the fake).
-cp "$root/tools/no-ledger-refs.sh" "$r/tools/"; grep '^\* -O' "$root/tools/no-ledger-refs.allow" > "$r/tools/no-ledger-refs.allow"
-g add -A && g commit -q -m 'static: the tool'
-printf 'the reason is in D%s\n' 123 > "$r/examples/label.txt"; g add -A && g commit -q -m 'static: a planning label'
-rm "$r/examples/label.txt"; g add -A && g commit -q -m 'static: the label removed'
-(cd "$r" && TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc20" < /dev/null > "$w/cc20.log" 2>&1); rc=$?
-t=$w/cc20/table.md
-row 'static: the tool' | grep -q '| ok | [0-9]* s |$' && row 'static: the label removed' | grep -q '| ok | [0-9]* s |$'
-say check-static-ok $? "$(row 'static: the tool' | cut -c1-300); $(row 'static: the label removed' | cut -c1-300)"
-[ $rc -eq 1 ] && row 'static: a planning label' | grep -q '| RED: no-ledger-refs: ' && [ -s "$(ls -d "$w/cc20/02-"*)/static-no-ledger-refs.log" ]
-say check-static-red $? "rc=$rc $(row 'static: a planning label' | cut -c1-300)"
-
-# 21. A commit that changes the compiler and not the runtime builds B and C'
-# alone; one that changes the runtime builds its objects too.
-echo 'v5' > "$r/compiler/main.av"; g add -A && g commit -q -m 'skip: the compiler'
-echo 'r5' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'skip: the runtime'
-: > "$w/steps"
-(cd "$r" && STUB_STEPS="$w/steps" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc21" < /dev/null > "$w/cc21.log" 2>&1); rc=$?
-[ $rc -eq 0 ] && [ "$(tail -n 2 "$w/steps" | tr '\n' ';')" = 'b c-llvm;runtime b c-llvm;' ] \
-  && grep -q '^letters: b c-llvm$' "$(ls -d "$w/cc21/01-"*)/letters.log" && grep -q '^letters: runtime b c-llvm$' "$(ls -d "$w/cc21/02-"*)/letters.log"
-say check-runtime-skipped $? "rc=$rc steps=$(tr '\n' ';' < "$w/steps") $(tail -n 2 "$w/cc21.log" | tr '\n' ';')"
-
-# 22. A second run over the same range takes the first run's green rows: no
-# build, the same cells, `reused` for the time; CC_REUSE=0 computes them.
-: > "$w/steps22"
-(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22a" < /dev/null > "$w/cc22a.log" 2>&1); ra=$?
-(cd "$r" && CC_REUSE=1 STUB_STEPS="$w/steps22" TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22b" < /dev/null > "$w/cc22b.log" 2>&1); rb=$?
-cells() { sed -n '3,$p' "$1" | sed 's/| [^|]* |$//'; }
-[ $ra -eq 0 ] && [ $rb -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22b/table.md")" = 2 ] && [ "$(cells "$w/cc22a/table.md")" = "$(cells "$w/cc22b/table.md")" ] \
-  && [ ! -s "$w/steps22" ] && [ "$(grep -c '^row .*: reused' "$w/cc22b/cache.txt")" = 2 ] && cmp -s "$w/cc22a/state/ins.tsv" "$w/cc22b/state/ins.tsv"
-say check-reuse $? "ra=$ra rb=$rb $(tr '\n' ';' < "$w/cc22b/table.md" | cut -c1-500) builds=$(wc -l < "$w/steps22")"
-(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~2 HEAD "$w/cc22c" < /dev/null > "$w/cc22c.log" 2>&1)
-! grep -q 'reused' "$w/cc22c/table.md"
-say check-reuse-off $? "$(tr '\n' ';' < "$w/cc22c/table.md" | cut -c1-300)"
-# A later commit after reused rows: the work tree is built again from the
-# reused rows' last build, and the new row reads as a run without reuse.
-echo 'v6' > "$r/compiler/main.av"; g add -A && g commit -q -m 'reuse: a third'
-(cd "$r" && CC_REUSE=1 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22d" < /dev/null > "$w/cc22d.log" 2>&1); rd=$?
-(cd "$r" && CC_REUSE=0 TEST_MAP=none sh tools/change-check.sh HEAD~3 HEAD "$w/cc22e" < /dev/null > "$w/cc22e.log" 2>&1)
-third() { grep -F '| reuse: a third |' "$1" | cut -d'|' -f3-8; }
-[ $rd -eq 0 ] && [ "$(grep -c '| reused |$' "$w/cc22d/table.md")" = 2 ] && [ -n "$(third "$w/cc22d/table.md")" ] && [ "$(third "$w/cc22d/table.md")" = "$(third "$w/cc22e/table.md")" ] \
-  && [ -e "$(ls -d "$w/cc22d/03-"*)/letters-previous.log" ]
-say check-reuse-then-new $? "rd=$rd $(third "$w/cc22d/table.md") / $(third "$w/cc22e/table.md")"
+wait "$part_b"
+cat "$w/part-b.out"
 echo done
