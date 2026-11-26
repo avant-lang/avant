@@ -139,7 +139,7 @@ fn test_tools(c: Checks) {
   wc = "${scratch_dir()}/wave-final-checks"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-checks.sh", wc], "${wc}.log"))
   whats.push("wave-final.sh checks")
-  names.push(["head-not-git", "head-clean", "tmp-gone-green", "tmp-new-red", "ref-other-machine", "ref-no-machine", "ref-cpu-parens", "ref-default", "ref-none", "runner-sides", "runner-lock-line", "runner-none", "runner-wall", "base-merge-base", "tmp-locale", "private-tmp", "private-tmp-paths", "cases-green", "cases-red", "cases-stdout", "cases-stop", "lock-old-form", "lock-old-form-runner", "lock-new-form-quiet", "lock-other-file", "group-one-call", "group-lines", "layout-marked", "layout-beyond", "layout-two-bases", "layout-same-built", "layout-built-differs", "twins-at-once", "twins-in-the-passes", "only-stats", "only-gate-no-build", "only-unknown", "beside-merged", "beside-differs", "beside-off", "neutral-count"])
+  names.push(["head-not-git", "head-clean", "tmp-gone-green", "tmp-new-red", "ref-other-machine", "ref-no-machine", "ref-cpu-parens", "ref-default", "ref-none", "la-red-skipped", "runner-sides", "runner-lock-line", "runner-none", "runner-wall", "base-merge-base", "tmp-locale", "private-tmp", "private-tmp-paths", "cases-green", "cases-red", "cases-stdout", "cases-stop", "lock-old-form", "lock-old-form-runner", "lock-new-form-quiet", "lock-other-file", "group-one-call", "group-lines", "layout-marked", "layout-beyond", "layout-two-bases", "layout-same-built", "layout-built-differs", "twins-at-once", "twins-in-the-passes", "only-stats", "only-gate-no-build", "only-unknown", "beside-merged", "beside-differs", "beside-off", "neutral-count", "reuse-green", "reuse-refused-path", "reuse-refused-toml", "reuse-refused-binary", "stats-base-yes", "stats-base-fixtures", "stats-base-programs", "stats-base-old"])
   // The timing tools' undisturbed rule: the judge, the rounds' retries and
   // tables, the LR re-measure's counters.
   mt = "${scratch_dir()}/measure-rule"
@@ -167,13 +167,18 @@ fn test_tools(c: Checks) {
   cc = "${scratch_dir()}/change-check"
   jobs.push(HJob.new("/usr/bin/env", ["CC_RUNNER=${cc}-no-runner", "TEST_MAP=${cc}-no-map", "CC_BASE_LANGARENA=${cc}-no-harness", "CC_SEEDS=0", "LA_SEEDS=12", "/bin/sh", "${root}/tests/tools/change-check.sh", cc], "${cc}.log"))
   whats.push("base-cache.sh and change-check.sh")
-  names.push(["cache-build", "cache-reuse", "cache-partial", "cache-concurrent", "digests-normalized", "prune-dry-run", "prune-removes-unread", "prune-keeps-read", "prune-keeps-in-use", "prune-after-reader", "prune-days-checked", "cache-read-stamp", "map-pick-carried", "map-pick-widened", "map-pick-unmapped", "map-pick-common", "cache-la", "neutral-cache", "neutral-default-la", "check-first-kept", "check-kept", "check-rebuilt", "check-runtime", "check-failed", "check-worktree", "cache-la-base-refuses", "neutral-base-refuses", "check-base-refuses", "check-base-harness", "check-map", "check-goldens-example", "check-goldens-golden", "check-map-none", "check-map-auto", "check-runner", "la-count-seeds", "la-count-fixed-path", "check-hash-seeds", "check-hash-seeds-scope", "check-hash-seeds-forced"])
+  names.push(["cache-build", "cache-reuse", "cache-partial", "cache-concurrent", "digests-normalized", "prune-dry-run", "prune-removes-unread", "prune-keeps-read", "prune-keeps-in-use", "prune-after-reader", "prune-days-checked", "cache-read-stamp", "map-pick-carried", "map-pick-widened", "map-pick-unmapped", "map-pick-common", "cache-la", "neutral-cache", "neutral-default-la", "check-first-kept", "check-kept", "check-rebuilt", "check-runtime", "check-failed", "check-worktree", "cache-la-base-refuses", "neutral-base-refuses", "check-base-refuses", "check-base-harness", "check-map", "check-goldens-example", "check-goldens-golden", "check-map-none", "check-map-auto", "check-runner", "la-count-seeds", "la-count-fixed-path", "check-hash-seeds", "check-hash-seeds-scope", "check-hash-seeds-forced", "check-static-ok", "check-static-red", "check-runtime-skipped", "check-reuse", "check-reuse-off", "check-reuse-then-new"])
   // The runtime's link check: a hidden function another object calls and
   // the exports file does not list fails the build, named.
   rl = "${scratch_dir()}/runtime-link"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/runtime-link.sh", rl], "${rl}.log"))
   whats.push("runtime/link-check.sh")
   names.push(["hidden-unlisted-fails", "hidden-unlisted-named", "program-symbols-ignored", "hidden-listed-passes", "undefined-named"])
+  // The runtime's units compile at once, to the same bytes as one by one.
+  rp = "${scratch_dir()}/runtime-par"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/runtime-par.sh", rp], "${rp}.log"))
+  whats.push("runtime/build.sh at once")
+  names.push(["par-serial-builds", "par-builds", "par-same-bytes", "par-fail-status", "par-fail-named"])
   // The layout flag, the layout re-timing (with stubs), the layout wrapper,
   // the spread across layouts and the rounds across layouts.
   ly = "${scratch_dir()}/layout"

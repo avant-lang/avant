@@ -15,33 +15,49 @@ import std.process
 // survivors) the budget stays at its default, 4 MiB; at 95 percent it
 // grows. Both run with AVANT_GC_STATS=1 (yng_max), and the default share
 // runs plainly and under AVANT_GC_VERIFY=1 with its known stdout.
-fn test_gc_sizing(c: Checks, compiler: String, root: String, dir: String) {
-  jobs: Array(HJob) = []
-  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/grow_survival.av", "${dir}/grow_survival", "${dir}/grow_survival.log"))
-  run_waves(jobs)
-  c.eq_int(jobs[0].code, 0, "grow_survival.av: compiles")
-  want = "kept: 675000\nwalked: 675000\nsum: 4500001 check: 3375001\n"
-  want_high = "kept: 1425000\nwalked: 1425000\nsum: 4500001 check: 7124992\n"
+// The compile of heap/grow_survival.av, started with the other fixtures' at once.
+fn test_gc_sizing_compile(compiler: String, root: String, dir: String): HJob {
+  compile_job("", compiler, "${root}/tests/fixtures/heap/grow_survival.av", "${dir}/grow_survival", "${dir}/grow_survival.log")
+}
+
+// Its runs, started with the other fixtures' runs in one wave.
+fn test_gc_sizing_runs(dir: String): Array(HJob) {
   envs = ["", "AVANT_GC_VERIFY=1"]
   runs: Array(HJob) = []
   e = 0
   while e < envs.size {
-    runs.push(run_job_env(dir, "grow_survival", "grow_survival.g${e}", envs[e]))
+    if e > 0 && sizing_same_run(envs[e]) {
+      runs.push(runs[0])
+    } else {
+      runs.push(run_job_env(dir, "grow_survival", "grow_survival.g${e}", envs[e]))
+    }
     e += 1
   }
   clean = "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
   runs.push(run_job_env(dir, "grow_survival", "grow_survival.mid", clean))
   runs.push(run_job_env(dir, "grow_survival", "grow_survival.high", "${clean} GROW_SURVIVAL_KEEP=95"))
-  run_waves(runs)
+  runs
+}
+
+// Its checks, read in the order they always were.
+fn test_gc_sizing(c: Checks, compile: HJob, runs: Array(HJob), dir: String) {
+  c.eq_int(compile.code, 0, "grow_survival.av: compiles")
+  want = "kept: 675000\nwalked: 675000\nsum: 4500001 check: 3375001\n"
+  want_high = "kept: 1425000\nwalked: 1425000\nsum: 4500001 check: 7124992\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
   e = 0
   while e < envs.size {
+    g = e
+    if e > 0 && runs[e].log == runs[0].log {
+      g = 0
+    }
     what = "plain"
     if envs[e].size > 0 {
       what = "under ${envs[e]}"
     }
     c.eq_int(runs[e].code, 0, "grow_survival.av ${what}: exit 0")
-    c.eq_str(log_text("${dir}/grow_survival.g${e}.out"), want, "grow_survival.av ${what}: the known stdout")
-    c.eq_str(log_text("${dir}/grow_survival.g${e}.err"), "", "grow_survival.av ${what}: no stderr (no verifier report)")
+    c.eq_str(log_text("${dir}/grow_survival.g${g}.out"), want, "grow_survival.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/grow_survival.g${g}.err"), "", "grow_survival.av ${what}: no stderr (no verifier report)")
     e += 1
   }
   mid = runs[envs.size]
@@ -69,30 +85,46 @@ fn test_gc_sizing(c: Checks, compiler: String, root: String, dir: String) {
 // promoted and the setup's collection is the only full one. It runs
 // plainly and under AVANT_GC_VERIFY=1 with its known stdout, and with
 // AVANT_GC_STATS=1 (full, los_promoted_bytes).
-fn test_holder_cycle(c: Checks, compiler: String, root: String, dir: String) {
-  jobs: Array(HJob) = []
-  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/holder_cycle.av", "${dir}/holder_cycle", "${dir}/holder_cycle.log"))
-  run_waves(jobs)
-  c.eq_int(jobs[0].code, 0, "holder_cycle.av: compiles")
-  want = "kept: 200000\nsum: 542100\n"
+// The compile of heap/holder_cycle.av, started with the other fixtures' at once.
+fn test_holder_cycle_compile(compiler: String, root: String, dir: String): HJob {
+  compile_job("", compiler, "${root}/tests/fixtures/heap/holder_cycle.av", "${dir}/holder_cycle", "${dir}/holder_cycle.log")
+}
+
+// Its runs, started with the other fixtures' runs in one wave.
+fn test_holder_cycle_runs(dir: String): Array(HJob) {
   envs = ["", "AVANT_GC_VERIFY=1"]
   runs: Array(HJob) = []
   e = 0
   while e < envs.size {
-    runs.push(run_job_env(dir, "holder_cycle", "holder_cycle.g${e}", envs[e]))
+    if e > 0 && sizing_same_run(envs[e]) {
+      runs.push(runs[0])
+    } else {
+      runs.push(run_job_env(dir, "holder_cycle", "holder_cycle.g${e}", envs[e]))
+    }
     e += 1
   }
   runs.push(run_job_env(dir, "holder_cycle", "holder_cycle.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
-  run_waves(runs)
+  runs
+}
+
+// Its checks, read in the order they always were.
+fn test_holder_cycle(c: Checks, compile: HJob, runs: Array(HJob), dir: String) {
+  c.eq_int(compile.code, 0, "holder_cycle.av: compiles")
+  want = "kept: 200000\nsum: 542100\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
   e = 0
   while e < envs.size {
+    g = e
+    if e > 0 && runs[e].log == runs[0].log {
+      g = 0
+    }
     what = "plain"
     if envs[e].size > 0 {
       what = "under ${envs[e]}"
     }
     c.eq_int(runs[e].code, 0, "holder_cycle.av ${what}: exit 0")
-    c.eq_str(log_text("${dir}/holder_cycle.g${e}.out"), want, "holder_cycle.av ${what}: the known stdout")
-    c.eq_str(log_text("${dir}/holder_cycle.g${e}.err"), "", "holder_cycle.av ${what}: no stderr (no verifier report)")
+    c.eq_str(log_text("${dir}/holder_cycle.g${g}.out"), want, "holder_cycle.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/holder_cycle.g${g}.err"), "", "holder_cycle.av ${what}: no stderr (no verifier report)")
     e += 1
   }
   c.eq_int(runs[envs.size].code, 0, "holder_cycle.av with AVANT_GC_STATS=1: exit 0")
@@ -117,30 +149,46 @@ fn test_holder_cycle(c: Checks, compiler: String, root: String, dir: String) {
 // AVANT_GC_STRESS=1 (without the verifier: the two together take minutes
 // on its 300 MB of allocation) with its known stdout, and with
 // AVANT_GC_STATS=1 (full_heap_goal).
-fn test_stranded_set(c: Checks, compiler: String, root: String, dir: String) {
-  jobs: Array(HJob) = []
-  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stranded_set.av", "${dir}/stranded_set", "${dir}/stranded_set.log"))
-  run_waves(jobs)
-  c.eq_int(jobs[0].code, 0, "stranded_set.av: compiles")
-  want = "anchor: 100000\nwork: 135000\njunk: 50\n"
+// The compile of heap/stranded_set.av, started with the other fixtures' at once.
+fn test_stranded_set_compile(compiler: String, root: String, dir: String): HJob {
+  compile_job("", compiler, "${root}/tests/fixtures/heap/stranded_set.av", "${dir}/stranded_set", "${dir}/stranded_set.log")
+}
+
+// Its runs, started with the other fixtures' runs in one wave.
+fn test_stranded_set_runs(dir: String): Array(HJob) {
   envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   runs: Array(HJob) = []
   e = 0
   while e < envs.size {
-    runs.push(run_job_env(dir, "stranded_set", "stranded_set.g${e}", envs[e]))
+    if e > 0 && sizing_same_run(envs[e]) {
+      runs.push(runs[0])
+    } else {
+      runs.push(run_job_env(dir, "stranded_set", "stranded_set.g${e}", envs[e]))
+    }
     e += 1
   }
   runs.push(run_job_env(dir, "stranded_set", "stranded_set.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
-  run_waves(runs)
+  runs
+}
+
+// Its checks, read in the order they always were.
+fn test_stranded_set(c: Checks, compile: HJob, runs: Array(HJob), dir: String) {
+  c.eq_int(compile.code, 0, "stranded_set.av: compiles")
+  want = "anchor: 100000\nwork: 135000\njunk: 50\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   e = 0
   while e < envs.size {
+    g = e
+    if e > 0 && runs[e].log == runs[0].log {
+      g = 0
+    }
     what = "plain"
     if envs[e].size > 0 {
       what = "under ${envs[e]}"
     }
     c.eq_int(runs[e].code, 0, "stranded_set.av ${what}: exit 0")
-    c.eq_str(log_text("${dir}/stranded_set.g${e}.out"), want, "stranded_set.av ${what}: the known stdout")
-    c.eq_str(log_text("${dir}/stranded_set.g${e}.err"), "", "stranded_set.av ${what}: no stderr (no verifier report)")
+    c.eq_str(log_text("${dir}/stranded_set.g${g}.out"), want, "stranded_set.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/stranded_set.g${g}.err"), "", "stranded_set.av ${what}: no stderr (no verifier report)")
     e += 1
   }
   c.eq_int(runs[envs.size].code, 0, "stranded_set.av with AVANT_GC_STATS=1: exit 0")
@@ -157,30 +205,46 @@ fn test_stranded_set(c: Checks, compiler: String, root: String, dir: String) {
 // objects stays at three strings (four when each full collection made
 // one old); the known stdout plainly, under AVANT_GC_VERIFY=1 and under
 // AVANT_GC_STRESS=1.
-fn test_kept_buffer(c: Checks, compiler: String, root: String, dir: String) {
-  jobs: Array(HJob) = []
-  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/kept_buffer.av", "${dir}/kept_buffer", "${dir}/kept_buffer.log"))
-  run_waves(jobs)
-  c.eq_int(jobs[0].code, 0, "kept_buffer.av: compiles")
-  want = "anchor: 50000\nsum: 4843656\n"
+// The compile of heap/kept_buffer.av, started with the other fixtures' at once.
+fn test_kept_buffer_compile(compiler: String, root: String, dir: String): HJob {
+  compile_job("", compiler, "${root}/tests/fixtures/heap/kept_buffer.av", "${dir}/kept_buffer", "${dir}/kept_buffer.log")
+}
+
+// Its runs, started with the other fixtures' runs in one wave.
+fn test_kept_buffer_runs(dir: String): Array(HJob) {
   envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   runs: Array(HJob) = []
   e = 0
   while e < envs.size {
-    runs.push(run_job_env(dir, "kept_buffer", "kept_buffer.g${e}", envs[e]))
+    if e > 0 && sizing_same_run(envs[e]) {
+      runs.push(runs[0])
+    } else {
+      runs.push(run_job_env(dir, "kept_buffer", "kept_buffer.g${e}", envs[e]))
+    }
     e += 1
   }
   runs.push(run_job_env(dir, "kept_buffer", "kept_buffer.stats", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"))
-  run_waves(runs)
+  runs
+}
+
+// Its checks, read in the order they always were.
+fn test_kept_buffer(c: Checks, compile: HJob, runs: Array(HJob), dir: String) {
+  c.eq_int(compile.code, 0, "kept_buffer.av: compiles")
+  want = "anchor: 50000\nsum: 4843656\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   e = 0
   while e < envs.size {
+    g = e
+    if e > 0 && runs[e].log == runs[0].log {
+      g = 0
+    }
     what = "plain"
     if envs[e].size > 0 {
       what = "under ${envs[e]}"
     }
     c.eq_int(runs[e].code, 0, "kept_buffer.av ${what}: exit 0")
-    c.eq_str(log_text("${dir}/kept_buffer.g${e}.out"), want, "kept_buffer.av ${what}: the known stdout")
-    c.eq_str(log_text("${dir}/kept_buffer.g${e}.err"), "", "kept_buffer.av ${what}: no stderr (no verifier report)")
+    c.eq_str(log_text("${dir}/kept_buffer.g${g}.out"), want, "kept_buffer.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/kept_buffer.g${g}.err"), "", "kept_buffer.av ${what}: no stderr (no verifier report)")
     e += 1
   }
   c.eq_int(runs[envs.size].code, 0, "kept_buffer.av with AVANT_GC_STATS=1: exit 0")
@@ -189,6 +253,17 @@ fn test_kept_buffer(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(k >= 20, "kept_buffer.av: the full collections leave the run's string young (full_kept_large ${k})")
   p = stat_of(st, "pk_large")
   c.expect(p > 0 && p < 4200000, "kept_buffer.av: no dead string old beside the live ones (pk_large ${p})")
+}
+
+// Whether a run under the words envs (on top of the pass's own) is the
+// plain run: every word already holds in this pass (the verify pass's
+// "under AVANT_GC_VERIFY=1"), and run_job_env adds no word of its own (it
+// removes the stress mode from a verifier run under the stress pass).
+fn sizing_same_run(envs: String): Bool {
+  if gc_stress_outer() && envs.contains("AVANT_GC_VERIFY") {
+    return false
+  }
+  env_holds(envs)
 }
 
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
@@ -205,10 +280,34 @@ fn stat_of(text: String, key: String): Int {
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_sizing.av")
   if compiler = process.env("AVANT_COMPILER") {
-    test_gc_sizing(c, compiler, avant_test_root(), scratch_dir())
-    test_holder_cycle(c, compiler, avant_test_root(), scratch_dir())
-    test_stranded_set(c, compiler, avant_test_root(), scratch_dir())
-    test_kept_buffer(c, compiler, avant_test_root(), scratch_dir())
+    // The four fixtures are independent: their compiles run at once, then
+    // all their runs at once, and the checks are read in the old order.
+    root = avant_test_root()
+    dir = scratch_dir()
+    compiles: Array(HJob) = []
+    compiles.push(test_gc_sizing_compile(compiler, root, dir))
+    compiles.push(test_holder_cycle_compile(compiler, root, dir))
+    compiles.push(test_stranded_set_compile(compiler, root, dir))
+    compiles.push(test_kept_buffer_compile(compiler, root, dir))
+    run_waves(compiles)
+    gs = test_gc_sizing_runs(dir)
+    hc = test_holder_cycle_runs(dir)
+    ss = test_stranded_set_runs(dir)
+    kb = test_kept_buffer_runs(dir)
+    all: Array(HJob) = []
+    for list in [gs, hc, ss, kb] {
+      for j in list {
+        // A run that serves two checks (sizing_same_run) is listed twice.
+        if all.size == 0 || all[all.size - 1].log != j.log {
+          all.push(j)
+        }
+      }
+    }
+    run_waves(all)
+    test_gc_sizing(c, compiles[0], gs, dir)
+    test_holder_cycle(c, compiles[1], hc, dir)
+    test_stranded_set(c, compiles[2], ss, dir)
+    test_kept_buffer(c, compiles[3], kb, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

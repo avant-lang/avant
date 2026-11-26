@@ -227,6 +227,36 @@ pub fn gc_env_outer(stated: String): String {
   out
 }
 
+// Whether every NAME=VALUE word of `words` already holds in this test's own
+// environment (a `-u` word never does): a program run with those words
+// added runs in exactly the environment it gets without them, so one run
+// serves both checks (the stress pass's "under AVANT_GC_STRESS=1" is its
+// own environment).
+pub fn env_holds(words: String): Bool {
+  for w in words.split(" ") {
+    if w.size == 0 {
+      continue
+    }
+    eq = -1
+    for i in 0..w.size {
+      if eq < 0 && w[i] == 61 {
+        eq = i
+      }
+    }
+    if eq <= 0 {
+      return false
+    }
+    if v = process.env(w[..eq]) {
+      if v != w[eq + 1..] {
+        return false
+      }
+    } else {
+      return false
+    }
+  }
+  true
+}
+
 // The length of the character XML 1.0 can carry that starts at byte i
 // of s, or 0: tab, line feed, carriage return
 // and UTF-8 characters from U+0020 on, except the surrogates, U+FFFE and
