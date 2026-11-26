@@ -5454,9 +5454,7 @@ pub class Checker {
       expr.receiver = r
       return check_method_call(expr, r, has_want, want)
     }
-    if refuse_moved_io(expr) {
-      return t_int()
-    }
+    std_io_builtin(expr)
     if expr.callee == "puts" || expr.callee == "print" || expr.callee == "eputs" || expr.callee == "eprint" {
       return check_output_call(expr)
     }
@@ -5480,18 +5478,18 @@ pub class Checker {
       fail(expr.loc, "now_ms takes no arguments")
       return t_int()
     }
-    if expr.callee == "argv" {
+    if expr.callee == "#argv" {
       if expr.args.size == 0 {
         if b = expr.block {
-          fail(expr.loc, "argv takes no arguments")
+          fail(expr.loc, "process.args takes no arguments")
           return ty_array(t_string())
         }
         return ty_array(t_string())
       }
-      fail(expr.loc, "argv takes no arguments")
+      fail(expr.loc, "process.args takes no arguments")
       return ty_array(t_string())
     }
-    if expr.callee == "env_get" {
+    if expr.callee == "#env_get" {
       if expr.args.size == 1 {
         if b = expr.block {
           fail(expr.loc, "env_get takes one String")
@@ -5507,7 +5505,7 @@ pub class Checker {
       }
       return ty_nilable(t_string())
     }
-    if expr.callee == "file_exists" {
+    if expr.callee == "#file_exists" {
       if expr.args.size == 1 {
         if b = expr.block {
           fail(expr.loc, "file_exists takes one String")

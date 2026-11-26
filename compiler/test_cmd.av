@@ -5,6 +5,8 @@ import manifest
 import source
 import cov_report
 import llvm.glue
+import std.fs
+import std.process
 
 pub class FileRun {
   abs: String = ""
@@ -301,7 +303,7 @@ pub class TestHost {
       self.self_path = absolute_tool(compiler)
     }
     self.tests_compiler = absolute_tool(compiler)
-    if given = env_get("AVANT_COMPILER") {
+    if given = process.env("AVANT_COMPILER") {
       if given.size > 0 {
         self.tests_compiler = absolute_tool(given)
       }
@@ -416,7 +418,7 @@ fn sort_files(files: Array(FileRun)) {
 }
 
 fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
-  names = dir_list(dir) ?? []
+  names = fs.list(dir) ?? []
   i = 0
   nseq = seq
   while i < names.size {
@@ -438,7 +440,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
     } else if !path_is_link(path) {
       // a symbolic link to a directory is not followed: it can lead out
       // of the tree or back into it
-      sub = dir_list(path) ?? []
+      sub = fs.list(path) ?? []
       if sub.size > 0 {
         nseq = walk_tests(path, cwd, into, nseq)
       }
@@ -448,7 +450,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
 }
 
 fn read_text(path: String): String {
-  if text = file_read(path) {
+  if text = fs.read(path) {
     return text
   }
   ""
@@ -597,7 +599,7 @@ fn check_results(f: FileRun, cmd: JobCmd) {
   if cmd.results.size == 0 {
     return
   }
-  if cmd.code == 0 && !file_exists(cmd.results) {
+  if cmd.code == 0 && !fs.exists(cmd.results) {
     f.ok = false
     if f.why.size == 0 {
       f.why = "${cmd.what} exited 0 and reported no results"
@@ -765,7 +767,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       // listed no parallel body was not selected: no line, not counted,
       // not in the JUnit report.
       if cmd.matches.size > 0 {
-        if cmd.code == 0 && f.ok && f.parallels.size == 0 && !file_exists(cmd.matches) {
+        if cmd.code == 0 && f.ok && f.parallels.size == 0 && !fs.exists(cmd.matches) {
           f.unmatched = true
           f.reported = true
         }
@@ -1081,7 +1083,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  if e = write_failure(file_write(path, b.to_s())) {
+  if e = write_failure(fs.write(path, b.to_s())) {
     diag_puts(e.message())
     diag_exit(1)
   }
@@ -1109,12 +1111,12 @@ fn test_fail(message: String) {
 }
 
 fn is_dir(path: String): Bool {
-  file_exists("${path}/.")
+  fs.exists("${path}/.")
 }
 
 fn require_cov_dir(anchor: String, rel: String, key: String) {
   path = abs_join(anchor, rel)
-  if !file_exists(path) {
+  if !fs.exists(path) {
     test_fail("${key} directory does not exist: ${rel}")
   }
   if !is_dir(path) {
@@ -1125,7 +1127,7 @@ fn require_cov_dir(anchor: String, rel: String, key: String) {
 pub fn driver_test(args: Array(String)) {
   jobs = -1
   file_limit = 900
-  if given_limit = env_get("AVANT_TEST_FILE_LIMIT") {
+  if given_limit = process.env("AVANT_TEST_FILE_LIMIT") {
     if given_limit.size > 0 {
       file_limit = parse_u(given_limit)
       if file_limit < 0 {
@@ -1257,7 +1259,7 @@ pub fn driver_test(args: Array(String)) {
   cov_exclude: Array(String) = []
   if man_dir.size > 0 {
     man_path = abs_join(man_dir, "avant.toml")
-    if text = file_read(man_path) {
+    if text = fs.read(man_path) {
       m = pkg_parse_manifest(text, man_path)
       if !m.ok {
         test_fail(m.err)
@@ -1295,7 +1297,7 @@ pub fn driver_test(args: Array(String)) {
   if paths.size == 0 {
     if test_entry.size > 0 {
       entry = abs_join(anchor, test_entry)
-      if !file_exists(entry) {
+      if !fs.exists(entry) {
         test_fail("test entry does not exist: ${test_entry}")
       }
       files.push(FileRun.new(entry, rel_of(cwd, entry), tmp_path("bin-1")))
@@ -1303,11 +1305,11 @@ pub fn driver_test(args: Array(String)) {
       root = abs_join(anchor, "tests")
       if test_dir.size > 0 {
         root = abs_join(anchor, test_dir)
-        if !file_exists(root) {
+        if !fs.exists(root) {
           test_fail("test dir does not exist: ${test_dir}")
         }
       }
-      if file_exists(root) {
+      if fs.exists(root) {
         walk_tests(root, cwd, files, 0)
       }
     }
@@ -1316,7 +1318,7 @@ pub fn driver_test(args: Array(String)) {
     seq = 0
     while p < paths.size {
       arg = paths[p]
-      if !file_exists(arg) {
+      if !fs.exists(arg) {
         test_fail("test path does not exist: ${arg}")
       }
       abs = arg
@@ -1438,13 +1440,13 @@ pub fn driver_test(args: Array(String)) {
   }
   run_order = order_first(files, first_abs)
   argv0 = "avant"
-  args0 = argv()
+  args0 = process.args()
   if args0.size > 0 {
     argv0 = args0[0]
   }
   host = TestHost.new(argv0, jobs)
   host.file_limit_s = file_limit
-  if given_progress = env_get("AVANT_TEST_PROGRESS_S") {
+  if given_progress = process.env("AVANT_TEST_PROGRESS_S") {
     if parse_u(given_progress) > 0 {
       host.progress_s = parse_u(given_progress)
     }

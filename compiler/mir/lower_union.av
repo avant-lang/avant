@@ -1278,11 +1278,12 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 
 // The builtins of the old back end that need no FFI and are neither
 // string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
-// `argv`, `file_exists`, `env_get` (the compiler's own sources only);
-// nil when c is not one of them.
+// `#argv`, `#file_exists`, `#env_get` (std.process's and std.fs's own
+// calls, checker/visibility.av std_io_builtin); nil when c is not one of
+// them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
-  if c == "env_get" && e.args.size == 1 {
+  if c == "#env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
   }
   f = ""
@@ -1290,9 +1291,9 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     // std.gc's `gc.collect()` (checker/visibility.av check_gc_call): the
     // runtime's complete collection.
     f = "avant_gc_collect"
-  } else if c == "argv" && e.args.size == 0 {
+  } else if c == "#argv" && e.args.size == 0 {
     f = "avant_argv"
-  } else if c == "file_exists" && e.args.size == 1 {
+  } else if c == "#file_exists" && e.args.size == 1 {
     f = "avant_file_exists"
   }
   if f.size == 0 {
@@ -1304,7 +1305,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if c == "file_exists" {
+  if c == "#file_exists" {
     r = lw.call_to(mt_i32(), f, ops)
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }

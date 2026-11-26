@@ -1,4 +1,5 @@
 import source
+import std.fs
 
 pub class PkgDep {
   pub name: String = ""
@@ -972,9 +973,9 @@ pub fn man_join(dir: String, leaf: String): String {
 // its packed-refs line; "" when there is no .git or it cannot be read.
 pub fn pkg_checkout_head(dir: String): String {
   gd = man_join(dir, ".git")
-  if !dir_exists(gd) {
+  if !fs.is_dir(gd) {
     // A .git file names the repository elsewhere (a worktree).
-    if text = file_read(gd) {
+    if text = fs.read(gd) {
       t = text.strip()
       if t.starts_with("gitdir: ") {
         p = t[8..].strip()
@@ -991,7 +992,7 @@ pub fn pkg_checkout_head(dir: String): String {
     }
   }
   head = ""
-  if h = file_read(man_join(gd, "HEAD")) {
+  if h = fs.read(man_join(gd, "HEAD")) {
     head = h.strip()
   } else {
     return ""
@@ -1003,13 +1004,13 @@ pub fn pkg_checkout_head(dir: String): String {
     return ""
   }
   ref = head[5..].strip()
-  if r = file_read(man_join(gd, ref)) {
+  if r = fs.read(man_join(gd, ref)) {
     t = r.strip()
     if pkg_is_sha(t) {
       return t
     }
   }
-  if packed = file_read(man_join(gd, "packed-refs")) {
+  if packed = fs.read(man_join(gd, "packed-refs")) {
     for line in packed.split("\n") {
       t = line.strip()
       if t.size > 41 && t[40] == 32 && t[41..] == ref {
@@ -1080,7 +1081,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
   man_path = man_join(dir, "avant.toml")
   root = PkgManifest.new()
   text = ""
-  if t = file_read(man_path) {
+  if t = fs.read(man_path) {
     text = t
   }
   root = pkg_parse_manifest(text, man_path)
@@ -1096,7 +1097,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
   lock_path = man_join(dir, "avant.lock")
   lock = PkgLock.new()
   has_lock = false
-  if lt = file_read(lock_path) {
+  if lt = fs.read(lock_path) {
     lock = pkg_parse_lock(lt)
     has_lock = true
   }
@@ -1117,7 +1118,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
     sub_path = man_join(man_join(deps_dir, d.name), "avant.toml")
     sub = PkgManifest.new()
     sub.ok = true
-    if st = file_read(sub_path) {
+    if st = fs.read(sub_path) {
       sub = pkg_parse_manifest(st, sub_path)
       if !sub.ok {
         set.fail(sub_path, sub.err)
@@ -1161,7 +1162,7 @@ pub fn pkg_dep_set(dir: String): DepSet {
   }
   for ent in lock.ents {
     dep_dir = man_join(deps_dir, ent.name)
-    if !dir_exists(dep_dir) {
+    if !fs.is_dir(dep_dir) {
       set.fail(lock_path, "avant.lock pins ${ent.name} and ${dep_dir} is missing (${fetch_hint})")
       return set
     }
@@ -1183,9 +1184,9 @@ pub fn pkg_dep_set(dir: String): DepSet {
     }
     set.pkgs.push(DepPkg.new(ent.name, dep_dir, ent.sha, man))
   }
-  entries = dir_list(deps_dir) ?? []
+  entries = fs.list(deps_dir) ?? []
   for e in entries {
-    if e.size > 0 && e[0] != 46 && dir_exists(man_join(deps_dir, e)) && !pkg_lock_has(lock, e) {
+    if e.size > 0 && e[0] != 46 && fs.is_dir(man_join(deps_dir, e)) && !pkg_lock_has(lock, e) {
       set.stray.push(e)
     }
   }

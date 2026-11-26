@@ -194,8 +194,9 @@ fn ruling_cases: Array(FCase) {
 }
 
 // A function named like a builtin: every call is the builtin's, so the
-// declaration is refused, naming the builtin; a method of that name, and
-// a free join (a method's name, not a builtin's), stay a program's own.
+// declaration is refused, naming the builtin; a method of that name, a
+// free join (a method's name, not a builtin's), and a function named like
+// a prelude function that left the language stay a program's own.
 fn builtin_name_cases: Array(FCase) {
   xs: Array(FCase) = []
   xs.push(refused("builtin-panic", "fn panic(s: String) {\n  puts(\"mine \${s}\")\n}\nfn main {\n  panic(\"x\")\n}\n", "fn panic: panic is a builtin function, and every call panic(...) is the builtin's, so this function would never be called; give it another name"))
@@ -206,7 +207,7 @@ fn builtin_name_cases: Array(FCase) {
   xs.push(refused("removed-sqrt", "fn main {\n  x = 2.0\n  puts(sqrt(x))\n}\n", "sqrt is a Float64 method: write x.sqrt()"))
   xs.push(refused("removed-exp-value", "fn main {\n  f = exp\n  puts(f(1.0))\n}\n", "exp is a Float64 method: write x.exp()"))
   xs.push(accepted("removed-sqrt-own", "fn sqrt(n: Int): Int {\n  n / 2\n}\nfn main {\n  puts(sqrt(8))\n  puts(16.0.sqrt())\n}\n", "4\n4.0\n"))
-  xs.push(refused("builtin-moved", "fn file_read(p: String): String {\n  p\n}\nfn main {\n  puts(file_read(\"a\"))\n}\n", "fn file_read: file_read is the prelude's old name of fs.read(path), and every call file_read(...) is refused with that spelling"))
+  xs.push(accepted("builtin-moved", "fn file_read(p: String): String {\n  \"read \${p}\"\n}\nfn argv: Int {\n  7\n}\nfn env_get(n: String): String {\n  n\n}\nfn file_exists(p: String): Bool {\n  p.size > 3\n}\nfn main {\n  puts(file_read(\"a\"))\n  puts(argv())\n  puts(env_get(\"HOME\"))\n  puts(file_exists(\"ab\"))\n}\n", "read a\n7\nHOME\nfalse\n"))
   xs.push(refused("twin-str-slice", "fn main {\n  s = \"abcd\"\n  puts(str_slice(s, 1, 3))\n}\n", "str_slice is gone: write s[start..stop]"))
   xs.push(refused("twin-buf-new", "fn main {\n  b = buf_new()\n  puts(b.size)\n}\n", "buf_new is gone: write Buf.new()"))
   xs.push(refused("twin-sha256", "fn main {\n  puts(sha256(\"abc\"))\n}\n", "sha256 is gone: write digest.sha256_hex(s.bytes) (import std.digest)"))

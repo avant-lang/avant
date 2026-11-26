@@ -477,6 +477,14 @@ pub fn left_prelude_text(name: String): String {
   if name == "buf_new" {
     return "buf_new is gone: write Buf.new()"
   }
+  spelled = moved_io_name(name)
+  if spelled.size > 0 {
+    mod = "std.fs"
+    if spelled.starts_with("process.") {
+      mod = "std.process"
+    }
+    return "${name} is now ${spelled}: import ${mod}"
+  }
   ""
 }
 
@@ -1329,35 +1337,16 @@ pub fn moved_io_name(name: String): String {
   ""
 }
 
-// Whether the current module may still call the prelude's old file and
-// process names and its twins: the compiler's own sources (built by the
-// seed, which has no std.fs), the two modules that wrap them, and the
-// prelude's own parts.
-pub fn (checker_self: Checker) moved_io_allowed: Bool {
+// std.fs's and std.process's own calls of the three runtime entries
+// they wrap (`argv`, `env_get`, `file_exists`): the builtins #argv,
+// #env_get and #file_exists, names no program can write, so a program's
+// own function of one of those names is its own.
+pub fn (checker_self: Checker) std_io_builtin(expr: Expr) {
   m = checker_self.current_module
-  if m == "std.fs" || m == "std.process" || m == "prelude" || m.starts_with("prelude_") {
-    return true
+  if m != "std.fs" && m != "std.process" {
+    return
   }
-  for info in checker_self.program.mods {
-    if info.name == m {
-      p = info.path
-      return p.starts_with("compiler/") || p.contains("/compiler/")
-    }
+  if expr.callee == "argv" || expr.callee == "env_get" || expr.callee == "file_exists" {
+    expr.callee = "#${expr.callee}"
   }
-  false
-}
-
-// A call of a function that left the prelude, outside the modules that
-// may still name it: refused with the new spelling; true when refused.
-pub fn (checker_self: Checker) refuse_moved_io(expr: Expr): Bool {
-  spelled = moved_io_name(expr.callee)
-  if spelled.size == 0 || checker_self.moved_io_allowed() {
-    return false
-  }
-  mod = "std.fs"
-  if spelled.starts_with("process.") {
-    mod = "std.process"
-  }
-  checker_self.fail(expr.loc, "${expr.callee} is now ${spelled}: import ${mod}")
-  true
 }

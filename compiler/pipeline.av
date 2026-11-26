@@ -33,6 +33,8 @@ import mir.lower_ffi
 import mir.lower_task
 import mir.lower_cov
 import std.digest
+import std.fs
+import std.process
 
 pub class IrBox {
   pub ok: Bool = false
@@ -214,7 +216,7 @@ pub fn record_runtime: String {
   if exe.size == 0 {
     return ""
   }
-  if text = file_read("${exe}.versions.txt") {
+  if text = fs.read("${exe}.versions.txt") {
     for line in text.split("\n") {
       if line.size > 9 && line.starts_with("runtime: ") {
         return line[9..]
@@ -234,7 +236,7 @@ pub fn record_runtime_root: String {
   if rt.size == 0 {
     return ""
   }
-  if !file_exists("${rt}/build/avant_rt.o") {
+  if !fs.exists("${rt}/build/avant_rt.o") {
     diag_puts("${self_exe_path()}.versions.txt names the runtime ${rt}, which has no build/avant_rt.o; set AVANT_ROOT to the checkout whose runtime this compiler should link")
     diag_exit(1)
   }
@@ -246,25 +248,25 @@ pub fn record_runtime_root: String {
 // record names, else the parent of the compiler's bin/ when it holds
 // runtime/build/avant_rt.o, else the current directory when it does.
 pub fn avant_checkout_root: String {
-  if v = env_get("AVANT_ROOT") {
+  if v = process.env("AVANT_ROOT") {
     return v
   }
   rec = record_runtime_root()
   if rec.size > 0 {
     return rec
   }
-  args = argv()
+  args = process.args()
   if args.size > 0 {
     dir = path_dirname(args[0])
     base = path_basename(dir)
     if base == "bin" {
       parent = path_dirname(dir)
-      if file_exists("${parent}/runtime/build/avant_rt.o") {
+      if fs.exists("${parent}/runtime/build/avant_rt.o") {
         return parent
       }
     }
   }
-  if file_exists("runtime/build/avant_rt.o") {
+  if fs.exists("runtime/build/avant_rt.o") {
     return "."
   }
   ""
@@ -279,21 +281,21 @@ pub fn avant_checkout_root: String {
 // else ".". A checkout wins so that a seed in bin/vX/ links the runtime
 // of the tree it builds.
 pub fn avant_root: String {
-  if v = env_get("AVANT_ROOT") {
+  if v = process.env("AVANT_ROOT") {
     return v
   }
   rec = record_runtime_root()
   if rec.size > 0 {
     return rec
   }
-  args = argv()
+  args = process.args()
   if args.size > 0 {
     dir = path_dirname(args[0])
     base = path_basename(dir)
     if base == "bin" {
       parent = path_dirname(dir)
       probe = "${parent}/runtime/build/avant_rt.o"
-      if file_exists(probe) {
+      if fs.exists(probe) {
         return parent
       }
     }
@@ -302,13 +304,13 @@ pub fn avant_root: String {
   // inside that tree (a seed in bin/vX/ links the tree it builds): a
   // release run from a PATH or another directory inside a clone of the
   // repository links its own runtime, not the clone's.
-  if file_exists("runtime/build/avant_rt.o") && args.size > 0 && started_inside_cwd(args[0]) {
+  if fs.exists("runtime/build/avant_rt.o") && args.size > 0 && started_inside_cwd(args[0]) {
     return "."
   }
   exe = self_exe_path()
   if exe.size > 0 {
     home = path_dirname(exe)
-    if file_exists("${home}/runtime/build/avant_rt.o") {
+    if fs.exists("${home}/runtime/build/avant_rt.o") {
       return home
     }
   }
@@ -376,7 +378,7 @@ pub fn linker_flags_s(extra: Array(String)): String {
 }
 
 pub fn compile_source(src: Source): IrBox {
-  if src.path.size > 0 && file_exists(src.path) {
+  if src.path.size > 0 && fs.exists(src.path) {
     return compile_av_path(src.path)
   }
   lex = Lexer.new(src)
@@ -401,7 +403,7 @@ pub fn compile_source(src: Source): IrBox {
   info = ModInfo.new(name, src.path)
   program.mods.push(info)
   if prelude_wanted(tokens) {
-    add_prelude(program, prelude_more_wanted(tokens), prelude_old_wanted(tokens))
+    add_prelude(program, prelude_more_wanted(tokens))
   }
   if task_prelude_wanted(tokens) {
     add_task_prelude(program)
@@ -517,7 +519,7 @@ pub fn cov_map_dir(path: String): String? {
 // refused with this message, naming the variable (the old back end it
 // selected is retired).
 pub fn backend_refusal: String? {
-  if v = env_get("AVANT_BACKEND") {
+  if v = process.env("AVANT_BACKEND") {
     if v.size == 0 || v == "llvm" {
       return nil
     }
@@ -528,7 +530,7 @@ pub fn backend_refusal: String? {
 
 // Coverage: AVANT_COVERAGE set to anything but "" or "0".
 pub fn coverage_wanted: Bool {
-  if v = env_get("AVANT_COVERAGE"), v.size > 0 {
+  if v = process.env("AVANT_COVERAGE"), v.size > 0 {
     if v == "0" {
     } else {
       return true
@@ -541,7 +543,7 @@ pub fn coverage_wanted: Bool {
 // the driver chose (beside the output binary, or the scratch
 // directory when the program runs inside this process).
 pub fn coverage_map_path(fallback: String): String {
-  if v = env_get("AVANT_COVERAGE_MAP"), v.size > 0 {
+  if v = process.env("AVANT_COVERAGE_MAP"), v.size > 0 {
     return v
   }
   fallback
@@ -748,13 +750,13 @@ pub fn plan_pkg_c(loader: Loader, box: IrBox): Bool {
 // $XDG_CACHE_HOME/avant, else ~/.cache/avant; "" when none can be named
 // (each link then compiles again).
 pub fn avant_cache_dir: String {
-  if v = env_get("AVANT_CACHE_DIR"), v.size > 0 {
+  if v = process.env("AVANT_CACHE_DIR"), v.size > 0 {
     return v
   }
-  if v = env_get("XDG_CACHE_HOME"), v.size > 0 {
+  if v = process.env("XDG_CACHE_HOME"), v.size > 0 {
     return "${v}/avant"
   }
-  if v = env_get("HOME"), v.size > 0 {
+  if v = process.env("HOME"), v.size > 0 {
     return "${v}/.cache/avant"
   }
   ""
@@ -765,9 +767,9 @@ pub fn avant_cache_dir: String {
 pub fn cc_identity: String {
   path = "/usr/bin/env"
   args: Array(String) = []
-  if v = env_get("CC"), file_exists(v) {
+  if v = process.env("CC"), fs.exists(v) {
     path = v
-  } else if file_exists("/usr/bin/cc") {
+  } else if fs.exists("/usr/bin/cc") {
     path = "/usr/bin/cc"
   } else {
     args.push("cc")
@@ -776,7 +778,7 @@ pub fn cc_identity: String {
   out = "${tmp_new_dir()}/cc-version.txt"
   _ = tool_run_out(path, args, out)
   first = ""
-  if text = file_read(out) {
+  if text = fs.read(out) {
     lines = text.split("\n")
     if lines.size > 0 {
       first = lines[0]
@@ -806,10 +808,10 @@ pub fn pkg_c_headers(unit: PkgCUnit): String {
   }
   for d in dirs {
     full = join_dir(unit.dir, d)
-    names = dir_walk(full) ?? []
+    names = fs.walk(full) ?? []
     for n in names {
       if n.ends_with(".h") {
-        text = file_read(join_dir(full, n)) ?? ""
+        text = fs.read(join_dir(full, n)) ?? ""
         b.push_str("${d}/${n} ${digest.sha256_hex(text.bytes)}\n")
       }
     }
@@ -833,7 +835,7 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
     }
     for src in unit.sources {
       full = join_dir(unit.dir, src)
-      if text = file_read(full) {
+      if text = fs.read(full) {
         key_text.push_str("source ${src} ${digest.sha256_hex(text.bytes)}\n")
       } else {
         diag_puts("package ${unit.name}: its C source ${src} is missing (${full})")
@@ -856,7 +858,7 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
       cached = ""
       if dest.size > 0 {
         cached = "${dest}/${obj_name}"
-        if file_exists(cached) {
+        if fs.exists(cached) {
           job.objects.push(cached)
           continue
         }
@@ -921,7 +923,7 @@ pub fn compile_av_path(path: String, cov_map: String, cpu: Int): IrBox {
       return IrBox.new(false)
     }
     src = Source.new(path, "")
-    if text = file_read(path) {
+    if text = fs.read(path) {
       src = Source.new(path, text)
     }
     box = compile_program(src, program, cov_map, cpu)
@@ -985,10 +987,10 @@ pub fn print_ir(ir: String) {
 }
 
 pub fn run_cc(args: Array(String)): Int {
-  if v = env_get("CC"), file_exists(v) {
+  if v = process.env("CC"), fs.exists(v) {
     return tool_run(v, args)
   }
-  if file_exists("/usr/bin/cc") {
+  if fs.exists("/usr/bin/cc") {
     return tool_run("/usr/bin/cc", args)
   }
   wrapped: Array(String) = []
@@ -1000,17 +1002,17 @@ pub fn run_cc(args: Array(String)): Int {
 // re2c, in this order: AVANT_RE2C, the re2c beside the compiler's own
 // executable (a release ships one), then the system's.
 pub fn re2c_bin: String {
-  if v = env_get("AVANT_RE2C"), file_exists(v) {
+  if v = process.env("AVANT_RE2C"), fs.exists(v) {
     return v
   }
   exe = self_exe_path()
   if exe.contains("/") {
     beside = "${path_dirname(exe)}/re2c"
-    if file_exists(beside) {
+    if fs.exists(beside) {
       return beside
     }
   }
-  if file_exists("/usr/bin/re2c") {
+  if fs.exists("/usr/bin/re2c") {
     return "/usr/bin/re2c"
   }
   "re2c"
@@ -1091,7 +1093,7 @@ pub fn compile_re2c(plan: Re2cPlan): Re2cBuild {
   re_path = "${base}.re"
   c_path = "${base}.c"
   log_path = "${base}.log"
-  if e = write_failure(file_write(re_path, src)) {
+  if e = write_failure(fs.write(re_path, src)) {
     diag_puts("re2c: ${e.message()}")
     return build
   }
@@ -1111,7 +1113,7 @@ pub fn compile_re2c(plan: Re2cPlan): Re2cBuild {
   args.push(c_path)
   args.push(re_path)
   code = tool_run_out(re2c_bin(), args, log_path)
-  text = file_read(log_path) ?? ""
+  text = fs.read(log_path) ?? ""
   if text.contains(": warning: ") || text.contains(": error: ") {
     if re2c_read_warnings(text, re_path, re2c_line_owners(src), build) && build.bad.size > 0 {
       return build
@@ -1152,7 +1154,7 @@ pub fn compile_re2c(plan: Re2cPlan): Re2cBuild {
 }
 
 pub fn compile_c_file(path: String): String {
-  if !file_exists(path) {
+  if !fs.exists(path) {
     diag_puts("C source is missing: ${path}")
     return ""
   }
@@ -1185,7 +1187,7 @@ pub fn link_lib(job: LinkJob, v: String): String {
     return "--lib needs a name or a library's path"
   }
   if v.contains("/") || v.ends_with(".a") || v.ends_with(".so") || v.contains(".so.") {
-    if !file_exists(v) || dir_exists(v) {
+    if !fs.exists(v) || fs.is_dir(v) {
       return "--lib ${v}: no such library file"
     }
     job.objects.push(v)

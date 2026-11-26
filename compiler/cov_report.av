@@ -1,6 +1,8 @@
 import source
 import pipeline
 import loader
+import std.fs
+import std.process
 
 lib cov_posix {
   fun isatty(fd: Int): Int
@@ -38,9 +40,9 @@ pub class CovReport {
   }
 
   pub fn merge_map(map_path: String) {
-    if text = file_read(map_path) {
+    if text = fs.read(map_path) {
       hits = ""
-      if raw = file_read("${map_path}.hits") {
+      if raw = fs.read("${map_path}.hits") {
         hits = raw
       }
       lines = cov_lines(text)
@@ -99,7 +101,7 @@ pub class CovReport {
       }
       b.push_str("end_of_record\n")
     }
-    if e = write_failure(file_write(path, b.to_s())) {
+    if e = write_failure(fs.write(path, b.to_s())) {
       diag_puts(e.message())
       return false
     }
@@ -167,7 +169,7 @@ pub class CovReport {
   }
 
   fn walk_tree(dir_abs: String, excludes: Array(String)) {
-    names = dir_list(dir_abs) ?? []
+    names = fs.list(dir_abs) ?? []
     i = 0
     while i < names.size {
       name = names[i]
@@ -182,7 +184,7 @@ pub class CovReport {
       if dir_abs == "/" {
         path = "/${name}"
       }
-      if file_exists("${path}/.") {
+      if fs.exists("${path}/.") {
         // a symbolic link to a directory is not followed (as the test walk)
         if !path_is_link(path) {
           walk_tree(path, excludes)
@@ -199,7 +201,7 @@ pub class CovReport {
   }
 
   fn add_bare(rel: String, abs: String) {
-    if text = file_read(abs) {
+    if text = fs.read(abs) {
       lines = cov_code_lines(text)
       i = 0
       while i < lines.size {
@@ -576,7 +578,7 @@ fn cov_less(a: String, b: String): Bool {
 }
 
 fn cov_color: Bool {
-  if v = env_get("AVANT_COVERAGE_COLOR") {
+  if v = process.env("AVANT_COVERAGE_COLOR") {
     if v == "0" {
       return false
     }

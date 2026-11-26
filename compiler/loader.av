@@ -9,6 +9,8 @@ import resolve
 import parser
 import prelude_src
 import manifest
+import std.fs
+import std.process
 
 lib oslink {
   fun readlink(path: String, buf: String, n: Int): Int
@@ -27,7 +29,7 @@ pub fn self_exe_path: String {
   if n > 0 && n < 4096 {
     return raw[..n]
   }
-  args = argv()
+  args = process.args()
   if args.size > 0 {
     return args[0]
   }
@@ -170,7 +172,7 @@ pub fn find_manifest(start: String): String {
     } else {
       cand = "${dir}/avant.toml"
     }
-    if file_exists(cand) {
+    if fs.exists(cand) {
       return dir
     }
     if dir == "." {
@@ -306,7 +308,6 @@ pub class Loader {
   wants_task: Bool = false
   wants_fmt: Bool = false
   wants_prelude_more: Bool = false
-  wants_prelude_old: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
   pub dep_set: DepSet? = nil
@@ -416,7 +417,7 @@ pub class Loader {
   }
 
   pub fn consider_hit(hits: Array(String), path: String) {
-    if file_exists(path) && !hit_listed(hits, path) {
+    if fs.exists(path) && !hit_listed(hits, path) {
       hits.push(path)
     }
   }
@@ -443,7 +444,7 @@ pub class Loader {
   pub fn record_lib(exe: String): String? {
     if !self.lib_read {
       self.lib_read = true
-      if text = file_read("${exe}.versions.txt") {
+      if text = fs.read("${exe}.versions.txt") {
         for line in text.split("\n") {
           if line.size > 5 && line.starts_with("lib: ") {
             self.lib_rec = line[5..]
@@ -464,9 +465,9 @@ pub class Loader {
     }
     rel = import_rel(name)
     suffix = "lib/${rel}"
-    if v = env_get("AVANT_ROOT") {
+    if v = process.env("AVANT_ROOT") {
       path = join_dir(v, suffix)
-      if file_exists(path) {
+      if fs.exists(path) {
         self.std_names[path] = name
         return path
       }
@@ -479,12 +480,12 @@ pub class Loader {
     // or copied compiler reads that one, never the nearest lib/ its
     // path climbs to, and says why when it is gone.
     if libdir = record_lib(exe) {
-      if !file_exists(libdir) {
+      if !fs.exists(libdir) {
         fail(loc, "cannot find ${name}: ${exe}.versions.txt names the library ${libdir}, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read")
         return ""
       }
       path = "${libdir}/${rel}"
-      if file_exists(path) {
+      if fs.exists(path) {
         self.std_names[path] = name
         return path
       }
@@ -494,7 +495,7 @@ pub class Loader {
     dir = path_dirname(exe)
     for guard in 0..64 {
       cand = join_dir(dir, suffix)
-      if file_exists(cand) {
+      if fs.exists(cand) {
         self.std_names[cand] = name
         return cand
       }
@@ -546,16 +547,16 @@ pub class Loader {
       if set = self.dep_set {
         for stray in set.stray {
           cand = join_dir("${self.manifest_dir}/deps/${stray}", rel)
-          if file_exists(cand) {
+          if fs.exists(cand) {
             fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps: ${cand} is in deps/, but avant.lock does not name ${stray}, so it is not a dependency (add it to avant.toml and run: avant fetch ${anchor})")
             return ""
           }
         }
       }
-      if file_exists("${anchor}/avant.toml") {
+      if fs.exists("${anchor}/avant.toml") {
         fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${anchor})")
       } else {
-        if file_exists("${self.project_dir}/avant.toml") {
+        if fs.exists("${self.project_dir}/avant.toml") {
           fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${self.project_dir})")
         } else {
           fail(loc, "cannot find ${name}.av next to ${importer}")
@@ -590,7 +591,7 @@ pub class Loader {
     hits = 0
     for dep_dir in self.dep_dirs {
       cand = "${dep_dir}/${name}.av"
-      if file_exists(cand) {
+      if fs.exists(cand) {
         hits += 1
         hit = cand
       }
@@ -629,7 +630,7 @@ pub class Loader {
   }
 
   pub fn load_root(path: String): Program? {
-    if !file_exists(path) {
+    if !fs.exists(path) {
       fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
       return nil
     }
@@ -643,7 +644,7 @@ pub class Loader {
     }
     if merged = merge(path) {
       if self.wants_prelude {
-        add_prelude(merged, self.wants_prelude_more, self.wants_prelude_old)
+        add_prelude(merged, self.wants_prelude_more)
       }
       if self.wants_task {
         add_task_prelude(merged)
@@ -694,9 +695,6 @@ pub class Loader {
       }
       if !self.wants_prelude_more && prelude_more_wanted(tokens) {
         self.wants_prelude_more = true
-      }
-      if !self.wants_prelude_old && prelude_old_wanted(tokens) {
-        self.wants_prelude_old = true
       }
       parser = Parser.new(file, tokens)
       program = parser.parse()
@@ -792,13 +790,9 @@ pub fn merge_decls(merged: Program, p: Program) {
 // Adds the prelude module (prelude_src.av) to a merged program: its
 // declarations after every other module's, so the program's own types
 // keep their order, and an import of it in every module. more adds the
-// module's second part (prelude_more_source) after the first, old the
-// old file and process functions (prelude_old_source).
-pub fn add_prelude(merged: Program, more: Bool, old: Bool) {
+// module's second part (prelude_more_source) after the first.
+pub fn add_prelude(merged: Program, more: Bool) {
   text = prelude_source()
-  if old {
-    text = text + prelude_old_source()
-  }
   if more {
     text = text + prelude_more_source()
   }

@@ -22,6 +22,7 @@ import mir.ir
 import mir.build
 import mir.lower
 import prelude_src
+import std.fs
 
 // The ranks of the thunks (functions take their index, below 1000000;
 // the constructors 1000000 and count nothing).
@@ -181,7 +182,7 @@ pub fn (lw: MirLower) cov_finish {
   // A coverage build without its slot map cannot be reported on (the
   // counters would have no lines): the build fails and says why (the
   // failure was dropped and the binary built).
-  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s())) {
+  if e = mir_cov_write_failure(fs.write(c.map_path, buf.to_s())) {
     lw.fail_build("error: the coverage map was not written: ${e.message()}")
   }
 }
