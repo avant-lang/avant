@@ -62,12 +62,10 @@ fn tags_shared_src: String {
 // The frozen check reads an Array's capacity word with an atomic
 // (monotonic) load and no tag: a task's end changes the word from
 // another thread.
-fn test_alias_tags_cap(c: Checks, compiler: String, stamp: Int) {
-  src = "${scratch()}/alias-tags-${stamp}-shared.av"
-  ll = "${scratch()}/alias-tags-${stamp}-shared.ll"
-  log = "${scratch()}/alias-tags-${stamp}-shared.log"
-  c.wrote(fs.write(src, tags_shared_src()), "write the shared probe")
-  c.eq_int(emit_ll(compiler, src, ll, log), 0, "the shared probe's .ll")
+fn test_alias_tags_cap(c: Checks, p: AliasJobs) {
+  ll = "${p.base}-shared.ll"
+  c.wrote(p.wrote_shared, "write the shared probe")
+  c.eq_int(p.jobs[2].code, 0, "the shared probe's .ll")
   if text = fs.read(ll) {
     lines = tags_lines(text)
     reads = 0
@@ -92,12 +90,10 @@ fn test_alias_tags_cap(c: Checks, compiler: String, stamp: Int) {
   }
 }
 
-fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
-  src = "${scratch()}/alias-tags-${stamp}-array.av"
-  ll = "${scratch()}/alias-tags-${stamp}-array.ll"
-  log = "${scratch()}/alias-tags-${stamp}-array.log"
-  c.wrote(fs.write(src, tags_array_src()), "write the array probe")
-  c.eq_int(emit_ll(compiler, src, ll, log), 0, "the array probe's .ll")
+fn test_alias_tags_ll(c: Checks, p: AliasJobs) {
+  ll = "${p.base}-array.ll"
+  c.wrote(p.wrote_array, "write the array probe")
+  c.eq_int(p.jobs[0].code, 0, "the array probe's .ll")
   if text = fs.read(ll) {
     lines = tags_lines(text)
     c.expect(text.contains("!1 = !{!\"avant alias\"}"), "the alias root")
@@ -136,11 +132,9 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   } else {
     c.expect(false, "read the array probe's .ll")
   }
-  src2 = "${scratch()}/alias-tags-${stamp}-other.av"
-  ll2 = "${scratch()}/alias-tags-${stamp}-other.ll"
-  log2 = "${scratch()}/alias-tags-${stamp}-other.log"
-  c.wrote(fs.write(src2, tags_other_src()), "write the object and hash probe")
-  c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
+  ll2 = "${p.base}-other.ll"
+  c.wrote(p.wrote_other, "write the object and hash probe")
+  c.eq_int(p.jobs[1].code, 0, "the object and hash probe's .ll")
   if text2 = fs.read(ll2) {
     lines2 = tags_lines(text2)
     // Box's one field is at byte offset 0: its tag is that offset's,
@@ -174,81 +168,139 @@ fn tags_wrap_src: String {
   "fn main: Int {\n  n = process.args().size\n  x = 9223372036854775807 - n + 1\n  y = x &+ 1\n  if y > x {\n    puts(\"add: no wrap\")\n  } else {\n    puts(\"add: wrap\")\n  }\n  m = 4611686018427387904 + n - 1\n  z = m &* 4\n  if z > m {\n    puts(\"mul: no wrap\")\n  } else {\n    puts(\"mul: wrap\")\n  }\n  s = -9223372036854775807 - n\n  w = s &- 1\n  if w < s {\n    puts(\"sub: no wrap\")\n  } else {\n    puts(\"sub: wrap\")\n  }\n  0\n}\nimport std.process\n"
 }
 
-fn test_alias_tags_wrap(c: Checks, compiler: String, stamp: Int) {
-  src = "${scratch()}/alias-tags-${stamp}-wrap.av"
-  bin = "${scratch()}/alias-tags-${stamp}-wrap"
-  clog = "${scratch()}/alias-tags-${stamp}-wrap.clog"
-  rlog = "${scratch()}/alias-tags-${stamp}-wrap.out"
-  c.wrote(fs.write(src, tags_wrap_src()), "write the wrapping probe")
-  flags: Array(String) = []
-  flags.push("--release")
-  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "the wrapping probe compiles with --release")
+fn test_alias_tags_wrap(c: Checks, p: AliasJobs) {
+  bin = "${p.base}-wrap"
+  rlog = "${p.base}-wrap.out"
+  c.wrote(p.wrote_wrap, "write the wrapping probe")
+  c.eq_int(p.jobs[3].code, 0, "the wrapping probe compiles with --release")
   if !fs.exists(bin) {
     c.expect(false, "the wrapping probe's binary")
     return
   }
-  chmod_x(bin)
-  args: Array(String) = []
-  code = run_out(bin, args, rlog) ?? -1
-  c.eq_int(code, 0, "the wrapping probe exits 0")
+  c.eq_int(p.runs[0].code, 0, "the wrapping probe exits 0")
   c.eq_str(fs.read(rlog) ?? "", "add: wrap\nmul: wrap\nsub: wrap\n", "a wrapping add, multiply and subtract wrap in --release")
 }
 
 // name: alias_moves (elements), alias_fields (object fields) or
 // slot_copies (frame slots read through their copies).
-fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int, name: String) {
+// The environments each fixture runs under (on top of the pass's own).
+fn tags_move_envs: Array(String) {
+  ["", "AVANT_GC_STRESS=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1", "AVANT_NURSERY=0", "AVANT_YOUNG_MB=1 AVANT_GC_VERIFY=1"]
+}
+
+fn tags_move_names: Array(String) {
+  ["alias_moves", "alias_fields", "slot_copies"]
+}
+
+// The work of every check below, started in two waves: the three probes'
+// .ll, the wrapping probe's and the three fixtures' --release compiles at
+// once, then every run at once. A fixture's run under words its pass
+// already sets is its plain run (env_holds): it runs once.
+class AliasJobs {
+  pub base: String = ""
+  pub jobs: Array(HJob)
+  pub runs: Array(HJob)
+  // For fixture k and environment j, the index in runs of the run whose
+  // output its checks read.
+  pub run_of: Array(Int)
+  pub wrote_array: Int | IoError = 0
+  pub wrote_other: Int | IoError = 0
+  pub wrote_shared: Int | IoError = 0
+  pub wrote_wrap: Int | IoError = 0
+
+  fn initialize(base: String) {
+    self.base = base
+    self.jobs = []
+    self.runs = []
+    self.run_of = []
+  }
+}
+
+fn tags_start(compiler: String, stamp: Int): AliasJobs {
   root = avant_test_root()
-  src = "${root}/tests/fixtures/heap/${name}.av"
-  bin = "${scratch()}/alias-tags-${stamp}-${name}"
-  clog = "${scratch()}/alias-tags-${stamp}-${name}.clog"
+  p = AliasJobs.new("${scratch()}/alias-tags-${stamp}")
+  b = p.base
+  p.wrote_array = fs.write("${b}-array.av", tags_array_src())
+  p.wrote_other = fs.write("${b}-other.av", tags_other_src())
+  p.wrote_shared = fs.write("${b}-shared.av", tags_shared_src())
+  p.wrote_wrap = fs.write("${b}-wrap.av", tags_wrap_src())
+  for n in ["array", "other", "shared"] {
+    p.jobs.push(HJob.new(compiler, ["__emit-ll", "${b}-${n}.av", "${b}-${n}.ll"], "${b}-${n}.log"))
+  }
+  p.jobs.push(HJob.new(compiler, ["compile", "${b}-wrap.av", "${b}-wrap", "--release"], "${b}-wrap.clog"))
+  for name in tags_move_names() {
+    p.jobs.push(HJob.new(compiler, ["compile", "${root}/tests/fixtures/heap/${name}.av", "${b}-${name}", "--release"], "${b}-${name}.clog"))
+  }
+  run_jobs(p.jobs)
+  if fs.exists("${b}-wrap") {
+    chmod_x("${b}-wrap")
+  }
+  no_args: Array(String) = []
+  p.runs.push(HJob.new("${b}-wrap", no_args, "${b}-wrap.out"))
+  envs = tags_move_envs()
+  for name in tags_move_names() {
+    bin = "${b}-${name}"
+    if fs.exists(bin) {
+      chmod_x(bin)
+    }
+    plain = p.runs.size
+    for j in 0..envs.size {
+      if j > 0 && env_holds(envs[j]) {
+        p.run_of.push(plain)
+      } else {
+        args: Array(String) = []
+        for w in envs[j].split(" ") {
+          if w.size > 0 {
+            args.push(w)
+          }
+        }
+        args.push(bin)
+        p.run_of.push(p.runs.size)
+        p.runs.push(HJob.new("/usr/bin/env", args, "${b}-${name}-${j}.out"))
+      }
+    }
+  }
+  run_jobs(p.runs)
+  p
+}
+
+// name: alias_moves (elements), alias_fields (object fields) or
+// slot_copies (frame slots read through their copies); k its place in
+// tags_move_names.
+fn test_alias_tags_moves(c: Checks, p: AliasJobs, k: Int, name: String) {
+  root = avant_test_root()
+  bin = "${p.base}-${name}"
   want = fs.read("${root}/tests/goldens/runs/fixtures/heap/${name}.out") ?? ""
   c.expect(want.size > 0, "${name}'s run golden")
-  flags: Array(String) = []
-  flags.push("--release")
-  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "${name} compiles with --release")
+  c.eq_int(p.jobs[4 + k].code, 0, "${name} compiles with --release")
   if !fs.exists(bin) {
     c.expect(false, "${name}'s binary")
     return
   }
-  chmod_x(bin)
-  envs = ["", "AVANT_GC_STRESS=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1", "AVANT_NURSERY=0", "AVANT_YOUNG_MB=1 AVANT_GC_VERIFY=1"]
+  envs = tags_move_envs()
   for j in 0..envs.size {
-    args: Array(String) = []
-    words = envs[j]
-    start = 0
-    for i in 0..words.size {
-      if words[i] == 32 {
-        args.push(words[start..i])
-        start = i + 1
-      }
-    }
-    if start < words.size {
-      args.push(words[start..])
-    }
-    args.push(bin)
-    rlog = "${scratch()}/alias-tags-${stamp}-${name}-${j}.out"
+    r = p.runs[p.run_of[k * envs.size + j]]
     mode = envs[j]
     if mode.size == 0 {
       mode = "the outer environment"
     }
-    code = run_out("/usr/bin/env", args, rlog) ?? -1
-    c.eq_int(code, 0, "${name} exits 0 under ${mode}")
-    c.eq_str(fs.read(rlog) ?? "", want, "${name}'s output under ${mode}")
+    c.eq_int(r.code, 0, "${name} exits 0 under ${mode}")
+    c.eq_str(fs.read(r.log) ?? "", want, "${name}'s output under ${mode}")
   }
 }
 
 fn test_alias_tags(c: Checks) {
   c.suite("tests/cases/test_alias_tags.av")
   if compiler = process.env("AVANT_COMPILER") {
-    stamp = now_ms()
-    test_alias_tags_ll(c, compiler, stamp)
-    test_alias_tags_cap(c, compiler, stamp)
-    test_alias_tags_wrap(c, compiler, stamp)
-    test_alias_tags_moves(c, compiler, stamp, "alias_moves")
-    test_alias_tags_moves(c, compiler, stamp, "alias_fields")
+    p = tags_start(compiler, now_ms())
+    test_alias_tags_ll(c, p)
+    test_alias_tags_cap(c, p)
+    test_alias_tags_wrap(c, p)
+    test_alias_tags_moves(c, p, 0, "alias_moves")
+    test_alias_tags_moves(c, p, 1, "alias_fields")
     // The slots' register copies read again after collecting calls on
     // some paths only (heap/slot_copies.av), in --release under each mode.
-    test_alias_tags_moves(c, compiler, stamp, "slot_copies")
+    test_alias_tags_moves(c, p, 2, "slot_copies")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
