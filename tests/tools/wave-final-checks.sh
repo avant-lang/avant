@@ -17,6 +17,8 @@
 #     refused; ref-no-machine: one without machine.txt is refused;
 #   ref-cpu-parens: a CPU whose name has its own parentheses
 #     (Intel(R) Xeon(R) ...) matches its reference (a fake cpuinfo);
+#   la-red-skipped: with a red step (and WAVE_LA_ON_RED unset) the
+#     LangArena step is skipped and says why, nothing timed;
 #   ref-default: with WAVE_LR_REFERENCE unset, the directory named in
 #     WAVE_LR_DEFAULT is used (and checked); ref-none: no reference at all
 #     is red and says how to give one;
@@ -71,6 +73,19 @@
 #     copy's binaries are not the gate's, a `beside:` line is red;
 #   beside-off: WAVE_BESIDE=0 runs them in turn after the gate, no copy, no
 #     `beside:` line;
+#   reuse-green, reuse-refused-path, reuse-refused-toml, reuse-refused-binary:
+#     with WAVE_REUSE naming a green final of an ancestor, a head that changes
+#     only README.md, CHANGELOG.md and avant.toml's version runs the
+#     documents' checks, the test files that name them and the smoke test,
+#     no gate, and ends `WAVE FINAL GREEN (carried over ...)`; a changed
+#     compiler file, another avant.toml line or a C' whose sha256 is not the
+#     final's is refused, named, and the whole final runs;
+#   stats-base-yes, stats-base-fixtures, stats-base-programs, stats-base-old:
+#     --stats-base takes an earlier final as a commit's statistics base when
+#     the commit differs from its head only outside compiler/, runtime/, lib/
+#     and tests/fixtures/ and its stitched programs are the ones the base
+#     cache's part stitches (the harness's paths aside); a changed fixture,
+#     a changed program or a final with no la/stitched.txt is refused, named;
 #   neutral-count: the neutral line counts the programs that moved outside
 #     the change (by kind) and names the first five.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
@@ -103,14 +118,16 @@ EOF
 # Run wave-final.sh in checkout F into OUT, the environment emptied but for
 # the given variables.
 # The fake checkouts run the steps in turn (WAVE_BESIDE=0) unless a check
-# names it; final_default leaves it unset, to check the default.
+# names it; final_default leaves it unset, to check the default. Their later
+# steps are red, so both time LangArena on a red final (WAVE_LA_ON_RED=1)
+# unless a check says otherwise (la-red-skipped).
 final() { # F OUT VAR=VALUE...
   f=$1 o=$2; shift 2
-  (cd "$f" && env -i PATH="$PATH" HOME="$w/home" WAVE_BESIDE=0 "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
+  (cd "$f" && env -i PATH="$PATH" HOME="$w/home" WAVE_BESIDE=0 WAVE_LA_ON_RED=1 "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
 }
 final_default() { # F OUT VAR=VALUE...
   f=$1 o=$2; shift 2
-  (cd "$f" && env -i PATH="$PATH" HOME="$w/home" "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
+  (cd "$f" && env -i PATH="$PATH" HOME="$w/home" WAVE_LA_ON_RED=1 "$@" timeout -k 10 300 sh tools/wave-final.sh "$o" < /dev/null > "$o.log" 2>&1)
 }
 has() { grep -q "$1" "$2" 2>/dev/null; }
 line() { grep "^$1" "$2" 2>/dev/null | head -n 1; }
@@ -179,6 +196,12 @@ final "$f" "$w/ref-unset.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" 
 s=$w/ref-unset.out/SUMMARY.txt
 has "^langarena: red (no LR reference: set WAVE_LR_REFERENCE, or write this machine's reference directory into $w/no-such-file)" "$s"
 say ref-none $? "$(line langarena: "$s")"
+# A final with a red step skips the whole-machine LangArena timing: its head
+# changes and the final runs again.
+final "$f" "$w/la-red.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" WAVE_LR_REFERENCE="$w/ref-here" WAVE_LA_ON_RED=0
+s=$w/la-red.out/SUMMARY.txt
+has '^langarena: skipped (a step is red: ' "$s" && [ ! -e "$w/la-red.out/la" ] && has '^WAVE FINAL RED:' "$s"
+say la-red-skipped $? "$(line langarena: "$s"); $(line WAVE "$s")"
 
 # 5. The machine lock through WAVE_RUNNER: a stub runner logs its side and
 # step, then runs the command after `--`.
@@ -548,4 +571,85 @@ s=$w/besideoff.out/SUMMARY.txt
 has '^gate: pass' "$s" && has '^goldens: green' "$s" && has '^gcstats: 2 files (no base given)$' "$s" && ! has '^beside:' "$s" && ! has '^build:' "$s" \
   && [ ! -e "$w/besideoff.out/beside" ] && ! grep -q 'run beside the gate' "$w/besideoff.out.log" && has '^WAVE PARTIAL GREEN (only: gate,goldens,stats; not a final)$' "$s"
 say beside-off $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-700)"
+
+# 15. WAVE_REUSE: a release head that changes only documents carries over
+# the integration's green final; anything else runs the whole final.
+reuse_fake() { # NAME: a git checkout with stub letters, document tools and C'
+  f=$(fake "$1")
+  mkdir -p "$f/compiler" "$f/tests/cases" "$f/runtime"
+  echo 'fn main {}' > "$f/compiler/main.av"; echo 'rt' > "$f/runtime/rt.c"
+  printf '[package]\nname = "avant"\nversion = "0.1.0"\n' > "$f/avant.toml"
+  echo '# Avant' > "$f/README.md"; echo '# Changes' > "$f/CHANGELOG.md"
+  echo 'reads README.md' > "$f/tests/cases/test_docs.av"; echo 'other' > "$f/tests/cases/test_other.av"
+  printf '/bin/\n/runtime/build/\n/langarena/\n' > "$f/.gitignore"
+  cat > "$f/tools/letters.sh" <<'EOS'
+#!/bin/sh
+# The stub letters: B and C' are a script of compiler/main.av, the runtime a copy.
+mkdir -p bin runtime/build
+{ echo '#!/bin/sh'; echo "# $(cat compiler/main.av)"; echo 'case $1 in test) shift; [ "$1" = --junit ] && { echo "<testsuites>" > "$2"; shift 2; }; for f in "$@"; do echo "ok $f"; done; echo "0 failed, $# passed"; echo "$*" > "$WF_TESTS" ;; esac'; } > bin/avant-c-llvm
+chmod +x bin/avant-c-llvm; cp bin/avant-c-llvm bin/avant-b; cp runtime/rt.c runtime/build/avant_rt.o
+EOS
+  for t in readme-check.sh readme-links.sh no-ledger-refs.sh format-check.sh; do printf '#!/bin/sh\necho "%s %s"\n' "$t" "\$*" > "$f/tools/$t"; done
+  printf '#!/bin/sh\necho "package: $1/a.tar.gz"\n' > "$f/tools/package.sh"
+  printf '#!/bin/sh\necho "ok hello"\n' > "$f/tools/smoke.sh"
+  printf 'FORMAT_SKIP=""\necho "GATE PASS (stub)"\n' > "$f/tools/gate.sh"
+  (cd "$f" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m int) > /dev/null 2>&1
+  # The integration's final: green, of this head, with these letters.
+  i=$w/$1/int; mkdir -p "$i"
+  (cd "$f" && sh tools/letters.sh && sha256sum bin/avant-b bin/avant-c-llvm runtime/build/avant_rt.o > "$i/letters.txt") > /dev/null 2>&1
+  git -C "$f" rev-parse HEAD > "$i/head.txt"; printf 'head: x\nWAVE FINAL GREEN\n' > "$i/SUMMARY.txt"
+  echo "$f"
+}
+rcommit() { (cd "$1" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m "$2") > /dev/null 2>&1; }
+f=$(reuse_fake reuse)
+sed -i 's/version = "0.1.0"/version = "0.2.0"/' "$f/avant.toml"; echo 'v0.2.0' >> "$f/CHANGELOG.md"; echo 'more' >> "$f/README.md"; rcommit "$f" release
+final "$f" "$w/reuse.out" WAVE_TMP="$w/tmp1" WAVE_ARCHIVE=0 WAVE_REUSE="$w/reuse/int" WF_TESTS="$w/reuse.tests"
+s=$w/reuse.out/SUMMARY.txt
+has "^reuse: $w/reuse/int (head .*) stands for this head: 3 files changed since" "$s" && has '^documents: green' "$s" && has '^document tests: 0 failed, 1 passed' "$s" \
+  && [ "$(cat "$w/reuse.tests" 2>/dev/null)" = "tests/cases/test_docs.av" ] && has '^smoke: 1 passed, 0 failed' "$s" && ! has '^gate: pass' "$s" \
+  && has "^WAVE FINAL GREEN (carried over from $w/reuse/int" "$s"
+say reuse-green $? "$(tr '\n' ';' < "$s" 2>/dev/null | cut -c1-900)"
+f=$(reuse_fake reuse2)
+echo 'fn main { }' > "$f/compiler/main.av"; echo more >> "$f/README.md"; rcommit "$f" code
+final "$f" "$w/reuse2.out" WAVE_TMP="$w/tmp1" WAVE_ARCHIVE=0 WAVE_REUSE="$w/reuse2/int" WF_TESTS="$w/reuse2.tests"
+s=$w/reuse2.out/SUMMARY.txt
+has '^reuse: refused (the head changes compiler/main.av .*: the whole final runs' "$s" && has '^gate: pass' "$s" && ! has 'carried over' "$s"
+say reuse-refused-path $? "$(line reuse: "$s"); $(line gate: "$s")"
+f=$(reuse_fake reuse3)
+printf '[package]\nname = "avant2"\nversion = "0.2.0"\n' > "$f/avant.toml"; rcommit "$f" toml
+final "$f" "$w/reuse3.out" WAVE_TMP="$w/tmp1" WAVE_ARCHIVE=0 WAVE_REUSE="$w/reuse3/int" WF_TESTS="$w/reuse3.tests"
+has '^reuse: refused (avant.toml changes more than its version line)' "$w/reuse3.out/SUMMARY.txt"
+say reuse-refused-toml $? "$(line reuse: "$w/reuse3.out/SUMMARY.txt")"
+f=$(reuse_fake reuse4)
+echo more >> "$f/README.md"; rcommit "$f" docs
+sed -i '2s/^[0-9a-f]*/0000/' "$w/reuse4/int/letters.txt"
+final "$f" "$w/reuse4.out" WAVE_TMP="$w/tmp1" WAVE_ARCHIVE=0 WAVE_REUSE="$w/reuse4/int" WF_TESTS="$w/reuse4.tests"
+has "^reuse: refused (bin/avant-c-llvm is not the integration's): the whole final runs" "$w/reuse4.out/SUMMARY.txt"
+say reuse-refused-binary $? "$(line reuse: "$w/reuse4.out/SUMMARY.txt")"
+
+# 16. --stats-base: an earlier final is a statistics base for a commit when
+# what its programs are built from is the commit's and it timed the same
+# stitched programs this checkout's harness stitches for it.
+f=$(fake statbase); mkdir -p "$f/compiler" "$f/tests/fixtures" "$w/statbase/part/avant/langarena/tmp"
+echo 'v1' > "$f/compiler/main.av"; echo 'fx' > "$f/tests/fixtures/a.av"; echo 'a tool' > "$f/tools/x.sh"
+printf '/langarena/\n' > "$f/.gitignore"
+(cd "$f" && git init -q .) > /dev/null 2>&1
+rcommit "$f" base1; t1=$(git -C "$f" rev-parse 'HEAD^{tree}')
+echo 'another tool' > "$f/tools/x.sh"; rcommit "$f" tools-only
+printf '// file: /somewhere/langarena/helper.av\nfn main {}\n' > "$w/statbase/part/avant/langarena/tmp/a.av"
+printf '#!/bin/sh\necho "%s"\n' "$w/statbase/part" > "$f/tools/base-cache.sh"
+p=$w/statbase/prev; mkdir -p "$p/gcstats" "$p/la"; echo t > "$p/la/table.md"
+printf 'x\n%s\n' "$t1" > "$p/head.txt"; printf 'WAVE FINAL GREEN\n' > "$p/SUMMARY.txt"
+printf '// file: /elsewhere/x/langarena/helper.av\nfn main {}\n' > "$w/statbase/a.av"
+printf '%s  a.av\n' "$(sed 's#^// file: .*/langarena/#// file: langarena/#' "$w/statbase/a.av" | sha256sum | cut -c1-64)" > "$p/la/stitched.txt"
+sbase() { (cd "$f" && sh tools/wave-final.sh --stats-base "$p" HEAD < /dev/null 2>&1); }
+o=$(sbase); r1=$?
+[ $r1 -eq 0 ] && echo "$o" | grep -q '^stats base: yes'; say stats-base-yes $? "rc=$r1 $o"
+echo 'fx2' > "$f/tests/fixtures/a.av"; rcommit "$f" fixture
+o=$(sbase); [ $? -eq 1 ] && echo "$o" | grep -q '^stats base: no (tests/fixtures/ differs'; say stats-base-fixtures $? "$o"
+echo 'fx' > "$f/tests/fixtures/a.av"; rcommit "$f" fixture-back
+printf '// file: /somewhere/langarena/helper.av\nfn main { 1 }\n' > "$w/statbase/part/avant/langarena/tmp/a.av"
+o=$(sbase); [ $? -eq 1 ] && echo "$o" | grep -q '^stats base: no (the LangArena programs differ'; say stats-base-programs $? "$o"
+rm "$p/la/stitched.txt"
+o=$(sbase); [ $? -eq 1 ] && echo "$o" | grep -q 'names no stitched programs'; say stats-base-old $? "$o"
 echo done

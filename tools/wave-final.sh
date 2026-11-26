@@ -106,7 +106,10 @@
 #      named in the line (a difference is explained in the record, not
 #      red). The base is where HEAD left WAVE_BASE (`git merge-base`): a
 #      branch that moved on since is not this head's base.
-#   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
+#   6. only with WAVE_LA=1, and only when no earlier step is red (a red final
+#      runs again on a fixed head, so its timing would hold the whole machine
+#      for nothing; WAVE_LA_ON_RED=1 times it anyway): LangArena prod once
+#      with C' (the harness binary
 #      of tools/la-harness.sh, built once per checkout), then the LR table
 #      (tools/lr-table.sh), OUT/la. The tasks are timed on the whole
 #      machine, one after another, as the references were; the pure-Avant
@@ -170,6 +173,41 @@
 # alive when the budget is spent is killed at once.
 # Exit status: 0 when every step is green, 1 otherwise, 2 on a usage error.
 set -u
+# stitched_list DIR: the stitched LangArena programs in DIR (SLUG.av and its
+# SLUG.cfg.av) with their sha256, one per line, by name; the `// file:` lines
+# that name where the harness was are read from langarena/ on, so the same
+# programs stitched in two checkouts read the same.
+stitched_list() { (cd "$1" 2> /dev/null && ls | grep '\.av$' | LC_ALL=C sort | while IFS= read -r sl_f; do printf '%s  %s\n' "$(sed 's#^// file: .*/langarena/#// file: langarena/#' "$sl_f" | sha256sum | cut -c1-64)" "$sl_f"; done); }
+
+# --stats-base PREV_OUT [REV]: whether an earlier final (or a WAVE_ONLY=stats,la
+# run) PREV_OUT is a statistics base for REV (default HEAD): its gcstats/ and
+# la/table.md are there, the compiler/, runtime/, lib/ and tests/fixtures/
+# trees of its head are REV's, and the LangArena programs it timed
+# (la/stitched.txt) are the ones this checkout's harness stitches for REV
+# (the base cache's LangArena part, tools/base-cache.sh --la REV): the
+# statistics and the times are functions of those alone, so a base commit
+# that only adds a seed switch, tools or the second half needs no run of
+# its own. Prints `stats base: yes ...` (status 0) or `stats base: no
+# (why)` (status 1).
+if [ "${1:-}" = --stats-base ]; then
+  [ $# -ge 2 ] && [ $# -le 3 ] || { echo "wave-final: usage: sh tools/wave-final.sh --stats-base PREV_OUT [REV]" >&2; exit 2; }
+  root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd); cd "$root" || exit 2
+  sp=$(realpath -m "$2"); srev=${3:-HEAD}
+  sno() { echo "stats base: no ($1)"; exit 1; }
+  [ -d "$sp/gcstats" ] && [ -s "$sp/la/table.md" ] || sno "$sp has no gcstats/ or la/table.md"
+  tail -n 1 "$sp/SUMMARY.txt" 2> /dev/null | grep -q '^WAVE \(FINAL\|PARTIAL\) GREEN' || sno "$sp did not end green"
+  sptree=$(sed -n '2p' "$sp/head.txt" 2> /dev/null)
+  srtree=$(git rev-parse -q --verify "$srev^{tree}") || sno "no commit $srev"
+  git cat-file -e "$sptree^{tree}" 2> /dev/null || sno "its head's tree ${sptree:-unknown} is not in this repository"
+  for sb_p in compiler runtime lib tests/fixtures; do
+    [ "$(git rev-parse -q --verify "$sptree:$sb_p")" = "$(git rev-parse -q --verify "$srtree:$sb_p")" ] || sno "$sb_p/ differs from $srev's"
+  done
+  [ -s "$sp/la/stitched.txt" ] || sno "$sp names no stitched programs (la/stitched.txt: a final from before this check)"
+  slap=$(sh tools/base-cache.sh --la "$srev" 2> /dev/null < /dev/null) || sno "tools/base-cache.sh --la $srev failed"
+  stitched_list "$slap/avant/langarena/tmp" | cmp -s - "$sp/la/stitched.txt" || sno "the LangArena programs differ from the ones this checkout's harness stitches for $srev ($slap)"
+  echo "stats base: yes ($sp: compiler/, runtime/, lib/, tests/fixtures/ are $srev's; its $(wc -l < "$sp/la/stitched.txt") stitched programs are $slap's)"
+  exit 0
+fi
 
 [ $# -ge 1 ] && [ $# -le 2 ] || { echo "wave-final: usage: sh tools/wave-final.sh OUT [BASE_STATS]" >&2; exit 2; }
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -712,6 +750,79 @@ fi
 rm -f "$out/status.txt"
 step "$lock_line"
 
+# 1d. WAVE_REUSE=INT_OUT (a release): the integration's green final INT_OUT
+# stands for this head when the head changes only what no compile reads,
+# checked here: INT_OUT's head is an ancestor of HEAD, every path changed
+# since is README.md, CHANGELOG.md, BENCHMARKS.md or avant.toml (its
+# `version = "..."` line alone), and B, C' and avant_rt.o built here are
+# INT_OUT's byte for byte (letters.txt; the version is read from a
+# compiler's versions.txt, not compiled in). Then only what those files
+# reach runs: the documents' checks (tools/readme-check.sh on README.md,
+# CONTRIBUTING.md and DESIGN.md, tools/readme-links.sh on those and
+# BENCHMARKS.md, tools/no-ledger-refs.sh, tools/format-check.sh), the test
+# files that name README, CHANGELOG, BENCHMARKS or avant.toml on C', and
+# the smoke test (step 5b) of the package; the last line reads `WAVE FINAL
+# GREEN (carried over from INT_OUT ...)`. Any condition that fails is named
+# in a `reuse: refused` line and the whole final runs.
+reuse_ok=""
+if [ -n "${WAVE_REUSE:-}" ] && [ "${WAVE_PART:-}" != shared ]; then
+  ro=$(realpath -m "$WAVE_REUSE"); rwhy=""; curname=reuse
+  ihead=$(sed -n '1p' "$ro/head.txt" 2>/dev/null)
+  if ! tail -n 1 "$ro/SUMMARY.txt" 2>/dev/null | grep -q '^WAVE FINAL GREEN'; then rwhy="$ro is not a green final"
+  elif [ -z "$ihead" ] || ! git merge-base --is-ancestor "$ihead" HEAD 2>/dev/null; then rwhy="its head ${ihead:-unknown} is not an ancestor of HEAD"
+  else
+    git diff --name-only "$ihead" HEAD > "$out/reuse-changed.txt"
+    rother=$(grep -v -x -e README.md -e CHANGELOG.md -e BENCHMARKS.md -e avant.toml "$out/reuse-changed.txt" | head -n 5 | tr '\n' ' ')
+    if [ -n "$rother" ]; then rwhy="the head changes ${rother}since it (only README.md, CHANGELOG.md, BENCHMARKS.md and avant.toml's version may change)"
+    elif git diff -U0 "$ihead" HEAD -- avant.toml | grep '^[-+]' | grep -v '^\(---\|+++\) ' | grep -q -v '^[-+]version = "[^"]*"$'; then rwhy="avant.toml changes more than its version line"
+    fi
+  fi
+  if [ -z "$rwhy" ]; then
+    t0=$(now)
+    if lk shared build timeout -k 10 1800 sh tools/letters.sh runtime b c-llvm < /dev/null > "$out/build.log" 2>&1; then
+      step "build: C' built by the letters (runtime, b, c-llvm), $(own "$t0" "$(now)")"
+      sha256sum bin/avant-b bin/avant-c-llvm runtime/build/avant_rt.o > "$out/letters.txt" 2>&1
+      for r_f in bin/avant-b bin/avant-c-llvm runtime/build/avant_rt.o; do
+        r_a=$(awk -v f="$r_f" '$2 == f { print $1 }' "$out/letters.txt"); r_b=$(awk -v f="$r_f" '$2 == f { print $1 }' "$ro/letters.txt" 2>/dev/null)
+        [ -n "$r_a" ] && [ "$r_a" = "$r_b" ] || rwhy="$rwhy${rwhy:+, }$r_f is not the integration's"
+      done
+    else rwhy="the letters did not build (build.log)"; fi
+  fi
+  if [ -n "$rwhy" ]; then step "reuse: refused ($rwhy): the whole final runs"
+  else
+    reuse_ok=1
+    step "reuse: $ro (head $ihead) stands for this head: $(wc -l < "$out/reuse-changed.txt") files changed since, all documents ($(tr '\n' ' ' < "$out/reuse-changed.txt")); B, C' and avant_rt.o are its byte for byte"
+    # The documents' checks, as the gate runs them, on C'.
+    curname=documents
+    # shellcheck disable=SC2016
+    lk shared documents sh -c 'cc=$1/bin/avant-c-llvm; d=$2; bad=""; mkdir -p "$d"
+      for m in README.md CONTRIBUTING.md DESIGN.md; do
+        [ "$m" = DESIGN.md ] && ! grep -q "^\`\`\`" DESIGN.md && continue
+        env -u AVANT_BACKEND AVANT_COMPILER="$cc" timeout -k 10 900 sh tools/readme-check.sh "$m" > "$d/check-$m.log" 2>&1 < /dev/null || bad="$bad check:$m"
+      done
+      for m in README.md CONTRIBUTING.md DESIGN.md BENCHMARKS.md; do
+        timeout -k 10 300 sh tools/readme-links.sh "$m" > "$d/links-$m.log" 2>&1 < /dev/null || bad="$bad links:$m"
+      done
+      sh tools/no-ledger-refs.sh > "$d/no-ledger-refs.log" 2>&1 < /dev/null || bad="$bad no-ledger-refs"
+      fs=$(sed -n "s/^FORMAT_SKIP=\"\(.*\)\"\$/\1/p" tools/gate.sh | head -n 1)
+      env -u AVANT_BACKEND AVANT_COMPILER="$cc" timeout -k 10 300 sh tools/format-check.sh $fs > "$d/format-check.log" 2>&1 < /dev/null || bad="$bad format"
+      [ -z "$bad" ] || { echo "$bad" > "$d/red.txt"; exit 1; }' documents "$root" "$out/documents" < /dev/null > "$out/documents.log" 2>&1
+    drc=$?
+    if [ $drc -eq 0 ]; then step "documents: green (README, CONTRIBUTING and DESIGN checked and their links, BENCHMARKS' links, no ledger references, format: documents/)"
+    else step "documents: red ($(cat "$out/documents/red.txt" 2>/dev/null || echo "rc=$drc"): documents/)"; fi
+    # The test files that read the documents or avant.toml, on C'.
+    git grep -l -E 'README|CHANGELOG|BENCHMARKS|avant\.toml' -- 'tests/cases/test_*.av' > "$out/reuse-tests.txt" 2>/dev/null
+    curname="document tests"
+    # shellcheck disable=SC2046
+    lk shared "document tests" env -u AVANT_BACKEND -u AVANT_COMPILER timeout -k 10 1800 ./bin/avant-c-llvm test --junit "$out/reuse-tests.xml" $(cat "$out/reuse-tests.txt") < /dev/null > "$out/reuse-tests.log" 2>&1
+    trc=$?
+    if [ $trc -eq 0 ]; then step "document tests: $(grep -E 'failed, .* passed' "$out/reuse-tests.log" | tail -n 1) ($(wc -l < "$out/reuse-tests.txt") files naming the documents or avant.toml: reuse-tests.txt)"
+    else step "document tests: red (rc=$trc; $(grep -E 'failed, .* passed' "$out/reuse-tests.log" | tail -n 1): reuse-tests.log)"; fi
+    # The package and its smoke test (step 5b) alone.
+    WAVE_ONLY=smoke; WAVE_BUILD=0; WAVE_BESIDE=0; export WAVE_ONLY WAVE_BUILD WAVE_BESIDE
+  fi
+fi
+
 rm -f "$out/.cases-stop"
 if [ -n "$runner" ] && [ "${WAVE_GROUP:-0}" = 1 ]; then
   # One runner call for the shared steps: the lock is taken once, so a
@@ -766,6 +877,10 @@ la_disturbed() {
     END { if (n) printf "; %d disturbed after retries, not evidence: %s", n, t }' "$la/lr-avant.tsv" 2>/dev/null
 }
 if [ "${WAVE_LA:-0}" = 1 ] && ! want la; then step "langarena: skipped (WAVE_ONLY=$WAVE_ONLY)"
+elif [ "${WAVE_LA:-0}" = 1 ] && [ -n "$red" ] && [ "${WAVE_LA_ON_RED:-0}" != 1 ]; then
+  # A red step means the head changes and the final runs again: its
+  # LangArena timing would hold the whole machine for numbers no one uses.
+  step "langarena: skipped (a step is red:$red; the final runs again on the fixed head; WAVE_LA_ON_RED=1 times it anyway)"
 elif [ "${WAVE_LA:-0}" = 1 ]; then
   side=${WAVE_LA_SIDE:-}; ref_from=""; ref_why=""
   if [ -z "$side" ] || [ ! -d "$side/avant" ] || [ ! -d "$side/LangArena" ]; then
@@ -812,6 +927,10 @@ elif [ "${WAVE_LA:-0}" = 1 ]; then
       [ $lrc -eq 0 ] && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
       lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref" "$twins_at_once" "$est"
     lrc=$?; curname=floor
+    # The programs this timing measured, by content (the stitched sources):
+    # a later final's layout step takes this one as its base only when its
+    # own programs are these (same_built, below).
+    stitched_list "$root/langarena/tmp" > "$la/stitched.txt"
     rc=$(awk '{ print $2 }' "$la/prod.txt" 2>/dev/null); [ -n "$rc" ] || rc=none
     pw=$(awk '{ printf "%.1f", $4 - $3 }' "$la/prod.txt" 2>/dev/null)
     twl=""
@@ -847,11 +966,16 @@ elif [ "${WAVE_LA:-0}" = 1 ]; then
     # programs are built from is the same in both: a base branch moved by a
     # commit that touches only tests or tools is still the base. A tree this
     # repository does not hold is only equal to itself.
+    # langarena/ is not tracked in this repository (its tree compares equal):
+    # the programs are compared by content too, the base final's stitched
+    # sources (la/stitched.txt) against this run's.
     same_built() {
       [ -n "$1" ] && [ -n "$2" ] && git cat-file -e "$1^{tree}" 2> /dev/null && git cat-file -e "$2^{tree}" 2> /dev/null || return 1
       for sb_p in compiler runtime lib tests/fixtures langarena; do
         [ "$(git rev-parse -q --verify "$1:$sb_p" 2> /dev/null)" = "$(git rev-parse -q --verify "$2:$sb_p" 2> /dev/null)" ] || return 1
       done
+      bst=$(dirname "$(dirname "$fbase")")/la/stitched.txt
+      if [ -s "$bst" ] && [ -s "$la/stitched.txt" ]; then cmp -s "$bst" "$la/stitched.txt" || return 1; fi
       return 0
     }
     blr=${fbase:+$(dirname "$fbase")/lr-avant.tsv}
@@ -859,7 +983,7 @@ elif [ "${WAVE_LA:-0}" = 1 ]; then
     if [ $lrc -ne 0 ]; then :
     elif [ -z "$entry" ]; then step "layout: skipped (WAVE_BASE unset: no base instruction counts)"
     elif [ -z "$blr" ] || [ ! -f "$blr" ]; then step "layout: skipped (no base LR re-measure: lr-avant.tsv beside the floor's base table)"
-    elif [ "$btree" != "$(basename "$entry")" ] && ! same_built "$btree" "$(basename "$entry")"; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"), which differ in what the programs are built from (compiler/, runtime/, lib/, tests/fixtures/, langarena/): times and counts of two bases; a statistics base of that tree: check out $WAVE_BASE (tree $(basename "$entry")), run WAVE_ONLY=stats,la WAVE_LA=1 sh tools/wave-final.sh there, and name its OUT as BASE_STATS)"
+    elif [ "$btree" != "$(basename "$entry")" ] && ! same_built "$btree" "$(basename "$entry")"; then step "layout: skipped (the floor's base table is of tree ${btree:-unknown}, the base cache's entry of $(basename "$entry"), which differ in what the programs are built from (compiler/, runtime/, lib/, tests/fixtures/, langarena/, or the stitched programs, la/stitched.txt): times and counts of two bases; a statistics base of that tree: check out $WAVE_BASE (tree $(basename "$entry")), run WAVE_ONLY=stats,la WAVE_LA=1 sh tools/wave-final.sh there, and name its OUT as BASE_STATS)"
     else
       # shellcheck disable=SC2016
       lk shared "langarena counts" sh -c 'lap=$(BASE_CACHE=$(dirname "$1") sh tools/base-cache.sh --la "$(basename "$1")" 2> "$2/ins-head.log" < /dev/null) || exit 3
@@ -919,6 +1043,10 @@ if [ -n "$partial" ]; then
   # Not a final: only the named steps ran (WAVE_ONLY), so no line reads as one.
   if [ -z "$red" ]; then step "WAVE PARTIAL GREEN (only: $WAVE_ONLY; not a final)"; cat "$out/SUMMARY.txt"; exit 0; fi
   step "WAVE PARTIAL RED:$red (only: $WAVE_ONLY; not a final)"; cat "$out/SUMMARY.txt"; exit 1
+fi
+if [ -n "$reuse_ok" ]; then
+  if [ -z "$red" ]; then step "WAVE FINAL GREEN (carried over from $ro, the final of $ihead: this head changes only its documents, which ran here)"; cat "$out/SUMMARY.txt"; exit 0; fi
+  step "WAVE FINAL RED:$red (the documents' steps of a carried-over final, $ro)"; cat "$out/SUMMARY.txt"; exit 1
 fi
 if [ -z "$red" ]; then step "WAVE FINAL GREEN"; cat "$out/SUMMARY.txt"; exit 0; fi
 step "WAVE FINAL RED:$red"; cat "$out/SUMMARY.txt"; exit 1
