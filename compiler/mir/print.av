@@ -17,10 +17,10 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
   x = v
   while x != 0 || out.size < width || out.size == 0 {
     d = (x & 15).to_i()
-    out.push(str_slice(digits, d, d + 1))
+    out.push(digits[d..d + 1])
     x = x >> 4u64
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = out.size - 1
   while i >= 0 {
     buf.push_str(out[i])
@@ -30,7 +30,7 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
 }
 
 pub fn mir_escape(s: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < s.size {
     c = s[i]
@@ -38,7 +38,7 @@ pub fn mir_escape(s: String): String {
       buf.push_str("\\")
       buf.push_str(mir_hex(c.to_u64(), true, 2))
     } else {
-      buf.push_str(str_slice(s, i, i + 1))
+      buf.push_str(s[i..i + 1])
     }
     i += 1
   }
@@ -46,7 +46,7 @@ pub fn mir_escape(s: String): String {
 }
 
 pub fn mir_int_text(ty: Int, v: Int): String {
-  if ty == mt_u64() {
+  if ty == mt_u64 {
     return "${v.wrap_u64()}"
   }
   "${v}"
@@ -55,9 +55,9 @@ pub fn mir_int_text(ty: Int, v: Int): String {
 pub fn mir_place_text(ts: MTypes, p: MPlace): String {
   s = "_${p.local}"
   for pr in p.proj {
-    if pr.kind == mpk_deref() {
+    if pr.kind == mpk_deref {
       s = "(*${s})"
-    } else if pr.kind == mpk_field() {
+    } else if pr.kind == mpk_field {
       s = "${s}.${pr.field}"
     } else if o = pr.index {
       s = "${s}[${mir_operand_text(ts, o)}]"
@@ -70,22 +70,22 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
   if p = o.place {
     return "copy ${mir_place_text(ts, p)}"
   }
-  if o.kind == mok_str() {
+  if o.kind == mok_str {
     return "const str.${o.sid}"
   }
-  if o.kind == mok_fn() {
+  if o.kind == mok_fn {
     return "const fn ${o.text}"
   }
-  if o.kind == mok_global() {
+  if o.kind == mok_global {
     return "const global ${o.text}"
   }
-  if o.kind == mok_bool() {
+  if o.kind == mok_bool {
     if o.ival != 0 {
       return "const bool true"
     }
     return "const bool false"
   }
-  if o.kind == mok_f64() {
+  if o.kind == mok_f64 {
     s = "const f64 0x${mir_hex(o.ival.wrap_u64(), true, 16)}"
     if o.text.size > 0 {
       s = "${s} /* ${o.text} */"
@@ -93,14 +93,14 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
     return s
   }
   tn = ts.text(o.ty)
-  if o.kind == mok_null() {
+  if o.kind == mok_null {
     return "const ${tn} null"
   }
   "const ${tn} ${mir_int_text(o.ty, o.ival)}"
 }
 
 fn mir_ops_text(ts: MTypes, ops: Array(MOperand)): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < ops.size {
     if i > 0 {
@@ -122,27 +122,27 @@ fn mir_opt_text(ts: MTypes, o: MOperand?): String {
 pub fn mir_rvalue_text(m: MModule, r: MRvalue): String {
   ts = m.types
   k = r.kind
-  if k == mrk_use() {
+  if k == mrk_use {
     return mir_opt_text(ts, r.a)
   }
-  if k == mrk_zero() {
+  if k == mrk_zero {
     return "zero"
   }
-  if k == mrk_unary() {
+  if k == mrk_unary {
     return "${mop_name(r.op)} ${mir_opt_text(ts, r.a)}"
   }
-  if k == mrk_binary() || k == mrk_cmp() {
+  if k == mrk_binary || k == mrk_cmp {
     return "${mop_name(r.op)} ${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)}"
   }
-  if k == mrk_checked() {
+  if k == mrk_checked {
     return "${mop_name(r.op)}.chk ${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)}"
   }
-  if k == mrk_cast() {
+  if k == mrk_cast {
     return "cast ${mir_opt_text(ts, r.a)} to ${m.types.text(r.ty)}"
   }
-  if k == mrk_addr() || k == mrk_addr_raw() {
+  if k == mrk_addr || k == mrk_addr_raw {
     word = "addr"
-    if k == mrk_addr_raw() {
+    if k == mrk_addr_raw {
       word = "addr.raw"
     }
     if p = r.place {
@@ -150,17 +150,17 @@ pub fn mir_rvalue_text(m: MModule, r: MRvalue): String {
     }
     return word
   }
-  if k == mrk_struct() {
+  if k == mrk_struct {
     return "struct ${m.types.text(r.ty)} (${mir_ops_text(ts, r.ops)})"
   }
-  if k == mrk_union() {
+  if k == mrk_union {
     s = "union ${m.types.text(r.ty)} tag ${r.op}"
     if a = r.a {
       s = "${s} (${mir_operand_text(ts, a)})"
     }
     return s
   }
-  if k == mrk_fnval() {
+  if k == mrk_fnval {
     return "fnval ${m.types.text(r.ty)} (${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)})"
   }
   "?"
@@ -169,7 +169,7 @@ pub fn mir_rvalue_text(m: MModule, r: MRvalue): String {
 pub fn mir_stmt_text(m: MModule, st: MStmt): String {
   ts = m.types
   k = st.kind
-  if k == msk_assign() {
+  if k == msk_assign {
     s = "?"
     if p = st.place {
       s = mir_place_text(ts, p)
@@ -182,7 +182,7 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
     }
     return s
   }
-  if k == msk_call() {
+  if k == msk_call {
     s = ""
     if st.dest >= 0 {
       s = "_${st.dest} = "
@@ -201,23 +201,23 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
     }
     return "${s}call ${callee}(${mir_ops_text(ts, st.args)}) ${mark}"
   }
-  if k == msk_barrier() {
+  if k == msk_barrier {
     return "barrier ${mir_ops_text(ts, st.args)}"
   }
-  if k == msk_barrier_at() {
+  if k == msk_barrier_at {
     return "barrier_at ${mir_ops_text(ts, st.args)}"
   }
-  if k == msk_check_bounds() {
+  if k == msk_check_bounds {
     return "check.bounds ${mir_ops_text(ts, st.args)}"
   }
-  if k == msk_gc_enter() {
+  if k == msk_gc_enter {
     return "gc.enter"
   }
-  if k == msk_gc_leave() {
+  if k == msk_gc_leave {
     return "gc.leave"
   }
-  if k == msk_gc_roots() {
-    buf = buf_new()
+  if k == msk_gc_roots {
+    buf = Buf.new()
     buf.push_str("gc.roots")
     for i in 0..st.locals.size {
       if i == 0 {
@@ -238,16 +238,16 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
   if t.cold > 0 {
     cold = " cold"
   }
-  if k == mtk_goto() {
+  if k == mtk_goto {
     return "goto bb${t.targets[0]}${cold}"
   }
-  if k == mtk_branch() {
+  if k == mtk_branch {
     return "branch ${mir_opt_text(ts, t.cond)}, bb${t.targets[0]}, bb${t.targets[1]}${cold}"
   }
-  if k == mtk_switch() {
-    buf = buf_new()
+  if k == mtk_switch {
+    buf = Buf.new()
     buf.push_str("switch ${mir_opt_text(ts, t.cond)} [")
-    ty = mt_i32()
+    ty = mt_i32
     if c = t.cond {
       ty = c.ty
     }
@@ -260,7 +260,7 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
     buf.push_str("] else bb${t.targets[t.targets.size - 1]}")
     return buf.to_s()
   }
-  if k == mtk_return() {
+  if k == mtk_return {
     return "return"
   }
   "unreachable"
@@ -281,7 +281,7 @@ pub fn mir_file_name(m: MModule, file: Int): String {
 }
 
 pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("layout %${l.name} = ${mlk_name(l.kind)} {")
   for i in 0..l.fields.size {
     if i > 0 {
@@ -333,7 +333,7 @@ pub fn mir_map_stride(ts: MTypes, tm: MTypeMap): Int {
     return 0
   }
   l = ts.layouts[tm.layout]
-  if l.kind == mlk_elems() {
+  if l.kind == mlk_elems {
     return l.size / 8
   }
   0
@@ -341,7 +341,7 @@ pub fn mir_map_stride(ts: MTypes, tm: MTypeMap): Int {
 
 pub fn mir_extern_text(m: MModule, e: MExtern): String {
   s = m.types.sigs[e.sig]
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("extern ${e.name}${s.text} ${mcc_name(e.cls)}")
   if e.alloc {
     buf.push_str(" alloc")
@@ -369,7 +369,7 @@ pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
 pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
   ts = m.types
   s = ts.sigs[f.sig]
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("fn ${f.symbol}(")
   for i in 0..s.params.size {
     if i > 0 {
@@ -378,9 +378,9 @@ pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
     buf.push_str("_${i + 1}: ${ts.text(s.params[i])}")
   }
   buf.push_str(") -> ${ts.text(s.ret)}")
-  if f.kind == mfk_frame() {
+  if f.kind == mfk_frame {
     buf.push_str(" frame")
-  } else if f.kind == mfk_leaf() {
+  } else if f.kind == mfk_leaf {
     buf.push_str(" leaf")
   }
   if f.external {
@@ -441,7 +441,7 @@ pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
 
 pub fn mir_print(m: MModule, with_locs: Bool): String {
   ts = m.types
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("module ${m.name}")
   if m.shared {
     buf.push_str(" shared")

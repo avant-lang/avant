@@ -91,8 +91,8 @@ pub fn (lw: MirLower) block_recv(recv: Expr, ty: Int): Int {
 // `i < (*_h).size` for the array in _h, into a branch to body or exit.
 pub fn (lw: MirLower) block_test(h: Int, i: Int, body: Int, exit: Int) {
   b = lw.lw_b
-  n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), n))
+  n = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+  c = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(i), n))
   b.branch(c, body, exit)
 }
 
@@ -114,8 +114,8 @@ pub fn (lw: MirLower) block_param(bl: Block, recv: Expr, h: Int, aty: Int, i: In
   if bl.place_arr.size > 0 {
     if rt = recv.ty {
       lw.bind_name(bl.place_arr, rt, aty, b.copy_local(h), bl.loc, true)
-      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
-      lw.bind_name(bl.place_idx, ty_int(), mt_int(), ix, bl.loc, true)
+      ix = lw.tmp(mt_int, b.rv_cast(b.copy_local(i), mt_int))
+      lw.bind_name(bl.place_idx, ty_int(), mt_int, ix, bl.loc, true)
       return
     }
   }
@@ -141,7 +141,7 @@ pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
 // _i = _i + 1 (the old plain add), then back to head.
 pub fn (lw: MirLower) block_step(i: Int, head: Int) {
   b = lw.lw_b
-  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
+  b.assign(b.pl(i), b.rv_bin(mop_add, b.copy_local(i), b.c_i32(1)))
   b.goto(head)
 }
 
@@ -170,7 +170,7 @@ pub fn (lw: MirLower) block_head(stmts: Array(Stmt), cont: Int, exit: Int) {
 pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   b = lw.lw_b
   if bl.paren && bl.returns {
-    if v = lw.lam_value(bl, ty_bool(), mt_bool(), cont, exit) {
+    if v = lw.lam_value(bl, ty_bool(), mt_bool, cont, exit) {
       return v
     }
     return b.c_bool(false)
@@ -202,7 +202,7 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
       return b.c_bool(false)
     }
     lw.at(x.loc)
-    r = lw.tmp(mt_bool(), b.rv_use(v))
+    r = lw.tmp(mt_bool, b.rv_use(v))
     lw.scope_end(mark)
     return r
   }
@@ -231,22 +231,22 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     return zero
   }
   lw.at(e.loc)
-  k = b.temp(mt_int())
+  k = b.temp(mt_int)
   b.assign(b.pl(k), b.rv_use(nv))
-  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
+  neg = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(k), b.c_i64(0)))
   ok = lw.trap_open(neg, true)
   lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
-  big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647)))
+  big = lw.tmp(mt_bool, b.rv_cmp(mop_gt, b.copy_local(k), b.c_i64(2147483647)))
   ok2 = lw.trap_open(big, true)
   lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
-  n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
-  bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
+  n64 = lw.tmp(mt_u64, b.rv_cast(b.copy_local(k), mt_u64))
+  bytes = lw.tmp(mt_u64, b.rv_bin(mop_mul, n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
   b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(e)
   rc = b.types.ref_carrying(et)
-  i = b.temp(mt_int())
+  i = b.temp(mt_int)
   b.assign(b.pl(i), b.rv_use(b.c_i64(0)))
   head = b.block()
   body = b.block()
@@ -254,10 +254,10 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   exit = b.block()
   b.goto(head)
   b.at(head)
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(k)))
+  c = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(i), b.copy_local(k)))
   b.branch(c, body, exit)
   b.at(body)
-  lw.bind_name(bl.params[0], ty_int(), mt_int(), b.copy_local(i), bl.loc, true)
+  lw.bind_name(bl.params[0], ty_int(), mt_int, b.copy_local(i), bl.loc, true)
   if bl.body.size == 0 {
     lw.refuse(bl.loc, "an empty value block")
     return zero
@@ -278,11 +278,11 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     lw.goto_if_open(step, e.loc)
     b.at(step)
     lw.at(e.loc)
-    b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1)))
+    b.assign(b.pl(i), b.rv_bin(mop_add, b.copy_local(i), b.c_i64(1)))
     b.goto(head)
     b.at(exit)
     lw.at(e.loc)
-    return lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
+    return lw.array_header(aty, d, lw.tmp(mt_i32, b.rv_cast(b.copy_local(k), mt_i32)))
   }
   first: Array(Stmt) = []
   j = 0
@@ -320,11 +320,11 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
-  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1)))
+  b.assign(b.pl(i), b.rv_bin(mop_add, b.copy_local(i), b.c_i64(1)))
   b.goto(head)
   b.at(exit)
   lw.at(e.loc)
-  lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
+  lw.array_header(aty, d, lw.tmp(mt_i32, b.rv_cast(b.copy_local(k), mt_i32)))
 }
 
 // `xs.each (x) { ... }` (emit_array_each, builtins.av:1632-1684).
@@ -340,7 +340,7 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
     return zero
   }
   lw.at(e.loc)
-  i = b.temp(mt_i32())
+  i = b.temp(mt_i32)
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block()
   body = b.block()
@@ -375,9 +375,9 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
     return zero
   }
   lw.at(e.loc)
-  res = b.temp(mt_bool())
+  res = b.temp(mt_bool)
   b.assign(b.pl(res), b.rv_use(b.c_bool(!is_any)))
-  i = b.temp(mt_i32())
+  i = b.temp(mt_i32)
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block()
   body = b.block()
@@ -396,7 +396,7 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
     lw.at(e.loc)
     hit = b.block()
     if !is_any {
-      p = lw.tmp(mt_bool(), b.rv_un(mop_not(), p))
+      p = lw.tmp(mt_bool, b.rv_un(mop_not, p))
     }
     b.branch(p, hit, step)
     b.at(hit)
@@ -443,9 +443,9 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   }
   lw.at(e.loc)
   c0 = lw.hash_changes(h)
-  n = b.temp(mt_i32())
+  n = b.temp(mt_i32)
   b.assign(b.pl(n), b.rv_use(b.c_i32(0)))
-  ent = b.temp(mt_i32())
+  ent = b.temp(mt_i32)
   head = b.block()
   body = b.block()
   step = b.block()
@@ -456,10 +456,10 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   ops.push(b.copy_local(h))
   ops.push(b.copy_local(n))
   b.call(ent, "avant_hash_walk", ops)
-  done = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ent), b.c_i32(0)))
+  done = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(ent), b.c_i32(0)))
   b.branch(done, exit, body)
   b.at(body)
-  b.assign(b.pl(n), b.rv_bin(mop_add(), b.copy_local(ent), b.c_i32(1)))
+  b.assign(b.pl(n), b.rv_bin(mop_add, b.copy_local(ent), b.c_i32(1)))
   if !bl.params[0].starts_with("__for") {
     kv = lw.walk_load(h, ent, "avant_hash_walk_key", kty)
     lw.bind_name(bl.params[0], kt, kty, kv, bl.loc, true)
@@ -517,9 +517,9 @@ pub fn (lw: MirLower) hash_delete_if(e: Expr, recv: Expr, ht: Ty, bl: Block): MO
   first.push(b.c_i32(-1))
   b.call(-1, "avant_hash_walk_delete", first)
   c0 = lw.hash_changes(h)
-  n = b.temp(mt_i32())
+  n = b.temp(mt_i32)
   b.assign(b.pl(n), b.rv_use(b.c_i32(0)))
-  ent = b.temp(mt_i32())
+  ent = b.temp(mt_i32)
   head = b.block()
   body = b.block()
   del = b.block()
@@ -531,10 +531,10 @@ pub fn (lw: MirLower) hash_delete_if(e: Expr, recv: Expr, ht: Ty, bl: Block): MO
   ops.push(b.copy_local(h))
   ops.push(b.copy_local(n))
   b.call(ent, "avant_hash_walk", ops)
-  done = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ent), b.c_i32(0)))
+  done = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(ent), b.c_i32(0)))
   b.branch(done, exit, body)
   b.at(body)
-  b.assign(b.pl(n), b.rv_bin(mop_add(), b.copy_local(ent), b.c_i32(1)))
+  b.assign(b.pl(n), b.rv_bin(mop_add, b.copy_local(ent), b.c_i32(1)))
   kv = lw.walk_load(h, ent, "avant_hash_walk_key", kty)
   lw.bind_name(bl.params[0], kt, kty, kv, bl.loc, true)
   if bl.params.size > 1 {
@@ -542,7 +542,7 @@ pub fn (lw: MirLower) hash_delete_if(e: Expr, recv: Expr, ht: Ty, bl: Block): MO
     vv = lw.walk_load(h, ent, "avant_hash_walk_val", vty)
     lw.bind_name(bl.params[1], vt, vty, vv, bl.loc, true)
   }
-  p = lw.verb_value(bl, ty_bool(), mt_bool(), keep, exit)
+  p = lw.verb_value(bl, ty_bool(), mt_bool, keep, exit)
   if lw.failed() {
     return zero
   }
@@ -580,7 +580,7 @@ pub fn (lw: MirLower) walk_load(h: Int, ent: Int, f: String, ty: Int): MOperand 
   ops: Array(MOperand) = []
   ops.push(b.copy_local(h))
   ops.push(b.copy_local(ent))
-  p = lw.call_to(mt_ptr(), f, ops)
+  p = lw.call_to(mt_ptr, f, ops)
   lw.hash_load(lw.hash_slot(p, ty), ty)
 }
 
@@ -593,7 +593,7 @@ pub fn (lw: MirLower) walk_load(h: Int, ent: Int, f: String, ty: Int): MOperand 
 pub fn (lw: MirLower) walk_changed_check(h: Int, c0: Int, ent: Int, what: Int, loc: Location) {
   b = lw.lw_b
   c = lw.hash_changes(h)
-  moved = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(c), b.copy_local(c0)))
+  moved = lw.tmp(mt_bool, b.rv_cmp(mop_ne, b.copy_local(c), b.copy_local(c0)))
   cold = b.block()
   join = b.block()
   b.branch(moved, cold, join)
@@ -602,10 +602,10 @@ pub fn (lw: MirLower) walk_changed_check(h: Int, c0: Int, ent: Int, what: Int, l
   ops.push(b.copy_local(h))
   ops.push(b.copy_local(c0))
   ops.push(b.copy_local(ent))
-  r = lw.call_to(mt_i32(), "avant_hash_walk_ok", ops)
-  bad = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), r, b.c_i32(1)))
+  r = lw.call_to(mt_i32, "avant_hash_walk_ok", ops)
+  bad = lw.tmp(mt_bool, b.rv_cmp(mop_ne, r, b.c_i32(1)))
   ok = lw.trap_open(bad, true)
-  w = lw.tmp(mt_i32(), b.rv_bin(mop_add(), r, b.c_i32(what)))
+  w = lw.tmp(mt_i32, b.rv_bin(mop_add, r, b.c_i32(what)))
   lw.trap_close(ok, "avant_trap_walk", lw.one(w), loc)
   b.assign(b.pl(c0), b.rv_use(b.copy_local(c)))
   b.goto(join)
@@ -616,7 +616,7 @@ pub fn (lw: MirLower) walk_changed_check(h: Int, c0: Int, ent: Int, what: Int, l
 // %Hash), into a new local.
 pub fn (lw: MirLower) hash_changes(h: Int): Int {
   b = lw.lw_b
-  a = b.temp(mt_u32())
+  a = b.temp(mt_u32)
   b.assign(b.pl(a), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 9))))
   a
 }
@@ -708,7 +708,7 @@ pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: 
     lw.lam_head(head, cont, exit)
     if !lw.failed() && lw.open_now() {
       last = bl.body[bl.body.size - 1]
-      if x = last.expr, last.kind == st_expr() && slot >= 0 {
+      if x = last.expr, last.kind == st_expr && slot >= 0 {
         v = lw.lower_coerced(x, mty, want)
         if !lw.failed() {
           lw.at(x.loc)
@@ -826,7 +826,7 @@ pub fn (lw: MirLower) arr_find(e: Expr, recv: Expr, bl: Block, want_index: Bool)
   lw.at(e.loc)
   d = b.temp(wty)
   lw.assign_nil(d, t, wty)
-  i = b.temp(mt_i32())
+  i = b.temp(mt_i32)
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block()
   body = b.block()
@@ -837,7 +837,7 @@ pub fn (lw: MirLower) arr_find(e: Expr, recv: Expr, bl: Block, want_index: Bool)
   lw.block_test(h, i, body, exit)
   b.at(body)
   lw.block_param(bl, recv, h, aty, i)
-  p = lw.verb_value(bl, ty_bool(), mt_bool(), step, exit)
+  p = lw.verb_value(bl, ty_bool(), mt_bool, step, exit)
   if lw.failed() {
     return zero
   }
@@ -847,7 +847,7 @@ pub fn (lw: MirLower) arr_find(e: Expr, recv: Expr, bl: Block, want_index: Bool)
     b.branch(p, hit, step)
     b.at(hit)
     if want_index {
-      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
+      ix = lw.tmp(mt_int, b.rv_cast(b.copy_local(i), mt_int))
       b.assign(b.pl(d), b.rv_use(lw.coerce(ix, ty_int(), t, e.loc)))
     } else {
       v = lw.block_elem(h, aty, i)
@@ -907,9 +907,9 @@ pub fn (lw: MirLower) arr_min_by(e: Expr, recv: Expr, bl: Block, is_max: Bool): 
   } else {
     b.assign(b.pl(best), b.rv_use(b.c_int(kty, 0)))
   }
-  at = b.temp(mt_i32())
+  at = b.temp(mt_i32)
   b.assign(b.pl(at), b.rv_use(b.c_i32(-1)))
-  i = b.temp(mt_i32())
+  i = b.temp(mt_i32)
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block()
   body = b.block()
@@ -929,7 +929,7 @@ pub fn (lw: MirLower) arr_min_by(e: Expr, recv: Expr, bl: Block, is_max: Bool): 
     kh = lw.hold(k, kty)
     take = b.block()
     cmp = b.block()
-    first = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(at), b.c_i32(0)))
+    first = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(at), b.c_i32(0)))
     b.branch(first, take, cmp)
     b.at(cmp)
     lhs = b.copy_local(kh)
@@ -943,10 +943,10 @@ pub fn (lw: MirLower) arr_min_by(e: Expr, recv: Expr, bl: Block, is_max: Bool): 
       args: Array(MOperand) = []
       args.push(lhs)
       args.push(rhs)
-      q = lw.call_to(mt_i32(), "avant_str_cmp", args)
-      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), q, b.c_i32(0)))
+      q = lw.call_to(mt_i32, "avant_str_cmp", args)
+      better = lw.tmp(mt_bool, b.rv_cmp(mop_lt, q, b.c_i32(0)))
     } else {
-      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), lhs, rhs))
+      better = lw.tmp(mt_bool, b.rv_cmp(mop_lt, lhs, rhs))
     }
     b.branch(better, take, step)
     b.at(take)
@@ -979,9 +979,9 @@ pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
   }
   lw.at(e.loc)
   lw.frozen_check(h, mir_frozen_delete_if(), e.loc)
-  w = b.temp(mt_i32())
+  w = b.temp(mt_i32)
   b.assign(b.pl(w), b.rv_use(b.c_i32(0)))
-  i = b.temp(mt_i32())
+  i = b.temp(mt_i32)
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block()
   body = b.block()
@@ -993,7 +993,7 @@ pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
   lw.block_test(h, i, body, exit)
   b.at(body)
   lw.block_param(bl, recv, h, aty, i)
-  p = lw.verb_value(bl, ty_bool(), mt_bool(), keep, exit)
+  p = lw.verb_value(bl, ty_bool(), mt_bool, keep, exit)
   if lw.failed() {
     return zero
   }
@@ -1005,7 +1005,7 @@ pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
   lw.at(e.loc)
   v = lw.block_elem(h, aty, i)
   lw.block_store(h, aty, w, v)
-  b.assign(b.pl(w), b.rv_bin(mop_add(), b.copy_local(w), b.c_i32(1)))
+  b.assign(b.pl(w), b.rv_bin(mop_add, b.copy_local(w), b.c_i32(1)))
   b.goto(step)
   b.at(step)
   lw.at(e.loc)
@@ -1013,9 +1013,9 @@ pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
   b.at(exit)
   et = lw.elem_of(aty)
   if b.types.ref_carrying(et) {
-    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
-    lo = lw.tmp(mt_int(), b.rv_cast(b.copy_local(w), mt_int()))
-    hi = lw.tmp(mt_int(), b.rv_cast(n, mt_int()))
+    n = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+    lo = lw.tmp(mt_int, b.rv_cast(b.copy_local(w), mt_int))
+    hi = lw.tmp(mt_int, b.rv_cast(n, mt_int))
     four = lw.two(b.copy_local(h), lo)
     four.push(hi)
     four.push(lw.elem_size(aty))

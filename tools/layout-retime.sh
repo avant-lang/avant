@@ -31,7 +31,8 @@ la=$(realpath "$1") || exit 2; s=$2; n=${3:-5}
 src=$la/avant/langarena/tmp
 [ -f "$src/$s.av" ] && [ -f "$la/args/$s" ] || { echo "layout-retime.sh: $s is not a stitched program of $la" >&2; exit 2; }
 [ -x "$root/bin/avant-c-llvm" ] || { echo "layout-retime.sh: $root/bin/avant-c-llvm: no such compiler" >&2; exit 2; }
-[ -x /usr/bin/time ] || { echo "layout-retime.sh: /usr/bin/time is missing" >&2; exit 2; }
+timer=${LAYOUT_TIME:-/usr/bin/time}
+[ -x "$timer" ] || { echo "layout-retime.sh: $timer is missing" >&2; exit 2; }
 cc_file=$(realpath "${LAYOUT_CC:-$root/tools/layout/plt.c}") || exit 2
 if [ -n "${4:-}" ]; then out=$(realpath -m "$4"); mkdir -p "$out" || exit 2; keep=1
 else out=$(mktemp -d "${TMPDIR:-/tmp}/layout-retime.XXXXXX") || exit 2; keep=0; fi
@@ -43,7 +44,7 @@ while IFS= read -r a; do set -- "$@" "$a"; done < "$la/args/$s"
   || { echo "layout-retime.sh: $s did not compile with --cc $cc_file ($out/shifted.log)" >&2; exit 1; }
 for b in plain shifted; do echo "$b main at $(nm "$out/$b" 2>/dev/null | awk '$3 == "main" { print $1 }')"; done | tee "$out/result.txt"
 one() { # BIN: one run, "wall user invol" on stdout, its first line in OUT/BIN.first
-  (cd "$src" && env -i PATH="$PATH" HOME="${HOME:-/}" /usr/bin/time -f '%e %U %c' -o "$out/$1.time" timeout -k 10 900 "$out/$1" < /dev/null > "$out/$1.out" 2> /dev/null)
+  (cd "$src" && env -i PATH="$PATH" HOME="${HOME:-/}" "$timer" -f '%e %U %c' -o "$out/$1.time" timeout -k 10 900 "$out/$1" < /dev/null > "$out/$1.out" 2> /dev/null)
   head -n 1 "$out/$1.out" > "$out/$1.first"
   cat "$out/$1.time"
 }

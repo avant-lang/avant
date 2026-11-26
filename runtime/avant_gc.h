@@ -43,7 +43,8 @@
  *   - A store of a reference into a heap object is preceded by
  *     avant_barrier on that object, or by
  *     avant_barrier_slot(object, slot) when the slot is known: a mature large
- *     pointer buffer (a carded object) is then
+ *     buffer of references (a pointer buffer or an element buffer of
+ *     structs holding references: a carded object) is then
  *     scanned at a young collection only in the 256-byte cards a store
  *     marked; avant_barrier on such a buffer counts every card.
  *   - avant_pin/avant_unpin keep an object at its address while C holds
@@ -132,7 +133,10 @@
  *     (avant_barrier, avant_barrier_slot: RC3's call, before the store
  *     and not after it), and a function that only removes references or
  *     moves them among the object's words (a clear, a delete that shifts,
- *     a sort, a reverse) calls avant_gc_overwrite on it first. The
+ *     a sort, a reverse) calls avant_gc_overwrite on it first; one that
+ *     moves them with no barrier per moved slot (a sort, a reverse) also
+ *     calls avant_gc_moved, so that a carded buffer's cards still cover
+ *     its young references. The
  *     barrier's slow call logs what the object held at the last full
  *     collection, which is what lets a complete collection prove the old
  *     heap unchanged (avant_gc_proof.c); a store before it loses the
@@ -198,7 +202,6 @@
  *                                                  from its own pool)
  *     copy_str (avant_json.c)                      C
  *     base64 encode/decode, zlib                   C
- *     sha256 (avant_codec.c)                       N (digest in C)
  *     avant_argv, avant_sys_list                   C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
@@ -379,14 +382,6 @@ __attribute__((visibility("hidden"))) void *avant_alloc_bytes_unzeroed(uint64_t 
 static inline void *avant_alloc_bytes_room(uint64_t nbytes) {
   return nbytes >= AVANT_GC_BYTES_LARGE ? avant_alloc_unzeroed(nbytes, 0) : avant_alloc(nbytes, 0);
 }
-/* 1 when P lies in the collected heap and is not the exact start of a
- * heap object (an address inside an object, or one where no object
- * lives); 0 for null, for an address outside the heap (C's own memory, a
- * static object) and for an object's start. The test of a C function's
- * `String` result (avant_c_str, avant_str.c): only such an address may
- * not be stored in a reference-typed
- * field (the field rule, avant_gc_internal.h). Never collects. */
-__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p);
 /* A helper that owns a large Bytes object keeps only its first NEW_SIZE
  * bytes; the run's pages past them go back now (avant_gc_los.c). 1 when
  * trimmed, 0 when PAYLOAD is not a large unpinned
@@ -412,12 +407,20 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
 /* avant_barrier_slot with its first test in line: a store into SLOT of
  * OBJ, a heap object's start (not null), needs nothing while OBJ is young
  * (a young object is scanned whole), which is the usual state of a buffer
- * being filled; only an object that is not young makes the call. For
- * the runtime's element stores, which make the barrier call before the
- * store (RC5): with the call skipped for a young buffer the store's
- * operands need not be kept across it. */
+ * being filled, nor while it is in the remembered set (its REM bit, 0x10:
+ * the set's next young collection scans it whole), the two bits the
+ * generated code's inline test reads too; one test of both costs what
+ * the test of YOUNG alone did (the bits are a heap object's only: a
+ * static object makes the call, which returns). Only a mature object not
+ * yet remembered or a carded one (its REMC bit is not REM: each store
+ * marks its card) makes the call. For the runtime's element stores,
+ * which make the barrier call before the store (RC5): with the call
+ * skipped the store's operands need not be kept across it. An element
+ * store into a remembered small buffer took two calls a store
+ * (avant_barrier_slot, then avant_barrier to find the bit): a binary
+ * heap's sift through avant_array_set_ptr spent 15% of its time there. */
 static inline void avant_barrier_slot_young(void *obj, void *slot) {
-  if (!(avant_header(obj)->flags & AVANT_FLAG_YOUNG)) {
+  if (!(avant_header(obj)->flags & 0x30u)) {
     avant_barrier_slot(obj, slot);
   }
 }
@@ -441,6 +444,15 @@ static inline void avant_gc_overwrite(void *obj) {
     avant_gc_overwrite_slow(obj);
   }
 }
+/* References are about to move among OBJ's words (a reverse, a sort: the
+ * same references, other places). A carded buffer remembered by its
+ * cards (REMC) then counts every card until the next young collection,
+ * which scans it whole and marks its cards again: a young reference in a
+ * marked card may land in a clear one, which that collection would not
+ * read. One not in the set names no young object, and needs nothing.
+ * Every other object is remembered whole or young, which a move within
+ * it keeps true. Never collects. Hidden. */
+__attribute__((visibility("hidden"))) void avant_gc_moved(void *obj);
 /* AVANT_GC_VERIFY=1's own pages for a Buf's storage (avant_gc_alloc.c):
  * NBYTES of scalar storage on its own page run
  * (a large Bytes object at any size), so that a growth that replaces it

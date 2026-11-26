@@ -66,8 +66,12 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
 
 /* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT): the list of a
  * small record's reference words, or
- * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
- * AVANT_TYPE_PTRS (gc_init_slow). */
+ * TYPE_REFS_WALK; with TYPE_REFS_CARD and the element's size for a type
+ * whose large objects are carded (a pointer buffer, an element buffer
+ * with a reference word). Called whenever the map of ID changes, and
+ * once for AVANT_TYPE_PTRS (gc_init_slow); every map is registered
+ * before an object of its type is allocated, so no object changes from
+ * remembered whole (REM) to carded (REMC) on its way. */
 void gc_type_refs_update(uint32_t id) {
   uint64_t d = 0;
   unsigned n = 0;
@@ -77,7 +81,7 @@ void gc_type_refs_update(uint32_t id) {
     return;
   }
   if (id == AVANT_TYPE_PTRS) {
-    gc_heap.refs[id] = TYPE_REFS_WALK;
+    gc_heap.refs[id] = TYPE_REFS_WALK | TYPE_REFS_CARD | ((uint64_t)sizeof(void *) << TYPE_REFS_SPAN_SHIFT);
     return;
   }
   if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
@@ -86,7 +90,9 @@ void gc_type_refs_update(uint32_t id) {
   }
   m = &gc_heap.types[id];
   if (m->stride) {
-    gc_heap.refs[id] = TYPE_REFS_WALK;
+    gc_heap.refs[id] = m->nrefs ? TYPE_REFS_WALK | TYPE_REFS_CARD |
+                                      ((uint64_t)m->stride * sizeof(void *) << TYPE_REFS_SPAN_SHIFT)
+                                : TYPE_REFS_WALK;
     return;
   }
   for (c = 0; c < m->nchunks; c++) {
@@ -739,6 +745,25 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * at four chunks, sixteen popcounts for each large-object chunk, growing
  * with the heap). AVANT_GC_VERIFY recounts both from the chunk map, as
  * every call did. */
+/* After an explicit full collection: what the collection itself freed is idle
+ * too (the clock moves on), and no retention history keeps it. */
+void gc_heap_return_all(void) {
+  uint64_t hist[RETAIN_CYCLES];
+  uint32_t k;
+  uint64_t yk = gc_heap.young_keep;
+  for (k = 0; k < RETAIN_CYCLES; k++) {
+    hist[k] = gc_heap.retain_hist[k];
+    gc_heap.retain_hist[k] = 0;
+  }
+  gc_heap.young_keep = 0;
+  gc_heap.return_clock++;
+  gc_heap_return(gc_heap.live);
+  for (k = 0; k < RETAIN_CYCLES; k++) {
+    gc_heap.retain_hist[k] = hist[k];
+  }
+  gc_heap.young_keep = yk;
+}
+
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint32_t k;
@@ -1233,17 +1258,6 @@ int avant_is_heap(void *payload) {
  * gc_heap_reserve and zero before it. */
 uint64_t avant_gc_heap_lo;
 uint64_t avant_gc_heap_len;
-
-/* avant_gc.h. One compare for every address outside the committed heap
- * (before the heap exists its base and committed size are zero, and no
- * address passes). */
-__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
-  uintptr_t off;
-  if (!heap_offset(p, &off)) {
-    return 0;
-  }
-  return !gc_is_heap_payload((void *)(uintptr_t)p, NULL, NULL);
-}
 
 /* The contract (ABI name kept): 1 when a young
  * collection can move this object, 0 when no collection before the next

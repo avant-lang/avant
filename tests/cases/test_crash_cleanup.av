@@ -11,29 +11,34 @@ import std.process
 // program's private directory after stopping the children it waits on. The
 // program makes its directory, starts two children (`sleep`), each from a
 // task of its own, and crashes once both have written their pids and a
-// quarter of a second more: a task registers the child it waits on just
-// after it starts it, and a crash in that gap (a loaded machine can hold a
-// task there for a while) leaves a child nobody knows of. Each check of a
-// child waits up to ten seconds for it to be gone before it reads it
-// alive. A trap
+// quarter of a second more. The window cases crash instead while both tasks
+// are between their fork and the runtime's next step (held there by a fork
+// handler in the test's C code, ready before the crash and with nothing
+// allocated from then to the crash, so no collection can hold the handler
+// back under any collector mode): a task claims the slot of the child it
+// waits on before it forks, so the crash still finds and stops the child.
+// Each check of a child waits up to ten seconds for it to be gone before it
+// reads it alive. A trap
 // stops them too, and so does every crash, trap or signal of a program
 // that never made its directory (plain_cases).
 
 fn program(dir: Bool): String {
   b = Buf.new()
   b.push_str("import std.fs\nimport std.process\nimport std.time\n\n")
-  b.push_str("lib crash_c {\n  fun avant_tmp_dir: String\n  fun so_call_on_thread(f: fn(Int): Int): Int\n  fun crash_write_null(k: Int): Int\n  fun crash_bus: Int\n  fun crash_div(k: Int): Int\n  fun crash_ill: Int\n  fun crash_abort: Int\n}\n\n")
+  b.push_str("lib crash_c {\n  fun avant_tmp_dir: String\n  fun so_call_on_thread(f: fn(Int): Int): Int\n  fun crash_write_null(k: Int): Int\n  fun crash_bus: Int\n  fun crash_div(k: Int): Int\n  fun crash_ill: Int\n  fun crash_abort: Int\n  fun crash_fork_hold: Int\n  fun crash_fork_held: Int\n  fun crash_fork_go: Int\n  fun crash_fork_null_on_fire: Int\n  fun crash_fork_armed: Int\n  fun crash_fork_fire: Int\n  fun crash_fork_wait: Int\n}\n\n")
   b.push_str("lib sig_c {\n  fun kill(pid: Int32, sig: Int32): Int32\n  fun getpid: Int32\n}\n\n")
   b.push_str("fn depth(n: Int): Int {\n  if n == 0 {\n    return 0\n  }\n  d = depth(n - 1)\n  d + 1 + ((d + n) & 1)\n}\n\n")
   b.push_str("fn start(n: Int): Int {\n  xs = [n]\n  depth(xs[0])\n}\n\n")
   b.push_str("fn null_on_thread(n: Int): Int {\n  xs = [n]\n  crash_c.crash_write_null(xs[0] - n)\n}\n\n")
-  b.push_str("fn main {\n  out = process.env(\"CRASH_OUT\") ?? \"\"\n")
+  b.push_str("fn main {\n  out = process.env(\"CRASH_OUT\") ?? \"\"\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n  window = m.starts_with(\"window-\")\n  if window {\n    m = m[7..m.size]\n    _ = crash_c.crash_fork_hold()\n  }\n")
   if dir {
     b.push_str("  _ = fs.write(\"\${out}.dir\", crash_c.avant_tmp_dir())\n")
   }
   b.push_str("  child = spawn {\n    args = [\"-c\", \"echo $$ > \${out}.pid.part && mv \${out}.pid.part \${out}.pid && exec sleep 30\"]\n    process.run(\"/bin/sh\", args) ?? -1\n  }\n")
   b.push_str("  child2 = spawn {\n    args2 = [\"-c\", \"echo $$ > \${out}.pid2.part && mv \${out}.pid2.part \${out}.pid2 && exec sleep 30\"]\n    process.run(\"/bin/sh\", args2) ?? -1\n  }\n")
-  b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") {\n    time.sleep_ms(10)\n  }\n  time.sleep_ms(250)\n  puts(\"start\")\n  m = process.env(\"CRASH_MODE\") ?? \"\"\n")
+  b.push_str("  while !fs.exists(\"\${out}.pid\") || !fs.exists(\"\${out}.pid2\") || (window && crash_c.crash_fork_held() < 2) {\n    time.sleep_ms(10)\n  }\n  if !window {\n    time.sleep_ms(250)\n  }\n  puts(\"start\")\n")
+  // From the go to the crash nothing allocates (ffi.c says why).
+  b.push_str("  if window {\n    xs0 = [m.size]\n    if m == \"null-task\" {\n      hw = spawn { crash_c.crash_fork_null_on_fire() }\n      while crash_c.crash_fork_armed() == 0 {\n        time.sleep_ms(1)\n      }\n      _ = crash_c.crash_fork_go()\n      _ = crash_c.crash_fork_fire()\n      _ = crash_c.crash_fork_wait()\n      puts(hw.join() ?? -1)\n    }\n    _ = crash_c.crash_fork_go()\n    if m == \"null\" {\n      puts(crash_c.crash_write_null(0))\n    }\n    if m == \"overflow\" {\n      puts(depth(100000000))\n    }\n    if m == \"trap\" {\n      puts(xs0[m.size])\n    }\n    if m == \"term\" {\n      puts(sig_c.kill(sig_c.getpid(), 15))\n    }\n    _ = crash_c.crash_fork_wait()\n  }\n")
   b.push_str("  if m == \"overflow\" {\n    puts(depth(100000000))\n  }\n")
   b.push_str("  if m == \"overflow-task\" {\n    h = spawn { depth(100000000) }\n    puts(h.join() ?? -1)\n  }\n")
   b.push_str("  if m == \"overflow-callback\" {\n    puts(crash_c.so_call_on_thread(start))\n  }\n")
@@ -84,6 +89,14 @@ fn cases: Array(Case) {
     // shell's background job, as these runs are: plain_signal_cases
     // sends it in the foreground.)
     Case.new("term", 143, ""),
+    // The same ends while both tasks are starting their children: each
+    // child exists and its task has not yet gone on from the fork (a fork
+    // handler of the test's C code holds it there), and it is stopped too.
+    Case.new("window-null", 139, "avant runtime: segmentation fault in main on the main thread: address 0x0 is not mapped (a null pointer, most likely in C code)"),
+    Case.new("window-null-task", 139, "avant runtime: segmentation fault in main in a task: address 0x0 is not mapped (a null pointer, most likely in C code)"),
+    Case.new("window-overflow", 1, "avant runtime: stack overflow in depth on the main thread: the calls nest too deep"),
+    Case.new("window-trap", 1, "avant runtime: index 4 out of bounds (size 1)"),
+    Case.new("window-term", 143, ""),
   ]
 }
 

@@ -109,8 +109,26 @@ void gc_rem_thread_leave(void) {
   rem_merge(&gc_thread);
 }
 
+/* gc_carded for the barriers: the type table is read out of line, for
+ * a large object that is not a pointer buffer only, so that
+ * avant_barrier's common path (a small record) keeps no register for it
+ * (in line it cost every call of avant_barrier two more saved registers:
+ * LangArena's compress_lzwdecode-pure counted 38 M more instructions
+ * there). */
+static __attribute__((noinline)) int type_carded(uint32_t id) {
+  return (gc_heap.refs[id] & TYPE_REFS_CARD) != 0;
+}
+
+static inline int barrier_carded(const AvantHeader *h) {
+  return (h->flags & AVANT_FLAG_LARGE) && (h->type_id == AVANT_TYPE_PTRS || type_carded(h->type_id));
+}
+
 static void rem_add(void *obj) {
-  rem_add_bit(obj, gc_carded(avant_header(obj)) ? AVANT_FLAG_REMC : AVANT_FLAG_REM);
+  if (__builtin_expect((avant_header(obj)->flags & AVANT_FLAG_LARGE) != 0, 0) && barrier_carded(avant_header(obj))) {
+    rem_add_bit(obj, AVANT_FLAG_REMC);
+    return;
+  }
+  rem_add_bit(obj, AVANT_FLAG_REM);
 }
 
 void gc_keep_add(void *obj) {
@@ -193,7 +211,7 @@ void gc_rem_keep_large_holders(void) {
 }
 
 /* After a young collection: the cards of every carded
- * object it reached (the carded list: the large pointer buffers among
+ * object it reached (the carded list: the carded buffers among
  * the noted objects, in the same order; this used to read every noted
  * entry's header to find them) are made
  * exact, and the object is
@@ -216,10 +234,10 @@ void gc_cards_settle(void) {
       continue;
     }
     if (h->flags & AVANT_FLAG_CARD_SCAN) {
-      EACH_CARD_SLOT(p, slot, {
-        if (slot == (void **)ecs_a_) {
-          gc_heap.cards[ecs_c_] = 0;
-        }
+      /* Each marked card is cleared before its slots are read (one with
+       * no reference slot, which an element's span may mark, stays
+       * clear). */
+      EACH_CARD_SLOT_AT(p, slot, { gc_heap.cards[ecs_c_] = 0; }, {
         if (!gc_heap.cards[ecs_c_] && slot_names_young(*slot)) {
           gc_heap.cards[ecs_c_] = 1;
           any = 1;
@@ -315,7 +333,7 @@ void avant_barrier(void *obj) {
       }
       /* A carded object named without its slot: every
        * card counts as marked until the next young collection. */
-      if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
+      if (barrier_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
         if (!(h->flags & AVANT_FLAG_REMC)) {
           gc_proof_store(obj, h);
         }
@@ -334,13 +352,67 @@ void avant_barrier(void *obj) {
   rem_add(obj);
 }
 
+/* The carded object's part of the slot barrier, after its cards: it
+ * joins the set (REMC) at its first store since a collection emptied
+ * the set. The proof's log is asked here, where the set is (a carded
+ * buffer is above the size the log takes, so this breaks the proof:
+ * PROOF_BIG, avant_gc_proof.c), and a store into a buffer already in the
+ * set pays nothing for it. */
+static inline __attribute__((always_inline)) void barrier_carded_rem(void *obj, AvantHeader *h) {
+  if (!(h->flags & AVANT_FLAG_REMC)) {
+    gc_proof_store(obj, h);
+    rem_add_bit(obj, AVANT_FLAG_REMC);
+  }
+}
+
+/* The slot barrier of a mature large object that is not a pointer
+ * buffer: an element buffer with a reference word (carded) has every
+ * card from SLOT to one element's size after it marked, clipped at the
+ * object's end; any other object takes avant_barrier. A function of its
+ * own, so that the pointer buffer's path in avant_barrier_slot keeps the
+ * instructions it had (with the table read and the span in line the
+ * compiler gave the whole function a frame and more register moves:
+ * LangArena's etc_cachesimulation-common, whose Hash(String, CNode)
+ * stores take the pointer buffer's path, counted 1.7% more
+ * instructions). */
+static __attribute__((noinline)) void barrier_slot_span(void *obj, void *slot) {
+  AvantHeader *h = avant_header(obj);
+  uint8_t *end = (uint8_t *)obj + h->size;
+  if (!(gc_heap.refs[h->type_id] & TYPE_REFS_CARD)) {
+    avant_barrier(obj);
+    return;
+  }
+  if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < end) {
+    uint8_t *last = (uint8_t *)slot + (size_t)(gc_heap.refs[h->type_id] >> TYPE_REFS_SPAN_SHIFT) - 1;
+    uint64_t c = gc_card_index(slot);
+    uint64_t ce;
+    if (last >= end) {
+      last = end - 1;
+    }
+    ce = gc_card_index(last);
+    gc_heap.cards[c] = 1;
+    while (c < ce) {
+      gc_heap.cards[++c] = 1;
+    }
+  } else {
+    gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
+  }
+  barrier_carded_rem(obj, h);
+}
+
 /* The barrier with the slot (card marking): a
  * store of a reference into SLOT of OBJ. For a mature carded object (a
- * large pointer buffer) the slot's card is marked and the object is in
- * the set (REMC); a slot outside the object counts as every card. For
- * any other object it is avant_barrier(OBJ). Generated code calls it
- * for an element store whose holder the inline test did not skip;
- * runtime C calls it where it knows the slot. Never collects. */
+ * large pointer buffer, or a large element buffer of structs or unions
+ * with a reference word) every card from SLOT up to one element's size
+ * after it (clipped at the object's end) is marked and the object is in
+ * the set (REMC): a store of a whole element passes the element's start,
+ * and its reference words may lie in the next card; a store of one field
+ * passes the field's address, which lies in that span too. No division:
+ * the span is the type's (TYPE_REFS_CARD). A slot outside the object
+ * counts as every card. For any other object it is avant_barrier(OBJ).
+ * Generated code calls it for an element store whose holder the inline
+ * test did not skip; runtime C calls it where it knows the slot. Never
+ * collects. */
 void avant_barrier_slot(void *obj, void *slot) {
   AvantHeader *h;
   if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
@@ -352,25 +424,37 @@ void avant_barrier_slot(void *obj, void *slot) {
   if (((uintptr_t)obj & (ALIGN - 1)) == 0 &&
       (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) < gc_heap.committed) {
     h = avant_header(obj);
-    if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP && gc_carded(h)) {
-      if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
-        gc_heap.cards[gc_card_index(slot)] = 1;
-      } else {
-        gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
+    if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) ==
+        (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE)) {
+      /* A pointer buffer's slot is one word, in one card. */
+      if (h->type_id == AVANT_TYPE_PTRS) {
+        if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
+          gc_heap.cards[gc_card_index(slot)] = 1;
+        } else {
+          gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
+        }
+        barrier_carded_rem(obj, h);
+        return;
       }
-      if (!(h->flags & AVANT_FLAG_REMC)) {
-        /* The first store since a collection emptied the set: the proof's
-         * log is asked here, where the set is (a carded buffer is above
-         * the size the log takes, so this breaks the proof: PROOF_BIG,
-         * avant_gc_proof.c), and a store into a buffer already in the set
-         * pays nothing for it. */
-        gc_proof_store(obj, h);
-        rem_add_bit(obj, AVANT_FLAG_REMC);
-      }
+      barrier_slot_span(obj, slot);
       return;
     }
   }
   avant_barrier(obj);
+}
+
+void avant_gc_moved(void *obj) {
+  AvantHeader *h;
+  if (!obj || gc_thread.collecting || ((uintptr_t)obj & (ALIGN - 1)) != 0 ||
+      (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) >= gc_heap.committed) {
+    return;
+  }
+  h = avant_header(obj);
+  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | AVANT_FLAG_REMC | AVANT_FLAG_CARD_ALL)) ==
+          (AVANT_FLAG_HEAP | AVANT_FLAG_REMC) &&
+      gc_carded(h)) {
+    gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
+  }
 }
 
 /* The barrier for a store through an address that may be

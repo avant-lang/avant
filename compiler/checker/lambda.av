@@ -205,10 +205,10 @@ pub fn (checker_self: Checker) fn_matches_want(sig: FuncSig, want: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) arg_is_deferred(arg: Expr): Bool {
-  if arg.kind == ex_lambda() {
+  if arg.kind == ex_lambda {
     return true
   }
-  if arg.kind == ex_name() {
+  if arg.kind == ex_name {
     if got = checker_self.lookup(arg.ident) {
       return false
     }
@@ -307,7 +307,7 @@ pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
   }
   if take {
     if b = expr.block {
-      lam = Expr.new(ex_lambda(), b.loc)
+      lam = Expr.new(ex_lambda, b.loc)
       lam.block = b
       expr.args.push(lam)
       expr.block = nil
@@ -327,14 +327,14 @@ pub fn (checker_self: Checker) early_arg_fits(arg: Expr, got: Ty, pty: Ty): Bool
   if checker_self.is_empty_array_ty(got) {
     return checker_self.empty_fits(got, pty) && !type.ty_has_var(pty)
   }
-  arg.kind == ex_int() && pty.is_integer()
+  arg.kind == ex_int && pty.is_integer()
 }
 
 // The same for a generic parameter: unified, unless the argument is `[]`
 // (it says nothing of the element) or a literal meeting a concrete
 // integer parameter.
 pub fn (checker_self: Checker) early_arg_unifies(arg: Expr, got: Ty, pty: Ty, keys: Array(String), vals: Array(Ty)): Bool {
-  if checker_self.is_empty_array_ty(got) || (arg.kind == ex_int() && pty.is_integer()) {
+  if checker_self.is_empty_array_ty(got) || (arg.kind == ex_int && pty.is_integer()) {
     return checker_self.early_arg_fits(arg, got, pty)
   }
   checker_self.unify_ty(pty, got, keys, vals) || ty_assignable(got, pty)
@@ -426,19 +426,19 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
         }
         checker_self.fail_no_fit(expr.loc, shown, fits, tys)
       } else {
-        list = buf_new()
+        list = Buf.new()
         for f in fits {
           if list.size > 0 {
             list.push_str(", ")
           }
           list.push_str(checker_self.sig_text(shown, f))
         }
-        given = buf_new()
+        given = Buf.new()
         for k in 0..expr.args.size {
           if k > 0 {
             given.push_str(", ")
           }
-          if deferred[k] == 1 && expr.args[k].kind == ex_name() {
+          if deferred[k] == 1 && expr.args[k].kind == ex_name {
             given.push_str(expr.args[k].ident)
           } else if deferred[k] == 1 {
             given.push_str("a lambda")
@@ -542,10 +542,10 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
 }
 
 pub fn (checker_self: Checker) check_fn_arg(arg: Expr, want: Ty): Ty {
-  if arg.kind == ex_lambda() {
+  if arg.kind == ex_lambda {
     return checker_self.check_lambda_against(arg, want)
   }
-  if arg.kind == ex_name() {
+  if arg.kind == ex_name {
     return checker_self.check_fn_ref(arg, want)
   }
   checker_self.check_expr_as(arg, want)
@@ -589,7 +589,7 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   if others.size > 0 {
     // The function exists with another type: a fn type matches only
     // itself, so say what it is, not that it is unknown.
-    shown = buf_new()
+    shown = Buf.new()
     for o in others {
       if shown.size > 0 {
         shown.push_str(" or ")
@@ -671,7 +671,7 @@ pub fn (checker_self: Checker) check_qualified_fn_value(expr: Expr, mod: String,
   }
   if cands.size == 1 {
     chosen = cands[0]
-    expr.kind = ex_name()
+    expr.kind = ex_name
     expr.object = nil
     expr.fn_ref = true
     expr.resolved = chosen.node.emit_name
@@ -910,7 +910,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     // A `Void | E` result: the end of the body is the success, as in a
     // function (checker.av check_function).
     if ret.is_union() && ret.includes_void() && checker_self.fallthrough(b.body) {
-      b.body.push(stmt_expr(b.loc, Expr.new(ex_void(), b.loc)))
+      b.body.push(stmt_expr(b.loc, Expr.new(ex_void, b.loc)))
     }
     if !ret.is_void() && !ret.is_var() && b.body.size == 0 {
       checker_self.fail(expr.loc, "missing return value")
@@ -1814,7 +1814,7 @@ pub fn (checker_self: Checker) absorb_lambda_arg(expr: Expr, object: Ty) {
     return
   }
   last = expr.args[expr.args.size - 1]
-  if last.kind == ex_name() && object.is_array() && c != "parallel" {
+  if last.kind == ex_name && object.is_array() && c != "parallel" {
     // A function value or a function's name (`xs.each(show)`): the
     // same loop, its body one call of the function per element.
     if fb = checker_self.fn_arg_block(expr, last, c) {
@@ -1823,7 +1823,7 @@ pub fn (checker_self: Checker) absorb_lambda_arg(expr: Expr, object: Ty) {
     }
     return
   }
-  if last.kind != ex_lambda() {
+  if last.kind != ex_lambda {
     return
   }
   if lb = last.block, lb.paren {
@@ -1855,12 +1855,12 @@ pub fn (checker_self: Checker) fn_arg_block(expr: Expr, f: Expr, c: String): Blo
   }
   b = Block.new(f.loc)
   b.paren = true
-  call = Expr.new(ex_call(), f.loc)
+  call = Expr.new(ex_call, f.loc)
   call.callee = f.ident
   for k in 0..n {
     p = "__avant_arg_${f.loc.line()}_${f.loc.column()}_${k}"
     b.params.push(p)
-    a = Expr.new(ex_name(), f.loc)
+    a = Expr.new(ex_name, f.loc)
     a.ident = p
     call.args.push(a)
   }
@@ -1975,8 +1975,8 @@ pub fn (checker_self: Checker) default_assigns(e: Expr, names: Array(String)): S
 
 pub fn (checker_self: Checker) default_assigns_stmts(body: Array(Stmt), names: Array(String)): String {
   for st in body {
-    if st.kind == st_assign() {
-      if t = st.target, t.kind == ex_name() {
+    if st.kind == st_assign {
+      if t = st.target, t.kind == ex_name {
         for n in names {
           if n == t.ident {
             return n

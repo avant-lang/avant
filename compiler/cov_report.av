@@ -1,6 +1,8 @@
 import source
 import pipeline
 import loader
+import std.fs
+import std.process
 
 lib cov_posix {
   fun isatty(fd: Int): Int
@@ -38,9 +40,9 @@ pub class CovReport {
   }
 
   pub fn merge_map(map_path: String) {
-    if text = file_read(map_path) {
+    if text = fs.read(map_path) {
       hits = ""
-      if raw = file_read("${map_path}.hits") {
+      if raw = fs.read("${map_path}.hits") {
         hits = raw
       }
       lines = cov_lines(text)
@@ -84,7 +86,7 @@ pub class CovReport {
   // False when the report could not be written; the message names the
   // path and the reason, and `avant test --coverage` fails.
   pub fn write_lcov(path: String): Bool {
-    b = buf_new()
+    b = Buf.new()
     paths = path_list()
     for p in paths {
       bare = path_bare(p)
@@ -99,7 +101,7 @@ pub class CovReport {
       }
       b.push_str("end_of_record\n")
     }
-    if e = write_failure(file_write(path, b.to_s())) {
+    if e = write_failure(fs.write(path, b.to_s())) {
       diag_puts(e.message())
       return false
     }
@@ -130,7 +132,7 @@ pub class CovReport {
     for p in paths {
       shown = p
       if shown.size > file_w {
-        shown = str_slice(shown, 0, file_w)
+        shown = shown[..file_w]
       }
       uncovered = uncovered(p)
       puts(" ${cov_pad(shown, file_w)} |${col_stmt(p)}|${col_branch(p)}|${col_func(p)}|${col_line(p)}| ${uncovered}")
@@ -167,7 +169,7 @@ pub class CovReport {
   }
 
   fn walk_tree(dir_abs: String, excludes: Array(String)) {
-    names = dir_list(dir_abs) ?? []
+    names = fs.list(dir_abs) ?? []
     i = 0
     while i < names.size {
       name = names[i]
@@ -182,7 +184,7 @@ pub class CovReport {
       if dir_abs == "/" {
         path = "/${name}"
       }
-      if file_exists("${path}/.") {
+      if fs.exists("${path}/.") {
         // a symbolic link to a directory is not followed (as the test walk)
         if !path_is_link(path) {
           walk_tree(path, excludes)
@@ -199,7 +201,7 @@ pub class CovReport {
   }
 
   fn add_bare(rel: String, abs: String) {
-    if text = file_read(abs) {
+    if text = fs.read(abs) {
       lines = cov_code_lines(text)
       i = 0
       while i < lines.size {
@@ -350,7 +352,7 @@ pub class CovReport {
         }
       }
     }
-    out = buf_new()
+    out = Buf.new()
     for i in 0..nums.size {
       if i > 0 {
         out.push_str(",")
@@ -450,9 +452,9 @@ fn cov_lines(text: String): Array(String) {
   i = 0
   while i <= text.size {
     if i == text.size || text[i] == 10 {
-      line = str_slice(text, start, i)
+      line = text[start..i]
       if line.size > 0 && line[line.size - 1] == 13 {
-        line = str_slice(line, 0, line.size - 1)
+        line = line[..line.size - 1]
       }
       out.push(line)
       start = i + 1
@@ -468,7 +470,7 @@ fn cov_tabs(line: String): Array(String) {
   i = 0
   while i <= line.size {
     if i == line.size || line[i] == 9 {
-      out.push(str_slice(line, start, i))
+      out.push(line[start..i])
       start = i + 1
     }
     i += 1
@@ -512,10 +514,10 @@ fn cov_read_hit(buf: String, slot: Int): Int {
 pub fn cov_rel(anchor: String, path: String): String {
   p = path
   if p.size > 1 && p[0] == 46 && p[1] == 47 {
-    p = str_slice(p, 2, p.size)
+    p = p[2..]
   }
   if anchor.size > 0 && p.size > anchor.size && p[0] == 47 && p.starts_with(anchor) && p[anchor.size] == 47 {
-    return str_slice(p, anchor.size + 1, p.size)
+    return p[anchor.size + 1..]
   }
   p
 }
@@ -543,9 +545,9 @@ fn cov_code_lines(text: String): Array(Int) {
   i = 0
   while i <= text.size {
     if i == text.size || text[i] == 10 {
-      raw = str_slice(text, start, i)
+      raw = text[start..i]
       if raw.size > 0 && raw[raw.size - 1] == 13 {
-        raw = str_slice(raw, 0, raw.size - 1)
+        raw = raw[..raw.size - 1]
       }
       t = raw.strip()
       if t.size > 0 && !(t.size >= 2 && t[0] == 47 && t[1] == 47) {
@@ -576,7 +578,7 @@ fn cov_less(a: String, b: String): Bool {
 }
 
 fn cov_color: Bool {
-  if v = env_get("AVANT_COVERAGE_COLOR") {
+  if v = process.env("AVANT_COVERAGE_COLOR") {
     if v == "0" {
       return false
     }
@@ -597,7 +599,7 @@ fn cov_pct(hit: Int, tot: Int): String {
   if pad < 1 {
     pad = 1
   }
-  b = buf_new()
+  b = Buf.new()
   for i in 0..pad {
     b.push_str(" ")
   }
@@ -626,7 +628,7 @@ fn cov_pad(s: String, w: Int): String {
   if s.size >= w {
     return s
   }
-  b = buf_new()
+  b = Buf.new()
   b.push_str(s)
   for i in s.size..w {
     b.push_str(" ")
@@ -635,7 +637,7 @@ fn cov_pad(s: String, w: Int): String {
 }
 
 fn cov_border(file_w: Int) {
-  b = buf_new()
+  b = Buf.new()
   i = 0
   while i < file_w + 2 {
     b.push_str("-")

@@ -262,20 +262,20 @@ pub class Expander {
 
   pub fn fill_stmt(s: Stmt): Stmt {
     k = s.kind
-    if k == st_expr() {
+    if k == st_expr {
       if e = s.expr {
         return stmt_expr(s.loc, fill_expr(e))
       }
       return s
     }
-    if k == st_return() {
+    if k == st_return {
       if e = s.expr {
         return stmt_return_val(s.loc, fill_expr(e))
       }
       return stmt_return_void(s.loc)
     }
-    if k == st_if() {
-      out = Stmt.new(st_if(), s.loc)
+    if k == st_if {
+      out = Stmt.new(st_if, s.loc)
       out.bind = s.bind
       out.else_bind = s.else_bind
       out.loop_head = s.loop_head
@@ -299,8 +299,8 @@ pub class Expander {
       }
       return out
     }
-    if k == st_while() {
-      out = Stmt.new(st_while(), s.loc)
+    if k == st_while {
+      out = Stmt.new(st_while, s.loc)
       out.for_kind = s.for_kind
       out.latch = s.latch
       if c = s.cond {
@@ -322,14 +322,14 @@ pub class Expander {
       }
       return out
     }
-    if k == st_release() {
-      out = Stmt.new(st_release(), s.loc)
+    if k == st_release {
+      out = Stmt.new(st_release, s.loc)
       if e = s.expr {
         out.expr = fill_expr(e)
       }
       return out
     }
-    if k == st_pin() || k == st_hold() || k == st_defer() {
+    if k == st_pin || k == st_hold || k == st_defer {
       out = Stmt.new(k, s.loc)
       if e = s.expr {
         out.expr = fill_expr(e)
@@ -341,8 +341,8 @@ pub class Expander {
       }
       return out
     }
-    if k == st_assign() {
-      out = Stmt.new(st_assign(), s.loc)
+    if k == st_assign {
+      out = Stmt.new(st_assign, s.loc)
       out.op = s.op
       if t = s.target {
         out.target = fill_expr(t)
@@ -355,7 +355,7 @@ pub class Expander {
       }
       return out
     }
-    if k == st_quote() {
+    if k == st_quote {
       return stmt_quote(s.loc, fill_stmt_list(s.body))
     }
     s
@@ -373,10 +373,10 @@ pub class Expander {
 
   pub fn fill_expr(e: Expr): Expr {
     k = e.kind
-    if k == ex_splice() {
+    if k == ex_splice {
       return splice_to_expr(e)
     }
-    if k == ex_call() {
+    if k == ex_call {
       if sp = e.splice {
         e.callee = splice_to_ident(sp)
         e.splice = nil
@@ -403,7 +403,7 @@ pub class Expander {
       }
       return e
     }
-    if k == ex_lambda() {
+    if k == ex_lambda {
       if b = e.block {
         i = 0
         while i < b.param_types.size {
@@ -417,16 +417,16 @@ pub class Expander {
       }
       return e
     }
-    if k == ex_unary() {
-      out = Expr.new(ex_unary(), e.loc)
+    if k == ex_unary {
+      out = Expr.new(ex_unary, e.loc)
       out.op = e.op
       if inner = e.inner {
         out.inner = fill_expr(inner)
       }
       return out
     }
-    if k == ex_binary() {
-      out = Expr.new(ex_binary(), e.loc)
+    if k == ex_binary {
+      out = Expr.new(ex_binary, e.loc)
       out.op = e.op
       if l = e.left {
         out.left = fill_expr(l)
@@ -436,12 +436,12 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_field() {
+    if k == ex_field {
       if sp = e.splice {
         e.ident = splice_to_ident(sp)
         e.splice = nil
       }
-      out = Expr.new(ex_field(), e.loc)
+      out = Expr.new(ex_field, e.loc)
       out.ident = e.ident
       out.method_call = e.method_call
       out.bare_name = e.bare_name
@@ -450,8 +450,8 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_index() {
-      out = Expr.new(ex_index(), e.loc)
+    if k == ex_index {
+      out = Expr.new(ex_index, e.loc)
       if l = e.left {
         out.left = fill_expr(l)
       }
@@ -460,7 +460,7 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_struct() {
+    if k == ex_struct {
       out = clone_expr(e)
       fe: Array(Expr) = []
       i = 0
@@ -471,7 +471,7 @@ pub class Expander {
       out.field_exprs = fe
       return out
     }
-    if k == ex_array() || k == ex_hash_lit() {
+    if k == ex_array || k == ex_hash_lit {
       out = Expr.new(k, e.loc)
       i = 0
       while i < e.elems.size {
@@ -480,8 +480,8 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_array_new() {
-      out = Expr.new(ex_array_new(), e.loc)
+    if k == ex_array_new {
+      out = Expr.new(ex_array_new, e.loc)
       if t = e.elem_type {
         out.elem_type = fill_type_name(t)
       }
@@ -493,8 +493,8 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_hash_new() {
-      out = Expr.new(ex_hash_new(), e.loc)
+    if k == ex_hash_new {
+      out = Expr.new(ex_hash_new, e.loc)
       out.bare_name = e.bare_name
       if x = e.size_expr {
         out.size_expr = fill_expr(x)
@@ -507,14 +507,14 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_try() {
-      out = Expr.new(ex_try(), e.loc)
+    if k == ex_try {
+      out = Expr.new(ex_try, e.loc)
       if inner = e.inner {
         out.inner = fill_expr(inner)
       }
       return out
     }
-    if k == ex_interp() {
+    if k == ex_interp {
       out = clone_expr(e)
       for p in out.parts {
         if inner = p.expr {
@@ -523,7 +523,7 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_switch() {
+    if k == ex_switch {
       out = clone_expr(e)
       if c = e.cond {
         out.cond = fill_expr(c)
@@ -544,7 +544,7 @@ pub class Expander {
   }
 
   pub fn splice_payload(sp: Expr): Expr {
-    if sp.kind == ex_splice() {
+    if sp.kind == ex_splice {
       if inner = sp.inner {
         return inner
       }
@@ -554,13 +554,13 @@ pub class Expander {
 
   pub fn splice_to_ident(sp: Expr): String {
     inner = splice_payload(sp)
-    if inner.kind == ex_string() {
+    if inner.kind == ex_string {
       return ident_from_string(inner.value_str, inner.loc)
     }
-    if inner.kind == ex_name() {
+    if inner.kind == ex_name {
       return inner.ident
     }
-    if inner.kind == ex_field() {
+    if inner.kind == ex_field {
       return walk_field_name(inner)
     }
     fail(inner.loc, "splice is a name here")
@@ -569,13 +569,13 @@ pub class Expander {
 
   pub fn splice_to_type(sp: Expr): TypeName {
     inner = splice_payload(sp)
-    if inner.kind == ex_string() {
+    if inner.kind == ex_string {
       return TypeName.new(inner.loc, ident_from_string(inner.value_str, inner.loc))
     }
-    if inner.kind == ex_name() {
+    if inner.kind == ex_name {
       return TypeName.new(inner.loc, inner.ident)
     }
-    if inner.kind == ex_field() {
+    if inner.kind == ex_field {
       if !walk_field(inner) {
         fail(inner.loc, "splice f.type needs a field walk")
         return TypeName.new(inner.loc, "Int")
@@ -598,34 +598,34 @@ pub class Expander {
   pub fn splice_to_expr(sp: Expr): Expr {
     inner = splice_payload(sp)
     k = inner.kind
-    if k == ex_int() {
+    if k == ex_int {
       return clone_expr(inner)
     }
-    if k == ex_float() {
+    if k == ex_float {
       return clone_expr(inner)
     }
-    if k == ex_string() {
+    if k == ex_string {
       return clone_expr(inner)
     }
-    if k == ex_bool() {
+    if k == ex_bool {
       return clone_expr(inner)
     }
-    if k == ex_nil() {
+    if k == ex_nil {
       return clone_expr(inner)
     }
-    if k == ex_name() {
-      e = Expr.new(ex_name(), inner.loc)
+    if k == ex_name {
+      e = Expr.new(ex_name, inner.loc)
       e.ident = inner.ident
       return e
     }
-    if k == ex_field() {
+    if k == ex_field {
       if !walk_field(inner) {
         fail(inner.loc, "splice f.name needs a field walk")
         return inner
       }
       if field = self.ctx_field {
         if inner.ident == "name" {
-          e = Expr.new(ex_string(), inner.loc)
+          e = Expr.new(ex_string, inner.loc)
           e.value_str = field.name
           return e
         }
@@ -647,7 +647,7 @@ pub class Expander {
     if self.ctx_var.size == 0 {
       return false
     }
-    if obj = fa.object, obj.kind == ex_name() && obj.ident == self.ctx_var {
+    if obj = fa.object, obj.kind == ex_name && obj.ident == self.ctx_var {
       if fa.ident == "name" {
         return true
       }
@@ -744,14 +744,14 @@ pub class Expander {
   pub fn collect_introduced(body: Array(Stmt), into: Array(String)) {
     for s in body {
       k = s.kind
-      if k == st_assign() {
-        if t = s.target, t.kind == ex_name() && t.ident != "_" {
+      if k == st_assign {
+        if t = s.target, t.kind == ex_name && t.ident != "_" {
           into.push(t.ident)
         }
         if v = s.value {
           collect_introduced_expr(v, into)
         }
-      } else if k == st_if() {
+      } else if k == st_if {
         collect_introduced(s.pre, into)
         if s.bind.size > 0 {
           into.push(s.bind)
@@ -764,30 +764,30 @@ pub class Expander {
         }
         collect_introduced(s.then_body, into)
         collect_introduced(s.else_body, into)
-      } else if k == st_while() {
+      } else if k == st_while {
         collect_introduced(s.pre, into)
         if c = s.cond {
           collect_introduced_expr(c, into)
         }
         collect_introduced(s.body, into)
-      } else if k == st_quote() {
+      } else if k == st_quote {
         collect_introduced(s.body, into)
-      } else if k == st_pin() || k == st_hold() || k == st_defer() {
+      } else if k == st_pin || k == st_hold || k == st_defer {
         // The names a `pin` block assigns are the quote's too (a
         // `gc.hold` block's as well).
         if pe = s.expr {
           collect_introduced_expr(pe, into)
         }
         collect_introduced(s.body, into)
-      } else if k == st_release() {
+      } else if k == st_release {
         if re = s.expr {
           collect_introduced_expr(re, into)
         }
-      } else if k == st_expr() {
+      } else if k == st_expr {
         if e = s.expr {
           collect_introduced_expr(e, into)
         }
-      } else if k == st_return() {
+      } else if k == st_return {
         if e = s.expr {
           collect_introduced_expr(e, into)
         }
@@ -797,7 +797,7 @@ pub class Expander {
 
   pub fn collect_introduced_expr(e: Expr, into: Array(String)) {
     k = e.kind
-    if k == ex_call() {
+    if k == ex_call {
       if b = e.block {
         into.concat(b.params)
         collect_introduced(b.body, into)
@@ -812,13 +812,13 @@ pub class Expander {
       }
       return
     }
-    if k == ex_unary() {
+    if k == ex_unary {
       if inner = e.inner {
         collect_introduced_expr(inner, into)
       }
       return
     }
-    if k == ex_binary() {
+    if k == ex_binary {
       if l = e.left {
         collect_introduced_expr(l, into)
       }
@@ -827,13 +827,13 @@ pub class Expander {
       }
       return
     }
-    if k == ex_field() {
+    if k == ex_field {
       if obj = e.object {
         collect_introduced_expr(obj, into)
       }
       return
     }
-    if k == ex_index() {
+    if k == ex_index {
       if l = e.left {
         collect_introduced_expr(l, into)
       }
@@ -842,7 +842,7 @@ pub class Expander {
       }
       return
     }
-    if k == ex_struct() {
+    if k == ex_struct {
       i = 0
       while i < e.field_exprs.size {
         collect_introduced_expr(e.field_exprs[i], into)
@@ -850,7 +850,7 @@ pub class Expander {
       }
       return
     }
-    if k == ex_array() || k == ex_hash_lit() {
+    if k == ex_array || k == ex_hash_lit {
       i = 0
       while i < e.elems.size {
         collect_introduced_expr(e.elems[i], into)
@@ -858,7 +858,7 @@ pub class Expander {
       }
       return
     }
-    if k == ex_array_new() {
+    if k == ex_array_new {
       if sz = e.size_expr {
         collect_introduced_expr(sz, into)
       }
@@ -867,13 +867,13 @@ pub class Expander {
       }
       return
     }
-    if k == ex_try() {
+    if k == ex_try {
       if inner = e.inner {
         collect_introduced_expr(inner, into)
       }
       return
     }
-    if k == ex_interp() {
+    if k == ex_interp {
       for p in e.parts {
         if inner = p.expr {
           collect_introduced_expr(inner, into)
@@ -881,7 +881,7 @@ pub class Expander {
       }
       return
     }
-    if k == ex_switch() {
+    if k == ex_switch {
       if expr_is_else_guard(e) && e.ident.size > 0 {
         into.push(e.ident)
       }
@@ -901,7 +901,7 @@ pub class Expander {
       collect_introduced(e.else_body, into)
       return
     }
-    if k == ex_lambda() {
+    if k == ex_lambda {
       if b = e.block {
         into.concat(b.params)
         collect_introduced(b.body, into)
@@ -921,20 +921,20 @@ pub class Expander {
 
   pub fn rename_stmt(s: Stmt, map: Hash(String, String)): Stmt {
     k = s.kind
-    if k == st_expr() {
+    if k == st_expr {
       if e = s.expr {
         return stmt_expr(s.loc, rename_expr(e, map))
       }
       return s
     }
-    if k == st_return() {
+    if k == st_return {
       if e = s.expr {
         return stmt_return_val(s.loc, rename_expr(e, map))
       }
       return stmt_return_void(s.loc)
     }
-    if k == st_if() {
-      out = Stmt.new(st_if(), s.loc)
+    if k == st_if {
+      out = Stmt.new(st_if, s.loc)
       out.bind = s.bind
       if mapped = map.get(s.bind) {
         out.bind = mapped
@@ -952,8 +952,8 @@ pub class Expander {
       out.else_body = rename_stmt_list(s.else_body, map)
       return out
     }
-    if k == st_while() {
-      out = Stmt.new(st_while(), s.loc)
+    if k == st_while {
+      out = Stmt.new(st_while, s.loc)
       out.for_kind = s.for_kind
       out.latch = s.latch
       if c = s.cond {
@@ -967,8 +967,8 @@ pub class Expander {
       out.body = rename_stmt_list(s.body, map)
       return out
     }
-    if k == st_assign() {
-      out = Stmt.new(st_assign(), s.loc)
+    if k == st_assign {
+      out = Stmt.new(st_assign, s.loc)
       out.op = s.op
       out.declared = s.declared
       if t = s.target {
@@ -979,17 +979,17 @@ pub class Expander {
       }
       return out
     }
-    if k == st_quote() {
+    if k == st_quote {
       return stmt_quote(s.loc, rename_stmt_list(s.body, map))
     }
-    if k == st_release() {
-      out = Stmt.new(st_release(), s.loc)
+    if k == st_release {
+      out = Stmt.new(st_release, s.loc)
       if e = s.expr {
         out.expr = rename_expr(e, map)
       }
       return out
     }
-    if k == st_pin() || k == st_hold() || k == st_defer() {
+    if k == st_pin || k == st_hold || k == st_defer {
       // Before, a `pin` block kept its names, so a quote's local inside
       // it captured the paste site's.
       out = Stmt.new(k, s.loc)
@@ -1004,9 +1004,9 @@ pub class Expander {
 
   pub fn rename_expr(e: Expr, map: Hash(String, String)): Expr {
     k = e.kind
-    if k == ex_name() {
+    if k == ex_name {
       if mapped = map.get(e.ident) {
-        n = Expr.new(ex_name(), e.loc)
+        n = Expr.new(ex_name, e.loc)
         n.ident = mapped
         n.implicit_field = e.implicit_field
         n.bare_name = e.bare_name
@@ -1014,7 +1014,7 @@ pub class Expander {
       }
       return e
     }
-    if k == ex_call() {
+    if k == ex_call {
       out = clone_expr(e)
       if mapped = map.get(e.callee) {
         out.callee = mapped
@@ -1041,16 +1041,16 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_unary() {
-      out = Expr.new(ex_unary(), e.loc)
+    if k == ex_unary {
+      out = Expr.new(ex_unary, e.loc)
       out.op = e.op
       if inner = e.inner {
         out.inner = rename_expr(inner, map)
       }
       return out
     }
-    if k == ex_binary() {
-      out = Expr.new(ex_binary(), e.loc)
+    if k == ex_binary {
+      out = Expr.new(ex_binary, e.loc)
       out.op = e.op
       if l = e.left {
         out.left = rename_expr(l, map)
@@ -1060,8 +1060,8 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_field() {
-      out = Expr.new(ex_field(), e.loc)
+    if k == ex_field {
+      out = Expr.new(ex_field, e.loc)
       out.ident = e.ident
       out.method_call = e.method_call
       out.bare_name = e.bare_name
@@ -1070,8 +1070,8 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_index() {
-      out = Expr.new(ex_index(), e.loc)
+    if k == ex_index {
+      out = Expr.new(ex_index, e.loc)
       if l = e.left {
         out.left = rename_expr(l, map)
       }
@@ -1080,7 +1080,7 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_struct() {
+    if k == ex_struct {
       out = clone_expr(e)
       fe: Array(Expr) = []
       i = 0
@@ -1091,7 +1091,7 @@ pub class Expander {
       out.field_exprs = fe
       return out
     }
-    if k == ex_array() || k == ex_hash_lit() {
+    if k == ex_array || k == ex_hash_lit {
       out = Expr.new(k, e.loc)
       i = 0
       while i < e.elems.size {
@@ -1100,7 +1100,7 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_array_new() {
+    if k == ex_array_new {
       out = clone_expr(e)
       if sz = e.size_expr {
         out.size_expr = rename_expr(sz, map)
@@ -1110,14 +1110,14 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_try() {
-      out = Expr.new(ex_try(), e.loc)
+    if k == ex_try {
+      out = Expr.new(ex_try, e.loc)
       if inner = e.inner {
         out.inner = rename_expr(inner, map)
       }
       return out
     }
-    if k == ex_interp() {
+    if k == ex_interp {
       out = clone_expr(e)
       for p in out.parts {
         if inner = p.expr {
@@ -1126,7 +1126,7 @@ pub class Expander {
       }
       return out
     }
-    if k == ex_switch() {
+    if k == ex_switch {
       out = clone_expr(e)
       if expr_is_else_guard(e) {
         if mapped0 = map.get(e.ident) {
@@ -1150,7 +1150,7 @@ pub class Expander {
       out.else_body = rename_stmt_list(e.else_body, map)
       return out
     }
-    if k == ex_lambda() {
+    if k == ex_lambda {
       out = clone_expr(e)
       if b = e.block {
         nb = clone_block(b)
@@ -1171,13 +1171,13 @@ pub class Expander {
     out: Array(Stmt) = []
     for s in body {
       k = s.kind
-      if k == st_quote() {
+      if k == st_quote {
         filled = fill_stmt_list(s.body)
         hygiened = hygiene_stmts(filled)
         nested = expand_stmt_list(hygiened)
         out.concat(nested)
-      } else if k == st_if() {
-        n = Stmt.new(st_if(), s.loc)
+      } else if k == st_if {
+        n = Stmt.new(st_if, s.loc)
         n.bind = s.bind
         n.else_bind = s.else_bind
         n.loop_head = s.loop_head
@@ -1186,8 +1186,8 @@ pub class Expander {
         n.then_body = expand_stmt_list(s.then_body)
         n.else_body = expand_stmt_list(s.else_body)
         out.push(n)
-      } else if k == st_while() {
-        n = Stmt.new(st_while(), s.loc)
+      } else if k == st_while {
+        n = Stmt.new(st_while, s.loc)
         n.for_kind = s.for_kind
         n.latch = s.latch
         n.cond = s.cond
@@ -1196,14 +1196,14 @@ pub class Expander {
         n.pre = expand_stmt_list(s.pre)
         n.body = expand_stmt_list(s.body)
         out.push(n)
-      } else if k == st_pin() || k == st_hold() || k == st_defer() {
+      } else if k == st_pin || k == st_hold || k == st_defer {
         n = Stmt.new(k, s.loc)
         n.expr = s.expr
         n.body = expand_stmt_list(s.body)
         out.push(n)
-      } else if k == st_expr() {
+      } else if k == st_expr {
         if e = s.expr {
-          if e.kind == ex_switch() {
+          if e.kind == ex_switch {
             sw = clone_expr(e)
             j = 0
             while j < sw.cases.size {

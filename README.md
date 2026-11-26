@@ -861,7 +861,7 @@ fn main {
 - **`for i, x in xs`** gives the position, then the element, over an `Array`, `Bytes`, a `Buf` or `s.bytes`. The position is the loop's own, as the variable is: it cannot be assigned, and a `continue` moves it. A range has one variable.
 - **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a nonzero integer literal or a module [constant](#constants) (`by chunk`, `by -chunk`), fixed when the loop is compiled. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. **A step down, `by -k`, visits the same values in reverse**: `for i in 0..n by -1` is `n - 1` down to `0`, and `for i in 0..10 by -3` is `9, 6, 3, 0` (the values of `by 3`, last first); the walk always ends at the range's start, never computes a value below it, and an empty range visits nothing.
 - **Bytes:** `for b in bytes`, `for b in buf` and `for b in s.bytes` give each byte as an `Int` (`s.bytes` walks the string's own bytes, with no copy). A bare `for c in s` is refused with the two walks it may mean: the bytes (`s.bytes`) or the characters (`s.chars()`).
-- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
+- **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()` and `members()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
 - **`for w in s.fields()`** scans the string and gives each field as `fields()` would, without building the array.
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
 
@@ -1561,8 +1561,7 @@ fn main {
 fn main {
   out = Buf.new()
   for i in 1..4 {
-    out.push_str("item ")
-    out.push_fmt_i(i)
+    out.push_str("item ${i}")       // written straight into out
     out.push_byte(10)               // a newline
   }
   text = out.to_s()
@@ -1603,7 +1602,7 @@ fn main {
 | `Buf.new(n, byte)` | `n` bytes, each `byte` (`Buf.new(n, 0)` is `n` zero bytes, writable by `buf[i] = x`; a negative `n` or a `byte` outside `0..255` traps) |
 | `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
-| `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |
+| `push_str("${n}")`, `push_fmt_f(x, digits)` | append an integer's text (an interpolation is written straight into the buffer), or a float with `digits` decimals |
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
 | `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
 | `buf.is_empty()` | `buf.size == 0` |
@@ -3714,7 +3713,7 @@ Structs live inline in their holder and optional references are plain pointers (
 
 Allocation-heavy code is where Avant is weakest:
 
-- **Many small objects.** A class instance is allocated inline (a compare, a store, the header, the zeroing) and a young collection touches only survivors, but many small live objects cost more time and memory than C's arena: `Binarytrees::Arena` is at 1.10× the best time and 1.12× the best memory.
+- **Many small objects.** A class instance is allocated inline (a compare, a store, the header, the zeroing) and a young collection touches only survivors, but many small live objects cost more time and memory than C's arena: `Binarytrees::Arena` is at 1.12× the best time and 1.12× the best memory.
 - **A large structure that all stays alive** (a big tree, a long list, a graph built once). With one thread, after two young collections in a row that keep nearly everything, the collector promotes each full young budget where it lies, without tracing or copying it; with several threads it still traces it (dense young blocks are aged in place, not copied). Either way it takes more memory than a hinted build ([Collection hints](#collection-hints)).
 - **A large live heap.** A full collection traces everything alive: its cost grows with the live data, not the garbage.
 
@@ -4482,6 +4481,13 @@ fn main {
       puts(langs.len())                  // => 2
       puts(first.str() ?? "?")           // => avant
     }
+    names: Array(String) = []
+    if ms = doc.members() {
+      for m in ms {
+        names.push(m.name)
+      }
+    }
+    puts(names.join(","))                // => name,langs,age
   }
 
   out = json.Json.object()
@@ -4559,9 +4565,11 @@ fn main {
 | `json.Json.parse(text, max_depth = 256, max_bytes: Int? = nil, max_entries: Int? = nil)` | `text: String`; the limits (below) | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset`, an `Int?` (`nil` when there is none); a limit passed is a `JsonError` naming it; a limit below 1 traps | |
 | `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member by name; an array's element or an object's member value by position | `nil` when there is none, and on a value that is neither an array nor an object | on an object `at(i)` is member `i`'s value in the document's order, a repeated name too, and `key_at(i)` its name |
 | `len` | — | `Int`: the number of members or elements | — | |
-| `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
+| `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | it walks from the first member: to read every member, `members` |
 | `arr`, then `next` on it | — | `JsonIter?`: the elements of an array, each in turn (`Json?`) | `nil` for any value but an array, so a walk over a string, a number, an object or `null` is not an empty walk; `next` is `nil` after the last | `if it = v.arr() { for e in it { ... } }` |
 | `arr(key)`, then `next` on it | `key: String` | `JsonIter?`: the elements of the member `key` | `nil` when there is no such member or it is not an array | `it = doc.arr("numbers") ?? return bad_request()` |
+| `members`, then `next` on it | — | `JsonMembers?`: the members of an object in the document's order, each a `JsonMember` with `name` (`String`) and `value` (`Json`) | `nil` for any value but an object; `next` is `nil` after the last | `if ms = doc.members() { for m in ms { puts("${m.name}: ${m.value.text()}") } }`; one step per member, so a walk over an object of n members reads n, where a loop over `key_at(i)` and `at(i)` reads n²/2 (each starts from the first member); a name given twice is given twice (`get` reads its first) |
+| `members(key)`, then `next` on it | `key: String` | `JsonMembers?`: the members of the member `key` | `nil` when there is no such member or it is not an object | |
 | `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
 | `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
@@ -5468,7 +5476,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 
 ## Benchmarks
 
-One server (AMD EPYC 7351P, boost off at 2.4 GHz), Avant 0.51.0 `--release --cpu=v3` on 2026-11-24 (the other languages' LangArena runs 2026-11-14); peak memory is `ru_maxrss`.
+One server (AMD EPYC 7351P, boost off at 2.4 GHz), Avant 0.52.0 `--release --cpu=v3` on 2026-11-26 (the other languages' LangArena runs 2026-11-14); peak memory is `ru_maxrss`.
 
 How each number was taken, the per-task tables, where Avant loses and every note: [BENCHMARKS.md](BENCHMARKS.md).
 
@@ -5476,49 +5484,49 @@ How each number was taken, the per-task tables, where Avant loses and every note
 
 | Language | 50 tasks (s) | Average peak memory | time × Avant | peak memory × Avant | time, geometric mean × Avant |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Avant | **86.263** | 27.5 MB | 1.00× | 1.00× | 1.00× |
-| C (Clang) | 138.008 | **23.0 MB** | 1.60× | 0.83× | 1.67× |
-| C (GCC) | 143.231 | 23.0 MB | 1.66× | 0.84× | 1.74× |
-| Rust | 137.709 | 29.3 MB | 1.60× | 1.07× | 1.70× |
-| Crystal | 194.527 | 65.2 MB | 2.26× | 2.37× | 2.57× |
-| Go | 311.401 | 62.8 MB | 3.61× | 2.29× | 3.13× |
+| Avant | **85.560** | 26.7 MB | 1.00× | 1.00× | 1.00× |
+| C (Clang) | 138.008 | **23.0 MB** | 1.61× | 0.86× | 1.68× |
+| C (GCC) | 143.231 | 23.0 MB | 1.67× | 0.86× | 1.75× |
+| Rust | 137.709 | 29.3 MB | 1.61× | 1.10× | 1.70× |
+| Crystal | 194.527 | 65.2 MB | 2.27× | 2.44× | 2.58× |
+| Go | 311.401 | 62.8 MB | 3.64× | 2.35× | 3.14× |
 
 ### HTTP servers
 
 | Server | No pipelining (requests per second) | Peak memory | 16 pipelined (requests per second) | Peak memory |
 | --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 350,298 | 3.8 MB | **4,174,476** | 4.1 MB |
-| C (h2o) | 343,206 | 9.6 MB | 1,584,415 | 10.6 MB |
-| Rust (std, thread per connection) | 343,788 | 7.0 MB | 1,746,867 | 19.7 MB |
-| Rust (hyper) | **353,983** | 13.1 MB | 4,005,974 | 27.5 MB |
-| Go (`net/http`) | 185,177 | 30.6 MB | 430,824 | 80.0 MB |
-| Go (fasthttp) | 344,133 | 17.6 MB | 3,388,545 | 28.4 MB |
-| Crystal (`HTTP::Server`) | 165,371 | 35.8 MB | 304,741 | 101.8 MB |
-| Valk (`http.serve_fast`) | 323,222 | 22.8 MB | 3,799,826 | 82.6 MB |
+| Avant (`std.http`) | 349,322 | 3.8 MB | **4,146,750** | 4.1 MB |
+| C (h2o) | 342,333 | 9.6 MB | 1,613,897 | 10.6 MB |
+| Rust (std, thread per connection) | 343,102 | 6.7 MB | 1,760,869 | 19.7 MB |
+| Rust (hyper) | **350,926** | 13.3 MB | 3,943,840 | 28.5 MB |
+| Go (`net/http`) | 185,580 | 30.0 MB | 433,562 | 85.6 MB |
+| Go (fasthttp) | 342,326 | 18.2 MB | 3,443,280 | 28.5 MB |
+| Crystal (`HTTP::Server`) | 162,479 | 33.6 MB | 304,384 | 101.1 MB |
+| Valk (`http.serve_fast`) | 321,096 | 22.9 MB | 3,743,528 | 83.2 MB |
 
 ### WebSocket servers
 
 | Server | Messages per second | Peak memory |
 | --- | ---: | ---: |
-| Avant (`std.http`) | 73,321 | 4.6 MB |
-| C (h2o) | 72,071 | 9.0 MB |
-| Rust (std, thread per connection) | **91,066** | 2.6 MB |
-| Go (`net/http`) | 53,626 | 10.9 MB |
-| Crystal (`HTTP::Server`) | 63,884 | 11.4 MB |
+| Avant (`std.http`) | 82,193 | 4.6 MB |
+| C (h2o) | 79,087 | 9.1 MB |
+| Rust (std, thread per connection) | **90,969** | 2.6 MB |
+| Go (`net/http`) | 53,648 | 11.4 MB |
+| Crystal (`HTTP::Server`) | 63,764 | 11.3 MB |
 
 ### Garbage collector
 
-Valk's collector suite (`bench/valk-gc/`), as Valk ships it for Valk, Go, D and C#, with Avant (`--release`), Crystal and Java ported: seven scenarios in one process, each scenario's own time, the median of 7 runs, the whole machine, 2026-11-24.
+Valk's collector suite (`bench/valk-gc/`), as Valk ships it for Valk, Go, D and C#, with Avant (`--release`), Crystal and Java ported: seven scenarios in one process, each scenario's own time, the median of 7 runs, the whole machine, 2026-11-26.
 
 | Language | 1 short-lived (ms) | 2 stable collects (ms) | 3 build chain (ms) | 4 free chain (ms) | 5 mutate links (ms) | 6 churn + live (ms) | 7 tree churn (ms) | whole process (s) | peak memory (MB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Avant | **38.5** | 5.11 | 202 | **0.306** | 17.0 | 32.0 | 156 | **0.536** | 89.9 |
-| Valk | 40.9 | **0.855** | **173** | 85.4 | 21.1 | **20.7** | **109** | 0.541 | 81.1 |
-| Go | 370 | 16858 | 284 | 19.0 | **16.9** | 324 | 776 | 19.083 | **44.2** |
-| D | 452 | 5143 | 465 | 28.6 | 23.9 | 303 | 794 | 7.406 | 160.9 |
-| C# | 224 | 9375 | 592 | 74.4 | 32.7 | 125 | 409 | 11.097 | 156.4 |
-| Crystal | 338 | 3755 | 331 | 6.69 | 26.1 | 107 | 283 | 5.018 | 185.6 |
-| Java | 150 | 15971 | 434 | 20.3 | 25.5 | 123 | 225 | 17.268 | 254.7 |
+| Avant | **39.8** | 5.12 | 182 | **0.449** | **16.9** | 34.4 | 156 | **0.513** | 85.8 |
+| Valk | 40.8 | **0.898** | **173** | 84.0 | 21.1 | **19.8** | **117** | 0.545 | 81.1 |
+| Go | 369 | 16804 | 269 | 18.2 | **16.9** | 325 | 809 | 18.960 | **43.5** |
+| D | 454 | 5165 | 462 | 28.3 | 23.7 | 303 | 793 | 7.419 | 161.0 |
+| C# | 226 | 9359 | 592 | 74.4 | 32.7 | 124 | 409 | 11.069 | 156.5 |
+| Crystal | 335 | 3755 | 331 | 6.75 | 26.3 | 108 | 284 | 5.028 | 185.6 |
+| Java | 148 | 15932 | 421 | 20.7 | 25.7 | 124 | 226 | 17.275 | 254.4 |
 
 ## Goals
 
@@ -5537,8 +5545,8 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 
 Where Avant stands, each gap a defect until fixed:
 
-- **LangArena** (2026-11-24, release 0.51.0, five code addresses with the runtime's code moved too and innermost loops aligned to 16 bytes within a line): the median task 0.98× the best's time, 1.26× its memory (1.23× by the exact peak); beyond 1.5×, no task in time and 11 in memory (10 by the exact peak); 10 behind Crystal or Go ([Where Avant loses](BENCHMARKS.md#where-avant-loses)); allocation-heavy code is the weakest ([What allocation costs today](#what-allocation-costs-today)).
-- **HTTP** (2026-11-24): the most pipelined requests a second of the eight servers, at the least memory; without pipelining the load generator is the limit for six of them, so the bar is not shown met there yet; the WebSocket echo 0.81× Rust's thread-per-connection server and 1.02× h2o's ([HTTP and WebSocket servers](#http-servers)).
+- **LangArena** (2026-11-26, release 0.52.0, five code addresses with the runtime's code moved too and innermost loops aligned to 16 bytes within a line): the median task 0.98× the best's time, 1.24× its memory (1.21× by the exact peak); beyond 1.5×, no task in time and 8 in memory (7 by the exact peak); 8 behind Crystal or Go ([Where Avant loses](BENCHMARKS.md#where-avant-loses)); allocation-heavy code is the weakest ([What allocation costs today](#what-allocation-costs-today)).
+- **HTTP** (2026-11-26): the most pipelined requests a second of the eight servers, at the least memory; without pipelining the load generator is the limit for six of them, so the bar is not shown met there yet; the WebSocket echo 0.90× Rust's thread-per-connection server and 1.04× h2o's ([HTTP and WebSocket servers](#http-servers)).
 - **Expressiveness**: Avant's LangArena sources are 5,482 lines to Crystal's 4,220 (30% more, 18% compressed), not Crystal's density yet; the forms that close the gap are in [Not built yet](#not-built-yet).
 
 Avant is not a better TypeScript, a borrow-checker language, a dynamic language with types bolted on, or a research language.

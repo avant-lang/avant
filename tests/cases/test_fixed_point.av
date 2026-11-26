@@ -104,6 +104,12 @@ fn test_fixed_point(c: Checks) {
     }
     if fs.exists(bin_c) {
       chmod_x(bin_c)
+      // The next compiler reads the standard library its build record
+      // names (the compiler imports std.gc): it is a kept compiler, with
+      // the record the compiler it was built by has.
+      if rec = fs.read("${compiler}.versions.txt") {
+        _ = fs.write("${bin_c}.versions.txt", rec)
+      }
       run_args: Array(String) = []
       run_args.push("run")
       run_args.push(hello)

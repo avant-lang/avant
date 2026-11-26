@@ -273,7 +273,7 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
       bt = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
       if !bt.is_int() {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be Int")
-      } else if expr.args[0].kind == ex_int() && (expr.args[0].int_bits < 2 || expr.args[0].int_bits > 36) {
+      } else if expr.args[0].kind == ex_int && (expr.args[0].int_bits < 2 || expr.args[0].int_bits > 36) {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be in 2..36")
       }
     }
@@ -374,14 +374,8 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
     return checker_self.t_void()
   }
   if expr.callee == "push_fmt_i" {
-    if expr.args.size != 1 {
-      checker_self.fail(expr.loc, "push_fmt_i takes one Int")
-      return checker_self.t_void()
-    }
-    n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !n.is_int() {
-      checker_self.fail(expr.args[0].loc, "push_fmt_i expects Int")
-    }
+    // The interpolation into a Buf is the same single call.
+    checker_self.fail(expr.loc, "push_fmt_i is gone: write b.push_str(\"\${n}\")")
     return checker_self.t_void()
   }
   if expr.callee == "starts_with" {
@@ -1261,32 +1255,6 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
   }
   checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", hint)
   checker_self.t_int()
-}
-
-pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
-  // The compiler's own sources' sha256 (the hex text), not std.digest's
-  // digest.sha256 (the bytes).
-  if expr.callee == "sha256" && expr.mod_name.size == 0 {
-    return checker_self.check_one_string(expr, checker_self.t_string())
-  }
-  nil
-}
-
-pub fn (checker_self: Checker) check_one_string(expr: Expr, ret: Ty): Ty {
-  if expr.args.size == 1 {
-    if b = expr.block {
-      checker_self.fail(expr.loc, "${expr.callee} takes one String")
-      return ret
-    }
-  } else {
-    checker_self.fail(expr.loc, "${expr.callee} takes one String")
-    return ret
-  }
-  got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
-  if !ty_assignable(got, checker_self.t_string()) {
-    checker_self.fail(expr.args[0].loc, "${expr.callee} expects String")
-  }
-  ret
 }
 
 pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {

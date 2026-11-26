@@ -51,7 +51,7 @@ pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
     // A C scalar (its C width) or a pointer: the element p[i] reads.
     return lw.lw_m.types.ptr_to(lw.c_elem_mty(inner2, loc))
   }
-  mt_ptr()
+  mt_ptr
 }
 
 // The MIR type of a C element (a layout field's or a Ptr's pointee): a
@@ -62,7 +62,7 @@ pub fn (lw: MirLower) c_elem_mty(t: Ty, loc: Location): Int {
     return lw.c_scalar_mty(t.c_scalar)
   }
   if t.is_enum() {
-    return mt_i32()
+    return mt_i32
   }
   lw.field_mty(t, loc)
 }
@@ -84,7 +84,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   lw.lw_busy[name] = 1
   none: Array(Int) = []
   nonames: Array(String) = []
-  id = lw.lw_b.note_layout(name, mlk_clayout(), none, nonames)
+  id = lw.lw_b.note_layout(name, mlk_clayout, none, nonames)
   fields: Array(Int) = []
   names: Array(String) = []
   j = 0
@@ -101,7 +101,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
     if t.fields[j].ty.is_enum() {
       // C's int: read through enum_from_c, written through
       // enum_to_c.
-      ft = mt_i32()
+      ft = mt_i32
     }
     if lw.failed() {
       return -1
@@ -139,7 +139,7 @@ pub fn (lw: MirLower) carray_mty(t: Ty, loc: Location): Int {
       fs.push(et)
       ns.push("")
     }
-    return lw.lw_m.types.agg(lw.lw_b.note_layout("carray(${lw.lw_m.types.text(et)}x${t.count})", mlk_carray(), fs, ns))
+    return lw.lw_m.types.agg(lw.lw_b.note_layout("carray(${lw.lw_m.types.text(et)}x${t.count})", mlk_carray, fs, ns))
   }
   lw.refuse(loc, "a C array without an element type")
   -1
@@ -161,13 +161,13 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     has_cb = false
     for param in cs.params {
       if param.is_fn() {
-        ps.push(mt_ptr())
+        ps.push(mt_ptr)
         has_cb = true
       } else if param.c_scalar > 0 {
         ps.push(lw.c_scalar_mty(param.c_scalar))
       } else if param.is_enum() {
         // C's int.
-        ps.push(mt_i32())
+        ps.push(mt_i32)
       } else {
         ps.push(lw.ty_at(param, e.loc, "a C parameter"))
       }
@@ -177,7 +177,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
       ret = lw.c_scalar_mty(cs.ret.c_scalar)
     }
     if cs.ret.is_enum() {
-      ret = mt_i32()
+      ret = mt_i32
     }
     if lw.failed() {
       return zero
@@ -194,7 +194,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
       o = zero
       if cs.params[i].is_fn() {
         o = lw.cb_pointer(a, cs.params[i])
-      } else if a.kind == ex_unary() && a.op == tk_amp() {
+      } else if a.kind == ex_unary && a.op == tk_amp {
         cell = lw.out_cell(a, cs.params[i], ps[i])
         if lw.failed() {
           return zero
@@ -228,7 +228,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         // gets the flat form whoever declares it (a program's own lib
         // block may bind one): a view's bytes in place have no header.
         rt_entry = cs.runtime || e.callee.starts_with("avant_")
-        if lw.c_ret_string(cs.params[i]) && !(cs.runtime && b.module.rt.class_of(e.callee) == mcc_never()) {
+        if lw.c_ret_string(cs.params[i]) && !(cs.runtime && b.module.rt.class_of(e.callee) == mcc_never) {
           o = lw.c_string_arg(o, ps[i], rt_entry)
         } else if cs.params[i].is_struct() && lw.has_c_strings(cs.params[i], 0) {
           // A struct by value: its strings as C reads them, in a copy.
@@ -242,7 +242,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         // A reference the C function holds, or an aggregate the emitter
         // passes by the C ABI (its C ABI lowering), is a bare local of the call.
         k = b.types.kind(ps[i])
-        if (b.types.traced(ps[i]) || k == mk_agg()) && mir_bare_copy(o) < 0 {
+        if (b.types.traced(ps[i]) || k == mk_agg) && mir_bare_copy(o) < 0 {
           lw.at(a.loc)
           o = lw.tmp(ps[i], b.rv_use(o))
         }
@@ -274,10 +274,10 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     }
     x = b.extern_c(e.callee, sig)
     if has_cb {
-      b.module.externs[x].cls = mcc_collects()
+      b.module.externs[x].cls = mcc_collects
     }
     dest = -1
-    if ret != mt_void() {
+    if ret != mt_void {
       dest = b.temp(ret)
     }
     st = b.call(dest, e.callee, args)
@@ -450,8 +450,8 @@ pub fn (lw: MirLower) str_flat_if_view(val: MOperand, ty: Int): Int {
   v0 = lw.hold(val, ty)
   res = b.temp(ty)
   b.assign(b.pl(res), b.rv_use(b.copy_local(v0)))
-  t = lw.call_to(mt_i32(), "avant_str_view_test", lw.one(b.copy_local(v0)))
-  isv = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), t, b.c_i32(0)))
+  t = lw.call_to(mt_i32, "avant_str_view_test", lw.one(b.copy_local(v0)))
+  isv = lw.tmp(mt_bool, b.rv_cmp(mop_ne, t, b.c_i32(0)))
   bv = b.block()
   join = b.block()
   b.branch(isv, bv, join)
@@ -508,7 +508,7 @@ pub fn (lw: MirLower) c_strings_out_in(p: MPlace, t: Ty, runtime: Bool, loc: Loc
 // reads NULL as nil.
 pub fn (lw: MirLower) c_string_present(dest: Int, name: String, loc: Location) {
   b = lw.lw_b
-  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(dest), b.c_null(b.func.locals[dest].ty)))
+  isnull = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(dest), b.c_null(b.func.locals[dest].ty)))
   ok = lw.trap_open(isnull, true)
   targs: Array(MOperand) = []
   targs.push(b.str_const(name))
@@ -523,7 +523,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
   b = lw.lw_b
   target = ""
   lam = false
-  if arg.kind == ex_lambda() {
+  if arg.kind == ex_lambda {
     t = fty
     if at = arg.ty {
       t = at
@@ -574,7 +574,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     while j < cb.fty.members.size {
       if cb.fty.members[j].is_enum() {
         // C's int, checked on the way in.
-        ps.push(mt_i32())
+        ps.push(mt_i32)
       } else if cb.fty.members[j].c_scalar > 0 {
         // C's width, converted exactly to its Avant view on the way in.
         ps.push(lw.c_scalar_mty(cb.fty.members[j].c_scalar))
@@ -583,11 +583,11 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j += 1
     }
-    ret = mt_void()
+    ret = mt_void
     if r = cb.fty.inner {
       ret = lw.ty_at(r, cb.loc, "a C callback result")
       if r.is_enum() {
-        ret = mt_i32()
+        ret = mt_i32
       }
       if r.c_scalar > 0 {
         ret = lw.c_scalar_mty(r.c_scalar)
@@ -602,7 +602,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
       if j < ps.size {
         t = ps[j]
       }
-      if b.types.kind(t) == mk_agg() {
+      if b.types.kind(t) == mk_agg {
         lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (a struct, union or fn value by value is passed by the C ABI only in calls into C)")
         return
       }
@@ -616,7 +616,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     lw.at(cb.loc)
     args: Array(MOperand) = []
     if cb.lambda {
-      args.push(b.c_null(mt_ref()))
+      args.push(b.c_null(mt_ref))
     }
     j = 0
     while j < ps.size {
@@ -649,7 +649,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
       // thread that has one, a thread-local test.
       b.call(-1, "avant_stack_ensure", none)
     }
-    if ret == mt_void() {
+    if ret == mt_void {
       b.call(-1, cb.target, args)
     } else if rt = cb.fty.inner, rt.is_enum() {
       d0 = b.temp(lw.ty_at(rt, cb.loc, "a C callback result"))
@@ -689,22 +689,22 @@ pub fn (lw: MirLower) lower_cb_thunks {
 // The C width of a C scalar type (type.av cs_*).
 pub fn (lw: MirLower) c_scalar_mty(k: Int): Int {
   ts = lw.lw_m.types
-  if k == cs_int8() {
-    return ts.scalar(mk_int(), 8, true, "i8")
+  if k == cs_int8 {
+    return ts.scalar(mk_int, 8, true, "i8")
   }
-  if k == cs_int16() {
-    return ts.scalar(mk_int(), 16, true, "i16")
+  if k == cs_int16 {
+    return ts.scalar(mk_int, 16, true, "i16")
   }
-  if k == cs_uint8() {
-    return mt_u8()
+  if k == cs_uint8 {
+    return mt_u8
   }
-  if k == cs_uint16() {
-    return ts.scalar(mk_int(), 16, false, "u16")
+  if k == cs_uint16 {
+    return ts.scalar(mk_int, 16, false, "u16")
   }
-  if k == cs_uint32() {
-    return mt_u32()
+  if k == cs_uint32 {
+    return mt_u32
   }
-  ts.scalar(mk_f64(), 32, true, "f32")
+  ts.scalar(mk_f64, 32, true, "f32")
 }
 
 // A C scalar's value seen in Avant: exact (sign or zero extension, or
@@ -720,7 +720,7 @@ pub fn (lw: MirLower) from_c_scalar(v: MOperand, k: Int): MOperand {
 pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand {
   b = lw.lw_b
   nt = lw.c_scalar_mty(k)
-  if k == cs_float32() {
+  if k == cs_float32 {
     return lw.tmp(nt, b.rv_cast(v, nt))
   }
   vt = mir_c_view_mty(k)
@@ -728,26 +728,26 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
   b.assign(b.pl(x), b.rv_use(v))
   lo = -128
   hi = 127
-  if k == cs_int16() {
+  if k == cs_int16 {
     lo = -32768
     hi = 32767
-  } else if k == cs_uint8() {
+  } else if k == cs_uint8 {
     lo = 0
     hi = 255
-  } else if k == cs_uint16() {
+  } else if k == cs_uint16 {
     lo = 0
     hi = 65535
-  } else if k == cs_uint32() {
+  } else if k == cs_uint32 {
     lo = 0
     hi = 4294967295
   }
-  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(vt, lo)))
-  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(vt, hi)))
-  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  c1 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(x), lw.int_const(vt, lo)))
+  c2 = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), lw.int_const(vt, hi)))
+  inside = lw.tmp(mt_bool, b.rv_bin(mop_and, c1, c2))
   ok = lw.trap_open(inside, false)
   x64 = b.copy_local(x)
-  if vt != mt_i64() {
-    x64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  if vt != mt_i64 {
+    x64 = lw.tmp(mt_i64, b.rv_cast(b.copy_local(x), mt_i64))
   }
   lw.trap_close(ok, "avant_trap_c_range", lw.two(x64, b.c_i32(k)), loc)
   lw.tmp(nt, b.rv_cast(b.copy_local(x), nt))
@@ -756,7 +756,7 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
 // The C scalar kind of a C layout's field that e names (directly or
 // through a Ptr), else 0.
 pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
-  if e.kind == ex_index() {
+  if e.kind == ex_index {
     // An element through a Ptr or of a C array: its element's kind.
     if l = e.left, lt = l.ty, lt.is_ptr() || lt.is_carray() {
       if inner = lt.inner {
@@ -765,7 +765,7 @@ pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
     }
     return 0
   }
-  if e.kind == ex_field() && !e.method_call {
+  if e.kind == ex_field && !e.method_call {
     if obj = e.object, ot = obj.ty {
       lay = ot
       if ot.is_ptr() {
@@ -787,7 +787,7 @@ pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
 // a Ptr), else nil.
 pub fn (lw: MirLower) c_field_enum(e: Expr): Ty? {
   none: Ty? = nil
-  if e.kind == ex_field() && !e.method_call {
+  if e.kind == ex_field && !e.method_call {
     if obj = e.object, ot = obj.ty {
       lay = ot
       if ot.is_ptr() {
@@ -808,7 +808,7 @@ pub fn (lw: MirLower) c_field_enum(e: Expr): Ty? {
 // The C layout and its field that e names (directly or through a Ptr),
 // when the field is declared a plain `String` (not `String?`), else nil.
 pub fn (lw: MirLower) c_field_string(e: Expr): String? {
-  if e.kind == ex_field() && !e.method_call {
+  if e.kind == ex_field && !e.method_call {
     if obj = e.object, ot = obj.ty {
       lay = ot
       if ot.is_ptr() {
@@ -839,7 +839,7 @@ pub fn (lw: MirLower) c_field_string_read(e: Expr, name: String): MOperand {
   lw.at(e.loc)
   d = b.temp(ty)
   b.assign(b.pl(d), b.rv_use(v))
-  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(d), b.c_null(ty)))
+  isnull = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(d), b.c_null(ty)))
   ok = lw.trap_open(isnull, true)
   targs: Array(MOperand) = []
   targs.push(b.str_const("the C field ${name} is NULL (declare it String? to read NULL as nil)"))
@@ -860,7 +860,7 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
     // A NULL pointer traps, naming the layout and the field, before the
     // access (one compare and a cold block): the program's output is
     // flushed and a task or a request that does it fails alone.
-    isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(h), b.c_null(pt)))
+    isnull = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(h), b.c_null(pt)))
     ok = lw.trap_open(isnull, true)
     targs: Array(MOperand) = []
     targs.push(b.str_const("the field ${e.ident} read or written through a NULL ${ot.show()} (a pointer C may leave NULL is declared ${ot.show()}? and tested: if p = ...)"))
@@ -891,7 +891,7 @@ pub fn (lw: MirLower) ptr_index_place(e: Expr): MPlace {
         return b.pl(0)
       }
       lw.at(e.loc)
-      k0 = lw.hold(i0, mt_int())
+      k0 = lw.hold(i0, mt_int)
       b.check_bounds(b.copy_local(k0), b.c_i64(at.count))
       return b.index(p, b.copy_local(k0))
     }
@@ -907,8 +907,8 @@ pub fn (lw: MirLower) ptr_index_place(e: Expr): MPlace {
       return b.pl(0)
     }
     lw.at(e.loc)
-    k = lw.hold(i, mt_int())
-    isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(h), b.c_null(pt)))
+    k = lw.hold(i, mt_int)
+    isnull = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(h), b.c_null(pt)))
     ok = lw.trap_open(isnull, true)
     targs: Array(MOperand) = []
     targs.push(b.str_const("an element read or written through a NULL ${at.show()} (a pointer C may leave NULL is declared ${at.show()}? and tested: if p = ...)"))
@@ -949,19 +949,19 @@ pub fn (lw: MirLower) lower_carray_to_s(e: Expr, recv: Expr): MOperand {
     }
     lw.at(e.loc)
     a0 = lw.tmp(b.types.ptr_to(lw.carray_mty(rt, e.loc)), b.rv_addr(p))
-    a = lw.hold(lw.tmp(mt_ptr(), b.rv_cast(a0, mt_ptr())), mt_ptr())
+    a = lw.hold(lw.tmp(mt_ptr, b.rv_cast(a0, mt_ptr)), mt_ptr)
     ps: Array(Int) = []
-    ps.push(mt_ptr())
-    ps.push(mt_u64())
-    sig = b.sig(ps, mt_u64(), false)
+    ps.push(mt_ptr)
+    ps.push(mt_u64)
+    sig = b.sig(ps, mt_u64, false)
     x = b.extern_c("strnlen", sig)
-    n = b.temp(mt_u64())
+    n = b.temp(mt_u64)
     st = b.call(n, "strnlen", lw.two(b.copy_local(a), b.c_u64(rt.count)))
     if b.module.externs[x].sig != sig {
       st.sig = sig
     }
-    n64 = lw.tmp(mt_int(), b.rv_cast(b.copy_local(n), mt_int()))
-    return lw.call_to(mt_str(), "avant_str_from_c", lw.two(b.copy_local(a), n64))
+    n64 = lw.tmp(mt_int, b.rv_cast(b.copy_local(n), mt_int))
+    return lw.call_to(mt_str, "avant_str_from_c", lw.two(b.copy_local(a), n64))
   }
   lw.refuse(e.loc, "this C array's text")
   b.c_i32(0)
@@ -979,26 +979,26 @@ pub fn (lw: MirLower) lower_from_c(e: Expr, what: String): MOperand {
   }
   lw.at(e.loc)
   pty = lw.ety(e.args[0])
-  if pty != mt_ptr() {
-    po = lw.tmp(mt_ptr(), b.rv_cast(po, mt_ptr()))
+  if pty != mt_ptr {
+    po = lw.tmp(mt_ptr, b.rv_cast(po, mt_ptr))
   }
-  p = lw.hold(po, mt_ptr())
+  p = lw.hold(po, mt_ptr)
   no = lw.lower_expr(e.args[1])
   if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  n = lw.hold(no, mt_int())
-  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(n), b.c_i64(0)))
-  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(p), b.c_null(mt_ptr())))
-  some = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(n), b.c_i64(0)))
-  nul = lw.tmp(mt_bool(), b.rv_bin(mop_and(), isnull, some))
-  bad = lw.tmp(mt_bool(), b.rv_bin(mop_or(), neg, nul))
+  n = lw.hold(no, mt_int)
+  neg = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(n), b.c_i64(0)))
+  isnull = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(p), b.c_null(mt_ptr)))
+  some = lw.tmp(mt_bool, b.rv_cmp(mop_gt, b.copy_local(n), b.c_i64(0)))
+  nul = lw.tmp(mt_bool, b.rv_bin(mop_and, isnull, some))
+  bad = lw.tmp(mt_bool, b.rv_bin(mop_or, neg, nul))
   ok = lw.trap_open(bad, true)
   targs: Array(MOperand) = []
   targs.push(b.str_const("${what}.from_c needs a length of 0 or more and, for a length above 0, a pointer that is not NULL"))
   lw.trap_close(ok, "avant_trap_expect", targs, e.loc)
-  lw.call_to(mt_str(), "avant_str_from_c", lw.two(b.copy_local(p), b.copy_local(n)))
+  lw.call_to(mt_str, "avant_str_from_c", lw.two(b.copy_local(p), b.copy_local(n)))
 }
 
 // A reference-carrying value stored into a C-layout field (the old
@@ -1011,13 +1011,13 @@ pub fn (lw: MirLower) lower_from_c(e: Expr, what: String): MOperand {
 pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   sv = val
-  if ty == mt_str() {
+  if ty == mt_str {
     // C reads the field as a terminated string with its bytes in
     // place: a view is stored as a flat copy (str_flat_if_view).
     sv = b.copy_local(lw.str_flat_if_view(val, ty))
   }
   v = lw.hold(sv, ty)
-  a = b.temp(mt_ptr())
+  a = b.temp(mt_ptr)
   b.assign(b.pl(a), b.rv_addr(p))
   args: Array(MOperand) = []
   args.push(b.copy_local(a))
@@ -1055,7 +1055,7 @@ pub fn (lw: MirLower) lower_release(st: Stmt) {
         return
       }
       lw.at(st.loc)
-      lo = b.temp(mt_ptr())
+      lo = b.temp(mt_ptr)
       b.assign(b.pl(lo), b.rv_addr(p))
       n = lw.lw_m.types.size_of(ty)
     }
@@ -1083,7 +1083,7 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
         return
       }
       lw.at(st.loc)
-      if mir_is_str_ty(et) && e.kind == ex_name() && !e.fn_ref && !e.implicit_field && !lw.name_in_box(e.ident) && lw.mutex_index(e.ident) < 0 {
+      if mir_is_str_ty(et) && e.kind == ex_name && !e.fn_ref && !e.implicit_field && !lw.name_in_box(e.ident) && lw.mutex_index(e.ident) < 0 {
         // A pinned string local is flat for the block: a view is
         // replaced by a flat copy (avant_str_flat; the same text), so the
         // address C gets from it is the pinned object's own.
@@ -1098,7 +1098,7 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
       h = b.temp(ty)
       b.assign(b.pl(h), b.rv_use(v))
       if et.is_fn() {
-        h2 = b.temp(mt_ref())
+        h2 = b.temp(mt_ref)
         b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
         h = h2
       }
@@ -1244,20 +1244,20 @@ pub fn (lw: MirLower) unpin_all {
 pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
   pat = e.args[0]
   flags = e.args[1]
-  if pat.kind != ex_string() || e.args.size != 5 {
+  if pat.kind != ex_string || e.args.size != 5 {
     return nil
   }
   if order = e.arg_order {
     for k in 2..5 {
-      if e.args[k].kind != ex_int() {
+      if e.args[k].kind != ex_int {
         return nil
       }
     }
   }
   fv = -1
-  if flags.kind == ex_int() && flags.int_bits <= 2147483647 {
+  if flags.kind == ex_int && flags.int_bits <= 2147483647 {
     fv = flags.int_bits.to_i()
-  } else if flags.kind == ex_bool() {
+  } else if flags.kind == ex_bool {
     fv = 0
     if flags.bool_val {
       fv = 1
@@ -1305,10 +1305,10 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
 // An enum passed to C is C's int: a narrow (one-byte) enum is widened,
 // one instruction.
 pub fn (lw: MirLower) enum_to_c(v: MOperand, t: Ty): MOperand {
-  if mir_enum_ty(t) == mt_i32() {
+  if mir_enum_ty(t) == mt_i32 {
     return v
   }
-  lw.tmp(mt_i32(), lw.lw_b.rv_cast(v, mt_i32()))
+  lw.tmp(mt_i32, lw.lw_b.rv_cast(v, mt_i32))
 }
 
 // An enum C gave (a `fun` result, a C layout's field): C's int, checked
@@ -1317,7 +1317,7 @@ pub fn (lw: MirLower) enum_to_c(v: MOperand, t: Ty): MOperand {
 // then the enum's width.
 pub fn (lw: MirLower) enum_from_c(v: MOperand, t: Ty, loc: Location): MOperand {
   b = lw.lw_b
-  x = b.temp(mt_i32())
+  x = b.temp(mt_i32)
   b.assign(b.pl(x), b.rv_use(v))
   vals = t.enum_vals()
   lo = vals[0]
@@ -1332,9 +1332,9 @@ pub fn (lw: MirLower) enum_from_c(v: MOperand, t: Ty, loc: Location): MOperand {
   }
   ok = -1
   if hi - lo + 1 == vals.size {
-    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i32(lo)))
-    c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i32(hi)))
-    inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+    c1 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(x), b.c_i32(lo)))
+    c2 = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), b.c_i32(hi)))
+    inside = lw.tmp(mt_bool, b.rv_bin(mop_and, c1, c2))
     ok = lw.trap_open(inside, false)
   } else {
     ok = b.block()
@@ -1346,10 +1346,10 @@ pub fn (lw: MirLower) enum_from_c(v: MOperand, t: Ty, loc: Location): MOperand {
     b.switch_on(b.copy_local(x), vals, targets, bad)
     b.at(bad)
   }
-  x64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  x64 = lw.tmp(mt_i64, b.rv_cast(b.copy_local(x), mt_i64))
   lw.trap_close(ok, "avant_trap_enum", lw.two(x64, b.str_const(t.show())), loc)
   et = mir_enum_ty(t)
-  if et == mt_i32() {
+  if et == mt_i32 {
     return b.copy_local(x)
   }
   lw.tmp(et, b.rv_cast(b.copy_local(x), et))

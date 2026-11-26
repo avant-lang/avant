@@ -4,47 +4,47 @@ import source
 import token
 import lexer
 
-pub fn tyk_int: Int { 1 }
-pub fn tyk_uint64: Int { 3 }
-pub fn tyk_bool: Int { 4 }
-pub fn tyk_float: Int { 5 }
-pub fn tyk_string: Int { 6 }
-pub fn tyk_void: Int { 7 }
-pub fn tyk_nil: Int { 8 }
-pub fn tyk_array: Int { 9 }
-pub fn tyk_struct: Int { 10 }
-pub fn tyk_class: Int { 11 }
-pub fn tyk_ptr: Int { 12 }
-pub fn tyk_union: Int { 13 }
-pub fn tyk_hash: Int { 14 }
-pub fn tyk_buf: Int { 15 }
-pub fn tyk_join: Int { 16 }
-pub fn tyk_opaque: Int { 17 }
-pub fn tyk_var: Int { 18 }
-pub fn tyk_module: Int { 19 }
-pub fn tyk_clayout: Int { 20 }
-pub fn tyk_fn: Int { 21 }
-pub fn tyk_iface: Int { 22 }
-pub fn tyk_bytes: Int { 23 }
+pub const tyk_int = 1
+pub const tyk_uint64 = 3
+pub const tyk_bool = 4
+pub const tyk_float = 5
+pub const tyk_string = 6
+pub const tyk_void = 7
+pub const tyk_nil = 8
+pub const tyk_array = 9
+pub const tyk_struct = 10
+pub const tyk_class = 11
+pub const tyk_ptr = 12
+pub const tyk_union = 13
+pub const tyk_hash = 14
+pub const tyk_buf = 15
+pub const tyk_join = 16
+pub const tyk_opaque = 17
+pub const tyk_var = 18
+pub const tyk_module = 19
+pub const tyk_clayout = 20
+pub const tyk_fn = 21
+pub const tyk_iface = 22
+pub const tyk_bytes = 23
 // `Int` is 64-bit; Int32 and UInt32 are everyday value types (dense
 // storage, C's int). Kind 2 was `Int64`, which named `Int` for one
 // release and is gone (one spelling for each meaning).
-pub fn tyk_int32: Int { 24 }
-pub fn tyk_uint32: Int { 25 }
+pub const tyk_int32 = 24
+pub const tyk_uint32 = 25
 // An enumeration: a distinct type whose values are its members, each an
 // integer (enum_vals) with a name (enum_names), in declaration order. Not
 // an integer type: no arithmetic, no ordering, no conversion; `==` and
 // `!=` compare two values of one enum.
-pub fn tyk_enum: Int { 26 }
+pub const tyk_enum = 26
 // The hasher a type's own `fn hash(h: Hasher)` is given: the runtime's,
 // on the C stack for the call; it exists only as a parameter (no value of
 // it is made, stored, returned or captured).
-pub fn tyk_hasher: Int { 27 }
+pub const tyk_hasher = 27
 // A C layout's fixed array field `T[N]` (C's `T name[N]`): its element
 // type in `inner`, N in `count`. It is no value: it is only indexed
 // (checked against N), sized (`.size`) and, for Int8 and UInt8, read as
 // text (`.to_s()`).
-pub fn tyk_carray: Int { 28 }
+pub const tyk_carray = 28
 
 // An enum's members: names and values in declaration order, the values
 // distinct (C's rule: one more than the previous member unless written).
@@ -126,10 +126,10 @@ pub class Ty {
     self.kind = kind
   }
 
-  pub fn is_int: Bool { self.kind == tyk_int() }
-  pub fn is_uint64: Bool { self.kind == tyk_uint64() }
-  pub fn is_int32: Bool { self.kind == tyk_int32() }
-  pub fn is_uint32: Bool { self.kind == tyk_uint32() }
+  pub fn is_int: Bool { self.kind == tyk_int }
+  pub fn is_uint64: Bool { self.kind == tyk_uint64 }
+  pub fn is_int32: Bool { self.kind == tyk_int32 }
+  pub fn is_uint32: Bool { self.kind == tyk_uint32 }
   pub fn is_integer: Bool {
     if self.is_int() {
       return true
@@ -153,35 +153,35 @@ pub class Ty {
     }
     0
   }
-  pub fn is_bool: Bool { self.kind == tyk_bool() }
-  pub fn is_float: Bool { self.kind == tyk_float() }
-  pub fn is_string: Bool { self.kind == tyk_string() }
-  pub fn is_void: Bool { self.kind == tyk_void() }
-  pub fn is_array: Bool { self.kind == tyk_array() }
-  pub fn is_struct: Bool { self.kind == tyk_struct() }
-  pub fn is_class: Bool { self.kind == tyk_class() }
-  pub fn is_ptr: Bool { self.kind == tyk_ptr() }
-  pub fn is_nil: Bool { self.kind == tyk_nil() }
+  pub fn is_bool: Bool { self.kind == tyk_bool }
+  pub fn is_float: Bool { self.kind == tyk_float }
+  pub fn is_string: Bool { self.kind == tyk_string }
+  pub fn is_void: Bool { self.kind == tyk_void }
+  pub fn is_array: Bool { self.kind == tyk_array }
+  pub fn is_struct: Bool { self.kind == tyk_struct }
+  pub fn is_class: Bool { self.kind == tyk_class }
+  pub fn is_ptr: Bool { self.kind == tyk_ptr }
+  pub fn is_nil: Bool { self.kind == tyk_nil }
   // A union member that carries nothing: `Nil`, or the `Void` of a
   // failure-or-nothing result (`Void | E`). It takes a tag and no payload.
-  pub fn no_payload: Bool { self.kind == tyk_nil() || self.kind == tyk_void() }
-  pub fn is_union: Bool { self.kind == tyk_union() }
-  pub fn is_hash: Bool { self.kind == tyk_hash() }
+  pub fn no_payload: Bool { self.kind == tyk_nil || self.kind == tyk_void }
+  pub fn is_union: Bool { self.kind == tyk_union }
+  pub fn is_hash: Bool { self.kind == tyk_hash }
   // A Set(T): a hash of T to Bool named "Set" (ty_set), whose members
   // are the set's (add, contains, delete, ...), not the hash's.
-  pub fn is_set: Bool { self.kind == tyk_hash() && self.name == "Set" }
-  pub fn is_buf: Bool { self.kind == tyk_buf() }
-  pub fn is_bytes: Bool { self.kind == tyk_bytes() }
-  pub fn is_join: Bool { self.kind == tyk_join() }
-  pub fn is_opaque: Bool { self.kind == tyk_opaque() }
-  pub fn is_clayout: Bool { self.kind == tyk_clayout() }
-  pub fn is_fn: Bool { self.kind == tyk_fn() }
-  pub fn is_iface: Bool { self.kind == tyk_iface() }
-  pub fn is_var: Bool { self.kind == tyk_var() }
-  pub fn is_module: Bool { self.kind == tyk_module() }
-  pub fn is_enum: Bool { self.kind == tyk_enum() }
-  pub fn is_hasher: Bool { self.kind == tyk_hasher() }
-  pub fn is_carray: Bool { self.kind == tyk_carray() }
+  pub fn is_set: Bool { self.kind == tyk_hash && self.name == "Set" }
+  pub fn is_buf: Bool { self.kind == tyk_buf }
+  pub fn is_bytes: Bool { self.kind == tyk_bytes }
+  pub fn is_join: Bool { self.kind == tyk_join }
+  pub fn is_opaque: Bool { self.kind == tyk_opaque }
+  pub fn is_clayout: Bool { self.kind == tyk_clayout }
+  pub fn is_fn: Bool { self.kind == tyk_fn }
+  pub fn is_iface: Bool { self.kind == tyk_iface }
+  pub fn is_var: Bool { self.kind == tyk_var }
+  pub fn is_module: Bool { self.kind == tyk_module }
+  pub fn is_enum: Bool { self.kind == tyk_enum }
+  pub fn is_hasher: Bool { self.kind == tyk_hasher }
+  pub fn is_carray: Bool { self.kind == tyk_carray }
 
   // An enum's member names and values (empty for any other type).
   pub fn enum_names: Array(String) {
@@ -254,52 +254,52 @@ pub class Ty {
       return false
     }
     k = self.kind
-    if k == tyk_int() {
+    if k == tyk_int {
       return true
     }
-    if k == tyk_uint64() {
+    if k == tyk_uint64 {
       return true
     }
-    if k == tyk_int32() || k == tyk_uint32() {
+    if k == tyk_int32 || k == tyk_uint32 {
       return true
     }
-    if k == tyk_bool() {
+    if k == tyk_bool {
       return true
     }
-    if k == tyk_float() {
+    if k == tyk_float {
       return true
     }
-    if k == tyk_string() {
+    if k == tyk_string {
       return true
     }
-    if k == tyk_void() {
+    if k == tyk_void {
       return true
     }
-    if k == tyk_nil() {
+    if k == tyk_nil {
       return true
     }
-    if k == tyk_buf() {
+    if k == tyk_buf {
       return true
     }
-    if k == tyk_hasher() {
+    if k == tyk_hasher {
       return true
     }
-    if k == tyk_bytes() {
+    if k == tyk_bytes {
       return true
     }
-    if k == tyk_array() {
+    if k == tyk_array {
       if a = self.inner, b = other.inner {
         return a.same_as(b)
       }
       return false
     }
-    if k == tyk_carray() {
+    if k == tyk_carray {
       if a = self.inner, b = other.inner {
         return self.count == other.count && a.c_scalar == b.c_scalar && a.same_as(b)
       }
       return false
     }
-    if k == tyk_ptr() {
+    if k == tyk_ptr {
       if a = self.inner, b = other.inner {
         // Ptr(UInt8) and Ptr(Int) point to elements of other widths,
         // though both read as Int.
@@ -307,13 +307,13 @@ pub class Ty {
       }
       return false
     }
-    if k == tyk_join() {
+    if k == tyk_join {
       if a = self.inner, b = other.inner {
         return a.same_as(b)
       }
       return false
     }
-    if k == tyk_hash() {
+    if k == tyk_hash {
       if self.name != other.name {
         return false
       }
@@ -322,31 +322,31 @@ pub class Ty {
       }
       return false
     }
-    if k == tyk_struct() {
+    if k == tyk_struct {
       return same_agg(other)
     }
-    if k == tyk_class() {
+    if k == tyk_class {
       return same_agg(other)
     }
-    if k == tyk_enum() {
+    if k == tyk_enum {
       return same_agg(other)
     }
-    if k == tyk_opaque() {
+    if k == tyk_opaque {
       // An opaque C type is its module's, as a C layout is.
       return self.name == other.name && (self.mod_name == other.mod_name || self.mod_name.size == 0 || other.mod_name.size == 0)
     }
-    if k == tyk_clayout() {
+    if k == tyk_clayout {
       // A C layout is its module's: two modules' layouts of one name
       // are two types.
       return self.name == other.name && (self.mod_name == other.mod_name || self.mod_name.size == 0 || other.mod_name.size == 0)
     }
-    if k == tyk_var() {
+    if k == tyk_var {
       return self.name == other.name
     }
-    if k == tyk_module() {
+    if k == tyk_module {
       return self.name == other.name
     }
-    if k == tyk_union() {
+    if k == tyk_union {
       if self.rec && other.rec {
         return self.name == other.name && self.mod_name == other.mod_name
       }
@@ -362,7 +362,7 @@ pub class Ty {
       }
       return true
     }
-    if k == tyk_iface() {
+    if k == tyk_iface {
       if self.name == other.name && self.ty_args.size == other.ty_args.size {
         for i in 0..self.ty_args.size {
           if !self.ty_args[i].same_as(other.ty_args[i]) {
@@ -373,7 +373,7 @@ pub class Ty {
       }
       return false
     }
-    if k == tyk_fn() {
+    if k == tyk_fn {
       if self.members.size != other.members.size {
         return false
       }
@@ -507,7 +507,7 @@ pub class Ty {
     if q && self.mod_name.starts_with("std.") {
       last = std_last_name(self.mod_name)
       if self.origin.size > 0 && self.ty_args.size > 0 {
-        buf = buf_new()
+        buf = Buf.new()
         buf.push_str(last)
         buf.push_str(".")
         buf.push_str(self.origin)
@@ -527,55 +527,55 @@ pub class Ty {
       return self.label
     }
     k = self.kind
-    if k == tyk_carray() {
+    if k == tyk_carray {
       if e = self.inner {
         return "${e.show_as(q)}[${self.count}]"
       }
     }
-    if k == tyk_int() {
+    if k == tyk_int {
       return "Int"
     }
-    if k == tyk_uint64() {
+    if k == tyk_uint64 {
       return "UInt64"
     }
-    if k == tyk_int32() {
+    if k == tyk_int32 {
       return "Int32"
     }
-    if k == tyk_uint32() {
+    if k == tyk_uint32 {
       return "UInt32"
     }
-    if k == tyk_bool() {
+    if k == tyk_bool {
       return "Bool"
     }
-    if k == tyk_float() {
+    if k == tyk_float {
       return "Float64"
     }
-    if k == tyk_string() {
+    if k == tyk_string {
       return "String"
     }
-    if k == tyk_void() {
+    if k == tyk_void {
       return "Void"
     }
-    if k == tyk_nil() {
+    if k == tyk_nil {
       return "Nil"
     }
-    if k == tyk_buf() {
+    if k == tyk_buf {
       return "Buf"
     }
-    if k == tyk_hasher() {
+    if k == tyk_hasher {
       return "Hasher"
     }
-    if k == tyk_bytes() {
+    if k == tyk_bytes {
       return "Bytes"
     }
-    if k == tyk_var() {
+    if k == tyk_var {
       return self.name
     }
-    if k == tyk_module() {
+    if k == tyk_module {
       return "module ${self.name}"
     }
-    if k == tyk_array() {
-      buf = buf_new()
+    if k == tyk_array {
+      buf = Buf.new()
       buf.push_str("Array(")
       if e = self.inner {
         buf.push_str(e.show_as(q))
@@ -583,14 +583,14 @@ pub class Ty {
       buf.push_str(")")
       return buf.to_s()
     }
-    if k == tyk_hash() && self.name == "Set" {
+    if k == tyk_hash && self.name == "Set" {
       if ke = self.key {
         return "Set(${ke.show_as(q)})"
       }
       return "Set"
     }
-    if k == tyk_hash() {
-      buf = buf_new()
+    if k == tyk_hash {
+      buf = Buf.new()
       buf.push_str("Hash(")
       if ke = self.key {
         buf.push_str(ke.show_as(q))
@@ -602,8 +602,8 @@ pub class Ty {
       buf.push_str(")")
       return buf.to_s()
     }
-    if k == tyk_ptr() {
-      buf = buf_new()
+    if k == tyk_ptr {
+      buf = Buf.new()
       buf.push_str("Ptr(")
       if e = self.inner {
         buf.push_str(e.show_as(q))
@@ -611,8 +611,8 @@ pub class Ty {
       buf.push_str(")")
       return buf.to_s()
     }
-    if k == tyk_join() {
-      buf = buf_new()
+    if k == tyk_join {
+      buf = Buf.new()
       buf.push_str("JoinHandle(")
       if e = self.inner {
         buf.push_str(e.show_as(q))
@@ -620,10 +620,10 @@ pub class Ty {
       buf.push_str(")")
       return buf.to_s()
     }
-    if k == tyk_union() {
+    if k == tyk_union {
       return self.show_union_as(q)
     }
-    if k == tyk_fn() {
+    if k == tyk_fn {
       return self.show_fn_as(q)
     }
     self.name
@@ -634,7 +634,7 @@ pub class Ty {
   }
 
   pub fn show_fn_as(q: Bool): String {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("fn(")
     i = 0
     while i < self.members.size {
@@ -660,7 +660,7 @@ pub class Ty {
   pub fn show_union_as(q: Bool): String {
     if self.is_nilable() {
       non_nil = ty_without_nil(self)
-      buf = buf_new()
+      buf = Buf.new()
       if non_nil.is_union() || non_nil.is_fn() {
         buf.push_str("(")
         buf.push_str(non_nil.show_as(q))
@@ -671,7 +671,7 @@ pub class Ty {
       }
       return buf.to_s()
     }
-    buf = buf_new()
+    buf = Buf.new()
     i = 0
     while i < self.members.size {
       if i > 0 {
@@ -692,19 +692,19 @@ pub fn std_last_name(mod_name: String): String {
       at = i + 1
     }
   }
-  str_slice(mod_name, at, mod_name.size)
+  mod_name[at..]
 }
 
 // The C scalar types: the C width and signedness of a `fun` parameter or result or a C layout's field, seen in Avant
 // as their view type: Int8, Int16, UInt8 and UInt16 as Int, Float32 as Float64. UInt32 (5) and Int32 are everyday
 // types: cs_uint32 stays only as a range kind (avant_trap_c_range). From C a value converts exactly; to C an integer
 // outside the C type's range traps, and a Float64 rounds to the nearest Float32.
-pub fn cs_int8: Int { 1 }
-pub fn cs_int16: Int { 2 }
-pub fn cs_uint8: Int { 3 }
-pub fn cs_uint16: Int { 4 }
-pub fn cs_uint32: Int { 5 }
-pub fn cs_float32: Int { 6 }
+pub const cs_int8 = 1
+pub const cs_int16 = 2
+pub const cs_uint8 = 3
+pub const cs_uint16 = 4
+pub const cs_uint32 = 5
+pub const cs_float32 = 6
 
 pub fn c_scalar_name(k: Int): String {
   if k == 1 {
@@ -731,7 +731,7 @@ pub fn c_scalar_name(k: Int): String {
 pub fn c_scalar_of(name: String): Int {
   k = 1
   while k <= 6 {
-    if k != cs_uint32() && c_scalar_name(k) == name {
+    if k != cs_uint32 && c_scalar_name(k) == name {
       return k
     }
     k += 1
@@ -740,12 +740,12 @@ pub fn c_scalar_of(name: String): Int {
 }
 
 pub fn ty_c_scalar(k: Int): Ty {
-  if k == cs_uint32() {
-    return Ty.new(tyk_uint32())
+  if k == cs_uint32 {
+    return Ty.new(tyk_uint32)
   }
-  kind = tyk_int()
-  if k == cs_float32() {
-    kind = tyk_float()
+  kind = tyk_int
+  if k == cs_float32 {
+    kind = tyk_float
   }
   t = Ty.new(kind)
   t.c_scalar = k
@@ -773,7 +773,7 @@ pub fn ty_cb_view(t: Ty): Ty {
   for m in t.members {
     ps.push(ty_c_view(m))
   }
-  v = Ty.new(tyk_fn())
+  v = Ty.new(tyk_fn)
   v.members = ps
   if r = t.inner {
     v.inner = ty_c_view(r)
@@ -787,16 +787,16 @@ pub fn ty_cb_view(t: Ty): Ty {
 // extending by the source's sign). The result type, or nil.
 pub fn int_conversion_ty(name: String): Ty? {
   if name == "to_i" || name == "wrap_i" {
-    return Ty.new(tyk_int())
+    return Ty.new(tyk_int)
   }
   if name == "to_i32" || name == "wrap_i32" {
-    return Ty.new(tyk_int32())
+    return Ty.new(tyk_int32)
   }
   if name == "to_u64" || name == "wrap_u64" {
-    return Ty.new(tyk_uint64())
+    return Ty.new(tyk_uint64)
   }
   if name == "to_u32" || name == "wrap_u32" {
-    return Ty.new(tyk_uint32())
+    return Ty.new(tyk_uint32)
   }
   nil
 }
@@ -818,28 +818,28 @@ pub fn removed_int_message(name: String, now: String): String {
   "${name} was removed: Int is the 64-bit integer (write ${now})"
 }
 
-pub fn ty_int: Ty { Ty.new(tyk_int()) }
-pub fn ty_int32: Ty { Ty.new(tyk_int32()) }
-pub fn ty_uint32: Ty { Ty.new(tyk_uint32()) }
-pub fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
-pub fn ty_bool: Ty { Ty.new(tyk_bool()) }
-pub fn ty_float: Ty { Ty.new(tyk_float()) }
-pub fn ty_string: Ty { Ty.new(tyk_string()) }
-pub fn ty_void: Ty { Ty.new(tyk_void()) }
-pub fn ty_nil: Ty { Ty.new(tyk_nil()) }
-pub fn ty_buf: Ty { Ty.new(tyk_buf()) }
-pub fn ty_hasher: Ty { Ty.new(tyk_hasher()) }
-pub fn ty_bytes: Ty { Ty.new(tyk_bytes()) }
+pub fn ty_int: Ty { Ty.new(tyk_int) }
+pub fn ty_int32: Ty { Ty.new(tyk_int32) }
+pub fn ty_uint32: Ty { Ty.new(tyk_uint32) }
+pub fn ty_uint64: Ty { Ty.new(tyk_uint64) }
+pub fn ty_bool: Ty { Ty.new(tyk_bool) }
+pub fn ty_float: Ty { Ty.new(tyk_float) }
+pub fn ty_string: Ty { Ty.new(tyk_string) }
+pub fn ty_void: Ty { Ty.new(tyk_void) }
+pub fn ty_nil: Ty { Ty.new(tyk_nil) }
+pub fn ty_buf: Ty { Ty.new(tyk_buf) }
+pub fn ty_hasher: Ty { Ty.new(tyk_hasher) }
+pub fn ty_bytes: Ty { Ty.new(tyk_bytes) }
 
 pub fn ty_carray(elem: Ty, n: Int): Ty {
-  t = Ty.new(tyk_carray())
+  t = Ty.new(tyk_carray)
   t.inner = elem
   t.count = n
   t
 }
 
 pub fn ty_var(name: String): Ty {
-  t = Ty.new(tyk_var())
+  t = Ty.new(tyk_var)
   t.name = name
   t
 }
@@ -879,68 +879,68 @@ pub fn mangle_ty(ty: Ty): String {
     return c_scalar_name(ty.c_scalar)
   }
   k = ty.kind
-  if k == tyk_int() {
+  if k == tyk_int {
     return "Int"
   }
-  if k == tyk_uint64() {
+  if k == tyk_uint64 {
     return "UInt64"
   }
-  if k == tyk_int32() {
+  if k == tyk_int32 {
     return "Int32"
   }
-  if k == tyk_uint32() {
+  if k == tyk_uint32 {
     return "UInt32"
   }
-  if k == tyk_bool() {
+  if k == tyk_bool {
     return "Bool"
   }
-  if k == tyk_float() {
+  if k == tyk_float {
     return "Float64"
   }
-  if k == tyk_string() {
+  if k == tyk_string {
     return "String"
   }
-  if k == tyk_void() {
+  if k == tyk_void {
     return "Void"
   }
-  if k == tyk_nil() {
+  if k == tyk_nil {
     return "Nil"
   }
-  if k == tyk_buf() {
+  if k == tyk_buf {
     return "Buf"
   }
-  if k == tyk_hasher() {
+  if k == tyk_hasher {
     return "Hasher"
   }
-  if k == tyk_bytes() {
+  if k == tyk_bytes {
     return "Bytes"
   }
-  if k == tyk_array() {
+  if k == tyk_array {
     if e = ty.inner {
       return "Array_${mangle_ty(e)}"
     }
     return "Array"
   }
-  if k == tyk_ptr() {
+  if k == tyk_ptr {
     if e = ty.inner {
       return "Ptr_${mangle_ty(e)}"
     }
     return "Ptr"
   }
-  if k == tyk_join() {
+  if k == tyk_join {
     if e = ty.inner {
       return "JoinHandle_${mangle_ty(e)}"
     }
     return "JoinHandle"
   }
-  if k == tyk_hash() && ty.name == "Set" {
+  if k == tyk_hash && ty.name == "Set" {
     if ke = ty.key {
       return "Set_${mangle_ty(ke)}"
     }
     return "Set"
   }
-  if k == tyk_hash() {
-    buf = buf_new()
+  if k == tyk_hash {
+    buf = Buf.new()
     buf.push_str("Hash")
     if ke = ty.key {
       buf.push_str("_")
@@ -952,12 +952,12 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return buf.to_s()
   }
-  if k == tyk_union() && ty.rec {
+  if k == tyk_union && ty.rec {
     // A recursive alias by its module and name.
     return "${mod_emit_prefix(ty.mod_name)}__${ty.name}"
   }
-  if k == tyk_union() {
-    buf = buf_new()
+  if k == tyk_union {
+    buf = Buf.new()
     for i in 0..ty.members.size {
       if i > 0 {
         buf.push_str("_")
@@ -966,8 +966,8 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return buf.to_s()
   }
-  if k == tyk_fn() {
-    buf = buf_new()
+  if k == tyk_fn {
+    buf = Buf.new()
     buf.push_str("Fn")
     for mem in ty.members {
       buf.push_str("_")
@@ -982,7 +982,7 @@ pub fn mangle_ty(ty: Ty): String {
     return buf.to_s()
   }
   if ty.origin.size > 0 && ty.ty_args.size > 0 {
-    buf = buf_new()
+    buf = Buf.new()
     base = ty.origin
     if ty.emit_base.size > 0 {
       base = ty.emit_base
@@ -1001,13 +1001,13 @@ pub fn mangle_ty(ty: Ty): String {
 }
 
 pub fn mod_emit_prefix(mod_name: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < mod_name.size {
     if mod_name[i] == 46 {
       buf.push_str("__")
     } else {
-      buf.push_str(str_slice(mod_name, i, i + 1))
+      buf.push_str(mod_name[i..i + 1])
     }
     i += 1
   }
@@ -1025,31 +1025,31 @@ pub fn ty_owned_symbol(ty: Ty, suffix: String): String {
 }
 
 pub fn ty_module(name: String): Ty {
-  t = Ty.new(tyk_module())
+  t = Ty.new(tyk_module)
   t.name = name
   t
 }
 
 pub fn ty_array(elem: Ty): Ty {
-  t = Ty.new(tyk_array())
+  t = Ty.new(tyk_array)
   t.inner = elem
   t
 }
 
 pub fn ty_ptr(inner: Ty): Ty {
-  t = Ty.new(tyk_ptr())
+  t = Ty.new(tyk_ptr)
   t.inner = inner
   t
 }
 
 pub fn ty_join(result: Ty): Ty {
-  t = Ty.new(tyk_join())
+  t = Ty.new(tyk_join)
   t.inner = result
   t
 }
 
 pub fn ty_hash(key: Ty, val: Ty): Ty {
-  t = Ty.new(tyk_hash())
+  t = Ty.new(tyk_hash)
   t.key = key
   t.val = val
   t
@@ -1140,7 +1140,7 @@ pub fn ty_named(kind: Int, name: String): Ty {
 }
 
 pub fn ty_fn(params: Array(Ty), ret: Ty): Ty {
-  t = Ty.new(tyk_fn())
+  t = Ty.new(tyk_fn)
   t.members = params
   t.inner = ret
   t
@@ -1208,18 +1208,18 @@ fn ty_qual_list(buf: Buf, tys: Array(Ty), sep: String) {
 // its defining module.
 pub fn ty_qual_key(ty: Ty): String {
   k = ty.kind
-  buf = buf_new()
-  if k == tyk_union() && ty.rec {
+  buf = Buf.new()
+  if k == tyk_union && ty.rec {
     buf.push_str(ty.mod_name)
     buf.push_str(".")
     buf.push_str(ty.name)
     return buf.to_s()
   }
-  if k == tyk_union() {
+  if k == tyk_union {
     ty_qual_list(buf, ty.members, "|")
     return buf.to_s()
   }
-  if k == tyk_fn() {
+  if k == tyk_fn {
     buf.push_str("fn(")
     ty_qual_list(buf, ty.members, ",")
     buf.push_str("):")
@@ -1228,7 +1228,7 @@ pub fn ty_qual_key(ty: Ty): String {
     }
     return buf.to_s()
   }
-  if k == tyk_hash() && ty.name == "Set" {
+  if k == tyk_hash && ty.name == "Set" {
     buf.push_str("Set(")
     if ke = ty.key {
       buf.push_str(ty_qual_key(ke))
@@ -1236,7 +1236,7 @@ pub fn ty_qual_key(ty: Ty): String {
     buf.push_str(")")
     return buf.to_s()
   }
-  if k == tyk_hash() {
+  if k == tyk_hash {
     buf.push_str("Hash(")
     if ke = ty.key {
       buf.push_str(ty_qual_key(ke))
@@ -1248,11 +1248,11 @@ pub fn ty_qual_key(ty: Ty): String {
     buf.push_str(")")
     return buf.to_s()
   }
-  if k == tyk_array() || k == tyk_ptr() || k == tyk_join() {
-    if k == tyk_array() {
+  if k == tyk_array || k == tyk_ptr || k == tyk_join {
+    if k == tyk_array {
       buf.push_str("Array(")
     } else {
-      if k == tyk_ptr() {
+      if k == tyk_ptr {
         buf.push_str("Ptr(")
       } else {
         buf.push_str("JoinHandle(")
@@ -1343,7 +1343,7 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
       }
     }
   }
-  u = Ty.new(tyk_union())
+  u = Ty.new(tyk_union)
   u.members = uniq
   u
 }
@@ -1395,7 +1395,7 @@ pub fn ty_members_cover(u: Ty, ms: Array(Ty)): Bool {
 // A recursive alias's union (Ty.rec), its members filled once its body
 // is resolved.
 pub fn ty_rec_union(name: String, mod_name: String): Ty {
-  t = Ty.new(tyk_union())
+  t = Ty.new(tyk_union)
   t.name = name
   t.mod_name = mod_name
   t.label = name
@@ -1405,9 +1405,9 @@ pub fn ty_rec_union(name: String, mod_name: String): Ty {
 
 // The walks that may meet a recursive union inside itself (Ty.walk_bits):
 // one bit each.
-pub fn wk_pub: Int { 1 }
-pub fn wk_clayout: Int { 2 }
-pub fn wk_clone: Int { 4 }
+pub const wk_pub = 1
+pub const wk_clayout = 2
+pub const wk_clone = 4
 
 // Whether walk w may go into t: false when t is a recursive union walk w
 // is already inside (the walk stops there, its answer for the whole
@@ -1520,10 +1520,10 @@ pub fn c_size_of(t: Ty): Int {
   }
   if t.c_scalar > 0 {
     k = t.c_scalar
-    if k == cs_int8() || k == cs_uint8() {
+    if k == cs_int8 || k == cs_uint8 {
       return 1
     }
-    if k == cs_int16() || k == cs_uint16() {
+    if k == cs_int16 || k == cs_uint16 {
       return 2
     }
     return 4

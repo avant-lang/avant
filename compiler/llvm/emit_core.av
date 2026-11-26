@@ -9,9 +9,12 @@
 // and rewrite them at any instruction. emit_gc.av holds the GC sequences,
 // emit.av the statements, functions, and the module.
 //
-// Kept within what an older seed's type maps traced (see
-// compiler/checker.av, FlowFacts): LlEmit holds 27 words; no array of
-// structs or unions.
+// LlEmit is one object per module with a field per piece of emitter state
+// (66 fields). An old seed's type maps once lost the reference words past
+// an object's payload word 63 (compiler/checker.av, FlowFacts), which held
+// this class to a smaller size; no seed that builds the compiler now has
+// that fault, so its size has no limit of that kind. Its arrays still hold
+// scalars, Strings or classes only, no structs or unions.
 
 import source
 import mir.types
@@ -50,6 +53,12 @@ pub class LlEmit {
   // once, in its entry block (%sl<n>, an optimized build), instead of a
   // GEP at each use (local_addr).
   pub slot_named: Bool = false
+  // The locals of the function being emitted that are values, not
+  // allocas (ll_ssa_plan, an optimized build): defined once and read only
+  // after that in the same block, so the value itself stands for every
+  // read; ssa_val holds it once its definition is emitted.
+  pub ssa_ok: Array(Bool)
+  pub ssa_val: Array(String)
   // The slot locals read through a copy of their own (ll_shadow_slots):
   // true at each such local's index, in the function being emitted;
   // whether this module's functions get them (an optimized build), and
@@ -125,21 +134,23 @@ pub class LlEmit {
   fn initialize(m: MModule) {
     self.m = m
     self.ts = m.types
-    self.v = MVerifier.new(m, mst_final())
+    self.v = MVerifier.new(m, mst_final)
     self.f = MFunc.new("", 0, mir_loc0())
-    self.out = buf_new()
+    self.out = Buf.new()
     self.label = ""
     self.rt_names = []
     self.rt_seen = Hash(String, Int).new()
     self.intrinsics = []
     self.intr_seen = Hash(String, Int).new()
     self.loop_md = Hash(String, Int).new()
-    self.loop_md_n = ll_tbaa_last()
+    self.loop_md_n = ll_tbaa_last
     self.field_md = Hash(Int, Int).new()
     self.field_at = Hash(Int, Int).new()
     self.frame_at = []
     self.frame_maps = []
     self.shadow = []
+    self.ssa_ok = []
+    self.ssa_val = []
     self.sh_mask = []
     self.sh_live = []
     self.sh_after = []
@@ -269,16 +280,16 @@ pub class LlEmit {
   // The zero of a type.
   pub fn zero_text(ty: Int): String {
     k = self.ts.kind(ty)
-    if k == mk_bool() {
+    if k == mk_bool {
       return "false"
     }
-    if k == mk_int() {
+    if k == mk_int {
       return "0"
     }
-    if k == mk_f64() {
+    if k == mk_f64 {
       return "0.0"
     }
-    if k == mk_agg() {
+    if k == mk_agg {
       return "zeroinitializer"
     }
     "null"
@@ -289,7 +300,7 @@ pub class LlEmit {
   pub fn int_text(ty: Int, x: Int): String {
     mt = self.ts.get(ty)
     width = mt.bits
-    if self.ts.kind(ty) == mk_bool() {
+    if self.ts.kind(ty) == mk_bool {
       if x != 0 {
         return "true"
       }
@@ -338,6 +349,11 @@ pub class LlEmit {
     local_name(n)
   }
 
+  // Whether local n is a value, not an alloca (ll_ssa_plan).
+  pub fn ssa(n: Int): Bool {
+    n < self.ssa_ok.size && self.ssa_ok[n]
+  }
+
   // Whether local n is a slot local read through its copy.
   pub fn shadowed(n: Int): Bool {
     n < self.shadow.size && self.shadow[n]
@@ -356,6 +372,10 @@ pub class LlEmit {
   // A store of a whole local's value: into its place, and into its copy
   // when it is shadowed.
   pub fn store_local(n: Int, val: String) {
+    if ssa(n) {
+      self.ssa_val[n] = val
+      return
+    }
     ty = self.f.locals[n].ty
     store(ty, val, local_addr(n), slot_vol(n))
     if shadowed(n) {
@@ -458,7 +478,15 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = read_addr(p.local)
+    // A value local is reached only through a deref (ll_ssa_plan): its
+    // value is the pointer the first deref would load.
+    held = ssa(p.local)
+    ptr = ""
+    if held {
+      ptr = self.ssa_val[p.local]
+    } else {
+      ptr = read_addr(p.local)
+    }
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an
@@ -481,26 +509,30 @@ pub class LlEmit {
     }
     for pr in p.proj {
       mt = self.ts.get(ty)
-      if pr.kind == mpk_deref() {
-        ptr = load_tagged(mt_ptr(), ptr, volatile, region_tag(region, foff, mt_ptr()))
+      if pr.kind == mpk_deref {
+        if held {
+          held = false
+        } else {
+          ptr = load_tagged(mt_ptr, ptr, volatile, region_tag(region, foff, mt_ptr))
+        }
         volatile = false
         region = -1
         pend = -1
         if self.ts.is_refkind(ty) && mt.layout >= 0 {
           lk = self.ts.layouts[mt.layout].kind
-          arr = lk == mlk_array()
-          if lk == mlk_elems() {
+          arr = lk == mlk_array
+          if lk == mlk_elems {
             pend = 1
-          } else if lk == mlk_array() || lk == mlk_buf() {
+          } else if lk == mlk_array || lk == mlk_buf {
             pend = 2
-          } else if lk == mlk_class() || lk == mlk_record() {
+          } else if lk == mlk_class || lk == mlk_record {
             pend = 3
           }
           ty = self.ts.agg(mt.layout)
         } else {
           ty = mt.pointee
         }
-      } else if pr.kind == mpk_field() {
+      } else if pr.kind == mpk_field {
         t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
@@ -521,7 +553,7 @@ pub class LlEmit {
         pend = 0
       } else {
         et = ty
-        if mt.kind == mk_agg() && (self.ts.layouts[mt.layout].kind == mlk_elems() || self.ts.layouts[mt.layout].kind == mlk_carray()) {
+        if mt.kind == mk_agg && (self.ts.layouts[mt.layout].kind == mlk_elems || self.ts.layouts[mt.layout].kind == mlk_carray) {
           et = self.ts.layouts[mt.layout].fields[0]
         }
         idx = "0"
@@ -558,7 +590,7 @@ pub class LlEmit {
   // part an index reaches, the tag every object field shares, which
   // aliases every offset's.
   fn region_tag(region: Int, foff: Int, ty: Int): String {
-    if region == 5 && foff >= 0 && self.ts.get(ty).kind != mk_agg() {
+    if region == 5 && foff >= 0 && self.ts.get(ty).kind != mk_agg {
       return field_tag(foff)
     }
     ll_tbaa_tag(region)
@@ -591,15 +623,15 @@ pub class LlEmit {
   // word, which a task's freeze counts in), or any field of a class
   // object (none is assigned outside initialize).
   fn const_place(p: MPlace, ty: Int) {
-    if p.proj.size == 1 && p.proj[0].kind == mpk_deref() && self.cslots.has(p.local) {
+    if p.proj.size == 1 && p.proj[0].kind == mpk_deref && self.cslots.has(p.local) {
       self.pa_cslot = self.ts.get(ty).pointee
       return
     }
-    if self.const_fields && p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && self.cvals.has(p.local) {
+    if self.const_fields && p.proj.size == 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_field && self.cvals.has(p.local) {
       l = self.ts.get(ty).layout
       if l >= 0 {
         lk = self.ts.layouts[l].kind
-        self.pa_cfield = lk == mlk_class() || (lk == mlk_array() && p.proj[1].field < 2)
+        self.pa_cfield = lk == mlk_class || (lk == mlk_array && p.proj[1].field < 2)
       }
     }
   }
@@ -621,11 +653,11 @@ pub class LlEmit {
 
   // An index operand as i64 (sign-extended from i32).
   fn index64(o: MOperand): String {
-    if o.kind == mok_int() {
+    if o.kind == mok_int {
       return "${o.ival}"
     }
     x = value(o)
-    if self.ov_ty == mt_i64() {
+    if self.ov_ty == mt_i64 {
       return x
     }
     t = self.tmp()
@@ -644,6 +676,10 @@ pub class LlEmit {
   // here (E1); constants are immediate.
   pub fn value(o: MOperand): String {
     if p = o.place {
+      if p.proj.size == 0 && ssa(p.local) {
+        self.ov_ty = self.f.locals[p.local].ty
+        return self.ssa_val[p.local]
+      }
       ptr = place_ptr(p)
       ty = self.pa_ty
       if self.pa_atomic {
@@ -665,16 +701,16 @@ pub class LlEmit {
     }
     self.ov_ty = self.v.op_ty(o, self.bk, self.si, mir_loc0())
     k = o.kind
-    if k == mok_int() || k == mok_bool() {
+    if k == mok_int || k == mok_bool {
       return int_text(o.ty, o.ival)
     }
-    if k == mok_f64() {
+    if k == mok_f64 {
       return llvm_f64_text(o.ival)
     }
-    if k == mok_null() {
+    if k == mok_null {
       return "null"
     }
-    if k == mok_str() {
+    if k == mok_str {
       return "getelementptr inbounds (i8, ptr @str.${o.sid}, i64 8)"
     }
     ll_sym(o.text)
@@ -689,22 +725,22 @@ pub class LlEmit {
 
 pub fn ll_type_text(ts: MTypes, ty: Int): String {
   k = ts.kind(ty)
-  if k == mk_void() {
+  if k == mk_void {
     return "void"
   }
-  if k == mk_bool() {
+  if k == mk_bool {
     return "i1"
   }
-  if k == mk_int() {
+  if k == mk_int {
     return "i${ts.get(ty).bits}"
   }
-  if k == mk_f64() {
+  if k == mk_f64 {
     if ts.get(ty).bits == 32 {
       return "float"
     }
     return "double"
   }
-  if k == mk_agg() {
+  if k == mk_agg {
     return ll_type_name(ts.layouts[ts.get(ty).layout].name)
   }
   "ptr"
@@ -749,7 +785,7 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
 // the task ended) and keeps every later fact about other memory from
 // letting LLVM merge or hoist the read. Stores stay plain: generated code
 // writes the word only into a new array, before any task can hold it.
-pub fn ll_tbaa_last: Int { 14 }
+pub const ll_tbaa_last = 14
 
 // An Array's or Buf's size is never negative (at most the runtime's
 // ceiling, 2^31 - 1, avant_size_check), so its loads carry the range

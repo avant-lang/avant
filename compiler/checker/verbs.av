@@ -54,7 +54,7 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
       return res
     }
     // The width, an argument of the template: 64 or 32.
-    w = Expr.new(ex_int(), expr.loc)
+    w = Expr.new(ex_int, expr.loc)
     w.int_bits = object.int_width().to_u64()
     w.ty = checker_self.t_int()
     expr.args.push(w)
@@ -295,7 +295,7 @@ pub fn (checker_self: Checker) check_binary_search(expr: Expr, array: Ty, e: Ty)
 // type from the lambda.
 pub fn (checker_self: Checker) check_sort_by(expr: Expr, array: Ty, e: Ty): Ty {
   res = checker_self.t_void()
-  key = Expr.new(ex_lambda(), expr.loc)
+  key = Expr.new(ex_lambda, expr.loc)
   if bl = expr.block {
     if expr.args.size != 0 {
       checker_self.fail(expr.loc, "sort_by takes one function, (x) { key }")
@@ -309,7 +309,7 @@ pub fn (checker_self: Checker) check_sort_by(expr: Expr, array: Ty, e: Ty): Ty {
       checker_self.fail(bl.loc, "sort_by takes a function of one parameter, (x) { key }")
       return res
     }
-    key = Expr.new(ex_lambda(), bl.loc)
+    key = Expr.new(ex_lambda, bl.loc)
     key.block = bl
   } else if expr.args.size == 1 {
     // A function by its name, or a variable holding one.
@@ -318,7 +318,7 @@ pub fn (checker_self: Checker) check_sort_by(expr: Expr, array: Ty, e: Ty): Ty {
     checker_self.fail(expr.loc, "sort_by takes one function, (x) { key }")
     return res
   }
-  recv = Expr.new(ex_name(), expr.loc)
+  recv = Expr.new(ex_name, expr.loc)
   if r = expr.receiver {
     recv = r
   } else {
@@ -419,7 +419,7 @@ pub fn (checker_self: Checker) array_join(expr: Expr, l: Expr, r: Expr, t: Ty): 
   if e = t.inner {
     args: Array(Expr) = []
     args.push(r)
-    expr.kind = ex_call()
+    expr.kind = ex_call
     expr.receiver = l
     expr.args = args
     expr.left = nil
@@ -440,7 +440,7 @@ pub fn (checker_self: Checker) check_fill_any(expr: Expr, e: Ty) {
     checker_self.fail(expr.args[0].loc, "fill expects ${e.show()}, got ${got.show()}")
     return
   }
-  if expr.args[0].kind != ex_nil() && type.ty_holds_mutable_ref(e) {
+  if expr.args[0].kind != ex_nil && type.ty_holds_mutable_ref(e) {
     checker_self.fail(expr.args[0].loc, "fill(v) would put the same object in every element (${e.show()} is, or holds, a reference: a change through one element would show in all); set each element in a loop")
     return
   }

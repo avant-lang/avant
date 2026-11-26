@@ -73,7 +73,7 @@ pub class MirBuilder {
       self.module.strs.push(text)
       self.module.str_index[text] = id
     }
-    o = MOperand.new(mok_str(), mt_str())
+    o = MOperand.new(mok_str, mt_str)
     o.sid = id
     o
   }
@@ -87,7 +87,7 @@ pub class MirBuilder {
   pub fn note_union(name: String, payloads: Array(Int), nil_tag: Int): Int {
     fields: Array(Int) = []
     names: Array(String) = []
-    fields.push(mt_i32())
+    fields.push(mt_i32)
     names.push("tag")
     i = 0
     while i < payloads.size {
@@ -95,7 +95,7 @@ pub class MirBuilder {
       names.push("m${i}")
       i += 1
     }
-    l = self.types.note_layout(name, mlk_union(), fields, names)
+    l = self.types.note_layout(name, mlk_union, fields, names)
     self.types.layouts[l].nil_tag = nil_tag
     l
   }
@@ -108,17 +108,17 @@ pub class MirBuilder {
     if l.type_id != 0 {
       return l.type_id
     }
-    if l.kind == mlk_elems() {
+    if l.kind == mlk_elems {
       e = l.fields[0]
       el = self.types.layout_of(e)
-      if self.types.is_refkind(e) || (self.types.kind(e) == mk_agg() && self.types.layouts[el].kind == mlk_fnval()) {
+      if self.types.is_refkind(e) || (self.types.kind(e) == mk_agg && self.types.layouts[el].kind == mlk_fnval) {
         l.type_id = 65535
         return 65535
       }
       if l.ref_words.size == 0 {
         return 0
       }
-    } else if l.kind != mlk_class() && l.kind != mlk_record() {
+    } else if l.kind != mlk_class && l.kind != mlk_record {
       return 0
     }
     id = 1 + self.module.next_dyn
@@ -275,17 +275,17 @@ pub class MirBuilder {
     q
   }
 
-  pub fn deref(p: MPlace): MPlace { extend(p, MProj.new(mpk_deref(), 0)) }
-  pub fn field(p: MPlace, k: Int): MPlace { extend(p, MProj.new(mpk_field(), k)) }
+  pub fn deref(p: MPlace): MPlace { extend(p, MProj.new(mpk_deref, 0)) }
+  pub fn field(p: MPlace, k: Int): MPlace { extend(p, MProj.new(mpk_field, k)) }
 
   pub fn index(p: MPlace, o: MOperand): MPlace {
-    pr = MProj.new(mpk_index(), 0)
+    pr = MProj.new(mpk_index, 0)
     pr.index = o
     extend(p, pr)
   }
 
   pub fn copy(p: MPlace): MOperand {
-    o = MOperand.new(mok_copy(), -1)
+    o = MOperand.new(mok_copy, -1)
     o.place = p
     o
   }
@@ -293,18 +293,18 @@ pub class MirBuilder {
   pub fn copy_local(local: Int): MOperand { copy(pl(local)) }
 
   pub fn c_int(ty: Int, v: Int): MOperand {
-    o = MOperand.new(mok_int(), ty)
+    o = MOperand.new(mok_int, ty)
     o.ival = v
     o
   }
 
-  pub fn c_i32(v: Int): MOperand { c_int(mt_i32(), v.to_i()) }
-  pub fn c_u32(v: Int): MOperand { c_int(mt_u32(), v.to_i()) }
-  pub fn c_i64(v: Int): MOperand { c_int(mt_i64(), v) }
-  pub fn c_u64(v: Int): MOperand { c_int(mt_u64(), v) }
+  pub fn c_i32(v: Int): MOperand { c_int(mt_i32, v.to_i()) }
+  pub fn c_u32(v: Int): MOperand { c_int(mt_u32, v.to_i()) }
+  pub fn c_i64(v: Int): MOperand { c_int(mt_i64, v) }
+  pub fn c_u64(v: Int): MOperand { c_int(mt_u64, v) }
 
   pub fn c_bool(v: Bool): MOperand {
-    o = MOperand.new(mok_bool(), mt_bool())
+    o = MOperand.new(mok_bool, mt_bool)
     if v {
       o.ival = 1
     }
@@ -314,18 +314,18 @@ pub class MirBuilder {
   // An f64 constant: its bit pattern and its %g rendering (printed as a
   // comment; empty prints none).
   pub fn c_f64(bits: Int, shown: String): MOperand {
-    o = MOperand.new(mok_f64(), mt_f64())
+    o = MOperand.new(mok_f64, mt_f64)
     o.ival = bits
     o.text = shown
     o
   }
 
-  pub fn c_null(ty: Int): MOperand { MOperand.new(mok_null(), ty) }
+  pub fn c_null(ty: Int): MOperand { MOperand.new(mok_null, ty) }
 
   // `const fn SYMBOL`: its type is the code type of the function's
   // signature, resolved by the verifier (the function may come later).
   pub fn c_fn(symbol: String): MOperand {
-    o = MOperand.new(mok_fn(), -1)
+    o = MOperand.new(mok_fn, -1)
     o.text = symbol
     self.module.fn_values[symbol] = true
     o
@@ -333,7 +333,7 @@ pub class MirBuilder {
 
   // The address of the global slot symbol, of type `addr ty`.
   pub fn c_global(symbol: String, ty: Int): MOperand {
-    o = MOperand.new(mok_global(), self.types.addr_of(ty))
+    o = MOperand.new(mok_global, self.types.addr_of(ty))
     o.text = symbol
     o
   }
@@ -341,15 +341,15 @@ pub class MirBuilder {
   // ---- rvalues
 
   pub fn rv_use(o: MOperand): MRvalue {
-    r = MRvalue.new(mrk_use())
+    r = MRvalue.new(mrk_use)
     r.a = o
     r
   }
 
-  pub fn rv_zero: MRvalue { MRvalue.new(mrk_zero()) }
+  pub fn rv_zero: MRvalue { MRvalue.new(mrk_zero) }
 
   pub fn rv_un(op: Int, a: MOperand): MRvalue {
-    r = MRvalue.new(mrk_unary())
+    r = MRvalue.new(mrk_unary)
     r.op = op
     r.a = a
     r
@@ -363,31 +363,31 @@ pub class MirBuilder {
     r
   }
 
-  pub fn rv_bin(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_binary(), op, a, b) }
-  pub fn rv_chk(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_checked(), op, a, b) }
-  pub fn rv_cmp(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_cmp(), op, a, b) }
+  pub fn rv_bin(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_binary, op, a, b) }
+  pub fn rv_chk(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_checked, op, a, b) }
+  pub fn rv_cmp(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_cmp, op, a, b) }
 
   pub fn rv_cast(a: MOperand, ty: Int): MRvalue {
-    r = MRvalue.new(mrk_cast())
+    r = MRvalue.new(mrk_cast)
     r.a = a
     r.ty = ty
     r
   }
 
   pub fn rv_addr(p: MPlace): MRvalue {
-    r = MRvalue.new(mrk_addr())
+    r = MRvalue.new(mrk_addr)
     r.place = p
     r
   }
 
   pub fn rv_addr_raw(p: MPlace): MRvalue {
-    r = MRvalue.new(mrk_addr_raw())
+    r = MRvalue.new(mrk_addr_raw)
     r.place = p
     r
   }
 
   pub fn rv_struct(layout: Int, ops: Array(MOperand)): MRvalue {
-    r = MRvalue.new(mrk_struct())
+    r = MRvalue.new(mrk_struct)
     r.ty = self.types.agg(layout)
     r.ops = ops
     r
@@ -400,14 +400,14 @@ pub class MirBuilder {
   }
 
   pub fn rv_union_nil(layout: Int, tag: Int): MRvalue {
-    r = MRvalue.new(mrk_union())
+    r = MRvalue.new(mrk_union)
     r.ty = self.types.agg(layout)
     r.op = tag
     r
   }
 
   pub fn rv_fnval(layout: Int, env: MOperand, code: MOperand): MRvalue {
-    r = MRvalue.new(mrk_fnval())
+    r = MRvalue.new(mrk_fnval)
     r.ty = self.types.agg(layout)
     r.a = env
     r.b = code
@@ -417,7 +417,7 @@ pub class MirBuilder {
   // ---- statements (appended to the current block; returned so a test
   // may adjust one)
   pub fn assign(p: MPlace, rv: MRvalue): MStmt {
-    st = MStmt.new(msk_assign(), self.cur_loc)
+    st = MStmt.new(msk_assign, self.cur_loc)
     st.place = p
     st.rv = rv
     push(st)
@@ -434,7 +434,7 @@ pub class MirBuilder {
   // first use.
   pub fn mark(callee: String): Bool {
     if f = self.module.func(callee) {
-      return f.kind != mfk_leaf()
+      return f.kind != mfk_leaf
     }
     if callee.starts_with("av.") {
       return true
@@ -447,7 +447,7 @@ pub class MirBuilder {
   }
 
   pub fn call(dest: Int, callee: String, args: Array(MOperand)): MStmt {
-    st = MStmt.new(msk_call(), self.cur_loc)
+    st = MStmt.new(msk_call, self.cur_loc)
     st.dest = dest
     st.callee = callee
     st.args = args
@@ -456,7 +456,7 @@ pub class MirBuilder {
   }
 
   pub fn call_indirect(dest: Int, fnval: MOperand, args: Array(MOperand)): MStmt {
-    st = MStmt.new(msk_call(), self.cur_loc)
+    st = MStmt.new(msk_call, self.cur_loc)
     st.dest = dest
     st.indirect = fnval
     st.args = args
@@ -470,35 +470,35 @@ pub class MirBuilder {
     push(st)
   }
 
-  pub fn barrier(h: Int): MStmt { stmt1(msk_barrier(), copy_local(h)) }
-  pub fn barrier_at(a: Int): MStmt { stmt1(msk_barrier_at(), copy_local(a)) }
+  pub fn barrier(h: Int): MStmt { stmt1(msk_barrier, copy_local(h)) }
+  pub fn barrier_at(a: Int): MStmt { stmt1(msk_barrier_at, copy_local(a)) }
 
   pub fn check_bounds(i: MOperand, n: MOperand): MStmt {
-    st = stmt1(msk_check_bounds(), i)
+    st = stmt1(msk_check_bounds, i)
     st.args.push(n)
     st
   }
 
   // The frame statements: the frame pass inserts them; the tests
   // write final-stage MIR by hand.
-  pub fn gc_enter: MStmt { push(MStmt.new(msk_gc_enter(), self.cur_loc)) }
-  pub fn gc_leave: MStmt { push(MStmt.new(msk_gc_leave(), self.cur_loc)) }
+  pub fn gc_enter: MStmt { push(MStmt.new(msk_gc_enter, self.cur_loc)) }
+  pub fn gc_leave: MStmt { push(MStmt.new(msk_gc_leave, self.cur_loc)) }
 
   pub fn gc_roots(locals: Array(Int)): MStmt {
-    st = MStmt.new(msk_gc_roots(), self.cur_loc)
+    st = MStmt.new(msk_gc_roots, self.cur_loc)
     st.locals = locals
     push(st)
   }
 
   // ---- terminators
   pub fn goto(bb: Int) {
-    t = MTerm.new(mtk_goto(), self.cur_loc)
+    t = MTerm.new(mtk_goto, self.cur_loc)
     t.targets.push(bb)
     term(t)
   }
 
   pub fn branch(c: MOperand, bt: Int, bf: Int) {
-    t = MTerm.new(mtk_branch(), self.cur_loc)
+    t = MTerm.new(mtk_branch, self.cur_loc)
     t.cond = c
     t.targets.push(bt)
     t.targets.push(bf)
@@ -507,7 +507,7 @@ pub class MirBuilder {
 
   // targets[i] is the block for values[i]; other is the else block.
   pub fn switch_on(o: MOperand, values: Array(Int), targets: Array(Int), other: Int) {
-    t = MTerm.new(mtk_switch(), self.cur_loc)
+    t = MTerm.new(mtk_switch, self.cur_loc)
     t.cond = o
     t.values = values
     t.targets.concat(targets)
@@ -515,11 +515,11 @@ pub class MirBuilder {
     term(t)
   }
 
-  pub fn ret { term(MTerm.new(mtk_return(), self.cur_loc)) }
-  pub fn unreachable { term(MTerm.new(mtk_unreachable(), self.cur_loc)) }
+  pub fn ret { term(MTerm.new(mtk_return, self.cur_loc)) }
+  pub fn unreachable { term(MTerm.new(mtk_unreachable, self.cur_loc)) }
 }
 
 // Whether a call to an external of class cls is marked collects.
 pub fn mir_class_collects(cls: Int): Bool {
-  cls != mcc_never()
+  cls != mcc_never
 }

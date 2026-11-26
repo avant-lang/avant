@@ -858,7 +858,9 @@ int gc_rooted(void *payload) {
  * root of this thread (a generated-code slot holding its data pointer
  * across the call, as `b[i] += f()` does, or a runtime C handle), a pin,
  * another thread (a shared program), or when it is mature with reference
- * fields (the remembered set and the cards may hold it), the spare, or a
+ * fields (the remembered set and the cards may hold it), or is
+ * remembered at all (the young collection reads the set's entries
+ * without a lookup, rem_entry_check), the spare, or a
  * collection is running. Returns 1 when freed. Under AVANT_GC_VERIFY=1
  * the freed run is held and protected at once until the next collection
  * begins: a pointer into it faults and is reported
@@ -904,7 +906,8 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
     return 0;
   }
   if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
-      ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) && h != gc_heap.los_spare &&
+      ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) &&
+      !(h->flags & (AVANT_FLAG_REM | AVANT_FLAG_REMC)) && h != gc_heap.los_spare &&
       !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {
     uint64_t bytes = (uint64_t)gc_large_bytes(h);
     if (!(h->flags & AVANT_FLAG_YOUNG)) {

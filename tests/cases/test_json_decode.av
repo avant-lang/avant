@@ -121,6 +121,14 @@ fn test_decode_errors(c: Checks) {
   c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"note\": null}]}"), "decoded 1", "an optional scalar given null")
   c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": \"1\", \"tags\": [], \"color\": \"red\"}]}"), "at $.items[0].price: expected a number, found a string", "a string for a Float64")
   c.eq_str(decode_error("{\"id\": 1, \"paid\": \"yes\"}"), "at $.paid: expected true or false, found a string", "a string for a Bool")
+  // The integer reader answers Int.min for "not an integer" and only
+  // then reads the status: a real Int.min is a value, after a miss too.
+  c.eq_str(decode_error("{\"id\": -9223372036854775808}"), "decoded -9223372036854775808", "Int.min is an integer")
+  c.eq_str(decode_error("{\"meta\": {\"a\": -9223372036854775808, \"b\": 2.5}, \"id\": 1}"), "at $.meta.b: expected an integer, found 2.5", "a Hash's Int.min, then a fraction")
+  c.eq_str(decode_error("{\"id\": -9223372036854775809}"), "at $.id: expected an integer, found -9223372036854776000.0", "an integer below Int (read as a real)")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": 5, \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\"}]}"), "at $.items[0].name: expected a string, found 5", "a number for a String")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"qty\": 1, \"name\": \"a\", \"price\": 1, \"tags\": [\"t\", 2], \"color\": \"red\"}]}"), "at $.items[0].tags[1]: expected a string, found 2", "an array's element of another kind")
+  c.eq_str(decode_error("{\"paid\": true, \"id\": -9223372036854775808, \"next\": {\"paid\": false, \"id\": 3}}"), "decoded -9223372036854775808", "members out of the declared order")
   if o = json.decode("{\"id\": 1, \"zap\": 2, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"extra\": []}]}", Order, ignore_unknown: true) {
     c.eq_int(o.items.size, 1, "ignore_unknown: true skips unknown members at every level")
   } else e {

@@ -74,7 +74,7 @@ import mir.flow
 import mir.fresh
 
 fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Set(String)): Bool {
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return false
   }
   if fo = st.indirect {
@@ -115,9 +115,9 @@ fn mir_holds_roots(m: MModule, f: MFunc): Bool {
 fn mir_mark_calls(m: MModule, f: MFunc) {
   for blk in f.blocks {
     for st in blk.stmts {
-      if st.kind == msk_call() {
+      if st.kind == msk_call {
         if g = m.func(st.callee) {
-          st.collects = g.kind != mfk_leaf()
+          st.collects = g.kind != mfk_leaf
         }
       }
     }
@@ -128,7 +128,7 @@ fn mir_mark_calls(m: MModule, f: MFunc) {
 pub fn mir_leaf_pass(m: MModule) {
   cand = Set(String).new()
   for f in m.funcs {
-    if f.kind == mfk_unset() && f.symbol != "main" && !(m.shared && mir_holds_roots(m, f)) {
+    if f.kind == mfk_unset && f.symbol != "main" && !(m.shared && mir_holds_roots(m, f)) {
       cand.add(f.symbol)
     }
   }
@@ -144,7 +144,7 @@ pub fn mir_leaf_pass(m: MModule) {
   }
   for f in m.funcs {
     if cand.has(f.symbol) {
-      f.kind = mfk_leaf()
+      f.kind = mfk_leaf
     }
   }
   for fdef in m.funcs {
@@ -184,7 +184,7 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
     j = blk.stmts.size - 1
     while j >= 0 {
       st = blk.stmts[j]
-      if st.kind == msk_call() && st.collects {
+      if st.kind == msk_call && st.collects {
         // every live local but the call's destination
         d = st.dest
         keep_d = d >= 0 && d < n && mir_bit(need, 0, d)
@@ -202,8 +202,8 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
           }
         }
       }
-      if st.kind == msk_assign() {
-        if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() && p.local >= 0 && p.local < n {
+      if st.kind == msk_assign {
+        if r = st.rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() && p.local >= 0 && p.local < n {
           mir_bit_on(need, 0, p.local)
         }
       }
@@ -288,7 +288,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
       } else if t = blk.term {
         loc = t.loc
       }
-      st = MStmt.new(msk_call(), loc)
+      st = MStmt.new(msk_call, loc)
       st.callee = "avant_gc_poll"
       st.collects = true
       xs: Array(MStmt) = [st]
@@ -317,7 +317,7 @@ fn mir_stale_in(f: MFunc, lv: MLive, cand: Array(UInt64)): Array(UInt64) {
     j = stmts.size - 1
     while j >= 0 {
       st = stmts[j]
-      if st.kind == msk_call() && st.collects {
+      if st.kind == msk_call && st.collects {
         for w in 0..nw {
           gen[b * nw + w] = cand[w]
           kill[b * nw + w] = ~0u64
@@ -361,7 +361,7 @@ fn mir_stale_in(f: MFunc, lv: MLive, cand: Array(UInt64)): Array(UInt64) {
 // the call that gave the slot it stores through (V13).
 fn mir_clear_at(blk: MBlock, j: Int): Int {
   at = j
-  while at + 1 < blk.stmts.size && blk.stmts[at + 1].kind == msk_assign() {
+  while at + 1 < blk.stmts.size && blk.stmts[at + 1].kind == msk_assign {
     if p = blk.stmts[at + 1].place, !p.frame_local() {
       at += 1
     } else {
@@ -372,9 +372,9 @@ fn mir_clear_at(blk: MBlock, j: Int): Int {
 }
 
 fn mir_clear_stmt(k: Int, loc: MLoc): MStmt {
-  z = MStmt.new(msk_assign(), loc)
+  z = MStmt.new(msk_assign, loc)
   z.place = MPlace.new(k)
-  z.rv = MRvalue.new(mrk_zero())
+  z.rv = MRvalue.new(mrk_zero)
   z
 }
 
@@ -413,7 +413,7 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
   }
   for blk in f.blocks {
     for st in blk.stmts {
-      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() && p.local >= 0 && p.local < n {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() && p.local >= 0 && p.local < n {
         mir_bit_off(cand, 0, p.local)
       }
     }
@@ -516,7 +516,7 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
           }
         }
       }
-      if st.kind == msk_call() && st.collects {
+      if st.kind == msk_call && st.collects {
         for w in 0..nw {
           stale[w] = cand[w]
         }
@@ -550,7 +550,7 @@ fn mir_clear_dead_slots(f: MFunc, lv: MLive, need: Array(Bool)) {
 // liveness is not kept). The function keeps it (f.live) for the verifier's
 // V11 and V12.
 fn mir_add_frame(m: MModule, f: MFunc) {
-  f.kind = mfk_frame()
+  f.kind = mfk_frame
   lv = mir_live(f)
   if m.shared {
     mir_add_polls(m, f, lv)
@@ -578,23 +578,23 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   i = 0
   while i < slots.size {
     if !f.is_param(slots[i]) {
-      z = MStmt.new(msk_assign(), f.loc)
+      z = MStmt.new(msk_assign, f.loc)
       z.place = MPlace.new(slots[i])
-      z.rv = MRvalue.new(mrk_zero())
+      z.rv = MRvalue.new(mrk_zero)
       pro.push(z)
     }
     i += 1
   }
-  pro.push(MStmt.new(msk_gc_enter(), f.loc))
-  roots = MStmt.new(msk_gc_roots(), f.loc)
+  pro.push(MStmt.new(msk_gc_enter, f.loc))
+  roots = MStmt.new(msk_gc_roots, f.loc)
   roots.locals = slots
   pro.push(roots)
   entry = f.blocks[0]
   pro.concat(entry.stmts)
   entry.stmts = pro
   for blk in f.blocks {
-    if t = blk.term, t.kind == mtk_return() {
-      blk.stmts.push(MStmt.new(msk_gc_leave(), t.loc))
+    if t = blk.term, t.kind == mtk_return {
+      blk.stmts.push(MStmt.new(msk_gc_leave, t.loc))
     }
   }
   if f.blocks.size > 0 {
@@ -614,7 +614,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
 // selftest's hand-built helpers, is left alone).
 pub fn mir_frame_pass(m: MModule) {
   for f in m.funcs {
-    if f.kind == mfk_unset() {
+    if f.kind == mfk_unset {
       mir_add_frame(m, f)
     }
   }

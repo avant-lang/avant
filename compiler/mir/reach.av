@@ -1,0 +1,135 @@
+// The functions a program reaches. The lowering lowers every function of
+// the program and of each module it imports; most programs reach a small
+// part of them (an imported std module's other functions, the prelude's
+// error types, the helpers a program never calls). mir_prune_unreached
+// keeps only the functions reachable from the module's entry points and
+// drops the others before the MIR passes, the emitter and LLVM see them.
+//
+// The world is closed: nothing loads code at run time and no other unit
+// calls into an Avant function, so the roots are `main` and every
+// function marked external (the symbols the link exports), and an edge is
+// any name a kept function's MIR can reach a function by: a direct
+// call's callee, and every function constant (`const fn`) among its
+// operands, wherever it stands (a call's argument, an indirect callee, an
+// assigned value, an aggregate's part, an index, a branch condition).
+// That covers a function value, a lambda's thunk, a C callback's thunk, a
+// task's thunk and a hash key's thunks, each named by the function that
+// makes the value. The walk is conservative: a name it meets keeps that
+// function, whatever path reaches it at run time.
+//
+// The kept functions stay in their lowering order, unchanged, so a kept
+// function's code is what it was; module facts gathered while lowering
+// (string constants, layouts, type maps, which functions were taken as
+// values) stay as they were.
+
+import mir.ir
+
+// Drops every function of m that no root reaches; the number dropped.
+pub fn mir_prune_unreached(m: MModule): Int {
+  keep = mir_reached(m)
+  if keep.size == m.funcs.size {
+    return 0
+  }
+  kept: Array(MFunc) = []
+  for f in m.funcs {
+    if keep.has(f.symbol) {
+      kept.push(f)
+    }
+  }
+  dropped = m.funcs.size - kept.size
+  m.funcs = kept
+  m.func_index = Hash(String, Int).new()
+  for i in 0..kept.size {
+    m.func_index[kept[i].symbol] = i
+  }
+  dropped
+}
+
+// The symbols of the functions of m reachable from its roots.
+pub fn mir_reached(m: MModule): Set(String) {
+  keep = Set(String).new()
+  work: Array(String) = []
+  for f in m.funcs {
+    if f.external || f.symbol == "main" {
+      if keep.add(f.symbol) {
+        work.push(f.symbol)
+      }
+    }
+  }
+  names: Array(String) = []
+  while work.size > 0 {
+    sym = work.pop() ?? break
+    if f = m.func(sym) {
+      names.clear()
+      mir_fn_names(f, names)
+      for n in names {
+        if m.func_index.has(n) && keep.add(n) {
+          work.push(n)
+        }
+      }
+    }
+  }
+  keep
+}
+
+// Every name f's statements and terminators can reach a function by,
+// pushed onto out (repeats included): the callees of its direct calls and
+// its function constants.
+pub fn mir_fn_names(f: MFunc, out: Array(String)) {
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if st.kind == msk_call && st.callee.size > 0 {
+        out.push(st.callee)
+      }
+      if p = st.place {
+        mir_place_names(p, out)
+      }
+      if r = st.rv {
+        mir_rv_names(r, out)
+      }
+      if x = st.indirect {
+        mir_op_names(x, out)
+      }
+      for a in st.args {
+        mir_op_names(a, out)
+      }
+    }
+    if t = blk.term {
+      if c = t.cond {
+        mir_op_names(c, out)
+      }
+    }
+  }
+}
+
+fn mir_rv_names(r: MRvalue, out: Array(String)) {
+  if a = r.a {
+    mir_op_names(a, out)
+  }
+  if b = r.b {
+    mir_op_names(b, out)
+  }
+  if p = r.place {
+    mir_place_names(p, out)
+  }
+  for o in r.ops {
+    mir_op_names(o, out)
+  }
+}
+
+fn mir_op_names(o: MOperand, out: Array(String)) {
+  if o.kind == mok_fn {
+    out.push(o.text)
+  }
+  if p = o.place {
+    mir_place_names(p, out)
+  }
+}
+
+fn mir_place_names(p: MPlace, out: Array(String)) {
+  for pr in p.proj {
+    if x = pr.index {
+      mir_op_names(x, out)
+    }
+  }
+}

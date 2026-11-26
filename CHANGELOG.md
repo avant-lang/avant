@@ -1,5 +1,28 @@
 # Avant Language changelog
 
+## 0.52.0 - 2026-11-26
+
+### Changed
+
+* Removed from the prelude, each call now an error that names the new spelling (a program's own function of such a name is its own): `sha256` (`digest.sha256_hex(s.bytes)`), `str_slice` (`s[a..b]`), `buf_new` (`Buf.new()`), and `file_read`, `file_write`, `dir_list`, `file_exists`, `dir_exists`, `dir_walk`, `process_run`, `argv` and `env_get` (`std.fs` and `std.process`).
+* `Buf.push_fmt_i(n)` is removed: `b.push_str("${n}")` makes the same single call. `ProcessError.new`'s fourth argument (`output`, always empty) is optional; the field leaves in a later release.
+* `Json.members()` and `members(key)` walk an object's members in the document's order, one step each, as `JsonMember`s with `name` and `value`; `Json`'s `int`, `str`, `bool` and `key_at`, and `json.decode`'s scalar fields, answer in one runtime call.
+* Faster compiles: the compiler compiles only the functions a program reaches (a std module's other functions are no longer compiled), and a program's link no longer runs the linker once more to learn its kind; coverage reports list the library functions a program can run.
+* The compiler takes less than half the memory of 0.51.0's to build itself with `--release`: it gives back what each phase frees before the next and runs its collector with a fixed young generation.
+* The collector: a program that keeps most, but not all, of what it builds no longer has its young generation promoted whole (Etc::GameOfLife-style programs faster, with less memory); large buffers of structs that hold references are tracked by cards, so a young collection scans only what a store touched; a store into an array the collector already remembers makes no call; the young generation grows past 8 MiB only once a full collection shows it pays (less peak memory).
+* A `Mutex`, or a channel's `send` or `recv`, spins briefly before it sleeps in the kernel: much faster under contention.
+* Adjacent byte reads of a `String` or `Bytes` are checked by one test; an optimized build keeps a local defined once as a value, not a stack slot.
+* The runtime's hot routines (parsing, hashing, buffers, the collector's fast paths, the regex matchers) are placed together after the program's code, on their own page, so an unrelated change no longer moves them.
+* The coverage report's lcov writer is linear in the program's size.
+* Developer tools: `tools/ci-local.sh` rehearses the CI workflows in a clean container of the runner's image; `tools/hold.py` runs a measurement's parts on the machine's NUMA nodes in one hold; `tools/la-half.sh` screens LangArena's second half by instruction counts.
+* The README's and `BENCHMARKS.md`'s tables are this release's measurements.
+* The compiler is built from v0.51.0.
+
+### Fixed
+
+* `reverse` and a `String` `sort` of a large, old `Array(String)` could free a `String` the array still held, in v0.47.0 to v0.51.0.
+* A crash, trap or signal right after a task started a child process no longer leaves the child running; with several tasks starting children at that moment, the program ends within about two seconds.
+
 ## 0.51.0 - 2026-11-24
 
 ### Changed

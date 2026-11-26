@@ -60,7 +60,7 @@ static inline uint32_t note_marked(void *payload, uintptr_t tag) {
   return gc_heap.noted_n++;
 }
 
-/* A large pointer buffer the trace marked (young or not) is also on the
+/* A carded buffer the trace marked (young or not) is also on the
  * carded list, in the order it was marked: gc_cards_settle makes the
  * cards of each exact after the collection, and reads this list instead
  * of every noted entry. */
@@ -590,6 +590,25 @@ static uint64_t field_count(void *p) {
   return (uint64_t)gc_heap.types[id].nrefs;
 }
 
+/* A remembered entry at a young collection is a live heap object: the
+ * barriers and the collector remember only heap objects (avant_barrier,
+ * rem_rebuild, gc_rem_keep_large_holders, gc_cards_settle), a young one
+ * never (it is traced from the roots), a full collection drops the dead
+ * ones (gc_rem_full_scrub) and rewrites the moved ones, a young
+ * collection frees no old object before the set is emptied, and the one
+ * free outside a collection, avant_gc_large_drop, leaves a remembered
+ * object alone. So the young collection reads each entry's header
+ * without a lookup; the verifier checks that the lookup agrees. */
+static void rem_entry_check(void *obj) {
+  AvantHeader *ol = NULL;
+  if (!gc_is_heap_payload(obj, NULL, &ol)) {
+    gc_die("avant gc verify: a remembered entry is not a live heap object at a young collection");
+  }
+  if ((ol != NULL) != ((avant_header(obj)->flags & AVANT_FLAG_LARGE) != 0)) {
+    gc_die("avant gc verify: a remembered entry's large flag differs from the heap's");
+  }
+}
+
 /* The trace: frame slots (the value, and the location when it lies in a
  * young object, which keeps that object), the remembered set (each entry
  * marked and its fields traced as R1'(c) says), pins, the runtime-held
@@ -631,9 +650,11 @@ static void trace_all(void) {
     }
     for (i = 0; i < gc_heap.rem_n; i++) {
       void *obj = gc_heap.remset[i];
-      AvantHeader *ol = NULL;
-      if (!gc_is_heap_payload(obj, NULL, &ol)) {
-        continue;
+      /* Every entry is a live heap object here (rem_entry_check): its
+       * header says whether it is a large one, with no lookup. */
+      AvantHeader *ol = (avant_header(obj)->flags & AVANT_FLAG_LARGE) ? avant_header(obj) : NULL;
+      if (gc_heap.set.verify) {
+        rem_entry_check(obj);
       }
       {
         AvantHeader *oh = avant_header(obj);
@@ -685,14 +706,19 @@ static void trace_all(void) {
  * objects remembered since the last collection). rem_rebuild then
  * remembers again the holders that name a young large object staying
  * young (the one case where
- * an object is still young after an S young collection). */
+ * an object is still young after an S young collection).
+ * No entry is looked up: every one is a live heap object (rem_entry_check
+ * says why, and checks it under AVANT_GC_VERIFY). The lookup of each
+ * entry's block and start bit used to be about 4% of a build that
+ * remembers hundreds of thousands of old rows a collection. */
 static void rem_empty(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
-    if (gc_is_heap_payload(obj, NULL, NULL)) {
-      avant_header(obj)->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
+    if (gc_heap.set.verify) {
+      rem_entry_check(obj);
     }
+    avant_header(obj)->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
   gc_side_use(GC_SIDE_REM, (uint64_t)gc_heap.rem_n * sizeof(void *));
@@ -979,6 +1005,19 @@ static inline __attribute__((always_inline)) void fix_field(const FixCtx *c, voi
   }
 }
 
+/* A carded object the trace scanned by its marked cards only: by the
+ * card invariant no other slot names a young (movable) object. A
+ * function of its own: the card walk in line in fix_holder gave every
+ * holder's fix-up the walk's registers to save (LangArena's
+ * compress_lzwdecode-pure, which has no carded buffer, counted 7 M more
+ * instructions there). */
+static __attribute__((noinline)) void fix_holder_cards(void *p) {
+  int aged = 0;
+  FixCtx c;
+  fix_open(&c);
+  EACH_CARD_SLOT(p, slot, { fix_field(&c, slot, &aged); });
+}
+
 /* The fix-up of one holder P (its copy, when it moved): the slots of its
  * marked cards when the trace scanned it by them, else every field. One
  * that is not young and now names an aged copy (YOUNG_AGE 2) joins the
@@ -992,13 +1031,11 @@ static void fix_holder(void *p) {
   if (h->type_id == AVANT_TYPE_BYTES) {
     return;
   }
-  fix_open(&c);
-  /* A carded object the trace scanned by its marked cards only: by the
-   * card invariant no other slot names a young (movable) object. */
   if (h->flags & AVANT_FLAG_CARD_SCAN) {
-    EACH_CARD_SLOT(p, slot, { fix_field(&c, slot, &aged); });
+    fix_holder_cards(p);
     return;
   }
+  fix_open(&c);
   EACH_REF_SLOT(p, slot, { fix_field(&c, slot, &aged); });
   if (aged && !(h->flags & AVANT_FLAG_YOUNG)) {
     gc_keep_add(p);
@@ -1056,7 +1093,7 @@ static void splus_fix(void) {
       }
     }
     /* A small record's fields here, by its type's list (a carded object
-     * is a pointer buffer, never one); any other holder in fix_holder. */
+     * is a buffer, never one); any other holder in fix_holder. */
     ph = avant_header(p);
     d = gc_heap.refs[ph->type_id];
     k = (unsigned)(d & 0xffu);

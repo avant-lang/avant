@@ -49,6 +49,29 @@ uint64_t avant_nursery_held;
 #ifndef YOUNG_BYTES_CAP
 #define YOUNG_BYTES_CAP (32ull * 1024ull * 1024ull)
 #endif
+/* The cap a budget grows to until the program shows it needs more: a
+ * larger budget pays only when the young objects it would keep young die
+ * before their second collection; when they live on (a program building
+ * a structure it keeps: the Graph tasks' 500,000 rows grown by push, 70%
+ * of each young collection surviving and staying), a larger budget only
+ * holds a larger batch of them, and the memory for it, before promoting
+ * them all the same (the Graph tasks' peaks 7-10% lower at 8 MiB than at
+ * the 16 MiB their builds grew it to). The evidence that it pays is premature tenuring: a full
+ * collection that finds dead at least YOUNG_BIG_DEAD_PCT percent of what
+ * entered mature space since the last one (structures that outlived a
+ * small budget and died old: a JSON document parsed whole at each
+ * iteration, larger than the budget, promoted and then dead, made
+ * Json::ParseDom-Pure 27% slower under a fixed 8 MiB cap). Such a full
+ * collection lets the budget grow to YOUNG_BYTES_CAP; one that finds
+ * most of it alive brings the cap back (young_cap_settle). A program
+ * that never runs a full collection keeps the small cap: what it
+ * promotes it keeps. */
+#ifndef YOUNG_SMALL_CAP
+#define YOUNG_SMALL_CAP (8ull * 1024ull * 1024ull)
+#endif
+#ifndef YOUNG_BIG_DEAD_PCT
+#define YOUNG_BIG_DEAD_PCT 50
+#endif
 /* The floor's divisor: the budget never shrinks below
  * the heap in use / YOUNG_HEAP_DIV (nor below YOUNG_BYTES_DEFAULT), so a
  * program with a large heap is not collected every 4 MiB when a young
@@ -172,6 +195,8 @@ static void gc_tune_read(void) {
   gc_tune.dflt = env_u64("AVANT_GC_TUNE_DEFAULT_KB", YOUNG_BYTES_DEFAULT / 1024, 64, kb) * 1024ull;
   gc_tune.start = env_u64("AVANT_GC_TUNE_START_KB", YOUNG_BYTES_START / 1024, 64, kb) * 1024ull;
   gc_tune.cap = env_u64("AVANT_GC_TUNE_CAP_KB", YOUNG_BYTES_CAP / 1024, 64, kb) * 1024ull;
+  gc_tune.small_cap = env_u64("AVANT_GC_TUNE_SMALL_CAP_KB", YOUNG_SMALL_CAP / 1024, 0, kb) * 1024ull;
+  gc_tune.big_pct = env_u64("AVANT_GC_TUNE_BIG_PCT", YOUNG_BIG_DEAD_PCT, 0, 100);
   if (gc_tune.cap < gc_tune.dflt) {
     gc_tune.cap = gc_tune.dflt;
   }
@@ -297,6 +322,34 @@ static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget
   return 1;
 }
 
+/* The cap the budget grows to now (YOUNG_SMALL_CAP's comment). */
+static uint64_t young_cap(void) {
+  uint64_t cap = TUNE(cap, YOUNG_BYTES_CAP);
+  uint64_t small = TUNE(small_cap, YOUNG_SMALL_CAP);
+  return gc_heap.young_big || small == 0 || small >= cap ? cap : small;
+}
+
+/* After a full collection: what entered mature space since the last full
+ * or complete collection (mature_since_full: promotions and mature
+ * allocations) and is dead now decides the cap (YOUNG_SMALL_CAP), when
+ * there was at least a default budget of it. */
+static void young_cap_settle(void) {
+  uint64_t since = gc_heap.mature_since_full;
+  uint64_t had = gc_heap.full_live + since;
+  uint64_t dead = had > gc_heap.live ? had - gc_heap.live : 0;
+  if (since >= YOUNG_BYTES_DEFAULT) {
+    gc_heap.young_big = (uint8_t)(dead * 100 >= since * TUNE(big_pct, YOUNG_BIG_DEAD_PCT));
+  }
+#ifdef AVANT_GC_TUNE
+  if (gc_tune.trace) {
+    fprintf(stderr, "avant gc trace: cap prev=%llu since=%llu live=%llu dead=%llu big=%d\n",
+            (unsigned long long)gc_heap.full_live, (unsigned long long)since, (unsigned long long)gc_heap.live,
+            (unsigned long long)dead, (int)gc_heap.young_big);
+  }
+#endif
+  gc_heap.full_live = gc_heap.live;
+}
+
 /* The young sizing rule, after a young collection that saw USED young
  * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
@@ -313,6 +366,7 @@ static int young_start_size(uint64_t used, uint64_t surv, uint64_t h, int budget
  * 318 MB). */
 static void young_size(uint64_t used, uint64_t surv, int budget) {
   uint64_t floor = TUNE(dflt, YOUNG_BYTES_DEFAULT);
+  uint64_t cap = young_cap();
   uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / TUNE(heap_div, YOUNG_HEAP_DIV);
   int high;
 #ifndef AVANT_GC_TUNE
@@ -347,9 +401,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
     }
     highs = th ? gc_tune.highs + 1 : 0;
     if (th) {
-      if (highs >= gc_tune.streak && avant_young_bytes < gc_tune.cap) {
+      if (highs >= gc_tune.streak && avant_young_bytes < cap) {
         uint64_t g = avant_young_bytes * gc_tune.grow_pct / 100;
-        avant_young_bytes = g > gc_tune.cap ? gc_tune.cap : g;
+        avant_young_bytes = g > cap ? cap : g;
         gc_heap.ctr.size.grows++;
       }
     } else if (tl && avant_young_bytes > floor) {
@@ -364,9 +418,8 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
 #else
   grow = surv * 100 > used * YOUNG_GROW_PCT;
   if (grow) {
-    if (gc_heap.young_grow_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
-      avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
-                                                                 : avant_young_bytes * 2;
+    if (gc_heap.young_grow_prev && avant_young_bytes < cap) {
+      avant_young_bytes = avant_young_bytes * 2 > cap ? cap : avant_young_bytes * 2;
       gc_heap.ctr.size.grows++;
     }
   } else if (surv * 10 < used && avant_young_bytes > floor) {
@@ -374,6 +427,11 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
     gc_heap.ctr.size.shrinks++;
   }
 #endif
+  /* A cap brought back by a full collection takes the budget back to it
+   * (never under the floor). */
+  if (avant_young_bytes > cap) {
+    avant_young_bytes = cap;
+  }
   if (avant_young_bytes < floor) {
     avant_young_bytes = floor;
   }
@@ -381,8 +439,9 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
    * the collections the budget asks for only (the program's end it,
    * gc_collect). In the phase a young collection is a probe: the phase
    * goes on, its interval doubled up to TENURE_GAP_MAX budgets, while
-   * nearly everything still survives. Out of it, the second such
-   * collection in a row starts it. */
+   * nearly everything still survives. Out of it, the second
+   * high-survival collection in a row starts it when it kept more than
+   * TENURE_ENTER_NUM / TENURE_ENTER_DEN of its young bytes. */
   if (budget && (gc_heap.tenure_on || (high && gc_heap.young_high_prev))) {
     int nearly = surv * TENURE_SURV_DEN > used * TENURE_SURV_NUM;
     if (gc_heap.tenure_on) {
@@ -393,7 +452,7 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
       } else {
         gc_heap.tenure_on = 0;
       }
-    } else if (nearly && gc_sticky_tenure_ok()) {
+    } else if (surv * TENURE_ENTER_DEN > used * TENURE_ENTER_NUM && gc_sticky_tenure_ok()) {
       gc_heap.tenure_on = 1;
       gc_heap.tenure_gap = 1;
       gc_heap.tenure_left = 1;
@@ -796,6 +855,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
        * them (the proof), and the young survivors. And the heap limit's
        * progress rule, as for the trace it stands for. */
       gc_heap.live += gc_heap.proof.old_live;
+      gc_heap.full_live = gc_heap.live;
       if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
         limit_progress_check();
       }
@@ -922,6 +982,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.ctr.sticky.keeps++;
       gc_heap.ctr.sticky.keep_bytes += gc_heap.keep_young_live;
     }
+    young_cap_settle();
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     /* What this cycle used beyond its live bytes joins the retention
@@ -1369,6 +1430,56 @@ void avant_gc_collect(void) {
     return;
   }
   gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* A full collection that then returns every free resident byte to the
+ * system at once (gc_heap_return_all), for a program about to allocate
+ * outside the heap what its heap just freed: the compiler before the
+ * in-process LLVM compiles its text. avant_gc_collect keeps what it
+ * frees for the next cycle's use, as every collection does: a program
+ * that calls gc.collect() before each build of a structure of the same
+ * size (Binarytrees::Obj) took its pages back from the system at every
+ * build when that collection returned them (2.8 times its time). Inside
+ * a hold or a no-GC region it is avant_gc_collect: the collection is
+ * deferred and nothing is returned. */
+void avant_gc_release(void) {
+  gc_init();
+  gc_alloc_sync();
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
+  if ((gc_thread.hold && !gc_thread.nogc) || region_refuses()) {
+    gc_heap.explicit_pending = 1;
+    gc_fast_clear();
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
+  gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  gc_heap_return_all();
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* A fixed young budget of MB MiB from now on, as AVANT_YOUNG_MB sets one
+ * at start-up: every survivor is promoted at its first young collection
+ * (no aging, no tenured phase). For a program whose data mostly lives
+ * on once built, called before it allocates: the compiler, whose syntax
+ * tree, tables and MIR are kept, and whose survivors the adaptive budget
+ * copied once more to age them (its build of itself 3.3% fewer
+ * instructions and 2% less time at 16 MiB). Nothing changes when the
+ * environment already chose the young generation's mode (AVANT_YOUNG_MB,
+ * AVANT_NURSERY=0) or a check mode runs (AVANT_GC_STRESS, AVANT_GC_VERIFY:
+ * they check the collector as the program would run without the call),
+ * or once a collection has run. */
+void avant_gc_young_fixed(avant_int mb) {
+  gc_init();
+  if (mb <= 0 || mb > 1024 || gc_heap.set.young_fixed || gc_heap.set.nursery_off || gc_heap.set.stress ||
+      gc_heap.set.verify || avant_g_stats.collections) {
+    return;
+  }
+  gc_lock(&gc_heap.world);
+  gc_heap.set.young_fixed = (uint64_t)mb * 1024ull * 1024ull;
+  avant_young_bytes = gc_heap.set.young_fixed;
+  gc_fast_clear();
   pthread_mutex_unlock(&gc_heap.world);
 }
 

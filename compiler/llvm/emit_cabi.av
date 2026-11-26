@@ -22,10 +22,10 @@ import llvm.emit_core
 
 // The passing of one value: 0 direct (a scalar), 1 coerced into parts,
 // 2 in memory (byval / sret), 3 ignored (zero size).
-pub fn cabi_direct: Int { 0 }
-pub fn cabi_parts: Int { 1 }
-pub fn cabi_memory: Int { 2 }
-pub fn cabi_none: Int { 3 }
+pub const cabi_direct = 0
+pub const cabi_parts = 1
+pub const cabi_memory = 2
+pub const cabi_none = 3
 
 pub class CAbiVal {
   kind: Int = 0
@@ -51,11 +51,11 @@ pub class CAbiSig {
 // Whether a C signature holds an aggregate (a parameter or the result).
 pub fn ll_cabi_needed(ts: MTypes, sig: Int): Bool {
   s = ts.sigs[sig]
-  if ts.kind(s.ret) == mk_agg() {
+  if ts.kind(s.ret) == mk_agg {
     return true
   }
   for param in s.params {
-    if ts.kind(param) == mk_agg() {
+    if ts.kind(param) == mk_agg {
       return true
     }
   }
@@ -65,7 +65,7 @@ pub fn ll_cabi_needed(ts: MTypes, sig: Int): Bool {
 // The scalar leaves of a value of type ty at byte offset base: each
 // leaf's offset, and whether it is an f64.
 fn ll_cabi_leaves(ts: MTypes, ty: Int, base: Int, offs: Array(Int), fps: Array(Bool)) {
-  if ts.kind(ty) == mk_agg() {
+  if ts.kind(ty) == mk_agg {
     l = ts.layouts[ts.get(ty).layout]
     i = 0
     while i < l.fields.size {
@@ -76,7 +76,7 @@ fn ll_cabi_leaves(ts: MTypes, ty: Int, base: Int, offs: Array(Int), fps: Array(B
   }
   if ts.size_of(ty) > 0 {
     offs.push(base)
-    fps.push(ts.kind(ty) == mk_f64())
+    fps.push(ts.kind(ty) == mk_f64)
   }
 }
 
@@ -131,45 +131,45 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
   s = ts.sigs[sig]
   ints = 6
   sses = 8
-  rv = CAbiVal.new(cabi_direct(), s.ret)
-  if ts.kind(s.ret) == mk_agg() {
+  rv = CAbiVal.new(cabi_direct, s.ret)
+  if ts.kind(s.ret) == mk_agg {
     size = ts.size_of(s.ret)
     if size == 0 {
-      rv.kind = cabi_none()
+      rv.kind = cabi_none
     } else if size > 16 {
-      rv.kind = cabi_memory()
+      rv.kind = cabi_memory
       ints -= 1
     } else {
-      rv.kind = cabi_parts()
+      rv.kind = cabi_parts
       ll_cabi_split(ts, s.ret, rv)
     }
   }
   plan = CAbiSig.new(rv)
   for t in s.params {
-    v = CAbiVal.new(cabi_direct(), t)
-    if ts.kind(t) == mk_agg() {
+    v = CAbiVal.new(cabi_direct, t)
+    if ts.kind(t) == mk_agg {
       size = ts.size_of(t)
       if size == 0 {
-        v.kind = cabi_none()
+        v.kind = cabi_none
       } else if size > 16 {
-        v.kind = cabi_memory()
+        v.kind = cabi_memory
       } else {
         ll_cabi_split(ts, t, v)
         ni = ll_cabi_count(v, false)
         ns = ll_cabi_count(v, true)
         if ni <= ints && ns <= sses {
-          v.kind = cabi_parts()
+          v.kind = cabi_parts
           ints -= ni
           sses -= ns
         } else {
-          v.kind = cabi_memory()
+          v.kind = cabi_memory
           p: Array(String) = []
           v.parts = p
           o: Array(Int) = []
           v.offs = o
         }
       }
-    } else if ts.kind(t) == mk_f64() {
+    } else if ts.kind(t) == mk_f64 {
       if sses > 0 {
         sses -= 1
       }
@@ -185,16 +185,16 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
 // struct of the parts for a coerced aggregate.
 fn ll_cabi_ret_text(ts: MTypes, plan: CAbiSig): String {
   rv = plan.ret
-  if rv.kind == cabi_memory() || rv.kind == cabi_none() {
+  if rv.kind == cabi_memory || rv.kind == cabi_none {
     return "void"
   }
-  if rv.kind == cabi_parts() {
+  if rv.kind == cabi_parts {
     if rv.parts.size == 1 {
       return rv.parts[0]
     }
     return "{ ${rv.parts[0]}, ${rv.parts[1]} }"
   }
-  if rv.ty == mt_bool() {
+  if rv.ty == mt_bool {
     return "zeroext i1"
   }
   ll_type_text(ts, rv.ty)
@@ -203,16 +203,16 @@ fn ll_cabi_ret_text(ts: MTypes, plan: CAbiSig): String {
 // The LLVM parameter types of a plan, in order.
 fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
   out: Array(String) = []
-  if plan.ret.kind == cabi_memory() {
+  if plan.ret.kind == cabi_memory {
     out.push("ptr sret(${ll_type_text(ts, plan.ret.ty)}) align ${ts.align_of(plan.ret.ty)}")
   }
   for v in plan.args {
-    if v.kind == cabi_parts() {
+    if v.kind == cabi_parts {
       out.concat(v.parts)
-    } else if v.kind == cabi_memory() {
+    } else if v.kind == cabi_memory {
       out.push("ptr byval(${ll_type_text(ts, v.ty)}) align 8")
-    } else if v.kind == cabi_direct() {
-      if v.ty == mt_bool() {
+    } else if v.kind == cabi_direct {
+      if v.ty == mt_bool {
         out.push("i1 zeroext")
       } else {
         out.push(ll_type_text(ts, v.ty))
@@ -223,7 +223,7 @@ fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
 }
 
 fn ll_cabi_join(xs: Array(String)): String {
-  buf = buf_new()
+  buf = Buf.new()
   for i in 0..xs.size {
     if i > 0 {
       buf.push_str(", ")
@@ -257,23 +257,23 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   ts = e.ts
   plan = ll_cabi_plan(ts, sig)
   args: Array(String) = []
-  if plan.ret.kind == cabi_memory() {
+  if plan.ret.kind == cabi_memory {
     args.push("ptr sret(${e.llt(plan.ret.ty)}) align ${e.align(plan.ret.ty)} ${e.local_addr(st.dest)}")
   }
   i = 0
   while i < plan.args.size && i < st.args.size {
     v = plan.args[i]
-    if v.kind == cabi_direct() {
+    if v.kind == cabi_direct {
       x = e.value(st.args[i])
-      if v.ty == mt_bool() {
+      if v.ty == mt_bool {
         args.push("i1 zeroext ${x}")
       } else {
         args.push("${e.llt(v.ty)} ${x}")
       }
-    } else if v.kind == cabi_memory() {
+    } else if v.kind == cabi_memory {
       a = ll_cabi_addr(e, st.args[i])
       args.push("ptr byval(${e.llt(v.ty)}) align 8 ${a}")
-    } else if v.kind == cabi_parts() {
+    } else if v.kind == cabi_parts {
       a2 = ll_cabi_addr(e, st.args[i])
       vol = e.pa_vol
       for j in 0..v.parts.size {
@@ -302,7 +302,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   rtext = ll_cabi_ret_text(ts, plan)
   call = "call ${rtext} (${ll_cabi_join(ptypes)}) ${ll_sym(name)}(${ll_cabi_join(args)})"
   rv = plan.ret
-  if rv.kind == cabi_memory() || rv.kind == cabi_none() || rtext == "void" {
+  if rv.kind == cabi_memory || rv.kind == cabi_none || rtext == "void" {
     e.line(call)
     return
   }
@@ -313,7 +313,12 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   }
   d = st.dest
   slot = e.slot_vol(d)
-  if rv.kind == cabi_direct() {
+  if rv.kind == cabi_direct {
+    // A value local has no alloca: the call's result is its value.
+    if e.ssa(d) {
+      e.ssa_val[d] = r
+      return
+    }
     e.store(rv.ty, r, e.local_addr(d), slot)
     return
   }

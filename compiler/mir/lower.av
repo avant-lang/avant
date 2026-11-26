@@ -35,6 +35,7 @@ import mir.runs
 import mir.heads
 import mir.take
 import mir.upsert
+import mir.reach
 import receiver_writes
 
 pub class MirLowered {
@@ -292,7 +293,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, "L0001", "not yet supported by the llvm back end: ${what}").render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -306,7 +307,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, diag_code(4, message), message).render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -320,7 +321,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, "L0002", "internal error: the llvm back end's lowering reached ${what}, which the checker refuses").render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -343,10 +344,10 @@ pub class MirLower {
   // source's directory, else to the Avant root, else as given.
   pub fn rel_path(path: String): String {
     if self.lw_root_dir.size > 0 && path.starts_with("${self.lw_root_dir}/") {
-      return str_slice(path, self.lw_root_dir.size + 1, path.size)
+      return path[self.lw_root_dir.size + 1..]
     }
     if self.lw_avant_root.size > 0 && path.starts_with("${self.lw_avant_root}/") {
-      return str_slice(path, self.lw_avant_root.size + 1, path.size)
+      return path[self.lw_avant_root.size + 1..]
     }
     path
   }
@@ -486,6 +487,9 @@ pub class MirLower {
         return
       }
     }
+    // Only the functions main reaches go on (reach.av): an imported
+    // module's other functions are lowered, then dropped here.
+    mir_prune_unreached(self.lw_m)
     self.cov_finish()
   }
 
@@ -503,7 +507,7 @@ pub class MirLower {
       while scanned < self.lw_m.funcs.size {
         for bb in self.lw_m.funcs[scanned].blocks {
           for st in bb.stmts {
-            if st.kind == msk_call() && st.callee.size > 0 {
+            if st.kind == msk_call && st.callee.size > 0 {
               called.add(st.callee)
             }
           }
@@ -547,7 +551,7 @@ pub class MirLower {
   pub fn ty_at(t: Ty, loc: Location, what: String): Int {
     m = mir_scalar_ty(t)
     if m < 0 && t.is_nil() {
-      m = mt_i32()
+      m = mt_i32
     }
     if m < 0 && t.is_union() {
       if r = mir_opt_word(t) {
@@ -641,9 +645,9 @@ pub class MirLower {
       params: Array(Int) = []
       ret = ty_at(fs.ret, fnn.loc, "a result")
       if self.lw_main {
-        params.push(mt_i32())
-        params.push(mt_ptr())
-        if ret != mt_void() && ret != mt_int() {
+        params.push(mt_i32)
+        params.push(mt_ptr)
+        if ret != mt_void && ret != mt_int {
           refuse(fnn.loc, "main with a result of type ${fs.ret.show()}")
         }
       } else {
@@ -661,7 +665,7 @@ pub class MirLower {
       self.lw_ret_ty = fs.ret
       sret = ret
       if self.lw_main {
-        sret = mt_i32()
+        sret = mt_i32
       }
       // The source name a trap prints: Owner.name for a method.
       sname = fnn.name
@@ -759,7 +763,7 @@ pub class MirLower {
       return
     }
     at(loc)
-    if self.lw_ret == mt_void() {
+    if self.lw_ret == mt_void {
       if self.lw_main {
         self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
       }
@@ -775,9 +779,9 @@ pub class MirLower {
     begin_function(r)
     self.lw_main = true
     params: Array(Int) = []
-    params.push(mt_i32())
-    params.push(mt_ptr())
-    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), mloc(r.loc), "main")
+    params.push(mt_i32)
+    params.push(mt_ptr)
+    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32, false), mloc(r.loc), "main")
     self.lw_b.set_external()
     self.lw_b.name_param(1, "argc")
     self.lw_b.name_param(2, "argv")
@@ -786,21 +790,21 @@ pub class MirLower {
     if got = self.lw_fn_syms.get(r.emit_name) {
       sym = got
     }
-    rty = mt_void()
+    rty = mt_void
     if fs = self.lw_syms.find_fn(r.emit_name) {
       rty = mir_scalar_ty(fs.ret)
     }
     none: Array(MOperand) = []
-    if rty == mt_int() {
-      t = self.lw_b.temp(mt_int())
+    if rty == mt_int {
+      t = self.lw_b.temp(mt_int)
       self.lw_b.call(t, sym, none)
       // run's Int is the exit status: outside 0..255 it traps
       // (lower_stmt.av exit_status).
       b = self.lw_b
-      u = b.temp(mt_u64())
-      b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u64()))
-      inside = b.temp(mt_bool())
-      b.assign(b.pl(inside), b.rv_cmp(mop_le(), b.copy_local(u), b.c_u64(255)))
+      u = b.temp(mt_u64)
+      b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u64))
+      inside = b.temp(mt_bool)
+      b.assign(b.pl(inside), b.rv_cmp(mop_le, b.copy_local(u), b.c_u64(255)))
       bad = b.block()
       ok = b.block()
       b.branch(b.copy_local(inside), ok, bad)
@@ -811,12 +815,12 @@ pub class MirLower {
       b.unreachable()
       b.at(ok)
       at(r.loc)
-      t32 = b.temp(mt_i32())
-      b.assign(b.pl(t32), b.rv_cast(b.copy_local(t), mt_i32()))
+      t32 = b.temp(mt_i32)
+      b.assign(b.pl(t32), b.rv_cast(b.copy_local(t), mt_i32))
       b.assign(b.pl(0), b.rv_use(b.copy_local(t32)))
     } else {
       dest = -1
-      if rty != mt_void() && rty >= 0 {
+      if rty != mt_void && rty >= 0 {
         dest = self.lw_b.temp(rty)
       }
       self.lw_b.call(dest, sym, none)
@@ -859,7 +863,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   i = root_path.size - 1
   while i >= 0 {
     if root_path[i] == 47 {
-      dir = str_slice(root_path, 0, i)
+      dir = root_path[..i]
       break
     }
     i -= 1
@@ -873,9 +877,9 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   if lw.failed() {
     return MirLowered.new(lw.lw_m, lw.lw_err)
   }
-  errs = mir_verify_errors(lw.lw_m, mst_lowered())
+  errs = mir_verify_errors(lw.lw_m, mst_lowered)
   if errs.size > 0 {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("internal error: the llvm back end's lowering broke the MIR verifier at stage lowered:")
     j = 0
     while j < errs.size {

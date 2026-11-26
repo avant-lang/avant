@@ -8,8 +8,10 @@ this mode costs N + 1 runs of every task.
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
           [--side NAME=BIN_DIR]... [--layouts S1,S2,...] [--pin CPU] [--short SECONDS]
           [--timeout SECONDS] [--allow-governor] [--time-identical] [--cpu-tolerance F]
-          [--reuse-base RECORD --drift TASK,...]
+          [--reuse-base RECORD --drift TASK,...] [--warm-up] [--stop-settled [--stop-exempt TASK,...]]
           [--max-involuntary N] [--max-outside CPUS] [--retries N] [TASK...]
+  python3 tools/rounds.py verdict --out DIR [--layouts L,...] [--library TSV] [--counts BASE.tsv HEAD.tsv]
+          [--all-runs TASK,...] [--apart TASK,...] [--title TEXT] SESSION...
   python3 tools/rounds.py table DIR
   python3 tools/rounds.py spawner DIR      (compiles the spawner into DIR, prints its path)
   python3 tools/rounds.py judge RESULT [THREADS]  (one spawner result by the undisturbed rule; THREADS the program's own)
@@ -42,7 +44,8 @@ whole base is timed again. drift.tsv has each drift row's verdict.
 
 --layouts S1,S2,... times every task across code layouts: each BIN_DIR then
 holds one directory per shift, BIN_DIR/S/SLUG, the same program with its
-code S bytes later (tools/layout-cc.sh links them), and round r runs every
+code S bytes later (tools/layout-cc.sh links them; at a shift rS only the
+runtime's code is S bytes later), and round r runs every
 side's binary at the ((r - 1) mod K)-th shift (the warm-up at S1). With as
 many rounds as shifts, every layout runs once per side, so a task's median
 is over its layouts and its min-max spread covers what one address can move
@@ -54,8 +57,12 @@ its kept-but-bad settled; bench/valk/measure.py now calls it:
 
 - the governor must be `performance` on every CPU (else it stops, unless
   --allow-governor, which marks the session "DISTURBED, NOT EVIDENCE");
-- one unmeasured warm-up of every row, then N rounds of one fresh process
-  per row; round r starts (r - 1) * (rows // N) rows (at least r - 1) into
+- N rounds of one fresh process per row, with no warm-up: a binary's
+  first run reads as its later ones (over 3,551 first runs of binaries
+  never run before, the layouts after the first, the first run over the
+  median of the later ones had a geometric mean of 1.0009, and the round
+  just after a warm-up 1.0007), so a warm-up only cost a round; --warm-up
+  runs one unmeasured run of every row first, as before; round r starts (r - 1) * (rows // N) rows (at least r - 1) into
   the list, every other round walks it backwards from there, and the
   sides' order rotates;
 - the program is started by a small C spawner (compiled into DIR at the
@@ -88,6 +95,28 @@ its kept-but-bad settled; bench/valk/measure.py now calls it:
   side; rounds.md lists every disturbed run with its counters and names
   each row short of undisturbed runs (to re-run).
 
+--stop-settled (two sides, the first the base): after each full cycle of
+the layouts (every K rounds, K the layouts' count), a task whose verdict
+no further run can change leaves the rotation: every layout has a run on
+both sides, the pooled ranges meet, and fewer than the per-layout rule's
+layouts have every head run above (or below) every base run. More runs
+only widen a range and only break such a layout, so the full session's
+verdict would be "within spread" too; only that row's median is over
+fewer runs (session.txt and the notes name each one). Rows that gain,
+lose or could still do either run every round. --stop-exempt keeps the
+named tasks in every round (rows whose median a table must read at full
+depth).
+
+verdict: every task's verdict, base against head, over the sessions named
+(a task in several, as one timed a layout a session, reads all of their
+runs; --all-runs counts a task's disturbed runs too, for a threaded task
+on a slot), by the keep rule's time verdict below (PL_LAYOUTS, PL_GAP);
+DIR/layouts.md (totals, the twins' and pure totals with --library, each
+--apart twin left out of them once, the per-layout ratios and counts, the
+instruction ratio with --counts, la-count.sh's tables of the two sides)
+and DIR/layouts.tsv. This is the integrations' table: the rule lives here
+only.
+
 Very short tasks: a LangArena task cannot repeat its work inside one
 process (its sizes are compiled in and it prints only a checksum), so a task
 whose median is under --short seconds (default 0.2, as the LR table's
@@ -105,6 +134,7 @@ of the medians. `table DIR` rewrites rounds.tsv, rounds.md and the
 lr-avant.tsv files from the raw files.
 """
 import hashlib
+import math
 import os
 import platform
 import re
@@ -455,18 +485,23 @@ def write_run(path, row, r, pos, res, out, why, attempt):
                 f.write("disturbed\t%s\n" % why)
 
 
-def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw", keep=False):
+def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw", keep=False, warmup=True,
+            stop=None):
     """The loop. rows: dicts with id, argv, cwd, pin (bool: may be pinned),
     env (optional: the run's complete environment), fields (written into
     the raw file). check(row, result, out, err) returns None when the run
     is a result, else the reason (the session stops). order_of(r) gives
-    round r's order (default: rotate). One unmeasured warm-up of every row
-    first; one raw file per run, d/RAW/round-R/FILE.run (FILE: the row's
-    "file", else its id), and with keep the run's standard output beside
-    it as FILE.out (bench/valk-gc reads its programs' own timings there).
-    A row with "layouts", a list of (name, cwd), runs round r from the
-    (r - 1) % len-th of them (its name is the raw file's `layout`) and the
-    warm-up from the first."""
+    round r's order (default: rotate). With warmup, one unmeasured warm-up
+    of every row first (the LangArena loop runs none: a binary's first run
+    reads as its later ones); one raw file per run, d/RAW/round-R/FILE.run
+    (FILE: the row's "file", else its id), and with keep the run's standard
+    output beside it as FILE.out (bench/valk-gc reads its programs' own
+    timings there). A row with "layouts", a list of (name, cwd), runs round
+    r from the (r - 1) % len-th of them (its name is the raw file's
+    `layout`) and the warm-up from the first. stop(r, done) is asked after
+    each round r with done, {row id: [(layout, wall_s, undisturbed)]} of the
+    rounds so far, and returns the row ids that leave the rotation (each a
+    row whose verdict no further run can change)."""
     scratch = os.path.join(d, "scratch")
     os.makedirs(scratch, exist_ok=True)
     fo, fe = os.path.join(scratch, "out"), os.path.join(scratch, "err")
@@ -486,11 +521,16 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
             die("%s: %s in %s (kept in %s)" % (row["id"], why, where, bad))
         return res, out, err
 
-    for row in rows:
-        one(row, "the warm-up")
-    note("warm-up done: %s" % loadavg())
+    if warmup:
+        for row in rows:
+            one(row, "the warm-up")
+        note("warm-up done: %s" % loadavg())
+    done, gone = {}, set()
     for r in range(1, rounds + 1):
         order = order_of(r) if order_of else rotate(rows, rounds, r)
+        order = [row for row in order if row["id"] not in gone]
+        if not order:
+            break
         rd = os.path.join(d, raw, "round-%d" % r)
         os.makedirs(rd)
         for pos, row in enumerate(order, 1):
@@ -506,6 +546,8 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
                 # never as a .run file, so the readers of the .run files see one run per row and round
                 path = base + (".run" if last else ".disturbed-%d" % (attempt + 1))
                 write_run(path, row, r, pos, res, out, why, attempt)
+                if last:
+                    done.setdefault(row["id"], []).append((row.get("fields", {}).get("layout", ""), res["wall_ns"] / 1e9, why is None))
                 if why:
                     note("round %d: %s disturbed (%s)%s" % (r, row["id"], why, "; kept as not undisturbed" if last else "; run again"))
                 if last:
@@ -515,9 +557,83 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
                     f.write(out)
         note("round %d: first %s, %s; loadavg %s" % (r, order[0]["id"], "backwards" if r % 2 == 0 else "forwards",
                                                      loadavg().split()[0]))
+        if stop and r < rounds:
+            left = set(stop(r, done)) - gone
+            if left:
+                gone |= left
+                note("round %d: settled, leaving the rotation: %s" % (r, " ".join(sorted(left))))
     for p in (fo, fe):
         os.remove(p)
     os.rmdir(scratch)
+
+
+# ---- the keep rule's time verdict -------------------------------------------
+#
+# A row (a task's base and head runs at the layouts) is slower (faster) beyond
+# its spread by the pooled rule when the two sides' min-max ranges over every
+# undisturbed run do not meet, and by the per-layout rule when at PL_LAYOUTS
+# layouts or more every head run there is above (below) every base run and the
+# two sides' nearest runs are at least PL_GAP of the base's median there apart.
+# The gap keeps a shift that one session cannot tell from the next (a tight
+# row's 0.1-0.5%, which the same binaries read in some sessions and not in
+# others) from deciding a row. `rounds.py verdict` and --stop-settled read
+# this one rule.
+
+PL_LAYOUTS = 3
+PL_GAP = 0.005
+
+
+def layout_counts(b, h, lays, gap=PL_GAP):
+    """(above, below): the layouts where every head run is above (below) every base run by at least gap of the base's
+    median there. b, h: [(layout, wall)] of the undisturbed runs."""
+    above = below = 0
+    for L in lays:
+        lb = [w for x, w in b if x == L]
+        lh = [w for x, w in h if x == L]
+        if not lb or not lh:
+            continue
+        m = statistics.median(lb)
+        if min(lh) > max(lb) and min(lh) - max(lb) >= gap * m:
+            above += 1
+        if max(lh) < min(lb) and min(lb) - max(lh) >= gap * m:
+            below += 1
+    return above, below
+
+
+def verdict_of(b, h, lays, k=PL_LAYOUTS, gap=PL_GAP):
+    """The row's verdict and its (above, below) layout counts."""
+    if not b or not h:
+        return "no runs", (0, 0)
+    bw, hw = [w for _, w in b], [w for _, w in h]
+    above, below = layout_counts(b, h, lays, gap)
+    if min(hw) > max(bw):
+        v = "loses beyond spread"
+    elif max(hw) < min(bw):
+        v = "gains beyond spread"
+    elif above >= k and below >= k:
+        v = "both ways by the per-layout rule"
+    elif above >= k:
+        v = "loses by the per-layout rule"
+    elif below >= k:
+        v = "gains by the per-layout rule"
+    else:
+        v = "within spread"
+    return v, (above, below)
+
+
+def settled(b, h, lays, k=PL_LAYOUTS):
+    """True when no further run can make the row's verdict anything but "within spread": every layout has a run on both
+    sides, the pooled ranges meet, and fewer than k layouts have every head run above (below) every base run. More runs
+    only widen a range and only break a layout's all-above (all-below), and a layout the gap rule counts is one of
+    those, so from here the verdict stays (the gap itself is not needed for the proof, so it is not used)."""
+    for L in lays:
+        if not any(x == L for x, _ in b) or not any(x == L for x, _ in h):
+            return False
+    bw, hw = [w for _, w in b], [w for _, w in h]
+    if min(hw) > max(bw) or max(hw) < min(bw):
+        return False
+    above, below = layout_counts(b, h, lays, gap=0.0)
+    return above < k and below < k
 
 
 # ---- LangArena --------------------------------------------------------------
@@ -566,6 +682,7 @@ def cmd_langarena(argv):
     time_identical = False
     reuse, drift = None, []
     layouts = []
+    warmup, stop_settled, exempt = False, False, []
     a = list(argv)
     while a:
         x = a.pop(0)
@@ -586,8 +703,8 @@ def cmd_langarena(argv):
                 sides.append(tuple(v.split("=", 1)))
             elif x == "--layouts":
                 layouts = [p.strip() for p in v.split(",") if p.strip()]
-                if not layouts or any(not re.fullmatch(r"[0-9]+(l(16|64))?", p) for p in layouts):
-                    die("--layouts needs shifts in bytes, comma-separated (0,64,192; a sub-line shift may name its loops' alignment, 16l16)")
+                if not layouts or any(not re.fullmatch(r"[0-9]+(l(16|64))?|r[0-9]+", p) for p in layouts):
+                    die("--layouts needs shifts in bytes, comma-separated (0,64,192; a sub-line shift may name its loops' alignment, 16l16; r768 moves the runtime alone)")
             elif x == "--pin":
                 pin = int(v)
             elif x == "--short":
@@ -600,6 +717,12 @@ def cmd_langarena(argv):
             allow = True
         elif x == "--time-identical":
             time_identical = True
+        elif x == "--warm-up":
+            warmup = True
+        elif x == "--stop-settled":
+            stop_settled = True
+        elif x == "--stop-exempt" and a:
+            exempt += [t.strip() for t in a.pop(0).split(",") if t.strip()]
         elif x == "--reuse-base" and a:
             reuse = os.path.abspath(a.pop(0))
         elif x == "--drift" and a:
@@ -610,6 +733,8 @@ def cmd_langarena(argv):
             only.append(x)
     if rounds is None or rounds < 1 or not run_js or not out:
         die("langarena needs --rounds N (N >= 1), --run-js RUN_JS and --out DIR")
+    if stop_settled and (len(sides) != 2 or reuse):
+        die("--stop-settled needs two sides (the first the base) and no --reuse-base")
     if not os.path.isfile(run_js):
         die("RUN_JS %s: no such file" % run_js)
     if not sides:
@@ -665,7 +790,9 @@ def cmd_langarena(argv):
         if not why_not:
             reused = [n for n in tnames if n not in drift]
     lines = ["mode: langarena rounds (tools/rounds.py), for milestones and publication, never per gate",
-             "rounds: %d (after one unmeasured warm-up of every row)" % rounds,
+             rounds_line(rounds, warmup),
+             "stop: %s" % (("a row whose verdict is settled leaves the rotation after a full cycle of the layouts; exempt: %s"
+                            % (" ".join(exempt) or "none")) if stop_settled else "none (every row runs every round)"),
              "run_js: %s" % os.path.abspath(run_js),
              "run_js sha256: %s" % js_sha,
              "tasks: %d; sides: %s" % (len(timed), " ".join(n for n, _ in sides)),
@@ -673,7 +800,7 @@ def cmd_langarena(argv):
                  len(identical), "" if len(identical) == 1 else "s",
                  " (timed anyway: --time-identical)" if time_identical and identical else (", not timed" if identical else ""),
                  ": " + " ".join(n for n, _ in identical) if identical else ""),
-             "layouts: %s" % ("shifts %s; round r runs every side at the ((r - 1) mod %d)-th, the warm-up at the first"
+             "layouts: %s" % ("shifts %s; round r runs every side at the ((r - 1) mod %d)-th, a warm-up (if any) at the first"
                               % (" ".join(layouts), len(layouts)) if layouts else "one (the binaries as built)"),
              "pin: %s" % ("cpu %d (Matmul::T* unpinned)" % pin if pin is not None else "none"),
              "base reuse: %s" % (("from %s for %d tasks, drift rows %s" % (reuse, len(reused), " ".join(drift))) if reused
@@ -745,13 +872,30 @@ def cmd_langarena(argv):
         k = (r - 1) % len(sides)
         return [row for g in rotate(per_task, rounds, r) for row in g[k:] + g[:k]]
 
+    lays = layouts or [""]
+
+    def stop(r, done):
+        """After each full cycle of the layouts: the rows of each settled task (not exempt) leave the rotation."""
+        if r % len(lays):
+            return []
+        gone = []
+        for g in per_task:
+            if g[0]["fields"]["task"] in exempt:
+                continue
+            b = [(x, w) for x, w, u in done.get(g[0]["id"], []) if u]
+            h = [(x, w) for x, w, u in done.get(g[1]["id"], []) if u]
+            if settled(b, h, lays):
+                gone += [g[0]["id"], g[1]["id"]]
+        return gone
+
     if not reused:
-        measure(spawn, rows, rounds, out, limit, check, note, pin, order_of)
+        measure(spawn, rows, rounds, out, limit, check, note, pin, order_of, warmup=warmup,
+                stop=stop if stop_settled else None)
     else:
         # Phase 1: the drift rows on both sides, alternating as ever.
         g1 = [g for g in per_task if g[0]["fields"]["task"] in drift]
         measure(spawn, [r for g in g1 for r in g], rounds, out, limit, check, note, pin,
-                lambda r: [row for g in rotate(g1, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]])
+                lambda r: [row for g in rotate(g1, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]], warmup=warmup)
         ok, lines_d = drift_verdict(out, reuse, sides[0][0], drift)
         with open(os.path.join(out, "drift.tsv"), "w") as f:
             f.write("task\trecord_min_s\trecord_max_s\tnow_median_s\tverdict\n" + "".join(lines_d))
@@ -760,18 +904,22 @@ def cmd_langarena(argv):
             note("drift: every drift row's base median is within the record's spread; the base's other %d tasks are the record's" % len(rest))
             heads = [[g[1]] for g in rest]
             measure(spawn, [g[0] for g in heads], rounds, out, limit, check, note, pin,
-                    lambda r: [row for g in rotate(heads, rounds, r) for row in g], raw="raw-2")
+                    lambda r: [row for g in rotate(heads, rounds, r) for row in g], raw="raw-2", warmup=warmup)
             merge_raw(out, "raw-2")
             copy_base_runs(reuse, out, sides[0][0], [g[0]["fields"]["task"] for g in rest])
         else:
             note("drift: a drift row moved beyond the record's spread (drift.tsv): the whole base is timed again")
             measure(spawn, [r for g in rest for r in g], rounds, out, limit, check, note, pin,
-                    lambda r: [row for g in rotate(rest, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]], raw="raw-2")
+                    lambda r: [row for g in rotate(rest, rounds, r) for row in g[(r - 1) % 2:] + g[:(r - 1) % 2]], raw="raw-2", warmup=warmup)
             merge_raw(out, "raw-2")
     session_close(note, meta)
     write_tables(out)
     print("rounds: %s" % os.path.join(out, "rounds.md"))
     return 0
+
+
+def rounds_line(rounds, warmup):
+    return "rounds: %d (after one unmeasured warm-up of every row)" % rounds if warmup else "rounds: %d (no warm-up)" % rounds
 
 
 def reuse_mismatch(rec, base, rounds, layouts, js_sha, timed, base_bins, digest):
@@ -786,7 +934,7 @@ def reuse_mismatch(rec, base, rounds, layouts, js_sha, timed, base_bins, digest)
             bsums[name] = h
     except OSError as e:
         return "the record cannot be read: %s" % e
-    if ("rounds: %d (after one unmeasured warm-up of every row)" % rounds) not in sess:
+    if rounds_line(rounds, True) not in sess and rounds_line(rounds, False) not in sess:
         return "another number of rounds"
     if params.get("layouts", "") != " ".join(layouts):
         return "other layouts"
@@ -1029,6 +1177,179 @@ def write_tables(d):
             f.write("\n".join(lr[s]) + ("\n" if lr[s] else ""))
 
 
+# ---- verdict: base against head across sessions ------------------------------
+
+def cmd_verdict(argv):
+    """rounds.py verdict --out DIR [options] SESSION...: every row's verdict, base against head, over one or more
+    sessions of this script (a task in several sessions, as one timed a layout a session, reads all of their runs),
+    into DIR/layouts.md and DIR/layouts.tsv; the line `verdicts: ...` on standard output."""
+    out, lays, lib, counts, all_runs, apart, title = None, None, None, None, [], [], ""
+    base, head = "base", "head"
+    k, gap = PL_LAYOUTS, PL_GAP
+    sess = []
+    a = list(argv)
+    while a:
+        x = a.pop(0)
+        if x in ("--out", "--layouts", "--library", "--counts", "--all-runs", "--apart", "--title", "--base", "--head",
+                 "--pl-layouts", "--pl-gap"):
+            if not a or (x == "--counts" and len(a) < 2):
+                die("%s needs a value" % x)
+            v = a.pop(0)
+            if x == "--out":
+                out = v
+            elif x == "--layouts":
+                lays = [p.strip() for p in v.split(",") if p.strip()]
+            elif x == "--library":
+                lib = v
+            elif x == "--counts":
+                counts = (v, a.pop(0))
+            elif x == "--all-runs":
+                all_runs += [t.strip() for t in v.split(",") if t.strip()]
+            elif x == "--apart":
+                apart += [t.strip() for t in v.split(",") if t.strip()]
+            elif x == "--title":
+                title = v
+            elif x == "--base":
+                base = v
+            elif x == "--head":
+                head = v
+            elif x == "--pl-layouts":
+                k = int(v)
+            else:
+                gap = float(v)
+        elif x.startswith("-"):
+            die("verdict: unknown option %s" % x)
+        else:
+            sess.append(x)
+    if not out or not sess:
+        die("usage: rounds.py verdict --out DIR [--layouts L,...] [--library TSV] [--counts BASE.tsv HEAD.tsv] "
+            "[--all-runs TASK,...] [--apart TASK,...] [--title TEXT] [--base NAME] [--head NAME] [--pl-layouts K] [--pl-gap F] SESSION...")
+    runs, seen = {}, []
+    for d in sess:
+        p = os.path.join(d, "params.tsv")
+        if os.path.exists(p):
+            for L in dict(l.rstrip("\n").split("\t", 1) for l in open(p)).get("layouts", "").split():
+                if L not in seen:
+                    seen.append(L)
+        for rid, rs in read_runs(d).items():
+            for r in rs:
+                if r.get("side") not in (base, head):
+                    continue
+                if r.get("undisturbed", "yes") != "yes" and r["task"] not in all_runs:
+                    continue
+                runs.setdefault((r["side"], r["task"]), []).append((r.get("layout", ""), int(r["wall_ns"]) / 1e9))
+    lays = lays or seen or [""]
+    ins = {}
+    if counts:
+        for side, f in zip((base, head), counts):
+            for l in open(f):
+                c = l.rstrip("\n").split("\t")
+                if len(c) > 1 and c[1].isdigit():
+                    ins[(side, c[0])] = int(c[1])
+    pure_of, twins = {}, set()
+    if lib:
+        for l in open(lib):
+            c = l.rstrip("\n").split("\t")
+            if len(c) < 5 or c[0] == "task" or c[2] == "-":
+                continue
+            twins.add(c[2])
+            if "common" in c[4]:
+                pure_of[c[0]] = c[2]
+    else:
+        twins = {t for _, t in runs if t.endswith(("-Pure", "-Common", "-Clever"))}
+    rows = []
+    for t in sorted({t for _, t in runs}):
+        b, h = runs.get((base, t), []), runs.get((head, t), [])
+        if not b or not h:
+            continue
+        v, (ab, be) = verdict_of(b, h, lays, k, gap)
+        bw, hw = [w for _, w in b], [w for _, w in h]
+        bm, hm = statistics.median(bw), statistics.median(hw)
+        per = []
+        for L in lays:
+            lb, lh = [w for x, w in b if x == L], [w for x, w in h if x == L]
+            per.append(statistics.median(lh) / statistics.median(lb) if lb and lh else float("nan"))
+        s = slug_of(t)
+        ir = ins[(head, s)] / ins[(base, s)] if (base, s) in ins and (head, s) in ins else float("nan")
+        rows.append(dict(task=t, slug=s, twin=t in twins, n=(len(bw), len(hw)), bm=bm, bmin=min(bw), bmax=max(bw), hm=hm,
+                         hmin=min(hw), hmax=max(hw), r=hm / bm, per=per, v=v, ab=ab, be=be, ir=ir,
+                         bsp=(max(bw) - min(bw)) / bm, hsp=(max(hw) - min(hw)) / hm))
+    os.makedirs(out, exist_ok=True)
+    tasks = [x for x in rows if not x["twin"]]
+    tw = {x["task"]: x for x in rows if x["twin"]}
+    with open(os.path.join(out, "layouts.tsv"), "w") as f:
+        f.write("task\tslug\ttwin\tbase_n\thead_n\tbase_med\tbase_min\tbase_max\thead_med\thead_min\thead_max\thead/base\t%s\tinstr\tabove\tbelow\tverdict\n"
+                % "\t".join("L" + (L or "-") for L in lays))
+        for x in rows:
+            f.write("%s\t%s\t%s\t%d\t%d\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%.4f\t%s\t%.5f\t%d\t%d\t%s\n" % (
+                x["task"], x["slug"], x["twin"], x["n"][0], x["n"][1], x["bm"], x["bmin"], x["bmax"], x["hm"], x["hmin"], x["hmax"],
+                x["r"], "\t".join("%.4f" % p for p in x["per"]), x["ir"], x["ab"], x["be"], x["v"]))
+
+    def tot(side, pure, skip=()):
+        t = 0.0
+        for x in tasks:
+            y = tw.get(pure_of.get(x["task"]), x) if pure else x
+            if y["task"] in skip:
+                continue
+            t += y["bm"] if side == base else y["hm"]
+        return t
+
+    def ratio(a, b):
+        return a / b if b else float("nan")
+    md = []
+    w = md.append
+    w("# Base against head at the layouts%s" % (": " + title if title else ""))
+    w("")
+    w("Rows: %d tasks, %d twins; layouts %s; undisturbed runs only%s. The rule (`tools/rounds.py`): a row is slower (faster) "
+      "beyond its spread when the two sides' min–max ranges over all runs do not meet (the pooled rule), or when at %d layouts "
+      "or more every head run is above (below) every base run and the nearest runs are at least %g%% of the base's median "
+      "there apart (the per-layout rule)." % (len(tasks), len(tw), " ".join(L or "-" for L in lays),
+                                              " (every run of %s)" % ", ".join(all_runs) if all_runs else "", k, gap * 100))
+    w("")
+    if tasks:
+        gm = math.exp(statistics.mean(math.log(x["r"]) for x in tasks))
+        pergm = []
+        for i in range(len(lays)):
+            v = [x["per"][i] for x in tasks if x["per"][i] == x["per"][i]]
+            pergm.append(math.exp(statistics.mean(math.log(p) for p in v)) if v else float("nan"))
+        w("| | Base | Head | Head/base |")
+        w("| --- | ---: | ---: | ---: |")
+        w("| tasks: total of medians (s) | %.3f | %.3f | **%.4f** |" % (tot(base, 0), tot(head, 0), ratio(tot(head, 0), tot(base, 0))))
+        w("| tasks: geometric mean of the ratios | | | **%.4f** |" % gm)
+        w("| per layout geometric mean (%s) | | | %s |" % (", ".join(L or "-" for L in lays), ", ".join("%.4f" % p for p in pergm)))
+        if pure_of:
+            w("| pure Avant total (each task with a common twin at its twin) (s) | %.3f | %.3f | **%.4f** |" % (
+                tot(base, 1), tot(head, 1), ratio(tot(head, 1), tot(base, 1))))
+            for t in apart:
+                w("| pure Avant total without %s (s) | %.3f | %.3f | **%.4f** |" % (
+                    t, tot(base, 1, (t,)), tot(head, 1, (t,)), ratio(tot(head, 1, (t,)), tot(base, 1, (t,)))))
+        if tw:
+            tb, th = sum(x["bm"] for x in tw.values()), sum(x["hm"] for x in tw.values())
+            w("| %d twins: total (s) | %.3f | %.3f | %.4f |" % (len(tw), tb, th, ratio(th, tb)))
+            for t in apart:
+                tb2 = sum(x["bm"] for n, x in tw.items() if n != t); th2 = sum(x["hm"] for n, x in tw.items() if n != t)
+                w("| twins without %s (s) | %.3f | %.3f | %.4f |" % (t, tb2, th2, ratio(th2, tb2)))
+        w("| median spread (max-min over median), tasks | %.2f%% | %.2f%% | |" % (
+            100 * statistics.median(x["bsp"] for x in tasks), 100 * statistics.median(x["hsp"] for x in tasks)))
+        w("")
+    names = ("gains beyond spread", "gains by the per-layout rule", "loses beyond spread", "loses by the per-layout rule",
+             "both ways by the per-layout rule")
+    for kind in names:
+        sel = [x for x in rows if x["v"] == kind]
+        w("%s: %d (%s)" % (kind, len(sel), ", ".join("%s %.3f" % (x["task"], x["r"]) for x in sorted(sel, key=lambda x: x["r"])) or "none"))
+    w("")
+    w("| Task | Base s (min–max) | Head s (min–max) | Head/base | per layout %s | layouts above / below | Instructions | Verdict |"
+      % " / ".join(L or "-" for L in lays))
+    w("| --- | --- | --- | ---: | --- | --- | ---: | --- |")
+    for x in sorted(rows, key=lambda x: (x["twin"], x["r"])):
+        w("| %s%s | %.3f (%.3f–%.3f) | %.3f (%.3f–%.3f) | %.3f | %s | %d / %d | %.4f | %s |" % (
+            x["task"], " (twin)" if x["twin"] else "", x["bm"], x["bmin"], x["bmax"], x["hm"], x["hmin"], x["hmax"], x["r"],
+            " / ".join("%.3f" % p for p in x["per"]), x["ab"], x["be"], x["ir"], x["v"]))
+    open(os.path.join(out, "layouts.md"), "w").write("\n".join(md) + "\n")
+    print("verdicts: %s" % "; ".join("%s %d" % (kind, sum(1 for x in rows if x["v"] == kind)) for kind in names + ("within spread",)))
+    return 0
+
+
 def cmd_judge(res_path, threads=None):
     """One spawner result file judged by the rule (THREADS: the program's own
     threads, when known): prints its counters as tab-separated fields
@@ -1067,11 +1388,13 @@ def main():
         if len(sys.argv) == 4 and not sys.argv[3].isdigit():
             die("judge RESULT [THREADS]: THREADS is a number of threads, not %r" % sys.argv[3])
         return cmd_judge(sys.argv[2], int(sys.argv[3]) if len(sys.argv) == 4 and sys.argv[3] != "0" else None)
+    if sys.argv[1] == "verdict":
+        return cmd_verdict(sys.argv[2:])
     if sys.argv[1] == "table" and len(sys.argv) == 3:
         write_tables(sys.argv[2])
         print(os.path.join(sys.argv[2], "rounds.md"))
         return 0
-    die("usage: rounds.py langarena ... | table DIR (--help)")
+    die("usage: rounds.py langarena ... | verdict --out DIR SESSION... | table DIR (--help)")
 
 
 if __name__ == "__main__":

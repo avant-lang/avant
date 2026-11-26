@@ -70,7 +70,7 @@ fn up_direct(st: MStmt): Bool {
 
 // The local of a bare `copy _k`, or -1.
 fn up_local(o: MOperand): Int {
-  if o.kind != mok_copy() {
+  if o.kind != mok_copy {
     return -1
   }
   if p = o.place, p.proj.size == 0 {
@@ -89,10 +89,10 @@ fn up_same_const(a: MOperand, b: MOperand): Bool {
   if pb = b.place {
     return false
   }
-  if a.kind == mok_int() {
+  if a.kind == mok_int {
     return a.ty == b.ty && a.ival == b.ival
   }
-  if a.kind == mok_str() {
+  if a.kind == mok_str {
     return a.sid == b.sid
   }
   false
@@ -176,7 +176,7 @@ class UpWalk {
         return false
       }
       st = blk.stmts[i]
-      if st.kind == msk_call() {
+      if st.kind == msk_call {
         if up_direct(st) && st.callee == self.set_name && st.args.size == 2 && st.dest >= 0 {
           hl = up_local(st.args[0])
           if hl >= 0 && s.h[hl] && same_key(st.args[1], s) {
@@ -189,20 +189,20 @@ class UpWalk {
         // unreachable); any other call stops the pass.
         return up_direct(st) && st.callee.starts_with("avant_trap_")
       }
-      if st.kind == msk_assign() {
+      if st.kind == msk_assign {
         if p = st.place {
           if p.last_deref() >= 0 {
             // A store into memory: never a local's value; not through a
             // raw pointer (it could name anything C gave out), nor through
             // more than one deref (a pointer read from memory).
-            if self.ts.kind(self.f.locals[p.local].ty) == mk_ptr() || up_derefs(p) > 1 {
+            if self.ts.kind(self.f.locals[p.local].ty) == mk_ptr || up_derefs(p) > 1 {
               return false
             }
           } else {
             nh = false
             nk = false
             if p.proj.size == 0 && !self.addr_taken[p.local] {
-              if r = st.rv, r.kind == mrk_use(), a = r.a {
+              if r = st.rv, r.kind == mrk_use, a = r.a {
                 y = up_local(a)
                 if y >= 0 {
                   nh = s.h[y]
@@ -211,7 +211,7 @@ class UpWalk {
               }
               // A narrower integer key widened for the runtime: the same
               // key as the get's, widened the same way.
-              if r = st.rv, r.kind == mrk_cast() && r.ty == mt_i64(), a = r.a {
+              if r = st.rv, r.kind == mrk_cast && r.ty == mt_i64, a = r.a {
                 y = up_local(a)
                 if y >= 0 {
                   nk = s.k[y]
@@ -222,7 +222,7 @@ class UpWalk {
             s.k[p.local] = nk
           }
         }
-      } else if st.kind != msk_check_bounds() && st.kind != msk_barrier() && st.kind != msk_barrier_at() {
+      } else if st.kind != msk_check_bounds && st.kind != msk_barrier && st.kind != msk_barrier_at {
         // A bounds check traps or goes on; a barrier neither collects nor
         // touches the hash's values; anything else stops the pass.
         return false
@@ -231,13 +231,13 @@ class UpWalk {
     }
     t = blk.term
     if tm = t {
-      if tm.kind == mtk_unreachable() {
+      if tm.kind == mtk_unreachable {
         return true
       }
-      if tm.kind == mtk_return() {
+      if tm.kind == mtk_return {
         return false
       }
-      if tm.kind != mtk_goto() && tm.kind != mtk_branch() && tm.kind != mtk_switch() {
+      if tm.kind != mtk_goto && tm.kind != mtk_branch && tm.kind != mtk_switch {
         return false
       }
       self.through[b] = true
@@ -262,7 +262,7 @@ class UpWalk {
 fn up_derefs(p: MPlace): Int {
   n = 0
   for i in 0..p.proj.size {
-    if p.proj[i].kind == mpk_deref() {
+    if p.proj[i].kind == mpk_deref {
       n += 1
     }
   }
@@ -276,12 +276,12 @@ fn up_widened_from(blk: MBlock, j: Int, k: Int): Int {
   i = j - 1
   while i >= 0 {
     st = blk.stmts[i]
-    if st.kind == msk_assign() {
+    if st.kind == msk_assign {
       if p = st.place, p.local == k {
         if p.proj.size > 0 {
           return -1
         }
-        if r = st.rv, r.kind == mrk_cast() && r.ty == mt_i64(), a = r.a {
+        if r = st.rv, r.kind == mrk_cast && r.ty == mt_i64, a = r.a {
           y = up_local(a)
           if y < 0 {
             return -1
@@ -311,8 +311,8 @@ fn up_addr_taken(f: MFunc): Array(Bool) {
   out = mir_bools(f.locals.size, false)
   for blk in f.blocks {
     for st in blk.stmts {
-      if st.kind == msk_assign() {
-        if r = st.rv, r.kind == mrk_addr() || r.kind == mrk_addr_raw(), p = r.place, p.local >= 0 && p.local < out.size {
+      if st.kind == msk_assign {
+        if r = st.rv, r.kind == mrk_addr || r.kind == mrk_addr_raw, p = r.place, p.local >= 0 && p.local < out.size {
           out[p.local] = true
         }
       }
@@ -352,7 +352,7 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
   if kl >= 0 && taken[kl] {
     return false
   }
-  if kl < 0 && key.kind != mok_int() && key.kind != mok_str() {
+  if kl < 0 && key.kind != mok_int && key.kind != mok_str {
     return false
   }
   if st.dest < 0 || st.dest == hl || st.dest == kl {
@@ -397,12 +397,12 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
   st.collects = true
   for k in 0..w.site_b.size {
     sst = f.blocks[w.site_b[k]].stmts[w.site_j[k]]
-    rv2 = MRvalue.new(mrk_use())
-    rv2.a = MOperand.new(mok_copy(), -1)
+    rv2 = MRvalue.new(mrk_use)
+    rv2.a = MOperand.new(mok_copy, -1)
     if a = rv2.a {
       a.place = MPlace.new(st.dest)
     }
-    nst = MStmt.new(msk_assign(), sst.loc)
+    nst = MStmt.new(msk_assign, sst.loc)
     nst.place = MPlace.new(sst.dest)
     nst.rv = rv2
     f.blocks[w.site_b[k]].stmts[w.site_j[k]] = nst
@@ -423,7 +423,7 @@ pub fn mir_upsert_pass(m: MModule): Int {
         j = 0
         while j < blk.stmts.size && !has {
           st = blk.stmts[j]
-          has = st.kind == msk_call() && up_name(st.callee).size > 0
+          has = st.kind == msk_call && up_name(st.callee).size > 0
           j += 1
         }
         b += 1
@@ -437,7 +437,7 @@ pub fn mir_upsert_pass(m: MModule): Int {
         j = 0
         while j < f.blocks[b].stmts.size {
           st = f.blocks[b].stmts[j]
-          if st.kind == msk_call() && up_name(st.callee).size > 0 && up_try(m, f, b, j, preds, taken) {
+          if st.kind == msk_call && up_name(st.callee).size > 0 && up_try(m, f, b, j, preds, taken) {
             n += 1
             // The new local is not address-taken.
             taken.push(false)

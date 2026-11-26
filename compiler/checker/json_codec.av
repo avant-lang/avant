@@ -56,7 +56,7 @@ pub fn json_std_type(ty: Ty, name: String): Bool {
 
 // s as an Avant string literal.
 pub fn json_quote(s: String): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("\"")
   for c in s.bytes {
     if c == 92 {
@@ -79,7 +79,7 @@ pub fn json_quote(s: String): String {
 // underscores.
 pub fn json_key(ty: Ty): String {
   raw = "${ty.mod_name}_${mangle_ty(ty)}"
-  b = buf_new()
+  b = Buf.new()
   for c in raw.bytes {
     if c == 95 || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
       b.push_byte(c)
@@ -322,7 +322,7 @@ pub fn (checker_self: Checker) json_not_a_type(arg: Expr): Ty {
 // The type an argument names: `Point`, `geo.Point`, `Box(Int)`,
 // `Array(Point)`, `Hash(String, Point)`; nil for any other expression.
 pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     if found = checker_self.lookup(e.ident) {
       return nil
     }
@@ -331,7 +331,7 @@ pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
     tn.args.concat(e.type_args)
     return tn
   }
-  if e.kind == ex_field() {
+  if e.kind == ex_field {
     checker_self.qualify_last_name(e)
     segs: Array(String) = []
     if !checker_self.ident_chain(e, segs) || segs.size < 2 {
@@ -344,7 +344,7 @@ pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
     tn.mod_name = checker_self.join_segs(segs, segs.size - 1)
     return tn
   }
-  if e.kind == ex_call() && e.field_exprs.size == 0 {
+  if e.kind == ex_call && e.field_exprs.size == 0 {
     if b = e.block {
       return nil
     }
@@ -481,9 +481,9 @@ pub fn json_mark_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeNam
 }
 
 pub fn json_mark_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
-  if e.kind == ex_struct() || e.kind == ex_name() {
+  if e.kind == ex_struct || e.kind == ex_name {
     for i in 0..from.size {
-      if (e.kind == ex_struct() && e.type_name == from[i]) || (e.kind == ex_name() && e.ident == from[i]) {
+      if (e.kind == ex_struct && e.type_name == from[i]) || (e.kind == ex_name && e.ident == from[i]) {
         e.derived = true
         e.elem_type = clone_type_name(to[i])
       }
@@ -543,7 +543,7 @@ pub fn (checker_self: Checker) json_decode_root(ty: Ty, loc: Location): FuncSig?
   gen = JsonGen.new()
   t0 = gen.ph(ty)
   deps: Array(Ty) = []
-  b = buf_new()
+  b = Buf.new()
   b.push_str("fn ${name}(text: String, ignore_unknown: Bool = false, max_depth: Int = 256, max_bytes: Int? = nil, max_entries: Int? = nil): ${t0} | JsonError {\n")
   b.push_str("  doc = Json.parse(text, max_depth: max_depth, max_bytes: max_bytes, max_entries: max_entries)?\n")
   b.push_str("  v = ${json_dec_call(ty, "doc", deps)} else e {\n")
@@ -651,7 +651,7 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
   gen = JsonGen.new()
   t0 = gen.ph(ty)
   deps: Array(Ty) = []
-  b = buf_new()
+  b = Buf.new()
   b.push_str("fn ${name}(j: Json, ignore_unknown: Bool): ${t0} | JsonError {\n")
   if ty.is_enum() {
     names = ""
@@ -707,7 +707,7 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
     b.push_str("  key = jsonc.avant_json_first_key(j.node)\n")
     b.push_str("  i = 0\n")
     b.push_str("  while kn = key {\n")
-    b.push_str("    k = jsonc.avant_json_as_str(kn)\n")
+    b.push_str("    k = jsonc.avant_json_name(kn)\n")
     b.push_str("    vn = jsonc.avant_json_next(kn) ?? return codec_wrong(j.node, \"an object\")\n")
     b.push_str("    if !out.has(k) {\n")
     inner = vt
@@ -783,13 +783,21 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
     reader = json_scalar_reader(inner)
     if reader.size > 0 {
       // A scalar is read by name in one runtime call, as `doc.f64(name)`
-      // reads it; only a miss looks again, to tell a member that is
-      // absent from one of another kind.
-      b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
-      if inner.is_float() {
-        b.push_str("  if r${i} == r${i} {\n")
+      // reads it, the answer in the call's result: a string or nil, a
+      // Bool's 1 or 0 or -1, a number or NaN, an integer or Int.min (the
+      // status read only then, to tell a real Int.min); only a miss looks
+      // again, to tell a member that is absent from one of another kind.
+      if inner.is_string() {
+        b.push_str("  if r${i} = jsonc.${reader}(j.node, ${key}) {\n")
       } else {
-        b.push_str("  if jsonc.avant_json_take_status() == 0 {\n")
+        b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
+        if inner.is_float() {
+          b.push_str("  if r${i} == r${i} {\n")
+        } else if inner.is_bool() {
+          b.push_str("  if r${i} >= 0 {\n")
+        } else {
+          b.push_str("  if r${i} != Int.min || jsonc.avant_json_take_status() == 0 {\n")
+        }
       }
       b.push_str("    found += 1\n")
       if inner.is_bool() {
@@ -849,7 +857,7 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
   b.push_str("      return u\n")
   b.push_str("    }\n")
   b.push_str("  }\n")
-  lit = buf_new()
+  lit = Buf.new()
   lit.push_str("${t0} {")
   first = true
   for i in 0..ty.fields.size {
@@ -899,7 +907,7 @@ pub fn (checker_self: Checker) json_encode_root(ty: Ty, loc: Location): FuncSig?
   enc = checker_self.json_enc_sig(ty, loc) ?? return nil
   gen = JsonGen.new()
   t0 = gen.ph(ty)
-  b = buf_new()
+  b = Buf.new()
   b.push_str("fn ${name}(value: ${t0}): String {\n")
   b.push_str("  b = Buf.new()\n")
   b.push_str("  ${enc.node.emit_name}(b, value)\n")
@@ -924,7 +932,7 @@ pub fn (checker_self: Checker) json_enc_fn(ty: Ty, loc: Location): String {
   // Registered before its body's functions are written (each looks for
   // the others by name), so a class that holds itself writes itself; its
   // text is complete before any of them is written.
-  body = buf_new()
+  body = Buf.new()
   deps: Array(Ty) = []
   if ty.is_array() {
     et = ty.inner ?? ty
@@ -991,7 +999,7 @@ pub fn json_enc_inline(b: Buf, ind: String, ty: Ty, x: String, gen: JsonGen, dep
     return
   }
   if ty.is_int() {
-    b.push_str("${ind}b.push_fmt_i(${x})\n")
+    b.push_str("${ind}b.push_str(\"\${${x}}\")\n")
   } else if ty.is_float() {
     b.push_str("${ind}codec_enc_f64(b, ${x})\n")
   } else if ty.is_string() {

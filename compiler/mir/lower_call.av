@@ -54,7 +54,7 @@ pub fn (lw: MirLower) lower_args(args: Array(Expr)): Array(MOperand) {
 // A call into a fresh temporary of type ty (none when ty is void).
 pub fn (lw: MirLower) call_to(ty: Int, callee: String, args: Array(MOperand)): MOperand {
   b = lw.lw_b
-  if ty == mt_void() {
+  if ty == mt_void {
     b.call(-1, callee, args)
     return b.c_i32(0)
   }
@@ -66,7 +66,7 @@ pub fn (lw: MirLower) call_to(ty: Int, callee: String, args: Array(MOperand)): M
 pub fn (lw: MirLower) call_f64(callee: String, a: MOperand): MOperand {
   args: Array(MOperand) = []
   args.push(a)
-  lw.call_to(mt_f64(), callee, args)
+  lw.call_to(mt_f64, callee, args)
 }
 
 pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
@@ -104,7 +104,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   if recv = e.receiver {
-    if recv.kind == ex_name() && recv.ident == "Float64" && e.callee == "from_bits" && e.args.size == 1 && e.resolved.size == 0 {
+    if recv.kind == ex_name && recv.ident == "Float64" && e.callee == "from_bits" && e.args.size == 1 && e.resolved.size == 0 {
       // Float64.from_bits(u): a bitcast of the 64 bits.
       u = lw.lower_expr(e.args[0])
       if lw.failed() {
@@ -113,9 +113,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       lw.at(e.loc)
       args0: Array(MOperand) = []
       args0.push(u)
-      return lw.call_to(mt_f64(), "avant_bits_u64_to_f64", args0)
+      return lw.call_to(mt_f64, "avant_bits_u64_to_f64", args0)
     }
-    if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_utf8" && e.args.size == 1 {
+    if recv.kind == ex_name && recv.ident == "String" && e.callee == "from_utf8" && e.args.size == 1 {
       // String.from_utf8(bytes) (builtins.av emit_from_utf8): the
       // runtime's string with an ok flag, as String?.
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
@@ -134,10 +134,10 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     if e.resolved == "carray.to_s" {
       return lw.lower_carray_to_s(e, recv)
     }
-    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && e.callee == "from_c" && e.args.size == 2 {
+    if recv.kind == ex_name && (recv.ident == "String" || recv.ident == "Bytes") && e.callee == "from_c" && e.args.size == 2 {
       return lw.lower_from_c(e, recv.ident)
     }
-    if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_code_point" && e.args.size == 1 {
+    if recv.kind == ex_name && recv.ident == "String" && e.callee == "from_code_point" && e.args.size == 1 {
       // String.from_code_point(n): the runtime's UTF-8 of one code point
       // (it traps outside them).
       ops = lw.lower_args(e.args)
@@ -145,7 +145,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
         return zero
       }
       lw.at(e.loc)
-      return lw.call_to(mt_str(), "avant_str_from_code_point", ops)
+      return lw.call_to(mt_str, "avant_str_from_code_point", ops)
     }
     if rt = recv.ty {
       if e.callee == "or" && rt.is_union() && e.args.size == 1 {
@@ -178,7 +178,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return zero
         }
         lw.at(e.loc)
-        return lw.tmp(mt_int(), lw.lw_b.rv_cast(v, mt_int()))
+        return lw.tmp(mt_int, lw.lw_b.rv_cast(v, mt_int))
       }
       if (mir_is_str_ty(rt) || rt.is_buf()) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
@@ -197,7 +197,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
         args2: Array(MOperand) = []
         args2.push(x)
         args2.push(y)
-        return lw.call_to(mt_f64(), float_math_binary(e.callee), args2)
+        return lw.call_to(mt_f64, float_math_binary(e.callee), args2)
       }
       if (mir_is_str_ty(rt) || rt.is_buf()) && e.resolved.size == 0 {
         if found = lw.seq_search(e, recv, rt, e.callee, e.args) {
@@ -266,7 +266,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     if c == "now_us" {
       unit = "us"
     }
-    return lw.call_to(mt_i64(), "avant_clock_${unit}", none)
+    return lw.call_to(mt_i64, "avant_clock_${unit}", none)
   }
   if mir_str_builtin_arity(c) == e.args.size {
     return lw.lower_str_builtin(e, c)
@@ -315,32 +315,32 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
     return b.c_i32(0)
   }
   lw.at(loc)
-  if !unsigned && ty == mt_f64() {
+  if !unsigned && ty == mt_f64 {
     b.call(-1, "avant_puts_f64", lw.one(v))
     return b.c_i32(0)
   }
-  if !unsigned && ty == mt_str() {
+  if !unsigned && ty == mt_str {
     b.call(-1, "avant_puts_str", lw.one(v))
     return b.c_i32(0)
   }
-  if !unsigned && ty == mt_bool() {
-    w = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+  if !unsigned && ty == mt_bool {
+    w = lw.tmp(mt_i32, b.rv_cast(v, mt_i32))
     b.call(-1, "avant_puts_bool", lw.one(w))
     return b.c_i32(0)
   }
-  if unsigned || ty == mt_u32() || ty == mt_u64() {
-    if ty == mt_i32() {
-      v = lw.tmp(mt_u32(), b.rv_cast(v, mt_u32()))
-      ty = mt_u32()
+  if unsigned || ty == mt_u32 || ty == mt_u64 {
+    if ty == mt_i32 {
+      v = lw.tmp(mt_u32, b.rv_cast(v, mt_u32))
+      ty = mt_u32
     }
-    if ty != mt_u64() {
-      v = lw.tmp(mt_u64(), b.rv_cast(v, mt_u64()))
+    if ty != mt_u64 {
+      v = lw.tmp(mt_u64, b.rv_cast(v, mt_u64))
     }
     b.call(-1, "avant_puts_u64", lw.one(v))
     return b.c_i32(0)
   }
-  if ty != mt_i64() {
-    v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
+  if ty != mt_i64 {
+    v = lw.tmp(mt_i64, b.rv_cast(v, mt_i64))
   }
   b.call(-1, "avant_puts_i64", lw.one(v))
   b.c_i32(0)
@@ -358,22 +358,22 @@ pub fn (lw: MirLower) lower_out(arg: Expr, how: Int, loc: Location): MOperand {
     return b.c_i32(0)
   }
   lw.at(loc)
-  if ty == mt_str() {
+  if ty == mt_str {
     return lw.lower_out_str(v, false, how)
   }
   f = "avant_out_i64"
-  if ty == mt_f64() {
+  if ty == mt_f64 {
     f = "avant_out_f64"
-  } else if ty == mt_bool() {
+  } else if ty == mt_bool {
     f = "avant_out_bool"
-    v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
-  } else if ty == mt_u32() || ty == mt_u64() {
+    v = lw.tmp(mt_i32, b.rv_cast(v, mt_i32))
+  } else if ty == mt_u32 || ty == mt_u64 {
     f = "avant_out_u64"
-    if ty != mt_u64() {
-      v = lw.tmp(mt_u64(), b.rv_cast(v, mt_u64()))
+    if ty != mt_u64 {
+      v = lw.tmp(mt_u64, b.rv_cast(v, mt_u64))
     }
-  } else if ty != mt_i64() {
-    v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
+  } else if ty != mt_i64 {
+    v = lw.tmp(mt_i64, b.rv_cast(v, mt_i64))
   }
   args: Array(MOperand) = []
   args.push(v)
@@ -405,8 +405,8 @@ pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
   if lw.failed() {
     return b.c_i32(0)
   }
-  if lw.ety(e.args[0]) != mt_int() {
-    v = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
+  if lw.ety(e.args[0]) != mt_int {
+    v = lw.tmp(mt_int, b.rv_cast(v, mt_int))
   }
   st = lw.exit_status(v, e.loc)
   b.call(-1, "avant_exit", lw.one(st))
@@ -494,7 +494,7 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
         return lw.lw_b.c_i32(0)
       }
       lw.at(e.loc)
-      raw2 = lw.tmp(mt_i32(), lw.lw_b.rv_use(lw.lw_b.copy(p2)))
+      raw2 = lw.tmp(mt_i32, lw.lw_b.rv_use(lw.lw_b.copy(p2)))
       return lw.enum_from_c(raw2, et, e.loc)
     }
     // A field declared a plain `String` traps on a NULL first
@@ -554,7 +554,7 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
       // The same 64 bits, as a UInt64: a bitcast.
       args: Array(MOperand) = []
       args.push(v)
-      return lw.call_to(mt_u64(), "avant_bits_f64_to_u64", args)
+      return lw.call_to(mt_u64, "avant_bits_f64_to_u64", args)
     }
   } else {
     if name == "to_i" || name == "to_u64" || name == "to_i32" || name == "to_u32" {
@@ -573,9 +573,9 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
     if op.size > 0 {
       // One LLVM operation on the value's bits (64 or 32 of them); the
       // count as an Int.
-      w = mt_i64()
-      if from == mt_i32() || from == mt_u32() {
-        w = mt_i32()
+      w = mt_i64
+      if from == mt_i32 || from == mt_u32 {
+        w = mt_i32
       }
       x = v
       if from != w {
@@ -584,14 +584,14 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
       args: Array(MOperand) = []
       args.push(x)
       wn = "i64"
-      if w == mt_i32() {
+      if w == mt_i32 {
         wn = "i32"
       }
       r = lw.call_to(w, "avant_bits_${op}_${wn}", args)
-      if w == mt_i64() {
+      if w == mt_i64 {
         return r
       }
-      return lw.tmp(mt_i64(), b.rv_cast(r, mt_i64()))
+      return lw.tmp(mt_i64, b.rv_cast(r, mt_i64))
     }
   }
   lw.refuse(e.loc, "the member .${name} of ${ot.show()}")
@@ -604,20 +604,20 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(ty)
   b.assign(b.pl(d), b.rv_use(v))
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(d), lw.int_const(ty, 0)))
+  c = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(d), lw.int_const(ty, 0)))
   neg = b.block()
   join = b.block()
   b.branch(c, neg, join)
   b.at(neg)
   min = lw.int_const(ty, 0 - 2147483647 - 1)
-  if ty == mt_i64() {
+  if ty == mt_i64 {
     min = lw.int_const(ty, 0 - 9223372036854775807 - 1)
   }
-  is_min = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(d), min))
+  is_min = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(d), min))
   ok = lw.trap_open(is_min, true)
   none: Array(MOperand) = []
   lw.trap_close(ok, "avant_trap_overflow", none, loc)
-  b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
+  b.assign(b.pl(d), b.rv_un(mop_neg, b.copy_local(d)))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
@@ -626,20 +626,20 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
 // The kinds of avant_trap_convert: 16 + from * 4 + to, each 0 Int, 1
 // Int32, 2 UInt64, 3 UInt32.
 pub fn mir_convert_code(ty: Int): Int {
-  if ty == mt_i32() {
+  if ty == mt_i32 {
     return 1
   }
-  if ty == mt_u64() {
+  if ty == mt_u64 {
     return 2
   }
-  if ty == mt_u32() {
+  if ty == mt_u32 {
     return 3
   }
   0
 }
 
 pub fn mir_int_signed(ty: Int): Bool {
-  ty == mt_i32() || ty == mt_i64()
+  ty == mt_i32 || ty == mt_i64
 }
 
 // to_i, to_i32, to_u64, to_u32 between
@@ -653,35 +653,35 @@ pub fn (lw: MirLower) int_convert(v: MOperand, from: Int, to: Int, loc: Location
   if to == from {
     return v
   }
-  if (from == mt_i32() && to == mt_i64()) || (from == mt_u32() && (to == mt_i64() || to == mt_u64())) {
+  if (from == mt_i32 && to == mt_i64) || (from == mt_u32 && (to == mt_i64 || to == mt_u64)) {
     return lw.tmp(to, b.rv_cast(v, to))
   }
   x = b.temp(from)
   b.assign(b.pl(x), b.rv_use(v))
   inside = b.c_bool(true)
   if mir_int_signed(from) {
-    c0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(from, 0)))
-    if to == mt_i32() {
-      lo = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i64(0 - 2147483648)))
-      hi = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(2147483647)))
-      inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), lo, hi))
-    } else if to == mt_u32() && from == mt_i64() {
-      hi2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(4294967295)))
-      inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c0, hi2))
+    c0 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(x), lw.int_const(from, 0)))
+    if to == mt_i32 {
+      lo = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(x), b.c_i64(0 - 2147483648)))
+      hi = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), b.c_i64(2147483647)))
+      inside = lw.tmp(mt_bool, b.rv_bin(mop_and, lo, hi))
+    } else if to == mt_u32 && from == mt_i64 {
+      hi2 = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), b.c_i64(4294967295)))
+      inside = lw.tmp(mt_bool, b.rv_bin(mop_and, c0, hi2))
     } else {
       inside = c0
     }
-  } else if to == mt_i64() {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(9223372036854775807)))
-  } else if to == mt_i32() {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(from, 2147483647)))
+  } else if to == mt_i64 {
+    inside = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), b.c_u64(9223372036854775807)))
+  } else if to == mt_i32 {
+    inside = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), lw.int_const(from, 2147483647)))
   } else {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(4294967295)))
+    inside = lw.tmp(mt_bool, b.rv_cmp(mop_le, b.copy_local(x), b.c_u64(4294967295)))
   }
   ok = lw.trap_open(inside, false)
   wide = b.copy_local(x)
-  if from != mt_i64() {
-    wide = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  if from != mt_i64 {
+    wide = lw.tmp(mt_i64, b.rv_cast(b.copy_local(x), mt_i64))
   }
   kind = 16 + mir_convert_code(from) * 4 + mir_convert_code(to)
   lw.trap_close(ok, "avant_trap_convert", lw.two(wide, b.c_i32(kind)), loc)
@@ -694,16 +694,16 @@ pub fn (lw: MirLower) int_convert(v: MOperand, from: Int, to: Int, loc: Location
 // inside [-2^63, 2^63), both bounds exact doubles.
 pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
-  x = b.temp(mt_f64())
+  x = b.temp(mt_f64)
   b.assign(b.pl(x), b.rv_use(v))
   lo = b.c_f64(mir_f64_bits(-9223372036854775808.0), "-9223372036854775808.0")
   hi = b.c_f64(mir_f64_bits(9223372036854775808.0), "9223372036854775808.0")
-  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lo))
-  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(x), hi))
-  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  c1 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(x), lo))
+  c2 = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(x), hi))
+  inside = lw.tmp(mt_bool, b.rv_bin(mop_and, c1, c2))
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_to_i", lw.one(b.copy_local(x)), loc)
-  lw.tmp(mt_int(), b.rv_cast(b.copy_local(x), mt_int()))
+  lw.tmp(mt_int, b.rv_cast(b.copy_local(x), mt_int))
 }
 
 // The value of the member named member of the enum t, a constant of the
@@ -733,8 +733,8 @@ pub fn (lw: MirLower) lower_hasher_add(e: Expr, recv: Expr): MOperand {
   ops.push(h)
   if at = arg.ty, at.is_string() {
     ops.push(v)
-    return lw.call_to(mt_void(), "avant_hasher_add_str", ops)
+    return lw.call_to(mt_void, "avant_hasher_add_str", ops)
   }
-  ops.push(lw.tmp(mt_u64(), b.rv_cast(v, mt_u64())))
-  lw.call_to(mt_void(), "avant_hasher_add", ops)
+  ops.push(lw.tmp(mt_u64, b.rv_cast(v, mt_u64)))
+  lw.call_to(mt_void, "avant_hasher_add", ops)
 }

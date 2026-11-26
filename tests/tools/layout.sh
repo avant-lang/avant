@@ -13,9 +13,15 @@
 #   flag-small: one whose time moved 1% (or 0.01 s) is not;
 #   retime-follows: tools/layout-retime.sh in a fake checkout whose stub
 #     C' makes the shifted binary (`--cc`) slower: the runs alternate and
-#     the verdict is that the time follows the layout;
-#   retime-overlap: with both binaries alike (each run 0.05 s or 0.25 s
-#     in turn, so their ranges overlap whatever the noise), "not separated";
+#     the verdict is that the time follows the layout. The walls come from
+#     a stub timer (LAYOUT_TIME) that reads the figure each run declares
+#     (0.05 s, 0.4 s for the shifted binary), not from a clock, so the load
+#     of the machine cannot move them;
+#   retime-overlap: with both binaries alike (each run declares 0.05 s or
+#     0.25 s in turn, so their ranges overlap), "not separated";
+#   retime-real-timer: the same tool with /usr/bin/time prints each run's
+#     wall, user and involuntary switches as numbers (their values are the
+#     machine's, so only their form is checked);
 #   retime-args: the stub saw the harness's compile arguments and the
 #     shift's C file, and nothing is left in TMPDIR;
 #   cc-shifts: tools/layout-cc.sh as CC links a C program as asked and once
@@ -23,6 +29,13 @@
 #     later in the others, each of which runs;
 #   cc-passthrough: a compile (-c) and a link without LAYOUT_DIR pass
 #     through untouched; cc-bad-shift: a shift not a multiple of 64 fails;
+#   cc-runtime-shift: a shift r128 links the program with the runtime's
+#     objects alone 128 bytes later (main where it was, the runtime's
+#     function 128 bytes on), and it runs; cc-runtime-shift-hot: in a link
+#     with the hot-section script, r128 moves the hot section's function
+#     alone (main and the runtime's cold function where they were);
+#     check-build-runtime-shift: layout-check.sh build at "0 r128" links
+#     the r128 layout with main where it was and avant_alloc 128 bytes on;
 #   rounds-identical-skipped, rounds-identical-timed: with two sides, a
 #     task whose binaries are byte-identical on both at every layout is not
 #     timed and is named (output, session.txt, identical.tsv, rounds.md);
@@ -81,6 +94,9 @@
 #     64 KB higher in its anonymous peak, run after run (ru_maxrss moves by 0
 #     or 256 KB there; the whole peak moves with the page cache's state of
 #     the program's files too), with its exit status and at least one reading;
+#   peak-forks, peak-threads: tools/la-run.c -p with 300 forked processes (the
+#     peak is the biggest one's) and with eight threads (their pages together),
+#     each stop read, the statm files kept open between them;
 #   run-path: tools/la-run.c starts a program from two directories of
 #     different lengths with the same argv[0] and auxiliary-vector name
 #     (/dev/fd/200), and as one more argv[0] with -n.
@@ -110,34 +126,51 @@ f=$w/fake/avant; mkdir -p "$f/tools/layout" "$f/bin"
 cp "$root/tools/layout-retime.sh" "$f/tools/"; cp "$root/tools/layout/plt.c" "$f/tools/layout/"
 cat > "$f/bin/avant-c-llvm" <<'STUB'
 #!/bin/sh
-# compile SRC OUT ARGS...: a program that sleeps, longer with --cc when
-# STUB_SLOW_SHIFT=1; the arguments are logged. With STUB_SPREAD=1 each
-# binary's runs sleep 0.05 s and 0.25 s in turn (its own counter), so the
-# two ranges overlap by construction: a noisy machine cannot separate
-# two alike binaries by chance.
+# compile SRC OUT ARGS...: a program that declares the wall time of each
+# of its runs (in OUT.wall, read by the stub timer below): 0.05 s, 0.4 s with
+# --cc when STUB_SLOW_SHIFT=1; with STUB_SPREAD=1 each binary's runs declare
+# 0.05 s and 0.25 s in turn (its own counter), so the two ranges overlap by
+# construction. The arguments are logged. With STUB_REAL=1 the program
+# really sleeps 0.05 s instead.
 [ "$1" = compile ] || exit 2
 src=$2 out=$3; shift 3
 echo "$*" >> "$STUB_ARGS"
 d=0.05
 case " $* " in *" --cc "*) [ "${STUB_SLOW_SHIFT:-0}" = 1 ] && d=0.4 ;; esac
-if [ "${STUB_SPREAD:-0}" = 1 ]; then
-  printf '#!/bin/sh\nn=$(cat "%s.n" 2>/dev/null || echo 0); echo $((n + 1)) > "%s.n"\nif [ $((n %% 2)) = 1 ]; then sleep 0.25; else sleep 0.05; fi\necho checksum-1\n' "$out" "$out" > "$out"
+if [ "${STUB_REAL:-0}" = 1 ]; then
+  printf '#!/bin/sh\nsleep 0.05\necho checksum-1\n' > "$out"
+elif [ "${STUB_SPREAD:-0}" = 1 ]; then
+  printf '#!/bin/sh\nn=$(cat "%s.n" 2>/dev/null || echo 0); echo $((n + 1)) > "%s.n"\nif [ $((n %% 2)) = 1 ]; then echo 0.25; else echo 0.05; fi > "%s.wall"\necho checksum-1\n' "$out" "$out" "$out" > "$out"
 else
-  printf '#!/bin/sh\nsleep %s\necho checksum-1\n' "$d" > "$out"
+  printf '#!/bin/sh\necho %s > "%s.wall"\necho checksum-1\n' "$d" "$out" > "$out"
 fi
 chmod +x "$out"
 STUB
 chmod +x "$f/bin/avant-c-llvm"
+cat > "$f/bin/stub-time" <<'STUB'
+#!/bin/sh
+# stub-time -f FORMAT -o FILE COMMAND...: runs COMMAND and writes "WALL 0.00 0"
+# to FILE, WALL being what the program (the last word) declared in PROGRAM.wall.
+of=$4; shift 4
+"$@"; rc=$?
+for last; do :; done
+echo "$(cat "$last.wall") 0.00 0" > "$of"
+exit $rc
+STUB
+chmod +x "$f/bin/stub-time"
 la=$w/part; mkdir -p "$la/avant/langarena/tmp" "$la/args"
 echo 'task' > "$la/avant/langarena/tmp/a_task.av"; printf -- '--release\n--cpu=v3\n' > "$la/args/a_task"
 mkdir -p "$w/tmp"
-(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args1.log" STUB_SLOW_SHIFT=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime1.out" 2>&1); rc=$?
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args1.log" LAYOUT_TIME="$f/bin/stub-time" STUB_SLOW_SHIFT=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime1.out" 2>&1); rc=$?
 [ $rc -eq 0 ] && [ "$(grep -c '^a_task plain wall=' "$w/retime1.out")" = 3 ] && [ "$(grep -c '^a_task shifted wall=' "$w/retime1.out")" = 3 ] \
   && grep -q '^verdict: the time follows the layout (median +[0-9.]*% with the code shifted)$' "$w/retime1.out"
 say retime-follows $? "rc=$rc $(tr '\n' ';' < "$w/retime1.out")"
-(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" STUB_SPREAD=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args2.log" LAYOUT_TIME="$f/bin/stub-time" STUB_SPREAD=1 sh tools/layout-retime.sh "$la" a_task 3 < /dev/null > "$w/retime2.out" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -q '^verdict: not separated' "$w/retime2.out"
 say retime-overlap $? "rc=$rc $(tr '\n' ';' < "$w/retime2.out")"
+(cd "$f" && env TMPDIR="$w/tmp" STUB_ARGS="$w/args3.log" STUB_REAL=1 sh tools/layout-retime.sh "$la" a_task 2 < /dev/null > "$w/retime3.out" 2>&1); rc=$?
+[ $rc -eq 0 ] && [ "$(grep -c '^a_task \(plain\|shifted\) wall=[0-9.][0-9.]* user=[0-9.][0-9.]* invol=[0-9][0-9]*$' "$w/retime3.out")" = 4 ] && grep -q '^verdict: ' "$w/retime3.out"
+say retime-real-timer $? "rc=$rc $(tr '\n' ';' < "$w/retime3.out")"
 grep -qx -- '--release --cpu=v3' "$w/args1.log" && grep -qx -- "--release --cpu=v3 --cc $f/tools/layout/plt.c" "$w/args1.log" && [ -z "$(ls "$w/tmp")" ]
 say retime-args $? "$(tr '\n' ';' < "$w/args1.log"); left: $(ls "$w/tmp" | tr '\n' ' ')"
 # 3. The CC wrapper, on a real link.
@@ -157,6 +190,22 @@ say cc-passthrough $? "rc=$rc $(cat "$c/log2")"
 (cd "$c" && env LAYOUT_DIR="$c/lay3" LAYOUT_SHIFTS="0 48" sh "$root/tools/layout-cc.sh" p.o -o r < /dev/null > "$c/log3" 2>&1); rc=$?
 [ $rc -eq 2 ] && grep -q 'shift 48 is not a multiple of 64' "$c/log3"
 say cc-bad-shift $? "rc=$rc $(cat "$c/log3")"
+# The runtime alone moved: a program object and a runtime object at a
+# runtime/build path, linked plainly and then with the hot-section script.
+printf 'int rt_cold(int x) { return x + 1; }\n__attribute__((section(".avant_hot.5.rt_hot"))) int rt_hot(int x) { return x * 2; }\n' > "$c/rt.c"
+mkdir -p "$c/runtime/build"; cc -c -O1 -falign-functions=64 -o "$c/runtime/build/avant_rt.o" "$c/rt.c"
+printf 'int rt_cold(int); int rt_hot(int);\nint main(void) { return rt_cold(rt_hot(0)) - 1; }\n' > "$c/m.c"; cc -c -O1 -falign-functions=64 -o "$c/m.o" "$c/m.c"
+sym() { nm "$1" 2>/dev/null | awk -v s="$2" '$3 == s { print $1 }'; }
+(cd "$c" && env CC= LAYOUT_DIR="$c/lay4" LAYOUT_SHIFTS="0 r128" sh "$root/tools/layout-cc.sh" m.o "$c/runtime/build/avant_rt.o" -o rp < /dev/null > "$c/log4" 2>&1); rc=$?
+m0=$(sym "$c/lay4/0/rp" main); m1=$(sym "$c/lay4/r128/rp" main); k0=$(sym "$c/lay4/0/rp" rt_cold); k1=$(sym "$c/lay4/r128/rp" rt_cold)
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ $((0x$k1 - 0x$k0)) = 128 ] && "$c/lay4/r128/rp"
+say cc-runtime-shift $? "rc=$rc main at $m0 $m1, rt_cold at $k0 $k1; $(cat "$c/log4")"
+printf 'SECTIONS\n{\n  .avant_hot ALIGN(4096) : { *(SORT(.avant_hot.*)) }\n}\nINSERT AFTER .text;\n' > "$c/avant_hot.ld"
+(cd "$c" && env CC= LAYOUT_DIR="$c/lay5" LAYOUT_SHIFTS="0 r128" sh "$root/tools/layout-cc.sh" m.o "$c/runtime/build/avant_rt.o" -fuse-ld=bfd "-Wl,-T,$c/avant_hot.ld" -o hp < /dev/null > "$c/log5" 2>&1); rc=$?
+m0=$(sym "$c/lay5/0/hp" main); m1=$(sym "$c/lay5/r128/hp" main); k0=$(sym "$c/lay5/0/hp" rt_cold); k1=$(sym "$c/lay5/r128/hp" rt_cold)
+h0=$(sym "$c/lay5/0/hp" rt_hot); h1=$(sym "$c/lay5/r128/hp" rt_hot)
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ -n "$k0" ] && [ "$k0" = "$k1" ] && [ -n "$h0" ] && [ $((0x$h1 - 0x$h0)) = 128 ] && "$c/lay5/r128/hp"
+say cc-runtime-shift-hot $? "rc=$rc main at $m0 $m1, rt_cold at $k0 $k1, rt_hot at $h0 $h1; $(cat "$c/log5")"
 
 # 4. rounds.py --layouts: two fake layouts of one fake task.
 r=$w/rl; mkdir -p "$r/bin/0" "$r/bin/64"
@@ -399,6 +448,11 @@ LAYOUT_CHECK_RUNTIME=fixed LAYOUT_CHECK_SHIFTS="0" LAYOUT_CHECK_SUBLINE="16" sh 
 a16=$(nm "$lm/d2/layouts/16/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
 [ $rc -eq 0 ] && [ $((0x$a16 % 64)) -eq 0 ] && [ "$(cat "$lm/d2/method.txt")" = "runtime: fixed" ]
 say check-build-runtime-fixed $? "rc=$rc alloc@16=$a16"
+LAYOUT_CHECK_SHIFTS="0 r128" LAYOUT_CHECK_SUBLINE="" sh "$lm/root/tools/layout-check.sh" build "$lm/la" "$lm/d3" x_one < /dev/null > "$lm/log3" 2>&1; rc=$?
+m0=$(nm "$lm/d3/layouts/0/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }'); m1=$(nm "$lm/d3/layouts/r128/x_one" 2>/dev/null | awk '$3 == "main" { print $1 }')
+a0=$(nm "$lm/d3/layouts/0/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }'); a1=$(nm "$lm/d3/layouts/r128/x_one" 2>/dev/null | awk '$3 == "avant_alloc" { print $1 }')
+[ $rc -eq 0 ] && [ -n "$m0" ] && [ "$m0" = "$m1" ] && [ $((0x$a1 - 0x$a0)) = 128 ] && [ "$(cat "$lm/d3/shifts.txt")" = "0 r128" ] && "$lm/d3/layouts/r128/x_one" < /dev/null; r=$?
+say check-build-runtime-shift $r "rc=$rc main at $m0 $m1, avant_alloc at $a0 $a1; $(tail -2 "$lm/log3" | tr '\n' ';')"
 sh "$lm/root/tools/layout-runtime.sh" --check "$lm/root/runtime" 0 "$lm/rt0" < /dev/null; rc=$?
 [ $rc -eq 0 ]
 say runtime-shift0-same $? "rc=$rc"
@@ -429,7 +483,8 @@ o3=$(python3 -I "$root/tools/la-mem.py" "$lmm/base-exact.tsv" "$lmm/head-exact.t
   && [ $rc3 -eq 0 ] && echo "$o3" | grep -q '^peaks read: exact$' && echo "$o3" | grep -q '^average peak over 3 tasks: .*: lower$'
 say mem-method $? "rc=$rc1/$rc2/$rc3 $(tr '\n' ';' < "$lmm/mixed.out")"
 
-# 11. tools/la-run.c -p: an exact peak, 4 KB per page touched.
+# 11. tools/la-run.c -p: an exact peak, 4 KB per page touched; with forked
+# processes and with threads.
 lp=$w/lp; mkdir -p "$lp"
 cat > "$lp/touch.c" <<'TOUCH'
 #include <stdlib.h>
@@ -452,6 +507,57 @@ for k in 1 2 3; do
 done
 [ $ok -eq 0 ]
 say peak-exact $? "rc=$rc anon/anon+16/readings:$d"
+# The statm file of each thread stays open between stops: the processes a
+# program forks (300 of them, their numbers reused by the cache's slots) and
+# the threads it starts are each read in their own, the largest reading is the
+# largest of any of them (the biggest child's, 550 pages, or all the threads'
+# 1600 pages together), and every stop is read.
+cat > "$lp/many.c" <<'MANY'
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+static pthread_barrier_t bar;
+static void *thread(void *arg) {
+  char *p = mmap(0, 200 * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  for (int i = 0; i < 200; i++) p[i * 4096] = 1;
+  pthread_barrier_wait(&bar);
+  munmap(p, 200 * 4096);
+  return arg;
+}
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "forks") == 0) {
+    for (int k = 0; k < 300; k++) {
+      pid_t c = fork();
+      if (c == 0) {
+        long n = 100 + (k % 10) * 50;
+        char *p = mmap(0, n * 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        for (long i = 0; i < n; i++) p[i * 4096] = 1;
+        munmap(p, n * 4096);
+        _exit(0);
+      }
+      waitpid(c, 0, 0);
+    }
+    return 0;
+  }
+  pthread_t t[8];
+  pthread_barrier_init(&bar, 0, 8);
+  for (int i = 0; i < 8; i++) pthread_create(&t[i], 0, thread, 0);
+  for (int i = 0; i < 8; i++) pthread_join(t[i], 0);
+  return 0;
+}
+MANY
+cc -O2 -pthread -o "$lp/many" "$lp/many.c"; rc=$?
+"$lp/la-run" -R -p "$lp/forks.out" "$lp/many" forks < /dev/null; rf=$?
+"$lp/la-run" -R -p "$lp/threads.out" "$lp/many" threads < /dev/null; rt=$?
+read -r fe fm fr fa < "$lp/forks.out"; read -r te tm tr ta < "$lp/threads.out"
+[ $rc -eq 0 ] && [ $rf -eq 0 ] && [ "${fr:-0}" -ge 600 ] && [ "${fa:-0}" -ge 2200 ] && [ "${fa:-0}" -le 2600 ]
+say peak-forks $? "rc=$rc/$rf forks: anon $fa KB (550 pages = 2200 KB and the program's own), $fr readings"
+[ $rc -eq 0 ] && [ $rt -eq 0 ] && [ "${tr:-0}" -ge 8 ] && [ "${ta:-0}" -ge 6400 ] && [ "${ta:-0}" -le 7200 ]
+say peak-threads $? "rc=$rc/$rt threads: anon $ta KB (1600 pages = 6400 KB and the program's own), $tr readings"
 cat > "$lp/names.c" <<'NAMES'
 #include <stdio.h>
 #include <sys/auxv.h>

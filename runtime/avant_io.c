@@ -636,28 +636,100 @@ static int32_t exit_code_of(int st) {
  * of its own process group). The scratch signal handler reads these to
  * stop children before it removes the directory. A slot is claimed and
  * given back with atomics, so the handler, which only reads, sees each
- * pid whole; g_waits_hi bounds its scan. */
+ * pid whole; g_waits_hi bounds its scan.
+ *
+ * A slot is claimed before the fork, holding WAIT_STARTING, and takes the
+ * child's pid as soon as fork returns: a crash, trap or signal on another
+ * thread while a child is being started finds the claimed slot and waits
+ * a bounded time for its pid, so no child is started that the handler
+ * does not know of. g_stopping closes the other side: the handler sets it
+ * before it reads the slots, and a thread that claims a slot after that
+ * does not fork (each side's write comes before its read, both
+ * sequentially consistent, so one of them sees the other). From the
+ * claim to the pid the starting thread blocks the signals the handler
+ * runs on, so the handler never runs on the one thread that would fill
+ * the slot it waits for; the child gets the thread's mask back before
+ * it runs anything. */
 #define JOB_MAX 1024
 #define WAIT_MAX 1100
+#define WAIT_STARTING ((pid_t)-1)
 static pid_t g_waits[WAIT_MAX];
 static int32_t g_waits_hi;
+static int32_t g_stopping;
 static __thread int32_t t_wait_slot = -1;
+static __thread int32_t t_job_starting;
 
-static void wait_begin(pid_t pid) {
+/* The signals that end the program through tmp_on_signal; a crash's
+ * signals are synchronous and are never blocked. */
+static void start_signals(sigset_t *set) {
+  sigemptyset(set);
+  sigaddset(set, SIGINT);
+  sigaddset(set, SIGTERM);
+  sigaddset(set, SIGHUP);
+  sigaddset(set, SIGPIPE);
+  sigaddset(set, SIGQUIT);
+}
+
+/* Before a fork: blocks the handler's signals on this thread (the old
+ * mask in *old) and tells whether the program is stopping, in which case
+ * the caller must not fork and gives the mask back (start_end). */
+static int start_begin(sigset_t *old) {
+  sigset_t set;
+  start_signals(&set);
+  pthread_sigmask(SIG_BLOCK, &set, old);
+  if (__atomic_load_n(&g_stopping, __ATOMIC_SEQ_CST)) {
+    pthread_sigmask(SIG_SETMASK, old, NULL);
+    return 0;
+  }
+  return 1;
+}
+
+static void start_end(const sigset_t *old) {
+  pthread_sigmask(SIG_SETMASK, old, NULL);
+}
+
+/* In the child, first: the mask the starting thread had. */
+static void start_child(const sigset_t *old) {
+  pthread_sigmask(SIG_SETMASK, old, NULL);
+}
+
+/* Claims this thread's slot before the fork (start_begin's signals
+ * blocked): 0 when the program is stopping, and then the caller does not
+ * fork. With every slot taken the run goes on without one (the pool has
+ * at most 1024 threads, so never in practice): that child is not stopped
+ * by a crash. */
+static int wait_claim(void) {
   int32_t i;
+  t_wait_slot = -1;
   for (i = 0; i < WAIT_MAX; i++) {
     pid_t z = 0;
-    if (__atomic_compare_exchange_n(&g_waits[i], &z, pid, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+    if (__atomic_compare_exchange_n(&g_waits[i], &z, WAIT_STARTING, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
       int32_t hi = __atomic_load_n(&g_waits_hi, __ATOMIC_RELAXED);
       while (hi < i + 1 && !__atomic_compare_exchange_n(&g_waits_hi, &hi, i + 1, 1, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
       }
       t_wait_slot = i;
-      return;
+      break;
     }
   }
-  /* More threads waiting at once than slots: this child is not stopped
-   * by a crash (the pool has at most 1024 threads, so never in practice). */
-  t_wait_slot = -1;
+  if (__atomic_load_n(&g_stopping, __ATOMIC_SEQ_CST)) {
+    if (t_wait_slot >= 0) {
+      __atomic_store_n(&g_waits[t_wait_slot], 0, __ATOMIC_SEQ_CST);
+      t_wait_slot = -1;
+    }
+    return 0;
+  }
+  return 1;
+}
+
+/* After the fork: the child's pid in the claimed slot, or the slot given
+ * back when the fork failed (pid < 0). */
+static void wait_begin(pid_t pid) {
+  if (t_wait_slot >= 0) {
+    __atomic_store_n(&g_waits[t_wait_slot], pid > 0 ? pid : 0, __ATOMIC_SEQ_CST);
+    if (pid <= 0) {
+      t_wait_slot = -1;
+    }
+  }
 }
 
 static void wait_end(void) {
@@ -705,6 +777,7 @@ static int32_t run_child_env(const char *path, void *args, void *env, const char
   char **envs;
   pid_t pid;
   int st = 0;
+  sigset_t mask;
   if (!path) {
     return 1;
   }
@@ -719,7 +792,21 @@ static int32_t run_child_env(const char *path, void *args, void *env, const char
   }
   fflush(stdout);
   fflush(stderr);
-  pid = fork();
+  if (!start_begin(&mask)) {
+    pid = -1;
+  } else if (!wait_claim()) {
+    start_end(&mask);
+    pid = -1;
+  } else {
+    pid = fork();
+    if (pid == 0) {
+      start_child(&mask);
+      child_envs(envs);
+      child_exec(path, argv, out_path, err_path, 0, no_stdin, -1);
+    }
+    wait_begin(pid);
+    start_end(&mask);
+  }
   if (pid < 0) {
     free_argv(argv);
     if (envs) {
@@ -727,15 +814,10 @@ static int32_t run_child_env(const char *path, void *args, void *env, const char
     }
     return 1;
   }
-  if (pid == 0) {
-    child_envs(envs);
-    child_exec(path, argv, out_path, err_path, 0, no_stdin, -1);
-  }
   free_argv(argv);
   if (envs) {
     free_argv(envs);
   }
-  wait_begin(pid);
   /* The process wait is native (rule 2). */
   avant_gc_native_begin();
   while (waitpid(pid, &st, 0) < 0) {
@@ -769,6 +851,8 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   int fds[2];
   int32_t msg[2];
   ssize_t got = 0;
+  sigset_t mask;
+  int e;
   g_sys_errno = 0;
   g_sys_stage = 0;
   g_sys_signal = 0;
@@ -786,7 +870,25 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   }
   fflush(stdout);
   fflush(stderr);
-  pid = fork();
+  if (!start_begin(&mask)) {
+    pid = -1;
+    errno = ECANCELED;
+  } else if (!wait_claim()) {
+    start_end(&mask);
+    pid = -1;
+    errno = ECANCELED;
+  } else {
+    pid = fork();
+    if (pid == 0) {
+      start_child(&mask);
+      close(fds[0]);
+      child_exec(argv[0], argv, out_path, NULL, 0, 0, fds[1]);
+    }
+    e = errno;
+    wait_begin(pid);
+    start_end(&mask);
+    errno = e;
+  }
   if (pid < 0) {
     g_sys_errno = errno;
     g_sys_stage = 2;
@@ -795,13 +897,8 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
     free_argv(argv);
     return -1;
   }
-  if (pid == 0) {
-    close(fds[0]);
-    child_exec(argv[0], argv, out_path, NULL, 0, 0, fds[1]);
-  }
   close(fds[1]);
   free_argv(argv);
-  wait_begin(pid);
   /* The pipe read and the process wait are native (a native wait
    * touches C memory only). */
   avant_gc_native_begin();
@@ -855,6 +952,8 @@ avant_int avant_job_start_env(const char *path, void *args, void *env, const cha
   char **argv;
   char **envs;
   pid_t pid;
+  int32_t n;
+  sigset_t mask;
   if (!path || g_njobs >= JOB_MAX) {
     return -1;
   }
@@ -869,26 +968,39 @@ avant_int avant_job_start_env(const char *path, void *args, void *env, const cha
   }
   fflush(stdout);
   fflush(stderr);
-  pid = fork();
-  if (pid < 0) {
-    free_argv(argv);
-    if (envs) {
-      free_argv(envs);
+  /* The job's entry is claimed before the fork, as a blocking run's slot
+   * is (wait_claim), and takes the pid once its process group exists (the
+   * handler stops a job by its group). Jobs are started and waited for on
+   * one thread, so only the handler reads the entry meanwhile. */
+  pid = -1;
+  if (start_begin(&mask)) {
+    n = g_njobs;
+    __atomic_store_n(&g_jobs[n], WAIT_STARTING, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&g_njobs, n + 1, __ATOMIC_SEQ_CST);
+    t_job_starting = 1;
+    if (!__atomic_load_n(&g_stopping, __ATOMIC_SEQ_CST)) {
+      pid = fork();
+      if (pid == 0) {
+        start_child(&mask);
+        child_envs(envs);
+        child_exec(path, argv, out_path, NULL, 1, 1, -1);
+      }
     }
-    return -1;
-  }
-  if (pid == 0) {
-    child_envs(envs);
-    child_exec(path, argv, out_path, NULL, 1, 1, -1);
+    if (pid > 0) {
+      setpgid(pid, pid);
+      __atomic_store_n(&g_jobs[n], pid, __ATOMIC_SEQ_CST);
+    } else {
+      __atomic_store_n(&g_njobs, n, __ATOMIC_SEQ_CST);
+      __atomic_store_n(&g_jobs[n], 0, __ATOMIC_SEQ_CST);
+    }
+    t_job_starting = 0;
+    start_end(&mask);
   }
   free_argv(argv);
   if (envs) {
     free_argv(envs);
   }
-  setpgid(pid, pid);
-  g_jobs[g_njobs] = pid;
-  g_njobs = g_njobs + 1;
-  return (int32_t)pid;
+  return pid > 0 ? (int32_t)pid : -1;
 }
 
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
@@ -1481,26 +1593,59 @@ static void tmp_finish(void) {
  * SIGTERM to every job's group and to every child a blocking run waits
  * on (one per waiting task), then reap them for up to about two seconds,
  * then SIGKILL whatever is left and reap briefly. Async-signal-safe
- * calls only; the waited pids are read once, before the first kill. */
+ * calls only. It first marks the program as stopping, so no thread
+ * starts a child after the slots are read, then reads the waited pids
+ * and the jobs once, before the first kill; a slot or a job another
+ * thread is starting a child for (WAIT_STARTING) is waited for until it
+ * holds the pid (that thread has the handler's signals blocked and is
+ * between its fork and its next store): about two seconds at most for
+ * all such slots together, so a crash with many tasks starting children
+ * ends as soon as one with a single task does. */
+static pid_t start_settled(volatile pid_t *at, int *rounds) {
+  struct timespec pause = {0, 1000 * 1000};
+  pid_t p = __atomic_load_n(at, __ATOMIC_SEQ_CST);
+  while (p == WAIT_STARTING && *rounds < 2000) {
+    nanosleep(&pause, NULL);
+    (*rounds)++;
+    p = __atomic_load_n(at, __ATOMIC_SEQ_CST);
+  }
+  return p;
+}
+
 static void tmp_stop_children(void) {
   struct timespec pause = {0, 10 * 1000 * 1000};
   static pid_t kids[WAIT_MAX];
+  static pid_t jobs[JOB_MAX];
   int32_t i;
   int32_t nk = 0;
-  int32_t hi = __atomic_load_n(&g_waits_hi, __ATOMIC_SEQ_CST);
+  int32_t n = 0;
+  int32_t hi;
+  int32_t nj;
   int round;
-  int32_t n = g_njobs;
+  int settle = 0;
+  __atomic_store_n(&g_stopping, 1, __ATOMIC_SEQ_CST);
+  hi = __atomic_load_n(&g_waits_hi, __ATOMIC_SEQ_CST);
   for (i = 0; i < hi && i < WAIT_MAX; i++) {
     pid_t p = __atomic_load_n(&g_waits[i], __ATOMIC_SEQ_CST);
+    if (p == WAIT_STARTING && i != t_wait_slot) {
+      p = start_settled(&g_waits[i], &settle);
+    }
     if (p > 0) {
       kids[nk++] = p;
+    }
+  }
+  nj = __atomic_load_n(&g_njobs, __ATOMIC_SEQ_CST);
+  for (i = 0; i < nj && i < JOB_MAX; i++) {
+    pid_t p = t_job_starting ? __atomic_load_n(&g_jobs[i], __ATOMIC_SEQ_CST) : start_settled(&g_jobs[i], &settle);
+    if (p > 0) {
+      jobs[n++] = p;
     }
   }
   if (n == 0 && nk == 0) {
     return;
   }
   for (i = 0; i < n; i++) {
-    kill(-g_jobs[i], SIGTERM);
+    kill(-jobs[i], SIGTERM);
   }
   for (i = 0; i < nk; i++) {
     kill(kids[i], SIGTERM);
@@ -1512,7 +1657,7 @@ static void tmp_stop_children(void) {
     while ((got = waitpid(-1, &st, WNOHANG)) > 0) {
     }
     for (i = 0; i < n; i++) {
-      if (kill(-g_jobs[i], 0) == 0) {
+      if (kill(-jobs[i], 0) == 0) {
         live = 1;
       }
     }
@@ -1526,7 +1671,7 @@ static void tmp_stop_children(void) {
     }
     if (round == 200) {
       for (i = 0; i < n; i++) {
-        kill(-g_jobs[i], SIGKILL);
+        kill(-jobs[i], SIGKILL);
       }
       for (i = 0; i < nk; i++) {
         kill(kids[i], SIGKILL);
@@ -2019,13 +2164,38 @@ __attribute__((noreturn)) void avant_io_child_fail(int errfd, int32_t stage) {
   _exit(127);
 }
 
-/* The child a blocking run of this thread waits on (0: the wait ended),
- * which the scratch directory's signal handler stops before it removes
- * the directory. */
+/* A blocking run's start, for avant_sys.c's: before the fork,
+ * avant_io_start_claim blocks the handler's signals on this thread and
+ * claims its wait slot (0: the program is stopping, nothing is claimed and
+ * the run must not fork); in the child, first, avant_io_start_child; in
+ * the parent, avant_io_start_done with fork's result, which puts the pid
+ * in the slot (or gives the slot back) and the mask back. */
+int avant_io_start_claim(sigset_t *old) {
+  if (!start_begin(old)) {
+    return 0;
+  }
+  if (!wait_claim()) {
+    start_end(old);
+    return 0;
+  }
+  return 1;
+}
+
+void avant_io_start_child(const sigset_t *old) {
+  start_child(old);
+}
+
+void avant_io_start_done(int32_t pid, const sigset_t *old) {
+  int e = errno;
+  wait_begin((pid_t)pid);
+  start_end(old);
+  errno = e;
+}
+
+/* The end of a blocking run's wait (pid 0): the scratch directory's
+ * signal handler no longer stops that child. */
 void avant_io_wait_child(int32_t pid) {
-  if (pid > 0) {
-    wait_begin((pid_t)pid);
-  } else {
+  if (pid <= 0) {
     wait_end();
   }
 }

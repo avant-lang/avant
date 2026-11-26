@@ -49,7 +49,7 @@ import receiver_writes
 // fold reports what is wrong): its own or the pub one of a module it
 // imports; `module.name`.
 pub fn (checker_self: Checker) const_quiet(e: Expr, m: String): ConstVal? {
-  if e.kind == ex_name() && e.type_args.size == 0 {
+  if e.kind == ex_name && e.type_args.size == 0 {
     if cv = checker_self.const_at(m, e.ident) {
       return cv
     }
@@ -64,8 +64,8 @@ pub fn (checker_self: Checker) const_quiet(e: Expr, m: String): ConstVal? {
     }
     return nil
   }
-  if e.kind == ex_field() {
-    if obj = e.object, obj.kind == ex_name() {
+  if e.kind == ex_field {
+    if obj = e.object, obj.kind == ex_name {
       return checker_self.const_at(obj.ident, e.ident)
     }
   }
@@ -73,7 +73,7 @@ pub fn (checker_self: Checker) const_quiet(e: Expr, m: String): ConstVal? {
 }
 
 pub fn const_fold_op(op: Int): Bool {
-  for k in [tk_plus(), tk_minus(), tk_star(), tk_slash(), tk_percent(), tk_less_less(), tk_greater_greater(), tk_amp(), tk_pipe(), tk_caret(), tk_eq_eq(), tk_not_eq(), tk_less(), tk_less_eq(), tk_greater(), tk_greater_eq(), tk_amp_amp(), tk_pipe_pipe()] {
+  for k in [tk_plus, tk_minus, tk_star, tk_slash, tk_percent, tk_less_less, tk_greater_greater, tk_amp, tk_pipe, tk_caret, tk_eq_eq, tk_not_eq, tk_less, tk_less_eq, tk_greater, tk_greater_eq, tk_amp_amp, tk_pipe_pipe] {
     if op == k {
       return true
     }
@@ -86,22 +86,22 @@ pub fn const_fold_op(op: Int): Bool {
 // asked again while it is being asked is a cycle, which the fold names.
 pub fn (checker_self: Checker) const_folds(e: Expr, m: String): Bool {
   k = e.kind
-  if k == ex_int() || k == ex_float() || k == ex_bool() {
+  if k == ex_int || k == ex_float || k == ex_bool {
     return true
   }
-  if k == ex_unary() {
-    if inner = e.inner, e.op == tk_minus() || e.op == tk_bang() || e.op == tk_tilde() {
+  if k == ex_unary {
+    if inner = e.inner, e.op == tk_minus || e.op == tk_bang || e.op == tk_tilde {
       return checker_self.const_folds(inner, m)
     }
     return false
   }
-  if k == ex_binary() {
+  if k == ex_binary {
     if l = e.left, r = e.right, const_fold_op(e.op) {
       return checker_self.const_folds(l, m) && checker_self.const_folds(r, m)
     }
     return false
   }
-  if k == ex_name() || k == ex_field() {
+  if k == ex_name || k == ex_field {
     if cv = checker_self.const_quiet(e, m) {
       return checker_self.const_shape(cv)
     }
@@ -381,7 +381,7 @@ pub fn (checker_self: Checker) const_read(e: Expr): Ty? {
       }
       return checker_self.t_int()
     }
-    e.kind = ex_const_ref()
+    e.kind = ex_const_ref
     e.ident = d.name
     e.mod_name = d.mod_name
     e.resolved = d.slot
@@ -420,7 +420,7 @@ pub fn (checker_self: Checker) const_ref_ty(e: Expr): Ty {
 pub fn (checker_self: Checker) const_root(e: Expr): ConstDef? {
   x = e
   while true {
-    if x.kind == ex_const_ref() {
+    if x.kind == ex_const_ref {
       for d in checker_self.program.startup_consts {
         if d.slot == x.resolved {
           return d
@@ -428,13 +428,13 @@ pub fn (checker_self: Checker) const_root(e: Expr): ConstDef? {
       }
       return nil
     }
-    if x.kind == ex_field() && !x.method_call {
+    if x.kind == ex_field && !x.method_call {
       if o = x.object {
         x = o
         continue
       }
     }
-    if x.kind == ex_index() {
+    if x.kind == ex_index {
       if l = x.left {
         x = l
         continue
@@ -527,7 +527,7 @@ pub fn (checker_self: Checker) check_const_values(fns: Array(Function)) {
     exprs: Array(Expr) = []
     const_flat(fb.body, stmts, exprs)
     for st in stmts {
-      if st.kind == st_assign() {
+      if st.kind == st_assign {
         if t = st.target, d2 = checker_self.const_root(t) {
           checker_self.clear_poison()
           checker_self.fail(t.loc, "this changes the constant ${d2.name}: a constant's value never changes, at any depth (change a copy: clone())")
@@ -555,7 +555,7 @@ pub fn (checker_self: Checker) check_const_values(fns: Array(Function)) {
 pub fn (checker_self: Checker) const_change_call(e: Expr, rw: ReceiverWrites, all: Array(Function), by_name: Hash(String, Int), changes: Hash(String, Int)) {
   recv: Expr? = nil
   name = ""
-  if e.kind == ex_call() {
+  if e.kind == ex_call {
     if r = e.receiver {
       recv = r
       name = e.callee
@@ -563,7 +563,7 @@ pub fn (checker_self: Checker) const_change_call(e: Expr, rw: ReceiverWrites, al
       recv = e.args[0]
       name = e.callee
     }
-  } else if e.kind == ex_field() && e.method_call {
+  } else if e.kind == ex_field && e.method_call {
     if o = e.object {
       recv = o
       name = e.ident
@@ -613,7 +613,7 @@ pub fn (checker_self: Checker) method_changes(sym: String, all: Array(Function),
     }
     r: Expr? = nil
     name = ""
-    if e.kind == ex_call() {
+    if e.kind == ex_call {
       if rr = e.receiver {
         r = rr
         name = e.callee
@@ -621,7 +621,7 @@ pub fn (checker_self: Checker) method_changes(sym: String, all: Array(Function),
         r = e.args[0]
         name = e.callee
       }
-    } else if e.kind == ex_field() && e.method_call {
+    } else if e.kind == ex_field && e.method_call {
       if o = e.object {
         r = o
         name = e.ident
@@ -640,8 +640,8 @@ pub fn (checker_self: Checker) method_changes(sym: String, all: Array(Function),
   if !hit {
     // An element store or a hash store through self's places.
     for st in stmts {
-      if st.kind == st_assign() {
-        if t = st.target, t.kind == ex_index() {
+      if st.kind == st_assign {
+        if t = st.target, t.kind == ex_index {
           if l = t.left, const_self_rooted(l, recv) {
             hit = true
           }
@@ -662,16 +662,16 @@ pub fn (checker_self: Checker) method_changes(sym: String, all: Array(Function),
 pub fn const_self_rooted(e: Expr, recv: String): Bool {
   x = e
   while true {
-    if x.kind == ex_name() {
+    if x.kind == ex_name {
       return x.ident == recv || x.implicit_field
     }
-    if x.kind == ex_field() && !x.method_call {
+    if x.kind == ex_field && !x.method_call {
       if o = x.object {
         x = o
         continue
       }
     }
-    if x.kind == ex_index() {
+    if x.kind == ex_index {
       if l = x.left {
         x = l
         continue
@@ -714,18 +714,18 @@ pub fn (checker_self: Checker) check_const_classes(all: Array(Function)) {
     exprs: Array(Expr) = []
     const_flat(fnn.body, stmts, exprs)
     for st in stmts {
-      if st.kind != st_assign() {
+      if st.kind != st_assign {
         continue
       }
       if t = st.target {
         ot: Ty? = nil
         self_store = false
-        if t.kind == ex_field() {
+        if t.kind == ex_field {
           if obj = t.object {
             ot = obj.ty
-            self_store = obj.kind == ex_name() && obj.ident == "self"
+            self_store = obj.kind == ex_name && obj.ident == "self"
           }
-        } else if t.kind == ex_name() && t.implicit_field {
+        } else if t.kind == ex_name && t.implicit_field {
           ot = checker_self.const_owner_of(fnn)
           self_store = true
         }
@@ -776,7 +776,7 @@ pub fn (checker_self: Checker) check_const_order(all: Array(Function), by_name: 
         exprs: Array(Expr) = []
         const_flat(g.body, stmts, exprs)
         for e in exprs {
-          if e.kind == ex_const_ref() {
+          if e.kind == ex_const_ref {
             for d2 in checker_self.program.startup_consts {
               if d2.slot == e.resolved && d2.order >= d.order {
                 checker_self.clear_poison()
@@ -790,10 +790,10 @@ pub fn (checker_self: Checker) check_const_order(all: Array(Function), by_name: 
             }
           }
           callees: Array(String) = []
-          if e.resolved.size > 0 && e.kind != ex_const_ref() {
+          if e.resolved.size > 0 && e.kind != ex_const_ref {
             callees.push(e.resolved)
           }
-          if e.kind == ex_call() && e.callee == "new" {
+          if e.kind == ex_call && e.callee == "new" {
             if t = e.ty, t.is_class() || t.is_struct() {
               for g2 in all {
                 if g2.name == "initialize" && g2.owner == t.name && (g2.owner_mod == t.mod_name || g2.mod_name == t.mod_name) {

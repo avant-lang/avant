@@ -4,14 +4,14 @@ import source
 import token
 
 pub fn ch_is_digit(c: Int): Bool {
-  c >= 48 && c <= 57
+  c >= '0' && c <= '9'
 }
 
 pub fn ch_is_alpha(c: Int): Bool {
-  if c >= 65 && c <= 90 {
+  if c >= 'A' && c <= 'Z' {
     return true
   }
-  if c >= 97 && c <= 122 {
+  if c >= 'a' && c <= 'z' {
     return true
   }
   false
@@ -21,7 +21,7 @@ pub fn ch_is_ident_start(c: Int): Bool {
   if ch_is_alpha(c) {
     return true
   }
-  c == 95
+  c == '_'
 }
 
 pub fn ch_is_ident_continue(c: Int): Bool {
@@ -35,10 +35,10 @@ pub fn ch_is_hex(c: Int): Bool {
   if ch_is_digit(c) {
     return true
   }
-  if c >= 97 && c <= 102 {
+  if c >= 'a' && c <= 'f' {
     return true
   }
-  if c >= 65 && c <= 70 {
+  if c >= 'A' && c <= 'F' {
     return true
   }
   false
@@ -49,10 +49,10 @@ pub fn hex_val(c: Int): Int {
   if ch_is_digit(c) {
     return c - 48
   }
-  if c >= 97 && c <= 102 {
+  if c >= 'a' && c <= 'f' {
     return c - 87
   }
-  if c >= 65 && c <= 70 {
+  if c >= 'A' && c <= 'F' {
     return c - 55
   }
   -1
@@ -209,7 +209,7 @@ pub class Lexer {
   pub fn skip_spaces {
     while true {
       c = self.peek()
-      if c == 32 || c == 9 || c == 13 {
+      if c == ' ' || c == 9 || c == 13 {
         self.bump()
       } else {
         break
@@ -226,13 +226,13 @@ pub class Lexer {
   }
 
   pub fn skip_line_comment {
-    if self.peek() == 47 {
+    if self.peek() == '/' {
       self.bump()
     }
-    if self.peek() == 47 {
+    if self.peek() == '/' {
       self.bump()
     }
-    if self.peek() == 32 && peek_at(1) == 102 && peek_at(2) == 105 && peek_at(3) == 108 && peek_at(4) == 101 && peek_at(5) == 58 && peek_at(6) == 32 {
+    if self.peek() == ' ' && peek_at(1) == 'f' && peek_at(2) == 'i' && peek_at(3) == 'l' && peek_at(4) == 'e' && peek_at(5) == ':' && peek_at(6) == ' ' {
       self.bump()
       self.bump()
       self.bump()
@@ -250,7 +250,7 @@ pub class Lexer {
         }
         self.bump()
       }
-      self.path = intern_str(str_slice(self.source.text, start, self.pos))
+      self.path = intern_str(self.source.text[start..self.pos])
       self.line = 0
       self.column = 1
       return
@@ -281,7 +281,7 @@ pub class Lexer {
     }
     self.failed = true
     self.errors.push(e)
-    Token.new(tk_eof(), loc, "")
+    Token.new(tk_eof, loc, "")
   }
 
   pub fn queue_empty: Bool {
@@ -322,26 +322,26 @@ pub class Lexer {
     while ch_is_ident_continue(self.peek()) {
       self.bump()
     }
-    str_slice(self.source.text, start, self.pos)
+    self.source.text[start..self.pos]
   }
 
   pub fn exponent_ahead: Bool {
     c = self.peek()
-    if c != 101 && c != 69 {
+    if c != 'e' && c != 'E' {
       return false
     }
     n = self.peek_next()
     if ch_is_digit(n) {
       return true
     }
-    if n == 43 || n == 45 {
+    if n == '+' || n == '-' {
       return ch_is_digit(peek_at(2))
     }
     false
   }
 
   pub fn read_int_suffix: String {
-    if self.peek() == 117 && self.peek_next() == 54 && peek_at(2) == 52 {
+    if self.peek() == 'u' && self.peek_next() == '6' && peek_at(2) == '4' {
       if ch_is_ident_continue(peek_at(3)) {
         return ""
       }
@@ -350,7 +350,7 @@ pub class Lexer {
       self.bump()
       return "u64"
     }
-    if self.peek() == 105 && self.peek_next() == 54 && peek_at(2) == 52 {
+    if self.peek() == 'i' && self.peek_next() == '6' && peek_at(2) == '4' {
       if ch_is_ident_continue(peek_at(3)) {
         return ""
       }
@@ -370,7 +370,7 @@ pub class Lexer {
     if base == 10 {
       return ch_is_digit(c)
     }
-    c >= 48 && c < 48 + base
+    c >= '0' && c < '0' + base
   }
 
   // The digits of one run (an integer part, a fraction, an exponent),
@@ -378,7 +378,7 @@ pub class Lexer {
   pub fn scan_digits(base: Int): Bool {
     while true {
       c = self.peek()
-      if c == 95 {
+      if c == '_' {
         if !digit_of(self.peek_next(), base) {
           fail_tok(self.here(), "a `_` in a number stands between two digits")
           return false
@@ -396,13 +396,13 @@ pub class Lexer {
 
   // A number's text without its separators (the formatter keeps them).
   pub fn number_text(start: Int): String {
-    raw = str_slice(self.source.text, start, self.pos)
+    raw = self.source.text[start..self.pos]
     if self.keep_comments {
       return raw
     }
-    b = buf_new()
+    b = Buf.new()
     for i in 0..raw.size {
-      if raw[i] != 95 {
+      if raw[i] != '_' {
         b.push_byte(raw[i])
       }
     }
@@ -415,14 +415,14 @@ pub class Lexer {
   pub fn read_prefixed(loc: Location, start: Int, base: Int, name: String, p: String): Token {
     self.bump()
     self.bump()
-    if self.peek() == 95 {
+    if self.peek() == '_' {
       return fail_tok(self.here(), "a `_` in a number stands between two digits, not after ${p}")
     }
     if !digit_of(self.peek(), base) {
       return fail_tok(self.here(), "${name} literal needs a digit after ${p}")
     }
     if !scan_digits(base) {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
     if ch_is_digit(self.peek()) {
       article = "a"
@@ -434,65 +434,65 @@ pub class Lexer {
     text = number_text(start)
     suffix = self.read_int_suffix()
     if suffix.size == 0 {
-      return Token.new(tk_integer(), loc, intern_str(text))
+      return Token.new(tk_integer, loc, intern_str(text))
     }
-    Token.new(tk_integer(), loc, intern_str(text + suffix))
+    Token.new(tk_integer, loc, intern_str(text + suffix))
   }
 
   pub fn read_number(loc: Location): Token {
     start = self.pos
-    if self.peek() == 48 {
+    if self.peek() == '0' {
       n = self.peek_next()
-      if n == 120 || n == 88 {
+      if n == 'x' || n == 'X' {
         return read_prefixed(loc, start, 16, "hex", "0x")
       }
-      if n == 98 {
+      if n == 'b' {
         return read_prefixed(loc, start, 2, "binary", "0b")
       }
-      if n == 111 {
+      if n == 'o' {
         return read_prefixed(loc, start, 8, "octal", "0o")
       }
-      if n == 66 || n == 79 {
+      if n == 'B' || n == 'O' {
         return fail_tok(loc, "write the prefix in lower case: 0${chr(n + 32)}")
       }
     }
     if !scan_digits(10) {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
     int_end = self.pos
     is_float = false
-    if self.peek() == 46 && ch_is_digit(self.peek_next()) {
+    if self.peek() == '.' && ch_is_digit(self.peek_next()) {
       is_float = true
       self.bump()
       if !scan_digits(10) {
-        return Token.new(tk_eof(), loc, "")
+        return Token.new(tk_eof, loc, "")
       }
     }
     if self.exponent_ahead() {
       is_float = true
       self.bump()
       s = self.peek()
-      if s == 43 || s == 45 {
+      if s == '+' || s == '-' {
         self.bump()
       }
       if !scan_digits(10) {
-        return Token.new(tk_eof(), loc, "")
+        return Token.new(tk_eof, loc, "")
       }
     }
     text = number_text(start)
     if is_float {
-      return Token.new(tk_float(), loc, intern_str(text))
+      return Token.new(tk_float, loc, intern_str(text))
     }
-    if int_end - start > 1 && self.source.text[start] == 48 {
+    if int_end - start > 1 && self.source.text[start] == '0' {
       digits = number_text(start)
       i = 0
-      while i < digits.size - 1 && (digits[i] == 48 || digits[i] == 95) {
+      while i < digits.size - 1 && (digits[i] == '0' || digits[i] == '_') {
         i += 1
       }
-      rest = str_slice(digits, i, digits.size)
+      rest = digits[i..]
       octal = true
       for j in 0..rest.size {
-        if rest[j] > 55 {
+        if rest[j] > '7' {
           octal = false
         }
       }
@@ -503,9 +503,9 @@ pub class Lexer {
     }
     suffix = self.read_int_suffix()
     if suffix.size == 0 {
-      return Token.new(tk_integer(), loc, intern_str(text))
+      return Token.new(tk_integer, loc, intern_str(text))
     }
-    Token.new(tk_integer(), loc, intern_str(text + suffix))
+    Token.new(tk_integer, loc, intern_str(text + suffix))
   }
 
   // One escape after a backslash: \n \t \r \\ \0, \xNN (one byte, two hex
@@ -523,28 +523,28 @@ pub class Lexer {
     }
     c = self.peek()
     self.bump()
-    if c == 110 {
+    if c == 'n' {
       return 10
     }
-    if c == 116 {
+    if c == 't' {
       return 9
     }
-    if c == 114 {
+    if c == 'r' {
       return 13
     }
     if c == 92 {
       return 92
     }
-    if c == 48 {
+    if c == '0' {
       return 0
     }
-    if qc == 34 && (c == 34 || c == 36) {
+    if qc == '"' && (c == '"' || c == '$') {
       return c
     }
     if qc == 39 && c == 39 {
       return 39
     }
-    if c == 120 {
+    if c == 'x' {
       h1 = hex_val(self.peek())
       h2 = hex_val(self.peek_next())
       if h1 < 0 || h2 < 0 {
@@ -555,7 +555,7 @@ pub class Lexer {
       self.bump()
       return h1 * 16 + h2
     }
-    if c == 117 {
+    if c == 'u' {
       return read_code_escape(at)
     }
     what = "string"
@@ -569,7 +569,7 @@ pub class Lexer {
   // \u{N}: one to six hex digits, a Unicode scalar value (not a surrogate,
   // at most 10FFFF).
   pub fn read_code_escape(at: Location): Int {
-    if self.peek() != 123 {
+    if self.peek() != '{' {
       fail_tok(at, "\\u takes a code point in braces: \\u{e9}")
       return 0
     }
@@ -583,7 +583,7 @@ pub class Lexer {
       n += 1
       self.bump()
     }
-    if self.peek() != 125 || n == 0 {
+    if self.peek() != '}' || n == 0 {
       fail_tok(at, "\\u takes a code point in braces: \\u{e9}")
       return 0
     }
@@ -622,13 +622,13 @@ pub class Lexer {
       mark = self.err_count()
       v = self.read_escape(39)
       if !new_err_since(mark) && self.esc_code && v > 127 {
-        b = buf_new()
+        b = Buf.new()
         push_utf8(b, v)
         fail_tok(loc, "a character literal is one byte, and this code point is ${b.size} bytes in UTF-8: write it in a String")
       }
       if new_err_since(mark) {
         self.skip_char_rest()
-        return Token.new(tk_eof(), loc, "")
+        return Token.new(tk_eof, loc, "")
       }
     } else if c >= 128 {
       n = utf8_len(c)
@@ -654,9 +654,9 @@ pub class Lexer {
     }
     self.bump()
     if self.keep_comments {
-      return Token.new(tk_integer(), loc, str_slice(self.source.text, start, self.pos))
+      return Token.new(tk_integer, loc, self.source.text[start..self.pos])
     }
-    Token.new(tk_integer(), loc, intern_str("${v}"))
+    Token.new(tk_integer, loc, intern_str("${v}"))
   }
 
   // After a character literal's error: up to its closing quote on the line.
@@ -670,7 +670,7 @@ pub class Lexer {
   }
 
   pub fn read_string_body {
-    buf = buf_new()
+    buf = Buf.new()
     while true {
       if self.at_end() {
         fail_tok(self.here(), "unterminated string")
@@ -679,7 +679,7 @@ pub class Lexer {
         return
       }
       c = self.peek()
-      if c == 34 {
+      if c == '"' {
         self.bump()
         self.str_frag = intern_str(buf.to_s())
         self.str_kind = 0
@@ -707,8 +707,8 @@ pub class Lexer {
         }
         continue
       }
-      if c == 36 {
-        if self.peek_next() == 123 {
+      if c == '$' {
+        if self.peek_next() == '{' {
           self.bump()
           self.bump()
           self.str_frag = intern_str(buf.to_s())
@@ -725,14 +725,14 @@ pub class Lexer {
   }
 
   pub fn is_raw_string_start: Bool {
-    if self.peek() == 114 && self.peek_next() == 34 {
+    if self.peek() == 'r' && self.peek_next() == '"' {
       return true
     }
     false
   }
 
   pub fn read_raw_string_body {
-    buf = buf_new()
+    buf = Buf.new()
     while true {
       if self.at_end() {
         fail_tok(self.here(), "unterminated string")
@@ -741,7 +741,7 @@ pub class Lexer {
         return
       }
       c = self.peek()
-      if c == 34 {
+      if c == '"' {
         self.bump()
         self.str_frag = intern_str(buf.to_s())
         self.str_kind = 0
@@ -767,9 +767,9 @@ pub class Lexer {
     mark = self.err_count()
     self.read_raw_string_body()
     if new_err_since(mark) {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
-    Token.new(tk_string(), loc, intern_str(self.str_frag))
+    Token.new(tk_string, loc, intern_str(self.str_frag))
   }
 
   pub fn read_raw_string_token_format(loc: Location): Token {
@@ -778,10 +778,10 @@ pub class Lexer {
     self.bump()
     self.read_raw_string_body()
     if self.has_err() {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
-    raw = str_slice(self.source.text, open_pos, self.pos)
-    Token.new(tk_string(), loc, raw)
+    raw = self.source.text[open_pos..self.pos]
+    Token.new(tk_string, loc, raw)
   }
 
   pub fn lex_interp_expr: Array(Token) {
@@ -803,16 +803,16 @@ pub class Lexer {
         last_nl = false
         if tokens.size > 0 {
           last = tokens[tokens.size - 1]
-          if last.kind == tk_newline() {
+          if last.kind == tk_newline {
             last_nl = true
           }
         }
         if !last_nl {
-          tokens.push(Token.new(tk_newline(), loc, ""))
+          tokens.push(Token.new(tk_newline, loc, ""))
         }
         continue
       }
-      if self.peek() == 47 && self.peek_next() == 47 {
+      if self.peek() == '/' && self.peek_next() == '/' {
         self.skip_line_comment()
         continue
       }
@@ -826,10 +826,10 @@ pub class Lexer {
         self.take_queued(tokens, qn)
         continue
       }
-      if tok.kind == tk_l_brace() {
+      if tok.kind == tk_l_brace {
         depth += 1
         tokens.push(tok)
-      } else if tok.kind == tk_r_brace() {
+      } else if tok.kind == tk_r_brace {
         if depth == 0 {
           return tokens
         }
@@ -859,12 +859,12 @@ pub class Lexer {
       }
       if self.str_kind == 0 {
         tokens.concat(expr)
-        tokens.push(Token.new(tk_interp_close(), self.here(), self.str_frag))
+        tokens.push(Token.new(tk_interp_close, self.here(), self.str_frag))
         return tokens
       }
       if self.str_kind == 1 {
         tokens.concat(expr)
-        tokens.push(Token.new(tk_interp_mid(), self.here(), self.str_frag))
+        tokens.push(Token.new(tk_interp_mid, self.here(), self.str_frag))
       }
     }
     tokens
@@ -878,10 +878,10 @@ pub class Lexer {
     mark = self.err_count()
     self.read_string_body()
     if new_err_since(mark) {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
     if self.str_kind == 0 {
-      return Token.new(tk_string(), loc, intern_str(self.str_frag))
+      return Token.new(tk_string, loc, intern_str(self.str_frag))
     }
     if self.str_kind == 1 {
       if self.interp_depth >= interp_limit() {
@@ -891,7 +891,7 @@ pub class Lexer {
       self.interp_depth += 1
       rest = self.lex_interpolation()
       self.interp_depth -= 1
-      first = Token.new(tk_interp_open(), loc, intern_str(first_frag))
+      first = Token.new(tk_interp_open, loc, intern_str(first_frag))
       i = 0
       while i < rest.size {
         queue_push(rest[i])
@@ -907,7 +907,7 @@ pub class Lexer {
     if k = self.keywords.get(ident) {
       return Token.new(k, loc, "")
     }
-    Token.new(tk_ident(), loc, intern_str(ident))
+    Token.new(tk_ident, loc, intern_str(ident))
   }
 
   pub fn read_token: Token {
@@ -925,113 +925,113 @@ pub class Lexer {
     switch c {
       case 123 {
         self.bump()
-        Token.new(tk_l_brace(), loc, "")
+        Token.new(tk_l_brace, loc, "")
       }
       case 125 {
         self.bump()
-        Token.new(tk_r_brace(), loc, "")
+        Token.new(tk_r_brace, loc, "")
       }
       case 40 {
         self.bump()
-        Token.new(tk_l_paren(), loc, "")
+        Token.new(tk_l_paren, loc, "")
       }
       case 41 {
         self.bump()
-        Token.new(tk_r_paren(), loc, "")
+        Token.new(tk_r_paren, loc, "")
       }
       case 91 {
         self.bump()
-        Token.new(tk_l_bracket(), loc, "")
+        Token.new(tk_l_bracket, loc, "")
       }
       case 93 {
         self.bump()
-        Token.new(tk_r_bracket(), loc, "")
+        Token.new(tk_r_bracket, loc, "")
       }
       case 44 {
         self.bump()
-        Token.new(tk_comma(), loc, "")
+        Token.new(tk_comma, loc, "")
       }
       case 58 {
         self.bump()
-        Token.new(tk_colon(), loc, "")
+        Token.new(tk_colon, loc, "")
       }
       case 124 {
         self.bump()
-        kind = tk_pipe()
-        if self.peek() == 124 {
+        kind = tk_pipe
+        if self.peek() == '|' {
           self.bump()
-          kind = tk_pipe_pipe()
-        } else if self.peek() == 61 {
+          kind = tk_pipe_pipe
+        } else if self.peek() == '=' {
           self.bump()
-          kind = tk_pipe_eq()
+          kind = tk_pipe_eq
         }
         Token.new(kind, loc, "")
       }
       case 38 {
         self.bump()
-        kind = tk_amp()
-        if self.peek() == 38 {
+        kind = tk_amp
+        if self.peek() == '&' {
           self.bump()
-          kind = tk_amp_amp()
-        } else if self.peek() == 43 {
+          kind = tk_amp_amp
+        } else if self.peek() == '+' {
           self.bump()
-          kind = tk_amp_plus()
-          if self.peek() == 61 {
+          kind = tk_amp_plus
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_amp_plus_eq()
+            kind = tk_amp_plus_eq
           }
-        } else if self.peek() == 45 {
+        } else if self.peek() == '-' {
           self.bump()
-          kind = tk_amp_minus()
-          if self.peek() == 61 {
+          kind = tk_amp_minus
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_amp_minus_eq()
+            kind = tk_amp_minus_eq
           }
-        } else if self.peek() == 42 {
+        } else if self.peek() == '*' {
           self.bump()
-          kind = tk_amp_star()
-          if self.peek() == 61 {
+          kind = tk_amp_star
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_amp_star_eq()
+            kind = tk_amp_star_eq
           }
-        } else if self.peek() == 61 {
+        } else if self.peek() == '=' {
           self.bump()
-          kind = tk_amp_eq()
+          kind = tk_amp_eq
         }
         Token.new(kind, loc, "")
       }
       case 94 {
         self.bump()
-        kind = tk_caret()
-        if self.peek() == 61 {
+        kind = tk_caret
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_caret_eq()
+          kind = tk_caret_eq
         }
         Token.new(kind, loc, "")
       }
       case 126 {
         self.bump()
-        Token.new(tk_tilde(), loc, "")
+        Token.new(tk_tilde, loc, "")
       }
       case 63 {
         self.bump()
-        kind = tk_question()
-        if self.peek() == 63 {
+        kind = tk_question
+        if self.peek() == '?' {
           self.bump()
-          kind = tk_question_question()
+          kind = tk_question_question
         }
         Token.new(kind, loc, "")
       }
       case 46 {
         self.bump()
-        kind = tk_dot()
-        if self.peek() == 46 {
+        kind = tk_dot
+        if self.peek() == '.' {
           self.bump()
-          kind = tk_dot_dot()
-          if self.peek() == 61 {
+          kind = tk_dot_dot
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_dot_dot_eq()
-          } else if self.peek() == 46 {
+            kind = tk_dot_dot_eq
+          } else if self.peek() == '.' {
             // Ruby's and Crystal's `...` excludes its end, CoffeeScript's
             // too: read here as `..` and `.`, a port would fail on a
             // confusing parse error, or as an inclusive range it would be
@@ -1043,95 +1043,95 @@ pub class Lexer {
       }
       case 43 {
         self.bump()
-        kind = tk_plus()
-        if self.peek() == 61 {
+        kind = tk_plus
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_plus_eq()
+          kind = tk_plus_eq
         }
         Token.new(kind, loc, "")
       }
       case 45 {
         self.bump()
-        kind = tk_minus()
-        if self.peek() == 61 {
+        kind = tk_minus
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_minus_eq()
+          kind = tk_minus_eq
         }
         Token.new(kind, loc, "")
       }
       case 42 {
         self.bump()
-        kind = tk_star()
-        if self.peek() == 61 {
+        kind = tk_star
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_star_eq()
+          kind = tk_star_eq
         }
         Token.new(kind, loc, "")
       }
       case 37 {
         self.bump()
-        kind = tk_percent()
-        if self.peek() == 61 {
+        kind = tk_percent
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_percent_eq()
+          kind = tk_percent_eq
         }
         Token.new(kind, loc, "")
       }
       case 47 {
         self.bump()
-        kind = tk_slash()
-        if self.peek() == 61 {
+        kind = tk_slash
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_slash_eq()
+          kind = tk_slash_eq
         }
         Token.new(kind, loc, "")
       }
       case 61 {
         self.bump()
-        kind = tk_eq()
-        if self.peek() == 61 {
+        kind = tk_eq
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_eq_eq()
+          kind = tk_eq_eq
         }
         Token.new(kind, loc, "")
       }
       case 33 {
         self.bump()
-        kind = tk_bang()
-        if self.peek() == 61 {
+        kind = tk_bang
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_not_eq()
+          kind = tk_not_eq
         }
         Token.new(kind, loc, "")
       }
       case 60 {
         self.bump()
-        kind = tk_less()
-        if self.peek() == 61 {
+        kind = tk_less
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_less_eq()
-        } else if self.peek() == 60 {
+          kind = tk_less_eq
+        } else if self.peek() == '<' {
           self.bump()
-          kind = tk_less_less()
-          if self.peek() == 61 {
+          kind = tk_less_less
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_less_less_eq()
+            kind = tk_less_less_eq
           }
         }
         Token.new(kind, loc, "")
       }
       case 62 {
         self.bump()
-        kind = tk_greater()
-        if self.peek() == 61 {
+        kind = tk_greater
+        if self.peek() == '=' {
           self.bump()
-          kind = tk_greater_eq()
-        } else if self.peek() == 62 {
+          kind = tk_greater_eq
+        } else if self.peek() == '>' {
           self.bump()
-          kind = tk_greater_greater()
-          if self.peek() == 61 {
+          kind = tk_greater_greater
+          if self.peek() == '=' {
             self.bump()
-            kind = tk_greater_greater_eq()
+            kind = tk_greater_greater_eq
           }
         }
         Token.new(kind, loc, "")
@@ -1144,7 +1144,7 @@ pub class Lexer {
       }
       case 35 {
         self.bump()
-        Token.new(tk_pound(), loc, "")
+        Token.new(tk_pound, loc, "")
       }
       else {
         self.bump()
@@ -1163,23 +1163,23 @@ pub class Lexer {
         break
       }
       if self.queue_empty() {
-        if self.peek() == 47 && self.peek_next() == 47 {
+        if self.peek() == '/' && self.peek_next() == '/' {
           self.skip_line_comment()
           continue
         }
         if self.peek() == 10 {
           loc = self.here()
           self.bump()
-          if last_kind != tk_newline() {
-            tokens.push(Token.new(tk_newline(), loc, ""))
-            last_kind = tk_newline()
+          if last_kind != tk_newline {
+            tokens.push(Token.new(tk_newline, loc, ""))
+            last_kind = tk_newline
           }
           continue
         }
         before = self.pos
         mark = self.err_count()
         t = self.read_token()
-        if t.kind == tk_eof() {
+        if t.kind == tk_eof {
           if new_err_since(mark) {
             if self.pos == before && !self.at_end() {
               self.bump()
@@ -1196,7 +1196,7 @@ pub class Lexer {
         last_kind = t.kind
       }
     }
-    tokens.push(Token.new(tk_eof(), self.here(), ""))
+    tokens.push(Token.new(tk_eof, self.here(), ""))
     tokens
   }
 
@@ -1207,7 +1207,7 @@ pub class Lexer {
       if c == 10 {
         return true
       }
-      if c == 32 {
+      if c == ' ' {
       } else if c == 9 {
       } else if c != 13 {
         return false
@@ -1229,31 +1229,31 @@ pub class Lexer {
   }
 
   pub fn comment_is_file_directive: Bool {
-    if self.peek() != 47 {
+    if self.peek() != '/' {
       return false
     }
-    if peek_at(1) != 47 {
+    if peek_at(1) != '/' {
       return false
     }
-    if peek_at(2) != 32 {
+    if peek_at(2) != ' ' {
       return false
     }
-    if peek_at(3) != 102 {
+    if peek_at(3) != 'f' {
       return false
     }
-    if peek_at(4) != 105 {
+    if peek_at(4) != 'i' {
       return false
     }
-    if peek_at(5) != 108 {
+    if peek_at(5) != 'l' {
       return false
     }
-    if peek_at(6) != 101 {
+    if peek_at(6) != 'e' {
       return false
     }
-    if peek_at(7) != 58 {
+    if peek_at(7) != ':' {
       return false
     }
-    peek_at(8) == 32
+    peek_at(8) == ' '
   }
 
   pub fn consume_comment_body {
@@ -1280,7 +1280,7 @@ pub class Lexer {
     if file_line {
       path_at = start + 9
       if path_at < self.pos {
-        self.path = intern_str(str_slice(self.source.text, path_at, self.pos))
+        self.path = intern_str(self.source.text[path_at..self.pos])
       } else {
         self.path = intern_str("")
       }
@@ -1288,14 +1288,14 @@ pub class Lexer {
       self.column = 1
       if only_ws_before(start) {
         begin = line_begin_at(start)
-        raw = str_slice(self.source.text, begin, self.pos)
-        return Token.new(tk_file_line(), loc, raw)
+        raw = self.source.text[begin..self.pos]
+        return Token.new(tk_file_line, loc, raw)
       }
-      raw_mid = str_slice(self.source.text, start, self.pos)
-      return Token.new(tk_comment(), loc, raw_mid)
+      raw_mid = self.source.text[start..self.pos]
+      return Token.new(tk_comment, loc, raw_mid)
     }
-    raw = str_slice(self.source.text, start, self.pos)
-    Token.new(tk_comment(), loc, raw)
+    raw = self.source.text[start..self.pos]
+    Token.new(tk_comment, loc, raw)
   }
 
   pub fn read_string_token_format(loc: Location): Token {
@@ -1303,29 +1303,29 @@ pub class Lexer {
     self.bump()
     self.read_string_body()
     if self.has_err() {
-      return Token.new(tk_eof(), loc, "")
+      return Token.new(tk_eof, loc, "")
     }
     if self.str_kind == 0 {
-      raw = str_slice(self.source.text, open_pos, self.pos)
-      return Token.new(tk_string(), loc, raw)
+      raw = self.source.text[open_pos..self.pos]
+      return Token.new(tk_string, loc, raw)
     }
     if self.str_kind == 1 {
       if self.interp_depth >= interp_limit() {
         return self.interp_too_deep(loc)
       }
-      raw_open = str_slice(self.source.text, open_pos, self.pos)
+      raw_open = self.source.text[open_pos..self.pos]
       self.interp_depth += 1
       rest = self.lex_interpolation_format()
       self.interp_depth -= 1
       if self.has_err() {
-        return Token.new(tk_eof(), loc, "")
+        return Token.new(tk_eof, loc, "")
       }
       i = 0
       while i < rest.size {
         queue_push(rest[i])
         i += 1
       }
-      return Token.new(tk_interp_open(), loc, raw_open)
+      return Token.new(tk_interp_open, loc, raw_open)
     }
     fail_tok(loc, "unterminated string")
   }
@@ -1345,10 +1345,10 @@ pub class Lexer {
       if self.peek() == 10 {
         loc = self.here()
         self.bump()
-        tokens.push(Token.new(tk_newline(), loc, ""))
+        tokens.push(Token.new(tk_newline, loc, ""))
         continue
       }
-      if self.peek() == 47 && self.peek_next() == 47 {
+      if self.peek() == '/' && self.peek_next() == '/' {
         tok = self.read_format_comment()
         tokens.push(tok)
         continue
@@ -1363,10 +1363,10 @@ pub class Lexer {
         self.take_queued(tokens, qn)
         continue
       }
-      if tok.kind == tk_l_brace() {
+      if tok.kind == tk_l_brace {
         depth += 1
         tokens.push(tok)
-      } else if tok.kind == tk_r_brace() {
+      } else if tok.kind == tk_r_brace {
         if depth == 0 {
           return tokens
         }
@@ -1394,14 +1394,14 @@ pub class Lexer {
       if self.has_err() {
         return tokens
       }
-      raw = str_slice(self.source.text, body_start, self.pos)
+      raw = self.source.text[body_start..self.pos]
       tokens.concat(expr)
       if self.str_kind == 0 {
-        tokens.push(Token.new(tk_interp_close(), self.here(), raw))
+        tokens.push(Token.new(tk_interp_close, self.here(), raw))
         return tokens
       }
       if self.str_kind == 1 {
-        tokens.push(Token.new(tk_interp_mid(), self.here(), raw))
+        tokens.push(Token.new(tk_interp_mid, self.here(), raw))
       } else {
         return tokens
       }
@@ -1424,7 +1424,7 @@ pub class Lexer {
         if self.at_end() {
           break
         }
-        if self.peek() == 47 && self.peek_next() == 47 {
+        if self.peek() == '/' && self.peek_next() == '/' {
           tok = self.read_format_comment()
           tokens.push(tok)
           continue
@@ -1432,7 +1432,7 @@ pub class Lexer {
         if self.peek() == 10 {
           loc = self.here()
           self.bump()
-          tokens.push(Token.new(tk_newline(), loc, ""))
+          tokens.push(Token.new(tk_newline, loc, ""))
           continue
         }
         t = self.read_token()
@@ -1448,7 +1448,7 @@ pub class Lexer {
     if self.has_err() {
       return tokens
     }
-    tokens.push(Token.new(tk_eof(), self.here(), ""))
+    tokens.push(Token.new(tk_eof, self.here(), ""))
     tokens
   }
 }

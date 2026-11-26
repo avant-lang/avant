@@ -14,11 +14,14 @@
 
 import source
 import pipeline
+import loader
 import mir.ir
 import mir.verify_core
 import mir.verify
 import llvm.glue
 import llvm.emit
+import std.fs
+import std.process
 
 pub class LlvmJob {
   pub codegen: String = "debug"
@@ -47,7 +50,7 @@ pub class LlvmJob {
 // them over the whole corpus there. Stage lowered's checks run on every
 // compile (mir/lower.av), and `__emit-ll` verifies at stage final always.
 pub fn llvm_verify_mode: Bool {
-  if v = env_get("AVANT_VERIFY"), v == "1" {
+  if v = process.env("AVANT_VERIFY"), v == "1" {
     return true
   }
   false
@@ -56,11 +59,11 @@ pub fn llvm_verify_mode: Bool {
 // The verifier at stage final: "" or every error in the compiler's
 // diagnostic form (error[V<n>] ... --> file:line:col), one after another.
 pub fn llvm_verify(m: MModule): String {
-  errs = mir_verify_errors(m, mst_final())
+  errs = mir_verify_errors(m, mst_final)
   if errs.size == 0 {
     return ""
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < errs.size {
     if i > 0 {
@@ -68,7 +71,7 @@ pub fn llvm_verify(m: MModule): String {
     }
     r = errs[i].render(m)
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     buf.push_str(r)
     i += 1
@@ -76,23 +79,78 @@ pub fn llvm_verify(m: MModule): String {
   buf.to_s()
 }
 
+// The .ll text of a program, and what the steps after it still need of
+// the module.
+class LlvmText {
+  text: String = ""
+  name: String = ""
+  err: String = ""
+  emit_us: Int = 0
+}
+
+// Verify (when verify), then emit the box's module. The module is taken
+// out of the box: when this returns nothing holds it, so the collection
+// that follows frees the whole MIR before the .ll text is compiled (the
+// in-process LLVM then grows on top of the text alone, not of the text and
+// the MIR).
+fn llvm_text(box: IrBox, inline_fast: Bool, shadows: Bool, verify: Bool): LlvmText {
+  r = LlvmText.new()
+  if m = box.mir {
+    box.mir = nil
+    r.name = m.name
+    if verify {
+      bad = llvm_verify(m)
+      if bad.size > 0 {
+        r.err = bad
+        return r
+      }
+    }
+    t0 = now_us()
+    r.text = ll_emit_module(m, inline_fast, shadows)
+    r.emit_us = now_us() - t0
+  } else {
+    r.err = "internal error: the program has no module"
+  }
+  r
+}
+
+// The module's name ("" when the box has none).
+fn box_name(box: IrBox): String {
+  if m = box.mir {
+    return m.name
+  }
+  ""
+}
+
+// The runtime's full collection that also returns every free resident
+// byte to the system (gc.collect() keeps what it frees for the next
+// cycle). The compiler calls it at its two phase boundaries, where what
+// it frees is not needed again: the text's building needs less than the
+// front end did, and LLVM allocates outside the heap.
+lib gc_release {
+  fun avant_gc_release
+}
+
 // Verify (in the verify mode), emit, and compile to obj_path. With job.keep_ll set, the
 // pre-optimization .ll is also written there (for the goldens and the
 // self-hosting fixed point). An LLVM failure after the verifier passed
-// is an emitter bug, reported as an internal error.
-pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
-  if llvm_verify_mode() {
-    bad = llvm_verify(m)
-    if bad.size > 0 {
-      return bad
-    }
+// is an emitter bug, reported as an internal error. The box's module is
+// dropped once its text is made; what the program's compile left dead
+// (the syntax tree, the checker's tables) is collected first, and the
+// module before LLVM starts, so the compiler's own heap is the text;
+// each collection gives what it freed back to the system.
+pub fn llvm_object(box: IrBox, job: LlvmJob, obj_path: String): String {
+  gc_release.avant_gc_release()
+  r = llvm_text(box, job.inline_fast, job.codegen == "release", llvm_verify_mode())
+  if r.err.size > 0 {
+    return r.err
   }
-  t0 = now_us()
-  text = ll_emit_module(m, job.inline_fast, job.codegen == "release")
-  t1 = now_us()
-  job.emit_us = t1 - t0
+  job.emit_us = r.emit_us
+  text = r.text
+  name = r.name
+  r = LlvmText.new()
   if job.keep_ll.size > 0 {
-    if e = write_failure(file_write(job.keep_ll, text)) {
+    if e = write_failure(fs.write(job.keep_ll, text)) {
       return e.message()
     }
   }
@@ -101,7 +159,9 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
     cpu = llvm_cpu_default()
   }
   llvm_set_cpu(cpu)
-  err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
+  gc_release.avant_gc_release()
+  t1 = now_us()
+  err = llvm_compile_text(text, "${name}.ll", job.codegen, obj_path)
   job.compile_us = now_us() - t1
   if err.size > 0 {
     return "internal error: ${err}"
@@ -109,14 +169,16 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   ""
 }
 
-// Verify and emit only: the pre-optimization .ll written to ll_path
-// (`avant __emit-ll`, the self-hosting fixed point).
-pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
-  bad = llvm_verify(m)
-  if bad.size > 0 {
-    return bad
+// Emit only: the pre-optimization .ll written to ll_path
+// (`avant __emit-ll`, the self-hosting fixed point), after the stage
+// final verifier.
+pub fn llvm_emit_ll(box: IrBox, inline_fast: Bool, ll_path: String): String {
+  gc_release.avant_gc_release()
+  r = llvm_text(box, inline_fast, true, true)
+  if r.err.size > 0 {
+    return r.err
   }
-  if e = write_failure(file_write(ll_path, ll_emit_module(m, inline_fast, true))) {
+  if e = write_failure(fs.write(ll_path, r.text)) {
     return e.message()
   }
   ""
@@ -125,14 +187,14 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 // Verify, emit, compile, and link the program out_path. A missing
 // parent directory of out_path is created first (kept from the old
 // driver: `compile x.av out/dir/x` works).
-pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
+pub fn llvm_build(box: IrBox, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
   if parent.size > 0 && fs_mkdir_p(parent) != 0 {
     return "cannot create the output directory ${parent}"
   }
   work = tmp_new_dir()
-  obj = "${work}/${m.name}.o"
-  err = llvm_object(m, job, obj)
+  obj = "${work}/${box_name(box)}.o"
+  err = llvm_object(box, job, obj)
   if err.size > 0 {
     return err
   }
@@ -149,42 +211,186 @@ pub fn llvm_out_parent(out_path: String): String {
   i = out_path.size - 1
   while i > 0 {
     if out_path[i] == 47 {
-      return str_slice(out_path, 0, i)
+      return out_path[..i]
     }
     i -= 1
   }
   ""
 }
 
+// The linker script the link adds to the default one (GNU ld and lld
+// read it with -T; INSERT keeps their default script): the runtime's hot
+// functions (sections .avant_hot.K.NAME, runtime/build.sh's place_hot)
+// sorted by name into one output section after all other code, starting
+// on a 4 KiB boundary. Placed there, a hot function moves only when a hot
+// function sorted before it changes: neither the program's code, which
+// stays where it was, nor the rest of the runtime moves it within its
+// page.
+pub fn llvm_hot_script: String {
+  "SECTIONS\n{\n  .avant_hot ALIGN(4096) : { *(SORT(.avant_hot.*)) }\n}\nINSERT AFTER .text;\n"
+}
+
+// pipeline.run_cc with the output to log.
+pub fn llvm_run_cc_out(args: Array(String), log: String): Int {
+  if v = process.env("CC"), fs.exists(v) {
+    return tool_run_out(v, args, log)
+  }
+  if fs.exists("/usr/bin/cc") {
+    return tool_run_out("/usr/bin/cc", args, log)
+  }
+  wrapped: Array(String) = []
+  wrapped.push("cc")
+  wrapped.concat(args)
+  tool_run_out("/usr/bin/env", wrapped, log)
+}
+
+// path with its symbolic links followed (at most 16), "" when it does not
+// exist.
+pub fn llvm_link_resolved(path: String): String {
+  p = path
+  for hop in 0..16 {
+    t = path_link_target(p)
+    if t.size == 0 {
+      if fs.exists(p) {
+        return p
+      }
+      return ""
+    }
+    if t.starts_with("/") {
+      p = t
+    } else {
+      p = "${path_dirname(p)}/${t}"
+    }
+  }
+  ""
+}
+
+// The script's answer for one linker file: 1 for GNU ld (ld.bfd) and lld,
+// 0 for mold and gold, -1 for a name it does not know.
+pub fn llvm_linker_name_reads(path: String): Int {
+  name = path_basename(path)
+  if name.contains("mold") || name.contains("gold") {
+    return 0
+  }
+  if name.ends_with(".bfd") || name.contains("lld") {
+    return 1
+  }
+  -1
+}
+
+// Whether the linker this link runs reads llvm_hot_script. GNU ld and lld
+// read it; mold and gold do not, and get no script: their links keep each
+// hot section as an output section of its own, where that linker puts an
+// unknown code section, on no page boundary. Decided without running
+// anything when it can be: a -fuse-ld= among the link's flags names the
+// linker; with no CC, no -fuse-ld and no -B, cc runs the system's linker,
+// /usr/bin/x86_64-linux-gnu-ld (gcc) or /usr/bin/ld (clang), whose links
+// lead to the linker's own file (ld.bfd, ld.lld, ld.mold). Only a link
+// that names none of these (a CC wrapper, a -B, an unknown file) asks cc
+// for its linker's version, one short run before the link (a run per
+// link costs every program three processes: the suite's wall read 3%
+// more with it).
+pub fn llvm_linker_reads_script(flags: Array(String), log: String): Bool {
+  probe = false
+  if v = process.env("CC") {
+    probe = v.size > 0
+  }
+  for f in flags {
+    if f.starts_with("-fuse-ld=") {
+      u = f[9..f.size]
+      if u == "bfd" || u == "lld" {
+        return true
+      }
+      if u == "mold" || u == "gold" {
+        return false
+      }
+      probe = true
+    }
+    if f.starts_with("-B") {
+      probe = true
+    }
+  }
+  if !probe {
+    known = 0
+    answer = true
+    lds: Array(String) = []
+    lds.push("/usr/bin/x86_64-linux-gnu-ld")
+    lds.push("/usr/bin/ld")
+    for ld in lds {
+      r = llvm_link_resolved(ld)
+      if r.size > 0 {
+        w = llvm_linker_name_reads(r)
+        if w < 0 {
+          probe = true
+        } else {
+          known += 1
+          answer = answer && w == 1
+        }
+      }
+    }
+    if !probe && known > 0 {
+      return answer
+    }
+  }
+  args: Array(String) = []
+  args.concat(flags)
+  args.push("-Wl,--version")
+  ok = false
+  if llvm_run_cc_out(args, log) == 0 {
+    text = fs.read(log) ?? ""
+    // The linker's own version line (cc prints its command lines too;
+    // mold's line says it is compatible with GNU ld, so the start of the
+    // line decides).
+    for l in text.split("\n") {
+      if l.starts_with("GNU ld ") || (l.contains("LLD ") && l.contains("compatible with GNU linkers")) {
+        ok = true
+      }
+    }
+  }
+  fs_unlink(log)
+  ok
+}
+
 // cc OBJ <runtime objects> <job objects> <the runtime's avant_tls.o>
-// <flags> -o OUT: the hot thread-locals' object comes after every other
-// object, so no other object's thread-locals come between them and the
-// thread pointer (runtime/avant_tls.c).
+// <flags> -Wl,-T,avant_hot.ld -o OUT: the hot thread-locals' object comes
+// after every other object, so no other object's thread-locals come
+// between them and the thread pointer (runtime/avant_tls.c); the script
+// (llvm_hot_script) is written beside OBJ when the linker reads it.
 pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   args: Array(String) = []
   args.push(obj)
   root = avant_root()
   rt = runtime_objects(root)
   args.concat(rt)
-  for o in job.objects {
-    if !is_runtime_tls_object(o) {
-      args.push(o)
-    }
-  }
+  args.concat(job.objects)
   args.push(runtime_tls_object(root))
   extra = job.flags
   line = linker_flags_s(extra)
   words = line.split(" ")
+  flags: Array(String) = []
   i = 0
   while i < words.size {
     if words[i].size > 0 {
       args.push(words[i])
+      flags.push(words[i])
     }
     i += 1
+  }
+  dir = llvm_out_parent(obj)
+  script = ""
+  if llvm_linker_reads_script(flags, "${dir}/linker.txt") {
+    script = "${dir}/avant_hot.ld"
+    if e = write_failure(fs.write(script, llvm_hot_script())) {
+      return e.message()
+    }
+    args.push("-Wl,-T,${script}")
   }
   args.push("-o")
   args.push(out_path)
   code = run_cc(args)
+  if script.size > 0 {
+    fs_unlink(script)
+  }
   if code != 0 {
     return "link failed: cc exited ${code}"
   }

@@ -5,23 +5,23 @@ import token
 import lexer
 import type
 
-pub fn ex_int: Int { 1 }
-pub fn ex_float: Int { 2 }
-pub fn ex_string: Int { 3 }
-pub fn ex_bool: Int { 4 }
-pub fn ex_name: Int { 5 }
-pub fn ex_call: Int { 6 }
-pub fn ex_unary: Int { 7 }
-pub fn ex_binary: Int { 8 }
-pub fn ex_field: Int { 9 }
-pub fn ex_index: Int { 10 }
-pub fn ex_struct: Int { 11 }
-pub fn ex_array: Int { 12 }
-pub fn ex_array_new: Int { 13 }
-pub fn ex_hash_new: Int { 14 }
-pub fn ex_nil: Int { 15 }
-pub fn ex_try: Int { 16 }
-pub fn ex_interp: Int { 17 }
+pub const ex_int = 1
+pub const ex_float = 2
+pub const ex_string = 3
+pub const ex_bool = 4
+pub const ex_name = 5
+pub const ex_call = 6
+pub const ex_unary = 7
+pub const ex_binary = 8
+pub const ex_field = 9
+pub const ex_index = 10
+pub const ex_struct = 11
+pub const ex_array = 12
+pub const ex_array_new = 13
+pub const ex_hash_new = 14
+pub const ex_nil = 15
+pub const ex_try = 16
+pub const ex_interp = 17
 // A switch node (`switch c { case ... else ... }`) also holds the two
 // forms whose value comes from statements, so every walker visits them as
 // it visits a switch: op tk_return, the right side of `x ?? return v` /
@@ -31,44 +31,44 @@ pub fn ex_interp: Int { 17 }
 // (`n = f() else e { ... }`) is the right side of a `??` in the same
 // node: op tk_return, bool_val set, else_body its block and ident the
 // failure's name.
-pub fn ex_switch: Int { 18 }
+pub const ex_switch = 18
 
 pub fn expr_is_else_guard(e: Expr): Bool {
-  e.kind == ex_switch() && e.op == tk_return() && e.bool_val
+  e.kind == ex_switch && e.op == tk_return && e.bool_val
 }
-pub fn ex_splice: Int { 19 }
-pub fn ex_lambda: Int { 20 }
+pub const ex_splice = 19
+pub const ex_lambda = 20
 // The success of a `Void | E` result where nothing is written: the
 // checker adds it at the end of such a function's body and to a bare
 // `return`; its type is Void, the union's Void member.
-pub fn ex_void: Int { 21 }
+pub const ex_void = 21
 // A hash literal, `["tea": 12, "milk": 3]` (`[:]` when empty): elems
 // holds each entry's key and then its value, in the written order.
-pub fn ex_hash_lit: Int { 22 }
+pub const ex_hash_lit = 22
 // An enum member written short, `:write` (its name in ident): the
 // member of the enum expected where it stands (the checker sets ty),
 // lowered as the member read `E.write` is.
-pub fn ex_enum_lit: Int { 23 }
+pub const ex_enum_lit = 23
 // A read of a module constant computed before `main` (a value that is
 // not a scalar, checker/const_values.av): ident is the constant's name,
 // mod_name its module, resolved the global slot's symbol; one load.
-pub fn ex_const_ref: Int { 24 }
+pub const ex_const_ref = 24
 
-pub fn st_expr: Int { 1 }
-pub fn st_return: Int { 2 }
-pub fn st_if: Int { 3 }
-pub fn st_while: Int { 4 }
-pub fn st_break: Int { 5 }
-pub fn st_continue: Int { 6 }
-pub fn st_assign: Int { 7 }
-pub fn st_quote: Int { 8 }
-pub fn st_pin: Int { 9 }
-pub fn st_release: Int { 10 }
+pub const st_expr = 1
+pub const st_return = 2
+pub const st_if = 3
+pub const st_while = 4
+pub const st_break = 5
+pub const st_continue = 6
+pub const st_assign = 7
+pub const st_quote = 8
+pub const st_pin = 9
+pub const st_release = 10
 // `gc.hold { body }` (std.gc): body only.
-pub fn st_hold: Int { 11 }
+pub const st_hold = 11
 // `defer { body }`: body runs on every way out of the enclosing block
 // (its end, return, `?`, break, continue), the latest first.
-pub fn st_defer: Int { 12 }
+pub const st_defer = 12
 
 pub class TypeName {
   pub loc: Location
@@ -141,13 +141,13 @@ pub class InterpPart {
 // `case 0..10`, `case 'a'..='z'`) holds its bounds as two labels, lo and
 // hi (each an integer or a name), incl when written `..=`; the checker
 // puts its first value in int_val and its last in hi_val.
-pub fn lb_int: Int { 1 }
-pub fn lb_string: Int { 2 }
-pub fn lb_member: Int { 3 }
-pub fn lb_type: Int { 4 }
-pub fn lb_nil: Int { 5 }
-pub fn lb_bool: Int { 6 }
-pub fn lb_range: Int { 7 }
+pub const lb_int = 1
+pub const lb_string = 2
+pub const lb_member = 3
+pub const lb_type = 4
+pub const lb_nil = 5
+pub const lb_bool = 6
+pub const lb_range = 7
 
 pub class CaseLabel {
   pub kind: Int = 0
@@ -334,9 +334,9 @@ pub class Expr {
   }
 }
 
-pub fn op_fn: Int { 1 }
-pub fn op_swap: Int { 2 }
-pub fn op_not: Int { 4 }
+pub const op_fn = 1
+pub const op_swap = 2
+pub const op_not = 4
 
 pub class Stmt {
   pub kind: Int = 0
@@ -747,29 +747,29 @@ pub class Program {
 }
 
 pub fn stmt_expr(loc: Location, expr: Expr): Stmt {
-  s = Stmt.new(st_expr(), loc)
+  s = Stmt.new(st_expr, loc)
   s.expr = expr
   s
 }
 
 pub fn stmt_return(loc: Location, expr: Expr?): Stmt {
-  s = Stmt.new(st_return(), loc)
+  s = Stmt.new(st_return, loc)
   s.expr = expr
   s
 }
 
 pub fn stmt_return_void(loc: Location): Stmt {
-  Stmt.new(st_return(), loc)
+  Stmt.new(st_return, loc)
 }
 
 pub fn stmt_return_val(loc: Location, expr: Expr): Stmt {
-  s = Stmt.new(st_return(), loc)
+  s = Stmt.new(st_return, loc)
   s.expr = expr
   s
 }
 
 pub fn stmt_quote(loc: Location, body: Array(Stmt)): Stmt {
-  s = Stmt.new(st_quote(), loc)
+  s = Stmt.new(st_quote, loc)
   s.body = body
   s
 }
@@ -1063,7 +1063,7 @@ pub fn ast_is_ctor_call(e: Expr): Bool {
 // ending in return. A local function value of that name is called
 // indirectly and is not it.
 pub fn ast_is_exit_call(e: Expr): Bool {
-  if e.kind != ex_call() || !(e.callee == "exit" || e.callee == "panic") || e.indirect || e.args.size != 1 {
+  if e.kind != ex_call || !(e.callee == "exit" || e.callee == "panic") || e.indirect || e.args.size != 1 {
     return false
   }
   if r = e.receiver {
@@ -1075,7 +1075,7 @@ pub fn ast_is_exit_call(e: Expr): Bool {
 // Whether the statement is an exit(status) or panic(message) call
 // (ast_is_exit_call).
 pub fn ast_stmt_exits(st: Stmt): Bool {
-  if st.kind == st_expr() {
+  if st.kind == st_expr {
     if e = st.expr {
       return ast_is_exit_call(e)
     }
@@ -1430,7 +1430,7 @@ pub fn arg_frame_name(frame: UInt64, j: Int): String {
 // has not been needed yet (its frame in int_bits, its index in op): it is
 // named at its first use, so the caller can tell which were used.
 pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     i = 0
     while i < from.size {
       if e.ident == from[i] {
@@ -1438,7 +1438,7 @@ pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
         if t.ident.size == 0 {
           t.ident = arg_frame_name(t.int_bits, t.op)
         }
-        c = Expr.new(ex_name(), t.loc)
+        c = Expr.new(ex_name, t.loc)
         c.ident = t.ident
         return c
       }

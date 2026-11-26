@@ -279,7 +279,7 @@ pub fn (checker_self: Checker) check: Program {
   while i < checker_self.program.functions.size {
     checker_self.clear_poison()
     fnn = checker_self.program.functions[i]
-    if fnn.mod_name == "std.json" && fnn.owner.size == 0 && fnn.name.size > 6 && str_slice(fnn.name, 0, 6) == "codec_" {
+    if fnn.mod_name == "std.json" && fnn.owner.size == 0 && fnn.name.size > 6 && fnn.name.starts_with("codec_") {
       // The typed decode's and encode's pieces (checker/json_codec.av):
       // lowered only when a call reaches them.
       fnn.lazy = true
@@ -688,18 +688,6 @@ pub fn c_sig_text(params: Array(Ty), ret: Ty): String {
 pub fn builtin_fn_shadow_text(name: String, mod_name: String): String {
   if mod_name == "prelude" {
     return ""
-  }
-  if mod_name.starts_with("std.") && name == "sha256" {
-    // std.digest's own sha256, called digest.sha256(...).
-    return ""
-  }
-  twin = retired_twin_name(name)
-  if twin.size > 0 {
-    return "fn ${name}: ${name} is the prelude's old spelling of ${twin}, and every call ${name}(...) is refused with that spelling, so this function would never be called; give it another name"
-  }
-  moved = moved_io_name(name)
-  if moved.size > 0 {
-    return "fn ${name}: ${name} is the prelude's old name of ${moved}, and every call ${name}(...) is refused with that spelling, so this function would never be called; give it another name"
   }
   if name != "join" && prelude_call_name(name) {
     return "fn ${name}: ${name} is a builtin function, and every call ${name}(...) is the builtin's, so this function would never be called; give it another name"

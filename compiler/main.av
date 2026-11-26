@@ -42,9 +42,11 @@ import source
 import test_cmd
 import token
 import type
+import std.fs
+import std.process
 
 pub fn argv_user: Array(String) {
-  args = argv()
+  args = process.args()
   if args.size == 0 {
     return []
   }
@@ -119,7 +121,7 @@ fn spawns_children(command: String): Bool {
 // named `deps` are skipped, and a symbolic link to a directory is not
 // followed (a link to a file is formatted as the file).
 fn format_walk(dir: String, into: Array(String)) {
-  names = dir_list(dir) ?? []
+  names = fs.list(dir) ?? []
   i = 0
   while i < names.size {
     name = names[i]
@@ -133,7 +135,7 @@ fn format_walk(dir: String, into: Array(String)) {
     }
     if name.ends_with(".av") {
       into.push(path)
-    } else if file_exists("${path}/.") && !path_is_link(path) {
+    } else if fs.exists("${path}/.") && !path_is_link(path) {
       format_walk(path, into)
     }
   }
@@ -196,7 +198,7 @@ pub fn driver_format(args: Array(String)) {
     i += 1
     if p.ends_with(".av") {
       paths.push(p)
-    } else if file_exists("${p}/.") {
+    } else if fs.exists("${p}/.") {
       dirs = true
       found: Array(String) = []
       format_walk(p, found)
@@ -215,7 +217,7 @@ pub fn driver_format(args: Array(String)) {
   while i < paths.size {
     path = paths[i]
     i += 1
-    if text = file_read(path) {
+    if text = fs.read(path) {
       got = format_source(path, text)
       if !got.ok {
         diag_puts(got.err)
@@ -230,7 +232,7 @@ pub fn driver_format(args: Array(String)) {
         }
       } else if write {
         if !same {
-          if e = write_failure(file_write(path, got.text)) {
+          if e = write_failure(fs.write(path, got.text)) {
             diag_puts(e.message())
             failed = true
           }
@@ -306,7 +308,7 @@ fn driver_dump_checked(path: String) {
       diag_bag(loader.errors)
       diag_exit(1)
     }
-    src = Source.new(path, file_read(path) ?? "")
+    src = Source.new(path, fs.read(path) ?? "")
     expander = Expander.new(src, merged)
     expander.expand()
     if e = expander.err {
@@ -373,7 +375,7 @@ pub fn driver_dump(args: Array(String)) {
 // call forms instead, so the suite can prove both forms (the
 // program-level twin of __mir-build --call-forms).
 fn llvm_inline_fast: Bool {
-  if v = env_get("AVANT_LLVM_CALL_FORMS"), v == "1" {
+  if v = process.env("AVANT_LLVM_CALL_FORMS"), v == "1" {
     return false
   }
   true
@@ -430,8 +432,8 @@ pub fn driver_run(args: Array(String)) {
     // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
-    if m = box.mir {
-      err = llvm_build(m, llvm_job_of(job), out)
+    if _ = box.mir {
+      err = llvm_build(box, llvm_job_of(job), out)
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
@@ -477,9 +479,9 @@ pub fn driver_compile(args: Array(String)) {
     if !attach_std_link(box, job) {
       diag_exit(1)
     }
-    if m = box.mir {
+    if _ = box.mir {
       // The driver leaves this line to its caller.
-      err = llvm_build(m, llvm_job_of(job), out_path)
+      err = llvm_build(box, llvm_job_of(job), out_path)
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
@@ -506,7 +508,7 @@ pub fn driver_bind(args: Array(String)) {
       lib_name = args[i + 1]
       i += 2
     } else if arg.starts_with("--lib=") {
-      lib_name = str_slice(arg, 6, arg.size)
+      lib_name = arg[6..]
       i += 1
     } else if arg.starts_with("-") {
       puts("unknown bind argument ${arg}")
@@ -530,7 +532,7 @@ pub fn driver_bind(args: Array(String)) {
   if lib_name.size == 0 {
     lib_name = bind_default_name(header)
   }
-  if !file_exists(header) {
+  if !fs.exists(header) {
     puts("header is missing")
     return
   }
@@ -644,7 +646,7 @@ fn driver_mir_build(args: Array(String)) {
       job.keep_ll = args[i + 1]
       i += 1
     } else if a.starts_with("--emit-ll=") {
-      job.keep_ll = str_slice(a, 10, a.size)
+      job.keep_ll = a[10..]
     } else if a == "--object" {
       object = true
     } else if a == "--call-forms" {
@@ -669,12 +671,14 @@ fn driver_mir_build(args: Array(String)) {
     if g = m.func("main") {
       has_main = true
     }
+    box = IrBox.new(true)
+    box.mir = m
     if object {
-      err = llvm_object(m, job, files[1])
+      err = llvm_object(box, job, files[1])
     } else if !has_main {
       err = "__mir-build: ${files[0]} has no main (use --object)"
     } else {
-      err = llvm_build(m, job, files[1])
+      err = llvm_build(box, job, files[1])
     }
     if timed {
       diag_puts("emit_us=${job.emit_us} compile_us=${job.compile_us} link_us=${job.link_us}")
@@ -713,9 +717,9 @@ fn driver_version(args: Array(String)) {
   }
   exe = self_exe_path()
   text = ""
-  if t = file_read("${exe}.versions.txt") {
+  if t = fs.read("${exe}.versions.txt") {
     text = t
-  } else if t = file_read("${path_dirname(exe)}/versions.txt") {
+  } else if t = fs.read("${path_dirname(exe)}/versions.txt") {
     text = t
   }
   if text.size == 0 {
@@ -728,11 +732,11 @@ fn driver_version(args: Array(String)) {
   dirty = false
   for line in text.split("\n") {
     if line.starts_with("version: ") {
-      version = str_slice(line, 9, line.size)
+      version = line[9..]
     } else if line.starts_with("tag: v") {
-      tag = str_slice(line, 6, line.size)
+      tag = line[6..]
     } else if line.starts_with("avant: ") {
-      commit = str_slice(line, 7, line.size)
+      commit = line[7..]
     } else if line == "dirty: yes" {
       dirty = true
     }
@@ -763,8 +767,8 @@ fn driver_emit_ll(args: Array(String)) {
   paths.push(args[0])
   box = compile_av_paths(paths)
   if box.ok {
-    if m = box.mir {
-      err = llvm_emit_ll(m, llvm_inline_fast(), args[1])
+    if _ = box.mir {
+      err = llvm_emit_ll(box, llvm_inline_fast(), args[1])
       if err.size > 0 {
         diag_puts(err)
         diag_exit(1)
@@ -775,7 +779,17 @@ fn driver_emit_ll(args: Array(String)) {
   diag_exit(1)
 }
 
+// The runtime's fixed young budget (avant_gc_young_fixed): the compiler
+// keeps what it builds (the syntax tree, the checker's tables, the MIR),
+// so its survivors are promoted at their first young collection instead
+// of being copied once more to age them. The environment's collector
+// modes (AVANT_YOUNG_MB, the check modes) still apply.
+lib gc_young {
+  fun avant_gc_young_fixed(mb: Int)
+}
+
 fn main {
+  gc_young.avant_gc_young_fixed(16)
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
     show_usage()

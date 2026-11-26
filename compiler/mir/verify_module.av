@@ -26,7 +26,7 @@ pub fn mir_verify_module(v: MVerifier) {
   for e in v.m.externs {
     s = ts.sigs[e.sig]
     for param in s.params {
-      if ts.is_addr(param) && !(e.peek_row && e.cls == mcc_never()) {
+      if ts.is_addr(param) && !(e.peek_row && e.cls == mcc_never) {
         v.merr(10, "extern ${e.name} takes a derived address")
       }
     }
@@ -76,11 +76,11 @@ fn mir_layout_id_rule(v: MVerifier, k: Int, l: MLayout) {
     return
   }
   fixed = 0
-  if l.kind == mlk_array() {
+  if l.kind == mlk_array {
     fixed = 1022
-  } else if l.kind == mlk_buf() {
+  } else if l.kind == mlk_buf {
     fixed = 1021
-  } else if l.kind == mlk_hash() {
+  } else if l.kind == mlk_hash {
     fixed = 1023
   }
   if fixed > 0 || id == 1020 || id == 1021 || id == 1022 || id == 1023 {
@@ -90,12 +90,12 @@ fn mir_layout_id_rule(v: MVerifier, k: Int, l: MLayout) {
     return
   }
   if id == 65535 {
-    if l.kind != mlk_elems() {
+    if l.kind != mlk_elems {
       v.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id 65535")
     }
     return
   }
-  if !(l.kind == mlk_class() || l.kind == mlk_record() || l.kind == mlk_elems()) || !mir_dyn_id(id) {
+  if !(l.kind == mlk_class || l.kind == mlk_record || l.kind == mlk_elems) || !mir_dyn_id(id) {
     v.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id ${id}")
     return
   }
