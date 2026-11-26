@@ -62,8 +62,25 @@ prefix="-ffile-prefix-map=$root=runtime"
 harden="-fstack-protector-strong -fstack-clash-protection -fcf-protection=full -D_FORTIFY_SOURCE=3 -Wformat -Wformat-security"
 cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $harden $place $prefix -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
+# The translation units compile at once: par starts a command in the
+# background, par_wait waits for every one started and stops the build when
+# one failed (its compiler's message is above). The objects are the same
+# bytes in any order; only the steps that read them (the merges, objcopy,
+# the checks) wait. RUNTIME_BUILD_SERIAL=1 compiles them one after another
+# (tests/tools/runtime-par.sh compares the two builds' bytes).
+par_pids=""
+par() {
+  if [ "${RUNTIME_BUILD_SERIAL:-0}" = 1 ]; then "$@"; return; fi
+  "$@" & par_pids="$par_pids $!"
+}
+par_wait() {
+  par_rc=0
+  for p in $par_pids; do wait "$p" || par_rc=1; done
+  par_pids=""
+  [ $par_rc -eq 0 ] || { echo "runtime/build.sh: a compile failed (its message is above)" >&2; exit 1; }
+}
 compile() {
-  "$cc" -c $cflags -o "$2" "$1"
+  par "$cc" -c $cflags -o "$2" "$1"
 }
 
 # The young generation is S+ (avant_gc_sticky.c).
@@ -93,9 +110,10 @@ build_core() {
   set --
   for name in $core_units; do
     # shellcheck disable=SC2086
-    "$cc" -c $cflags $gc_cflags -o "$out/$name.unit.o" "$root/$name.c"
+    par "$cc" -c $cflags $gc_cflags -o "$out/$name.unit.o" "$root/$name.c"
     set -- "$@" "$out/$name.unit.o"
   done
+  par_wait
   ld -r -o "$out/avant_rt_merged.o" "$@"
   objcopy --keep-global-symbols="$root/avant_rt.exports" "$out/avant_rt_merged.o"
   # The surface check: the object's global symbols are
@@ -120,7 +138,7 @@ build_core() {
   mv "$out/avant_rt_merged.o" "$out/avant_rt.o"
   for name in avant_str avant_buf avant_hash avant_array avant_task avant_wide avant_codec avant_io avant_cov; do
     # shellcheck disable=SC2086
-    "$cc" -c $cflags -o "$out/$name.o" "$root/$name.c"
+    par "$cc" -c $cflags -o "$out/$name.o" "$root/$name.c"
   done
   # The stack overflow's unit (avant_stack.c) joins the last object every
   # program links, so its code and its main-thread signal stack (.bss)
@@ -129,7 +147,8 @@ build_core() {
   # LangArena task by a few percent (the link table names no new object,
   # so the seed links it too).
   # shellcheck disable=SC2086
-  "$cc" -c $cflags -o "$out/avant_stack.unit.o" "$root/avant_stack.c"
+  par "$cc" -c $cflags -o "$out/avant_stack.unit.o" "$root/avant_stack.c"
+  par_wait
   mv "$out/avant_cov.o" "$out/avant_cov.unit.o"
   ld -r -o "$out/avant_cov.o" "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
   rm -f "$out/avant_cov.unit.o" "$out/avant_stack.unit.o"
@@ -137,7 +156,7 @@ build_core() {
   # object, which the compiler links after every other object of a
   # program, so they end the thread-local block with any linker.
   # shellcheck disable=SC2086
-  "$cc" -c $cflags -o "$out/avant_tls.o" "$root/avant_tls.c"
+  par "$cc" -c $cflags -o "$out/avant_tls.o" "$root/avant_tls.c"
 }
 
 build_core "$root/build"
@@ -159,10 +178,11 @@ zl_out="$root/build/zlib"
 rm -rf "$zl_out"
 mkdir -p "$zl_out"
 for f in adler32 compress crc32 deflate inffast inflate inftrees trees uncompr zutil; do
-  "$cc" -c -O3 -pthread -fno-omit-frame-pointer $harden -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN \
+  par "$cc" -c -O3 -pthread -fno-omit-frame-pointer $harden -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN \
     -I"$zl" -o "$zl_out/$f.o" "$zl/$f.c"
 done
-"$cc" -c $cflags -I"$zl" -o "$root/build/avant_zlib_own.o" "$root/avant_zlib.c"
+par "$cc" -c $cflags -I"$zl" -o "$root/build/avant_zlib_own.o" "$root/avant_zlib.c"
+par_wait
 ld -r -o "$root/build/avant_zlib.o" "$root/build/avant_zlib_own.o" "$zl_out"/*.o
 objcopy -w --keep-global-symbol='avant_*' "$root/build/avant_zlib.o"
 rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
@@ -187,20 +207,24 @@ for f in auto_possess chkdint chartables compile compile_cgroup compile_class co
   dfa_match error extuni find_bracket jit_compile maketables match match_data match_next newline ord2utf \
   pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
 do
-  "$cc" -c -O2 -pthread -fno-omit-frame-pointer -ffunction-sections $harden -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
+  par "$cc" -c -O2 -pthread -fno-omit-frame-pointer -ffunction-sections $harden -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
     -DHEAP_LIMIT=262144 -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
 done
-"$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
+par "$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
+# yyjson, the longest unit, and picohttpparser compile beside PCRE2;
+# avant_http.o's merge below reads them.
+compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
+compile "$root/third_party/picohttpparser/picohttpparser.c" "$root/build/picohttpparser.o"
+par_wait
 ld -r -o "$root/build/avant_re.o" "$root/build/avant_re_own.o" "$pcre_out"/*.o
 objcopy -w --localize-symbol='pcre2_*' --localize-symbol='_pcre2_*' "$root/build/avant_re.o"
 rm -rf "$pcre_out" "$root/build/avant_re_own.o"
 
-compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
-compile "$root/third_party/picohttpparser/picohttpparser.c" "$root/build/picohttpparser.o"
 
 # picohttpparser folds into avant_http.o: the seed's link table names
 # avant_http.o only, so a new object could not be linked by the old
 # seed. The compiler's std.http row names avant_http.o for the pair.
+par_wait
 ld -r -o "$root/build/avant_http_merged.o" "$root/build/avant_http.o" "$root/build/picohttpparser.o"
 mv "$root/build/avant_http_merged.o" "$root/build/avant_http.o"
 rm -f "$root/build/picohttpparser.o"
@@ -219,7 +243,7 @@ esac
 # shellcheck disable=SC2086
 # The library's Makefile adds its own flags to CFLAGS; function sections,
 # so its hot codecs can be placed (runtime/hot.txt, place_hot below).
-( cd "$b64" && env CC="$cc" CFLAGS="$harden -ffunction-sections" $simd make lib/libbase64.o )
+( cd "$b64" && env CC="$cc" CFLAGS="$harden -ffunction-sections" $simd make -j"$(nproc 2> /dev/null || echo 1)" lib/libbase64.o )
 cp "$b64/lib/libbase64.o" "$root/build/libbase64.o"
 # The aklomp object stays separate: the compiler links it only for a
 # program that imports std.base64. The SIMD codecs need their own -m
@@ -232,6 +256,7 @@ compile "$us/loop.c" "$root/build/us_loop.o"
 compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
+par_wait
 
 # The hot functions' own place. A function of runtime/hot.txt (the
 # runtime's functions that take a large share of some benchmark program's
