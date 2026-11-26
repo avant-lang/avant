@@ -651,7 +651,7 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
     if !pi.ident.starts_with("__for") {
       pos = pi.ident
     }
-    base = str_slice(pt.ident, 0, pt.ident.size - 2)
+    base = pt.ident[..pt.ident.size - 2]
     params: Array(String) = []
     if pos.size > 0 && pty.is_struct() && pty.mod_name == "std.http" && (pty.origin == "Headers" || pty.name == "Headers") {
       checker_self.headers_for_walk(stmt, pt.ident, pi.ident, pos, el.ident, base)
@@ -791,7 +791,7 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
   if pt = pre0.target, pi = stmt.pre[1].target, st0 = src.ty {
     xs = pt.ident
     ix = pi.ident
-    base = str_slice(xs, 0, xs.size - 2)
+    base = xs[..xs.size - 2]
     cn = "${base}c"
     sn = "${base}st"
     pre0.value = src
@@ -811,7 +811,7 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
     body.push(fw_assign(loc, sn, fw_name(loc, ix)))
     body.push(fw_scan(loc, xs, ix, cn, true))
     cut = Expr.new(ex_call(), loc)
-    cut.callee = "str_slice"
+    cut.callee = "#str_slice"
     cut.derived = true
     cut.args.push(fw_name(loc, xs))
     cut.args.push(fw_name(loc, sn))

@@ -169,7 +169,7 @@ pub fn diag_bag(bag: DiagBag) {
   }
   text = bag.render_all()
   if text.size > 0 && text[text.size - 1] == 10 {
-    diag_puts(str_slice(text, 0, text.size - 1))
+    diag_puts(text[..text.size - 1])
     return
   }
   diag_puts(text)
@@ -200,7 +200,7 @@ pub class RunSplit {
 pub fn drop_av_suffix(path: String): String {
   base = path_basename(path)
   if base.ends_with(".av") {
-    return str_slice(base, 0, base.size - 3)
+    return base[..base.size - 3]
   }
   base
 }
@@ -217,7 +217,7 @@ pub fn record_runtime: String {
   if text = file_read("${exe}.versions.txt") {
     for line in text.split("\n") {
       if line.size > 9 && line.starts_with("runtime: ") {
-        return str_slice(line, 9, line.size)
+        return line[9..]
       }
     }
   }
@@ -366,7 +366,7 @@ pub fn runtime_tls_object(root: String): String {
 }
 
 pub fn linker_flags_s(extra: Array(String)): String {
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("-pthread -lm")
   for i in 0..extra.size {
     buf.push_str(" ")
@@ -501,7 +501,7 @@ pub fn cov_map_dir(path: String): String? {
   i = path.size - 1
   while i > 0 {
     if path[i] == 47 {
-      dir = str_slice(path, 0, i)
+      dir = path[..i]
       if fs_mkdir_p(dir) != 0 {
         return "cannot create the coverage map directory ${dir}"
       }
@@ -647,7 +647,7 @@ pub class PkgCUnit {
 }
 
 pub fn pkg_c_list(xs: Array(String)): String {
-  b = buf_new()
+  b = Buf.new()
   for i in 0..xs.size {
     if i > 0 {
       b.push_str(", ")
@@ -658,7 +658,7 @@ pub fn pkg_c_list(xs: Array(String)): String {
 }
 
 pub fn pkg_c_what(man: PkgManifest): String {
-  b = buf_new()
+  b = Buf.new()
   if man.c_sources.size > 0 {
     if man.c_sources.size == 1 {
       b.push_str("1 C source")
@@ -789,7 +789,7 @@ pub fn cc_identity: String {
 // directories and beside its sources, as "path sha256" lines, sorted by
 // path as listed.
 pub fn pkg_c_headers(unit: PkgCUnit): String {
-  b = buf_new()
+  b = Buf.new()
   dirs: Array(String) = []
   dirs.concat(unit.include)
   for src in unit.sources {
@@ -823,7 +823,7 @@ pub fn pkg_c_headers(unit: PkgCUnit): String {
 // adds them and its libraries to the link.
 pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
   if unit.sources.size > 0 {
-    key_text = buf_new()
+    key_text = Buf.new()
     key_text.push_str("package C 1\n${cc_identity()}\n")
     for f in unit.flags {
       key_text.push_str("flag ${f}\n")
@@ -845,7 +845,7 @@ pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
     cache = avant_cache_dir()
     dest = ""
     if cache.size > 0 {
-      dest = "${cache}/c/${unit.name}-${str_slice(key, 0, 16)}"
+      dest = "${cache}/c/${unit.name}-${key[..16]}"
       if fs_mkdir_p(dest) != 0 {
         dest = ""
       }
@@ -978,7 +978,7 @@ pub fn print_ir(ir: String) {
     return
   }
   if ir[ir.size - 1] == 10 {
-    puts(str_slice(ir, 0, ir.size - 1))
+    puts(ir[..ir.size - 1])
   } else {
     puts(ir)
   }
@@ -1036,12 +1036,12 @@ pub fn re2c_line_owners(src: String): Array(Int) {
   cur = 0
   for line in src.split("\n") {
     if line.starts_with("static int32_t avant_re2c_find_") {
-      rest = str_slice(line, 31, line.size)
+      rest = line[31..]
       k = 0
       while k < rest.size && rest[k] >= 48 && rest[k] <= 57 {
         k += 1
       }
-      cur = str_slice(rest, 0, k).to_i() ?? 0
+      cur = rest[..k].to_i() ?? 0
     } else if line.starts_with("}") {
       owners.push(cur)
       cur = 0
@@ -1064,12 +1064,12 @@ pub fn re2c_read_warnings(text: String, re_path: String, owners: Array(Int), bui
     if !line.starts_with(prefix) {
       return false
     }
-    rest = str_slice(line, prefix.size, line.size)
+    rest = line[prefix.size..]
     k = 0
     while k < rest.size && rest[k] >= 48 && rest[k] <= 57 {
       k += 1
     }
-    n = str_slice(rest, 0, k).to_i() ?? 0
+    n = rest[..k].to_i() ?? 0
     if n <= 0 || n >= owners.size || owners[n] == 0 {
       return false
     }
@@ -1078,7 +1078,7 @@ pub fn re2c_read_warnings(text: String, re_path: String, owners: Array(Int), bui
       continue
     }
     at = line.index_of(": warning: ") ?? (line.index_of(": error: ") ?? 0)
-    why = str_slice(line, at + 2, line.size)
+    why = line[at + 2..]
     build.bad[id] = "re2c ${why}"
   }
   true
@@ -1159,7 +1159,7 @@ pub fn compile_c_file(path: String): String {
   base = path_basename(path)
   name = base
   if base.ends_with(".c") {
-    name = str_slice(base, 0, base.size - 2)
+    name = base[..base.size - 2]
   }
   obj = "${tmp_new_dir()}/${name}.o"
   args: Array(String) = []
@@ -1231,7 +1231,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
         v = args[i + 1]
         i += 2
       } else {
-        v = str_slice(arg, 6, arg.size)
+        v = arg[6..]
         i += 1
       }
       if !(v == "baseline" || v == "v2" || v == "v3" || v == "v4" || v == "native") {
@@ -1254,7 +1254,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       i += 2
     } else if arg.starts_with("--lib=") {
-      job.err = link_lib(job, str_slice(arg, 6, arg.size))
+      job.err = link_lib(job, arg[6..])
       if job.err.size > 0 {
         return job
       }
@@ -1272,7 +1272,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
       job.objects.push(obj)
       i += 2
     } else if arg.starts_with("--cc=") {
-      obj = compile_c_file(str_slice(arg, 5, arg.size))
+      obj = compile_c_file(arg[5..])
       if obj == "" {
         job.err = "failed to compile C"
         return job

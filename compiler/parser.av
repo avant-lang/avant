@@ -54,7 +54,7 @@ pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
 // (none at the start, none after `_`), so MaxDepth and MAX_DEPTH are
 // max_depth.
 pub fn snake_case_of(name: String): String {
-  b = buf_new()
+  b = Buf.new()
   for i in 0..name.size {
     c = name[i]
     if c >= 65 && c <= 90 {
@@ -547,13 +547,13 @@ pub class Parser {
     if raw.ends_with("u64") {
       if raw.size > 3 {
         suffix = "u64"
-        raw = str_slice(raw, 0, raw.size - 3)
+        raw = raw[..raw.size - 3]
       }
     } else if raw.ends_with("i64") {
       if raw.size > 3 {
         // One integer spelling: the lexer still reads the suffix so the
         // error can say what to write.
-        raw = str_slice(raw, 0, raw.size - 3)
+        raw = raw[..raw.size - 3]
         fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
     }
@@ -569,7 +569,7 @@ pub class Parser {
         radix = 8
       }
       if radix != 10 {
-        digits = str_slice(raw, 2, raw.size)
+        digits = raw[2..]
       }
     }
     bits = 0u64
@@ -701,7 +701,7 @@ pub class Parser {
     loc = expect(tk_import()).loc
     self.skip_newlines()
     name = expect(tk_ident())
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str(name.value)
     while self.current().kind == tk_dot() {
       self.bump()
@@ -732,7 +732,7 @@ pub class Parser {
       while i >= 0 && imp[i] != 46 {
         i -= 1
       }
-      if i >= 0 && str_slice(imp, i + 1, imp.size) == qual {
+      if i >= 0 && imp[i + 1..] == qual {
         if found.size == 0 {
           found = imp
         } else if other.size == 0 && imp != found {
@@ -1953,7 +1953,7 @@ pub class Parser {
     }
     qual = ""
     if parts.size > 1 {
-      buf = buf_new()
+      buf = Buf.new()
       i = 0
       while i < parts.size - 1 {
         if i > 0 {
@@ -3825,7 +3825,7 @@ pub class Parser {
   pub fn qual_of(expr: Expr): String {
     segs: Array(String) = []
     if collect_idents(expr, segs) {
-      buf = buf_new()
+      buf = Buf.new()
       for i in 0..segs.size {
         if i > 0 {
           buf.push_str(".")

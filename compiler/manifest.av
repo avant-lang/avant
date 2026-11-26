@@ -99,7 +99,7 @@ pub fn pkg_strip_comment(line: String): String {
       if c == 34 {
         in_str = true
       } else if c == 35 {
-        return str_slice(line, 0, i)
+        return line[..i]
       }
     }
     i += 1
@@ -115,7 +115,7 @@ pub fn pkg_parse_string(s: String, err: String): String {
   if t[0] != 34 {
     return ""
   }
-  b = buf_new()
+  b = Buf.new()
   i = 1
   while i < t.size {
     c = t[i]
@@ -285,7 +285,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
   if t.size < 2 || t[0] != 91 || t[t.size - 1] != 93 {
     return got
   }
-  inner = str_slice(t, 1, t.size - 1)
+  inner = t[1..t.size - 1]
   i = 0
   n = inner.size
   while i < n {
@@ -316,7 +316,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
     if !closed {
       return got
     }
-    item = pkg_parse_string(str_slice(inner, start, i), "")
+    item = pkg_parse_string(inner[start..i], "")
     got.items.push(item)
   }
   got.ok = true
@@ -590,7 +590,7 @@ pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String,
     m.err = "${path}:${line_no}: dependency ${dep.name} needs an inline table like { git = \"URL\", rev = \"SHA\" }"
     return false
   }
-  inner = str_slice(t, 1, t.size - 1)
+  inner = t[1..t.size - 1]
   i = 0
   n = inner.size
   while i < n {
@@ -608,7 +608,7 @@ pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String,
       m.err = "${path}:${line_no}: bad inline table for dependency ${m.deps[dep_idx].name}"
       return false
     }
-    key = str_slice(inner, start, i)
+    key = inner[start..i]
     i += 1
     while i < n && (inner[i] == 32 || inner[i] == 9) {
       i += 1
@@ -636,7 +636,7 @@ pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String,
       m.err = "${path}:${line_no}: unterminated string in inline table"
       return false
     }
-    vtext = str_slice(inner, vstart, i)
+    vtext = inner[vstart..i]
     if !pkg_apply_pair(m, dep_idx, key, vtext, path, line_no) {
       return false
     }
@@ -653,7 +653,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
   i = 0
   while i <= text.size {
     if i == text.size || text[i] == 10 {
-      lines.push(str_slice(text, start, i))
+      lines.push(text[start..i])
       start = i + 1
     }
     i += 1
@@ -672,7 +672,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         m.err = "${path}:${line_no}: bad section header"
         return m
       }
-      inner = str_slice(line, 1, line.size - 1).strip()
+      inner = line[1..line.size - 1].strip()
       if inner == "package" {
         section = "package"
         dep_idx = -1
@@ -684,7 +684,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         continue
       }
       if inner.starts_with("dependencies.") {
-        dname = str_slice(inner, 13, inner.size).strip()
+        dname = inner[13..].strip()
         if dname.size == 0 {
           m.err = "${path}:${line_no}: bad dependency section"
           return m
@@ -737,8 +737,8 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       m.err = "${path}:${line_no}: expected key = value"
       return m
     }
-    key = str_slice(line, 0, eq).strip()
-    val = str_slice(line, eq + 1, line.size).strip()
+    key = line[..eq].strip()
+    val = line[eq + 1..].strip()
     // A list may go on over several lines, up to its closing bracket.
     if val.size > 0 && val[0] == 91 && !pkg_list_closed(val) {
       while li < lines.size && !pkg_list_closed(val) {
@@ -855,7 +855,7 @@ pub fn pkg_parse_lock(text: String): PkgLock {
   i = 0
   while i <= text.size {
     if i == text.size || text[i] == 10 {
-      lines.push(str_slice(text, start, i))
+      lines.push(text[start..i])
       start = i + 1
     }
     i += 1
@@ -882,8 +882,8 @@ pub fn pkg_parse_lock(text: String): PkgLock {
       if eq < 0 {
         continue
       }
-      key = str_slice(line, 0, eq).strip()
-      val = str_slice(line, eq + 1, line.size)
+      key = line[..eq].strip()
+      val = line[eq + 1..]
       if key == "name" {
         cur_name = pkg_parse_string(val, "")
       } else if key == "source" {
@@ -903,12 +903,12 @@ pub fn pkg_lock_push(lock: PkgLock, name: String, source: String, rev: String) {
   git = source
   sha = ""
   if source.starts_with("git+") {
-    rest = str_slice(source, 4, source.size)
+    rest = source[4..]
     h = rest.size - 1
     while h >= 0 {
       if rest[h] == 35 {
-        git = str_slice(rest, 0, h)
-        sha = str_slice(rest, h + 1, rest.size)
+        git = rest[..h]
+        sha = rest[h + 1..]
         break
       }
       h -= 1
@@ -921,7 +921,7 @@ pub fn pkg_lock_push(lock: PkgLock, name: String, source: String, rev: String) {
 
 // A string as a TOML basic string's body: `"` and `\\` escaped.
 pub fn pkg_toml_escape(s: String): String {
-  b = buf_new()
+  b = Buf.new()
   i = 0
   while i < s.size {
     if s[i] == 34 || s[i] == 92 {
@@ -934,7 +934,7 @@ pub fn pkg_toml_escape(s: String): String {
 }
 
 pub fn pkg_lock_render(ents: Array(PkgLockEnt)): String {
-  b = buf_new()
+  b = Buf.new()
   b.push_str("# avant.lock - generated by avant fetch. Do not edit.\n")
   b.push_str("version = 1\n")
   for e in ents {
@@ -977,7 +977,7 @@ pub fn pkg_checkout_head(dir: String): String {
     if text = file_read(gd) {
       t = text.strip()
       if t.starts_with("gitdir: ") {
-        p = str_slice(t, 8, t.size).strip()
+        p = t[8..].strip()
         if p.size > 0 && p[0] == 47 {
           gd = p
         } else {
@@ -1002,7 +1002,7 @@ pub fn pkg_checkout_head(dir: String): String {
   if !head.starts_with("ref: ") {
     return ""
   }
-  ref = str_slice(head, 5, head.size).strip()
+  ref = head[5..].strip()
   if r = file_read(man_join(gd, ref)) {
     t = r.strip()
     if pkg_is_sha(t) {
@@ -1012,8 +1012,8 @@ pub fn pkg_checkout_head(dir: String): String {
   if packed = file_read(man_join(gd, "packed-refs")) {
     for line in packed.split("\n") {
       t = line.strip()
-      if t.size > 41 && t[40] == 32 && str_slice(t, 41, t.size) == ref {
-        sha = str_slice(t, 0, 40)
+      if t.size > 41 && t[40] == 32 && t[41..] == ref {
+        sha = t[..40]
         if pkg_is_sha(sha) {
           return sha
         }

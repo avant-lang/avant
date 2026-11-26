@@ -250,7 +250,7 @@ pub class Lexer {
         }
         self.bump()
       }
-      self.path = intern_str(str_slice(self.source.text, start, self.pos))
+      self.path = intern_str(self.source.text[start..self.pos])
       self.line = 0
       self.column = 1
       return
@@ -322,7 +322,7 @@ pub class Lexer {
     while ch_is_ident_continue(self.peek()) {
       self.bump()
     }
-    str_slice(self.source.text, start, self.pos)
+    self.source.text[start..self.pos]
   }
 
   pub fn exponent_ahead: Bool {
@@ -396,11 +396,11 @@ pub class Lexer {
 
   // A number's text without its separators (the formatter keeps them).
   pub fn number_text(start: Int): String {
-    raw = str_slice(self.source.text, start, self.pos)
+    raw = self.source.text[start..self.pos]
     if self.keep_comments {
       return raw
     }
-    b = buf_new()
+    b = Buf.new()
     for i in 0..raw.size {
       if raw[i] != 95 {
         b.push_byte(raw[i])
@@ -489,7 +489,7 @@ pub class Lexer {
       while i < digits.size - 1 && (digits[i] == 48 || digits[i] == 95) {
         i += 1
       }
-      rest = str_slice(digits, i, digits.size)
+      rest = digits[i..]
       octal = true
       for j in 0..rest.size {
         if rest[j] > 55 {
@@ -622,7 +622,7 @@ pub class Lexer {
       mark = self.err_count()
       v = self.read_escape(39)
       if !new_err_since(mark) && self.esc_code && v > 127 {
-        b = buf_new()
+        b = Buf.new()
         push_utf8(b, v)
         fail_tok(loc, "a character literal is one byte, and this code point is ${b.size} bytes in UTF-8: write it in a String")
       }
@@ -654,7 +654,7 @@ pub class Lexer {
     }
     self.bump()
     if self.keep_comments {
-      return Token.new(tk_integer(), loc, str_slice(self.source.text, start, self.pos))
+      return Token.new(tk_integer(), loc, self.source.text[start..self.pos])
     }
     Token.new(tk_integer(), loc, intern_str("${v}"))
   }
@@ -670,7 +670,7 @@ pub class Lexer {
   }
 
   pub fn read_string_body {
-    buf = buf_new()
+    buf = Buf.new()
     while true {
       if self.at_end() {
         fail_tok(self.here(), "unterminated string")
@@ -732,7 +732,7 @@ pub class Lexer {
   }
 
   pub fn read_raw_string_body {
-    buf = buf_new()
+    buf = Buf.new()
     while true {
       if self.at_end() {
         fail_tok(self.here(), "unterminated string")
@@ -780,7 +780,7 @@ pub class Lexer {
     if self.has_err() {
       return Token.new(tk_eof(), loc, "")
     }
-    raw = str_slice(self.source.text, open_pos, self.pos)
+    raw = self.source.text[open_pos..self.pos]
     Token.new(tk_string(), loc, raw)
   }
 
@@ -1280,7 +1280,7 @@ pub class Lexer {
     if file_line {
       path_at = start + 9
       if path_at < self.pos {
-        self.path = intern_str(str_slice(self.source.text, path_at, self.pos))
+        self.path = intern_str(self.source.text[path_at..self.pos])
       } else {
         self.path = intern_str("")
       }
@@ -1288,13 +1288,13 @@ pub class Lexer {
       self.column = 1
       if only_ws_before(start) {
         begin = line_begin_at(start)
-        raw = str_slice(self.source.text, begin, self.pos)
+        raw = self.source.text[begin..self.pos]
         return Token.new(tk_file_line(), loc, raw)
       }
-      raw_mid = str_slice(self.source.text, start, self.pos)
+      raw_mid = self.source.text[start..self.pos]
       return Token.new(tk_comment(), loc, raw_mid)
     }
-    raw = str_slice(self.source.text, start, self.pos)
+    raw = self.source.text[start..self.pos]
     Token.new(tk_comment(), loc, raw)
   }
 
@@ -1306,14 +1306,14 @@ pub class Lexer {
       return Token.new(tk_eof(), loc, "")
     }
     if self.str_kind == 0 {
-      raw = str_slice(self.source.text, open_pos, self.pos)
+      raw = self.source.text[open_pos..self.pos]
       return Token.new(tk_string(), loc, raw)
     }
     if self.str_kind == 1 {
       if self.interp_depth >= interp_limit() {
         return self.interp_too_deep(loc)
       }
-      raw_open = str_slice(self.source.text, open_pos, self.pos)
+      raw_open = self.source.text[open_pos..self.pos]
       self.interp_depth += 1
       rest = self.lex_interpolation_format()
       self.interp_depth -= 1
@@ -1394,7 +1394,7 @@ pub class Lexer {
       if self.has_err() {
         return tokens
       }
-      raw = str_slice(self.source.text, body_start, self.pos)
+      raw = self.source.text[body_start..self.pos]
       tokens.concat(expr)
       if self.str_kind == 0 {
         tokens.push(Token.new(tk_interp_close(), self.here(), raw))

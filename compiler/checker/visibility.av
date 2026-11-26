@@ -132,7 +132,7 @@ pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
       }
       if brk {
         if i > start {
-          out.push(str_slice(s, start, i))
+          out.push(s[start..i])
         }
         start = i + 1
       }
@@ -471,6 +471,12 @@ pub fn left_prelude_text(name: String): String {
   if name == "sha256" {
     return "sha256 is gone: write digest.sha256_hex(s.bytes) (import std.digest)"
   }
+  if name == "str_slice" {
+    return "str_slice is gone: write s[start..stop]"
+  }
+  if name == "buf_new" {
+    return "buf_new is gone: write Buf.new()"
+  }
   ""
 }
 
@@ -533,8 +539,8 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
     checker_self.fail(loc, "${plain}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match")
     return
   }
-  defs = buf_new()
-  calls = buf_new()
+  defs = Buf.new()
+  calls = Buf.new()
   for k in 0..mods.size {
     if k > 0 {
       sep = ", "
@@ -560,7 +566,7 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
 // "a(x: Int) and a(s: String)", "f(), g() and h()": the signatures of
 // a call's candidates, under the name the call wrote.
 pub fn (checker_self: Checker) sigs_text(shown: String, cands: Array(FuncSig)): String {
-  b = buf_new()
+  b = Buf.new()
   for k in 0..cands.size {
     if k > 0 {
       if k == cands.size - 1 {
@@ -599,7 +605,7 @@ pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: Strin
   }
   if mods.size > 1 {
     mods.sort (a, b) { str_lt(a, b) }
-    defs = buf_new()
+    defs = Buf.new()
     for k in 0..mods.size {
       if k > 0 {
         if k == mods.size - 1 {
@@ -637,7 +643,7 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
     checker_self.fail(loc, "ambiguous function value ${name}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match; give the value its fn type to pick one (f: ${checker_self.fn_sig_ty(first).show()} = ${name})")
     return
   }
-  defs = buf_new()
+  defs = Buf.new()
   for k in 0..mods.size {
     if k > 0 {
       if k == mods.size - 1 {
@@ -648,7 +654,7 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
     }
     defs.push_str("${mods[k]}.${name}")
   }
-  picks = buf_new()
+  picks = Buf.new()
   for k2 in 0..mods.size {
     if k2 > 0 {
       if k2 == mods.size - 1 {
@@ -734,8 +740,8 @@ pub fn (checker_self: Checker) clash_message(name: String, from_mod: String): St
       all_types = false
     }
   }
-  what = buf_new()
-  spell = buf_new()
+  what = Buf.new()
+  spell = Buf.new()
   for i in 0..mods.size {
     if i > 0 {
       if i == mods.size - 1 {
@@ -1258,7 +1264,7 @@ pub fn module_last_name(m: String): String {
   i = m.size - 1
   while i >= 0 {
     if m[i] == 46 {
-      return str_slice(m, i + 1, m.size)
+      return m[i + 1..]
     }
     i -= 1
   }
@@ -1323,19 +1329,6 @@ pub fn moved_io_name(name: String): String {
   ""
 }
 
-// The spelling that replaced a prelude twin (a free function beside the
-// form that says the same), "" for any other name. The compiler's own
-// sources keep the twin until the next seed builds them.
-pub fn retired_twin_name(name: String): String {
-  if name == "str_slice" {
-    return "s[start..stop]"
-  }
-  if name == "buf_new" {
-    return "Buf.new()"
-  }
-  ""
-}
-
 // Whether the current module may still call the prelude's old file and
 // process names and its twins: the compiler's own sources (built by the
 // seed, which has no std.fs), the two modules that wrap them, and the
@@ -1357,11 +1350,6 @@ pub fn (checker_self: Checker) moved_io_allowed: Bool {
 // A call of a function that left the prelude, outside the modules that
 // may still name it: refused with the new spelling; true when refused.
 pub fn (checker_self: Checker) refuse_moved_io(expr: Expr): Bool {
-  twin = retired_twin_name(expr.callee)
-  if twin.size > 0 && !expr.derived && !checker_self.moved_io_allowed() {
-    checker_self.fail(expr.loc, "${expr.callee} is gone: write ${twin}")
-    return true
-  }
   spelled = moved_io_name(expr.callee)
   if spelled.size == 0 || checker_self.moved_io_allowed() {
     return false

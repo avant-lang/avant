@@ -876,7 +876,7 @@ pub fn closes_bracket(k: Int): Bool {
 // opened it. Brackets opened on one line give the lines inside one level
 // together (`f(Box {` and its fields, closed by `})`).
 pub fn reprint(tokens: Array(Token)): String {
-  buf = buf_new()
+  buf = Buf.new()
   // The indent of the line each open bracket was opened on, innermost
   // last, and the current line's own.
   opened: Array(Int) = []
@@ -1001,10 +1001,10 @@ pub fn fault_for_test(out: String): String {
   if v = env_get("AVANT_FORMAT_FAULT") {
     for i in 1..out.size - 1 {
       if v == "line" && out[i] == 10 {
-        return str_slice(out, 0, i) + " " + str_slice(out, i + 1, out.size)
+        return out[..i] + " " + out[i + 1..]
       }
       if v == "space" && out[i] == 32 && word_byte(out[i - 1]) && word_byte(out[i + 1]) {
-        return str_slice(out, 0, i) + str_slice(out, i + 1, out.size)
+        return out[..i] + out[i + 1..]
       }
     }
   }
@@ -1072,7 +1072,7 @@ pub fn print_format(text: String) {
     return
   }
   if text[text.size - 1] == 10 {
-    puts(str_slice(text, 0, text.size - 1))
+    puts(text[..text.size - 1])
   } else {
     puts(text)
   }

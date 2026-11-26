@@ -18,14 +18,14 @@ lib oslink {
 // (/proc/self/exe), else argv[0], else "". argv[0] alone has no directory
 // when the compiler is started through PATH.
 pub fn self_exe_path: String {
-  raw_buf = buf_new()
+  raw_buf = Buf.new()
   for nfill in 0..4096 {
     raw_buf.push_byte(0)
   }
   raw = raw_buf.to_s()
   n = oslink.readlink("/proc/self/exe", raw, 4095)
   if n > 0 && n < 4096 {
-    return str_slice(raw, 0, n)
+    return raw[..n]
   }
   args = argv()
   if args.size > 0 {
@@ -39,7 +39,7 @@ pub fn self_exe_path: String {
 // do not follow a link to a directory: a link can lead out of the tree
 // (a bundled compiler's own sources) or back into it (a cycle).
 pub fn path_is_link(path: String): Bool {
-  one = buf_new()
+  one = Buf.new()
   one.push_byte(0)
   oslink.readlink(path, one.to_s(), 1) >= 0
 }
@@ -48,7 +48,7 @@ pub fn path_basename(path: String): String {
   i = path.size - 1
   while i >= 0 {
     if path[i] == 47 {
-      return str_slice(path, i + 1, path.size)
+      return path[i + 1..]
     }
     i -= 1
   }
@@ -62,7 +62,7 @@ pub fn path_dirname(path: String): String {
       if i == 0 {
         return "/"
       }
-      return str_slice(path, 0, i)
+      return path[..i]
     }
     i -= 1
   }
@@ -74,7 +74,7 @@ pub fn module_name_of(path: String): String {
   if base.size > 3 {
     n = base.size
     if base[n - 3] == 46 && base[n - 2] == 97 && base[n - 1] == 118 {
-      return str_slice(base, 0, n - 3)
+      return base[..n - 3]
     }
   }
   base
@@ -119,13 +119,13 @@ pub fn join_dir(dir: String, rel: String): String {
 }
 
 pub fn import_rel(name: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < name.size {
     if name[i] == 46 {
       buf.push_str("/")
     } else {
-      buf.push_str(str_slice(name, i, i + 1))
+      buf.push_str(name[i..i + 1])
     }
     i += 1
   }
@@ -138,22 +138,22 @@ pub fn rel_module_name(dir: String, path: String): String {
   if dir == "." {
   } else {
     if path_under(dir, path) {
-      rel = str_slice(path, dir.size + 1, path.size)
+      rel = path[dir.size + 1..]
     }
   }
   if rel.size > 3 {
     n = rel.size
     if rel[n - 3] == 46 && rel[n - 2] == 97 && rel[n - 1] == 118 {
-      rel = str_slice(rel, 0, n - 3)
+      rel = rel[..n - 3]
     }
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < rel.size {
     if rel[i] == 47 {
       buf.push_str(".")
     } else {
-      buf.push_str(str_slice(rel, i, i + 1))
+      buf.push_str(rel[i..i + 1])
     }
     i += 1
   }
@@ -363,7 +363,7 @@ pub class Loader {
         }
         if n > 0 && j + 1 < message.size && message[j] == 58 && message[j + 1] == 32 {
           line = n
-          message = str_slice(message, j + 2, message.size)
+          message = message[j + 2..]
         }
       }
       fail(Location.new(set.err_path, line, 1, 0), message)
@@ -446,7 +446,7 @@ pub class Loader {
       if text = file_read("${exe}.versions.txt") {
         for line in text.split("\n") {
           if line.size > 5 && line.starts_with("lib: ") {
-            self.lib_rec = str_slice(line, 5, line.size)
+            self.lib_rec = line[5..]
           }
         }
       }
@@ -564,7 +564,7 @@ pub class Loader {
       return ""
     }
     if hits.size > 1 {
-      buf = buf_new()
+      buf = Buf.new()
       buf.push_str("import ${name} is ambiguous:")
       for hit in hits {
         buf.push_str(" ${hit}")
@@ -658,7 +658,7 @@ pub class Loader {
 
   pub fn load_file(path: String): Program? {
     if path_in_list(self.stack, path) {
-      buf = buf_new()
+      buf = Buf.new()
       buf.push_str("import cycle: ")
       for i in 0..self.stack.size {
         if i > 0 {

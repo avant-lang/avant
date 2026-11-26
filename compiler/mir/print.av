@@ -17,10 +17,10 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
   x = v
   while x != 0 || out.size < width || out.size == 0 {
     d = (x & 15).to_i()
-    out.push(str_slice(digits, d, d + 1))
+    out.push(digits[d..d + 1])
     x = x >> 4u64
   }
-  buf = buf_new()
+  buf = Buf.new()
   i = out.size - 1
   while i >= 0 {
     buf.push_str(out[i])
@@ -30,7 +30,7 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
 }
 
 pub fn mir_escape(s: String): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < s.size {
     c = s[i]
@@ -38,7 +38,7 @@ pub fn mir_escape(s: String): String {
       buf.push_str("\\")
       buf.push_str(mir_hex(c.to_u64(), true, 2))
     } else {
-      buf.push_str(str_slice(s, i, i + 1))
+      buf.push_str(s[i..i + 1])
     }
     i += 1
   }
@@ -100,7 +100,7 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
 }
 
 fn mir_ops_text(ts: MTypes, ops: Array(MOperand)): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < ops.size {
     if i > 0 {
@@ -217,7 +217,7 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
     return "gc.leave"
   }
   if k == msk_gc_roots() {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("gc.roots")
     for i in 0..st.locals.size {
       if i == 0 {
@@ -245,7 +245,7 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
     return "branch ${mir_opt_text(ts, t.cond)}, bb${t.targets[0]}, bb${t.targets[1]}${cold}"
   }
   if k == mtk_switch() {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("switch ${mir_opt_text(ts, t.cond)} [")
     ty = mt_i32()
     if c = t.cond {
@@ -281,7 +281,7 @@ pub fn mir_file_name(m: MModule, file: Int): String {
 }
 
 pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("layout %${l.name} = ${mlk_name(l.kind)} {")
   for i in 0..l.fields.size {
     if i > 0 {
@@ -341,7 +341,7 @@ pub fn mir_map_stride(ts: MTypes, tm: MTypeMap): Int {
 
 pub fn mir_extern_text(m: MModule, e: MExtern): String {
   s = m.types.sigs[e.sig]
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("extern ${e.name}${s.text} ${mcc_name(e.cls)}")
   if e.alloc {
     buf.push_str(" alloc")
@@ -369,7 +369,7 @@ pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
 pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
   ts = m.types
   s = ts.sigs[f.sig]
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("fn ${f.symbol}(")
   for i in 0..s.params.size {
     if i > 0 {
@@ -441,7 +441,7 @@ pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
 
 pub fn mir_print(m: MModule, with_locs: Bool): String {
   ts = m.types
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("module ${m.name}")
   if m.shared {
     buf.push_str(" shared")

@@ -293,7 +293,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, "L0001", "not yet supported by the llvm back end: ${what}").render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -307,7 +307,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, diag_code(4, message), message).render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -321,7 +321,7 @@ pub class MirLower {
     }
     r = CompileError.new(loc, "L0002", "internal error: the llvm back end's lowering reached ${what}, which the checker refuses").render()
     if r.size > 0 && r[r.size - 1] == 10 {
-      r = str_slice(r, 0, r.size - 1)
+      r = r[..r.size - 1]
     }
     self.lw_err = r
   }
@@ -344,10 +344,10 @@ pub class MirLower {
   // source's directory, else to the Avant root, else as given.
   pub fn rel_path(path: String): String {
     if self.lw_root_dir.size > 0 && path.starts_with("${self.lw_root_dir}/") {
-      return str_slice(path, self.lw_root_dir.size + 1, path.size)
+      return path[self.lw_root_dir.size + 1..]
     }
     if self.lw_avant_root.size > 0 && path.starts_with("${self.lw_avant_root}/") {
-      return str_slice(path, self.lw_avant_root.size + 1, path.size)
+      return path[self.lw_avant_root.size + 1..]
     }
     path
   }
@@ -863,7 +863,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   i = root_path.size - 1
   while i >= 0 {
     if root_path[i] == 47 {
-      dir = str_slice(root_path, 0, i)
+      dir = root_path[..i]
       break
     }
     i -= 1
@@ -879,7 +879,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   }
   errs = mir_verify_errors(lw.lw_m, mst_lowered())
   if errs.size > 0 {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("internal error: the llvm back end's lowering broke the MIR verifier at stage lowered:")
     j = 0
     while j < errs.size {

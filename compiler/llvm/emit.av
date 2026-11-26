@@ -47,7 +47,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool, shadows: Bool): String {
     i += 1
   }
   body = e.out.to_s()
-  e.out = buf_new()
+  e.out = Buf.new()
   ll_type_maps(e)
   if e.used_frame_helpers {
     ll_gc_frame_helpers(e)
@@ -57,7 +57,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool, shadows: Bool): String {
   }
   maps = e.out.to_s()
 
-  out = buf_new()
+  out = Buf.new()
   out.push_str("source_filename = \"${m.name}\"\n")
   out.push_str("target datalayout = \"${ll_datalayout()}\"\n")
   out.push_str("target triple = \"${ll_triple()}\"\n")
@@ -245,7 +245,7 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
 // attributes follow (the pure readers, runtime.av mir_rt_attrs).
 fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
   s = ts.sigs[sig]
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("declare ${ll_c_type(ts, s.ret)} ${ll_sym(name)}(")
   for i in 0..s.params.size {
     if i > 0 {
@@ -1143,7 +1143,7 @@ fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: Str
 // `(<params>[, ...])`: the function type a call through another
 // binding's signature, or a variadic call, spells out.
 fn ll_fn_type(e: LlEmit, s: MSig): String {
-  buf = buf_new()
+  buf = Buf.new()
   buf.push_str("(")
   for i in 0..s.params.size {
     if i > 0 {
@@ -1165,7 +1165,7 @@ fn ll_fn_type(e: LlEmit, s: MSig): String {
 // parameter takes its declared type (zeroext for a C boolean), a variadic
 // argument its own type.
 fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool): String {
-  buf = buf_new()
+  buf = Buf.new()
   i = 0
   while i < ops.size {
     x = e.value(ops[i])
@@ -1273,7 +1273,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
     if o = t.cond {
       c = e.value(o)
       ty = e.ov_ty
-      buf = buf_new()
+      buf = Buf.new()
       buf.push_str("switch ${e.llt(ty)} ${c}, label %bb${t.targets[t.targets.size - 1]} [")
       for i in 0..t.values.size {
         buf.push_str(" ${e.llt(ty)} ${e.int_text(ty, t.values[i])}, label %bb${t.targets[i]}")
@@ -1490,7 +1490,7 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
     flag = "nuw"
   }
   v = e.tmp()
-  e.line("${v} = ${str_slice(name, 1, name.size)} ${flag} ${lt} ${x}, ${y}")
+  e.line("${v} = ${name[1..]} ${flag} ${lt} ${x}, ${y}")
   v
 }
 

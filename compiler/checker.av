@@ -5545,19 +5545,19 @@ pub class Checker {
       }
       return t_string()
     }
-    if expr.callee == "str_slice" {
+    if expr.callee == "#str_slice" {
       if expr.args.size == 3 {
         if b = expr.block {
-          fail(expr.loc, "str_slice takes String, start, stop")
+          fail(expr.loc, "a string slice takes String, start, stop")
           return t_string()
         }
       } else {
-        fail(expr.loc, "str_slice takes String, start, stop")
+        fail(expr.loc, "a string slice takes String, start, stop")
         return t_string()
       }
       s = check_expr_as(expr.args[0], t_string())
       if !ty_assignable(s, t_string()) {
-        fail(expr.args[0].loc, "str_slice expects String")
+        fail(expr.args[0].loc, "a string slice expects String")
       }
       start = check_expr_as(expr.args[1], t_int())
       stop = check_expr_as(expr.args[2], t_int())
@@ -5569,9 +5569,9 @@ pub class Checker {
       }
       return t_string()
     }
-    if expr.callee == "buf_new" {
+    if expr.callee == "#buf_new" {
       if b = expr.block {
-        fail(expr.loc, "buf_new does not take a block")
+        fail(expr.loc, "Buf.new does not take a block")
         return t_buf()
       }
       if expr.args.size == 0 {
@@ -5738,10 +5738,9 @@ pub class Checker {
       return t_int()
     }
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
-      // `Buf.new`, `Buf.new(cap)` and `Buf.new(n, byte)` are `buf_new()`,
-      // `buf_new(cap)` and `buf_new(n, byte)` (before, "unknown type
-      // Buf").
-      expr.callee = "buf_new"
+      // `Buf.new`, `Buf.new(cap)` and `Buf.new(n, byte)`: the builtin
+      // #buf_new, a name no program can write.
+      expr.callee = "#buf_new"
       expr.derived = true
       expr.receiver = nil
       return check_call(expr, has_want, want)
@@ -6137,7 +6136,7 @@ pub class Checker {
   }
 
   pub fn join_segs(segs: Array(String), n: Int): String {
-    buf = buf_new()
+    buf = Buf.new()
     for i in 0..n {
       if i > 0 {
         buf.push_str(".")
@@ -7144,7 +7143,7 @@ pub class Checker {
   // A String label as written in a message: quoted, its quote and
   // backslash escaped.
   pub fn quote_label(text: String): String {
-    buf = buf_new()
+    buf = Buf.new()
     buf.push_str("\"")
     for i in 0..text.size {
       c = text[i]
@@ -7191,7 +7190,7 @@ pub class Checker {
   }
 
   pub fn join_names(names: Array(String)): String {
-    buf = buf_new()
+    buf = Buf.new()
     for i in 0..names.size {
       if i > 0 {
         buf.push_str(", ")
@@ -7574,7 +7573,7 @@ pub class Checker {
     }
     // The gates are std.sync's: a name of `std` modules only, not of
     // a program's.
-    if str_slice(self.current_module, 0, 4) != "std." {
+    if self.current_module[..4] != "std." {
       fail(expr.loc, "${expr.callee} is internal to the standard library: use sync.Channel(T) and sync.Mutex(T) from std.sync (import std.sync)")
       return t_void()
     }
