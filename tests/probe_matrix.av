@@ -439,32 +439,9 @@ fn program(r: PRule, w: String, safe: Bool): String {
   "${decls}\n${filled}\nimport std.process\n"
 }
 
-// The index of needle in hay at or after from, or -1; no allocation per
-// position (the stress pass collects at every allocation).
-fn find_at(hay: String, needle: String, from: Int): Int {
-  if needle.size == 0 {
-    return from
-  }
-  i = from
-  while i + needle.size <= hay.size {
-    k = 0
-    while k < needle.size && hay[i + k] == needle[k] {
-      k += 1
-    }
-    if k == needle.size {
-      return i
-    }
-    i += 1
-  }
-  -1
-}
-
 // The first error line of a log ("" when none).
 fn first_error(log: String): String {
-  at = find_at(log, "error[", 0)
-  if at < 0 {
-    return ""
-  }
+  at = log.index_of("error[") ?? return ""
   e = at
   while e < log.size && log[e] != 10 {
     e += 1
@@ -564,7 +541,7 @@ fn main: Int {
       cls = "refused"
     } else if !safe && code == "0" {
       cls = "hole"
-    } else if !safe && find_at(text, needles[i], 0) < 0 {
+    } else if !safe && !text.contains(needles[i]) {
       cls = "other"
     }
     if code != "0" && code != "1" {
