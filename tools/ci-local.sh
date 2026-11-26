@@ -89,7 +89,8 @@ USER runner
 EOF
   tagname="avant-ci-local:$1-$(sha256sum "$d/Dockerfile" | cut -c1-12)"
   if ! $docker image inspect "$tagname" > /dev/null 2>&1; then
-    echo "ci-local: building $tagname from $base" | tee -a "$out/summary.txt"
+    echo "ci-local: building $tagname from $base" >> "$out/summary.txt"
+    echo "ci-local: building $tagname from $base" >&2
     $docker build -q -t "$tagname" "$d" > "$d/build.log" 2>&1 || { echo "ci-local.sh: the image $tagname did not build ($d/build.log)" >&2; return 1; }
   fi
   echo "$tagname"
