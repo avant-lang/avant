@@ -5,7 +5,7 @@ the steps that need the whole machine, in one run.
   python3 tools/hold.py PLAN [--nodes 0,1,2,3] [--walls PREVIOUS]... [--log WALLS]
                              [--pin numactl|none] [--dry-run]
 
-Run inside one `ledger run --timed` (the machine held alone, D571's form):
+Run inside one `ledger run --timed` (the machine held alone):
 everything a wave times then goes through one turnstile, so no shared run
 slips in between the chains, Matmul::T16's whole-machine run and the
 suite's walls, and the hold ends when its last step ends.
