@@ -44,6 +44,21 @@ pub fn path_is_link(path: String): Bool {
   oslink.readlink(path, one.to_s(), 1) >= 0
 }
 
+// The target a symbolic link names (as written: relative or absolute),
+// "" when path is not a link.
+pub fn path_link_target(path: String): String {
+  raw_buf = buf_new()
+  for nfill in 0..4096 {
+    raw_buf.push_byte(0)
+  }
+  raw = raw_buf.to_s()
+  n = oslink.readlink(path, raw, 4095)
+  if n > 0 && n < 4096 {
+    return str_slice(raw, 0, n)
+  }
+  ""
+}
+
 pub fn path_basename(path: String): String {
   i = path.size - 1
   while i >= 0 {

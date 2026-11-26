@@ -14,6 +14,7 @@
 
 import source
 import pipeline
+import loader
 import mir.ir
 import mir.verify_core
 import mir.verify
@@ -241,13 +242,94 @@ pub fn llvm_run_cc_out(args: Array(String), log: String): Int {
   tool_run_out("/usr/bin/env", wrapped, log)
 }
 
-// Whether the linker this link runs reads llvm_hot_script: cc with the
-// link's own flags (a -fuse-ld among them, or a CC that adds one) asked
-// for its linker's version (one short run before the link). GNU ld and
-// lld read it; mold and gold do not, and get no script: their links keep
-// each hot section as an output section of its own, where that linker
-// puts an unknown code section, on no page boundary.
+// path with its symbolic links followed (at most 16), "" when it does not
+// exist.
+pub fn llvm_link_resolved(path: String): String {
+  p = path
+  for hop in 0..16 {
+    t = path_link_target(p)
+    if t.size == 0 {
+      if file_exists(p) {
+        return p
+      }
+      return ""
+    }
+    if t.starts_with("/") {
+      p = t
+    } else {
+      p = "${path_dirname(p)}/${t}"
+    }
+  }
+  ""
+}
+
+// The script's answer for one linker file: 1 for GNU ld (ld.bfd) and lld,
+// 0 for mold and gold, -1 for a name it does not know.
+pub fn llvm_linker_name_reads(path: String): Int {
+  name = path_basename(path)
+  if name.contains("mold") || name.contains("gold") {
+    return 0
+  }
+  if name.ends_with(".bfd") || name.contains("lld") {
+    return 1
+  }
+  -1
+}
+
+// Whether the linker this link runs reads llvm_hot_script. GNU ld and lld
+// read it; mold and gold do not, and get no script: their links keep each
+// hot section as an output section of its own, where that linker puts an
+// unknown code section, on no page boundary. Decided without running
+// anything when it can be: a -fuse-ld= among the link's flags names the
+// linker; with no CC, no -fuse-ld and no -B, cc runs the system's linker,
+// /usr/bin/x86_64-linux-gnu-ld (gcc) or /usr/bin/ld (clang), whose links
+// lead to the linker's own file (ld.bfd, ld.lld, ld.mold). Only a link
+// that names none of these (a CC wrapper, a -B, an unknown file) asks cc
+// for its linker's version, one short run before the link (a run per
+// link costs every program three processes: the suite's wall read 3%
+// more with it).
 pub fn llvm_linker_reads_script(flags: Array(String), log: String): Bool {
+  probe = false
+  if v = env_get("CC") {
+    probe = v.size > 0
+  }
+  for f in flags {
+    if f.starts_with("-fuse-ld=") {
+      u = str_slice(f, 9, f.size)
+      if u == "bfd" || u == "lld" {
+        return true
+      }
+      if u == "mold" || u == "gold" {
+        return false
+      }
+      probe = true
+    }
+    if f.starts_with("-B") {
+      probe = true
+    }
+  }
+  if !probe {
+    known = 0
+    answer = true
+    lds: Array(String) = []
+    lds.push("/usr/bin/x86_64-linux-gnu-ld")
+    lds.push("/usr/bin/ld")
+    for ld in lds {
+      r = llvm_link_resolved(ld)
+      if r.size > 0 {
+        w = llvm_linker_name_reads(r)
+        if w < 0 {
+          probe = true
+        } else {
+          known += 1
+          answer = answer && w == 1
+        }
+      }
+    }
+    if !probe && known > 0 {
+      return answer
+    }
+  }
   args: Array(String) = []
   args.concat(flags)
   args.push("-Wl,--version")

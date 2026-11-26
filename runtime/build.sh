@@ -291,6 +291,21 @@ place_hot() {
       objcopy --rename-section "$sec=.avant_hot.$k.${sec#.text.}" "$root/build/$o"
     done
   done < "$root/hot.txt"
+  # The other functions' sections go back into one .text per object (and
+  # one .text.unlikely, ...), in the order they had: a program's link then
+  # reads a few sections per object, not thousands (it cost every link a
+  # third more instructions), and lays the code out as before but for the
+  # padding between functions.
+  printf 'SECTIONS\n{\n  .text.unlikely : { *(.text.unlikely .text.unlikely.*) }\n  .text.exit : { *(.text.exit .text.exit.*) }\n  .text.startup : { *(.text.startup .text.startup.*) }\n  .text.hot : { *(.text.hot .text.hot.*) }\n  .text : { *(.text .text.*) }\n}\n' > "$root/build/text_merge.ld"
+  for o in "$root"/build/*.o; do
+    # avant_llvm.o is the compiler's alone; libbase64.o's functions keep
+    # their library's 16-byte alignment, so one .text would place them
+    # otherwise (and it holds a few dozen).
+    case "$o" in */avant_llvm.o|*/libbase64.o) continue ;; esac
+    ld -r -T "$root/build/text_merge.ld" -o "$o.merged" "$o" || exit 1
+    mv "$o.merged" "$o"
+  done
+  rm -f "$root/build/text_merge.ld"
 }
 place_hot
 
