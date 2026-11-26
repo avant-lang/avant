@@ -161,14 +161,14 @@ fn ll_layouts(e: LlEmit, out: Buf) {
   // C's arrays (`T name[N]`) first: an array type is no struct, so a
   // struct that holds one may not name it before its definition.
   for l in e.ts.layouts {
-    if l.kind == mlk_carray() {
+    if l.kind == mlk_carray {
       out.push_str("${ll_type_name(l.name)} = type [${l.fields.size} x ${e.llt(l.fields[0])}]\n")
       n += 1
     }
   }
   for l in e.ts.layouts {
-    if l.kind == mlk_carray() {
-    } else if l.kind != mlk_elems() {
+    if l.kind == mlk_carray {
+    } else if l.kind != mlk_elems {
       out.push_str("${ll_type_name(l.name)} = type {")
       for j in 0..l.fields.size {
         if j > 0 {
@@ -272,7 +272,7 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String)
 
 // A parameter or result type at the C boundary.
 fn ll_c_type(ts: MTypes, ty: Int): String {
-  if ty == mt_bool() {
+  if ty == mt_bool {
     return "zeroext i1"
   }
   ext = ll_c_ext(ts, ty)
@@ -284,7 +284,7 @@ fn ll_c_type(ts: MTypes, ty: Int): String {
 
 // A parameter type at the C boundary: the attribute follows the type.
 fn ll_c_param(ts: MTypes, ty: Int): String {
-  if ty == mt_bool() {
+  if ty == mt_bool {
     return "i1 zeroext"
   }
   ext = ll_c_ext(ts, ty)
@@ -369,22 +369,22 @@ fn ll_const_facts(e: LlEmit) {
       for blk in g.blocks {
         for st in blk.stmts {
           names: Array(String) = []
-          if st.kind == msk_call() && st.callee.size > 0 {
+          if st.kind == msk_call && st.callee.size > 0 {
             names.push(st.callee)
           }
           for o in st.args {
-            if o.kind == mok_fn() {
+            if o.kind == mok_fn {
               names.push(o.text)
             }
           }
           if r = st.rv {
             for o2 in [r.a, r.b] {
-              if x = o2, x.kind == mok_fn() {
+              if x = o2, x.kind == mok_fn {
                 names.push(x.text)
               }
             }
             for o3 in r.ops {
-              if o3.kind == mok_fn() {
+              if o3.kind == mok_fn {
                 names.push(o3.text)
               }
             }
@@ -404,18 +404,18 @@ fn ll_const_facts(e: LlEmit) {
   for f2 in e.m.funcs {
     for blk2 in f2.blocks {
       for st2 in blk2.stmts {
-        if st2.kind == msk_call() && st2.callee.size > 0 && !st2.callee.starts_with("av.") {
+        if st2.kind == msk_call && st2.callee.size > 0 && !st2.callee.starts_with("av.") {
           if xr = e.m.rt.find(st2.callee) {
           } else {
             for a in st2.args {
               at = a.ty
               if p = a.place {
-                at = mt_ref()
+                at = mt_ref
                 if p.proj.size == 0 && p.local < f2.locals.size {
                   at = f2.locals[p.local].ty
                 }
               }
-              if e.ts.is_refkind(at) && at != mt_str() {
+              if e.ts.is_refkind(at) && at != mt_str {
                 fields = false
               }
             }
@@ -441,14 +441,14 @@ fn ll_const_locals(e: LlEmit, f: MFunc) {
   other = Set(Int).new()
   for blk in f.blocks {
     for st in blk.stmts {
-      if st.kind == msk_assign() {
+      if st.kind == msk_assign {
         if pl = st.place, pl.proj.size == 0 {
           kind = 0
-          if r = st.rv, r.kind == mrk_use() {
+          if r = st.rv, r.kind == mrk_use {
             if a = r.a {
-              if a.kind == mok_global() {
+              if a.kind == mok_global {
                 kind = 1
-              } else if ap = a.place, ap.proj.size == 1 && ap.proj[0].kind == mpk_deref() && slots.has(ap.local) {
+              } else if ap = a.place, ap.proj.size == 1 && ap.proj[0].kind == mpk_deref && slots.has(ap.local) {
                 kind = 2
               }
             }
@@ -461,7 +461,7 @@ fn ll_const_locals(e: LlEmit, f: MFunc) {
             other.add(pl.local)
           }
         }
-      } else if st.kind == msk_call() && st.dest >= 0 {
+      } else if st.kind == msk_call && st.dest >= 0 {
         other.add(st.dest)
       }
     }
@@ -489,11 +489,11 @@ fn ll_const_locals(e: LlEmit, f: MFunc) {
 // Array the same facts let LLVM reshape Sort::Merge's merge for 8% more
 // time, as measured.
 fn ll_param_facts(e: LlEmit, f: MFunc, i: Int, ty: Int): String {
-  if e.frame_words >= 0 || i >= f.nonnull.size || !f.nonnull[i] || e.ts.kind(ty) != mk_ref() {
+  if e.frame_words >= 0 || i >= f.nonnull.size || !f.nonnull[i] || e.ts.kind(ty) != mk_ref {
     return ""
   }
   l = e.ts.get(ty).layout
-  if l < 0 || e.ts.layouts[l].kind != mlk_buf() || e.ts.layouts[l].size <= 0 {
+  if l < 0 || e.ts.layouts[l].kind != mlk_buf || e.ts.layouts[l].size <= 0 {
     return ""
   }
   " nonnull align 8 dereferenceable(${e.ts.layouts[l].size})"
@@ -618,7 +618,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
 fn ll_stmt(e: LlEmit, st: MStmt) {
   e.site(st.loc)
   k = st.kind
-  if k == msk_assign() {
+  if k == msk_assign {
     if p = st.place, rv = st.rv {
       pt = e.place_type(p)
       val = ll_rvalue(e, rv, pt)
@@ -633,7 +633,7 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
         e.store_tagged(pt, val, e.local_addr(p.local), false, e.pa_tbaa)
       }
     }
-  } else if k == msk_call() {
+  } else if k == msk_call {
     e.resync_pending = true
     e.sh_inner = true
     ll_call(e, st)
@@ -646,20 +646,20 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
       e.resync_pending = true
     }
     e.resync()
-  } else if k == msk_barrier() {
+  } else if k == msk_barrier {
     ll_barrier(e, st.args[0])
-  } else if k == msk_barrier_at() {
+  } else if k == msk_barrier_at {
     ll_barrier_at(e, st.args[0])
-  } else if k == msk_check_bounds() {
+  } else if k == msk_check_bounds {
     ll_bounds(e, st)
-  } else if k == msk_gc_enter() {
+  } else if k == msk_gc_enter {
     ll_gc_frame_enter(e)
     if e.f.first_frame() || !e.inline_fast {
       // The runtime's entry may set the heap up.
       e.resync_pending = true
       e.resync()
     }
-  } else if k == msk_gc_leave() {
+  } else if k == msk_gc_leave {
     ll_gc_frame_leave(e)
   }
 }
@@ -709,7 +709,7 @@ pub fn ll_ssa_plan(e: LlEmit, f: MFunc) {
         ll_ssa_bad(bad, l)
       }
       if p = st.place {
-        if st.kind == msk_assign() && p.proj.size == 0 {
+        if st.kind == msk_assign && p.proj.size == 0 {
           ll_ssa_def(defs, dblk, dat, bad, p.local, b, j)
         } else {
           ll_ssa_place(p, false, reads, bad)
@@ -722,7 +722,7 @@ pub fn ll_ssa_plan(e: LlEmit, f: MFunc) {
           ll_ssa_operand(o, reads, bad)
         }
         if p = r.place {
-          if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
+          if r.kind == mrk_addr || r.kind == mrk_addr_raw {
             ll_ssa_place(p, false, reads, bad)
           } else {
             ll_ssa_bad(bad, p.local)
@@ -737,7 +737,7 @@ pub fn ll_ssa_plan(e: LlEmit, f: MFunc) {
       for l in reads {
         ll_ssa_read(dblk, dat, bad, l, b, j)
       }
-      if st.kind == msk_call() && st.dest >= 0 {
+      if st.kind == msk_call && st.dest >= 0 {
         ll_ssa_def(defs, dblk, dat, bad, st.dest, b, j)
       }
     }
@@ -807,7 +807,7 @@ fn ll_ssa_place(p: MPlace, whole_ok: Bool, reads: Array(Int), bad: Array(Bool)) 
     } else {
       ll_ssa_bad(bad, p.local)
     }
-  } else if p.proj[0].kind == mpk_deref() {
+  } else if p.proj[0].kind == mpk_deref {
     reads.push(p.local)
   } else {
     ll_ssa_bad(bad, p.local)
@@ -839,7 +839,7 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   // (a site argument per check flipped an inlining on Maze::AStar,
   // +5.8% instructions).
   e.trap_bounds = true
-  if ity != mt_i64() {
+  if ity != mt_i64 {
     wi = e.tmp()
     e.line("${wi} = sext i32 ${i} to i64")
     wn = e.tmp()
@@ -856,7 +856,7 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
 // local) stored at once. Allocation rows may expand inline.
 fn ll_call(e: LlEmit, st: MStmt) {
   result = ""
-  ret = mt_void()
+  ret = mt_void
   if fo = st.indirect {
     result = ll_call_indirect(e, st, fo)
     ret = e.ov_ty
@@ -870,7 +870,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
       }
       args = "${args}i32 ${ll_caller_site(e)}"
     }
-    result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
+    result = ll_emit_call(e, ret == mt_void, e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
     if x.name == "avant_gc_poll" {
       // The request flag's test, the call only when set.
@@ -948,7 +948,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
       if s.varargs || sig != x.sig {
         rt = "${rt} ${ll_fn_type(e, s)}"
       }
-      result = ll_emit_call(e, ret == mt_void(), rt, callee, args)
+      result = ll_emit_call(e, ret == mt_void, rt, callee, args)
     }
   }
   if st.dest >= 0 {
@@ -967,11 +967,11 @@ fn ll_call(e: LlEmit, st: MStmt) {
 // the one difference).
 fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   s = ts.sigs[x.sig]
-  if s.params.size < 1 || s.params.size > 2 || s.ret != mt_f64() || s.varargs {
+  if s.params.size < 1 || s.params.size > 2 || s.ret != mt_f64 || s.varargs {
     return ""
   }
   for p in s.params {
-    if p != mt_f64() {
+    if p != mt_f64 {
       return ""
     }
   }
@@ -1176,7 +1176,7 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
     if i > 0 {
       buf.push_str(", ")
     }
-    if c_boundary && ty == mt_bool() {
+    if c_boundary && ty == mt_bool {
       buf.push_str("i1 zeroext ${x}")
     } else if c_boundary && ll_c_ext(e.ts, ty).size > 0 {
       buf.push_str("${e.llt(ty)} ${ll_c_ext(e.ts, ty)} ${x}")
@@ -1205,7 +1205,7 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
   } else {
     args = "ptr ${env}"
   }
-  r = ll_emit_call(e, s.ret == mt_void(), e.llt(s.ret), code, args)
+  r = ll_emit_call(e, s.ret == mt_void, e.llt(s.ret), code, args)
   e.ov_ty = s.ret
   r
 }
@@ -1234,7 +1234,7 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
 // per field offset's tag (a type node under the object field tag, then
 // its access tag), numbered in emission order.
 fn ll_loop_md(e: LlEmit, out: Buf) {
-  first = ll_tbaa_last() + 1
+  first = ll_tbaa_last + 1
   if e.loop_md_n < first && !e.used_tbaa {
     return
   }
@@ -1261,15 +1261,15 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
 fn ll_term(e: LlEmit, t: MTerm) {
   e.site(t.loc)
   k = t.kind
-  if k == mtk_goto() {
+  if k == mtk_goto {
     e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
-  } else if k == mtk_branch() {
+  } else if k == mtk_branch {
     c = "false"
     if o = t.cond {
       c = e.value(o)
     }
     e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}${ll_cold_md(e, t)}")
-  } else if k == mtk_switch() {
+  } else if k == mtk_switch {
     if o = t.cond {
       c = e.value(o)
       ty = e.ov_ty
@@ -1281,7 +1281,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
       buf.push_str(" ]")
       e.line(buf.to_s())
     }
-  } else if k == mtk_return() {
+  } else if k == mtk_return {
     if e.f.has_ret() {
       ty = e.f.locals[0].ty
       x = e.load(ty, e.read_addr(0), e.slot_vol(0))
@@ -1298,42 +1298,42 @@ fn ll_term(e: LlEmit, t: MTerm) {
 
 fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
   k = r.kind
-  if k == mrk_use() {
+  if k == mrk_use {
     if a = r.a {
       return e.value(a)
     }
   }
-  if k == mrk_zero() {
+  if k == mrk_zero {
     return e.zero_text(pt)
   }
-  if k == mrk_unary() {
+  if k == mrk_unary {
     return ll_unary(e, r)
   }
-  if k == mrk_binary() || k == mrk_checked() || k == mrk_cmp() {
+  if k == mrk_binary || k == mrk_checked || k == mrk_cmp {
     if a = r.a, b = r.b {
       x = e.value(a)
       ty = e.ov_ty
       y = e.value(b)
-      if k == mrk_cmp() {
+      if k == mrk_cmp {
         return ll_cmp(e, r.op, ty, x, y)
       }
-      if k == mrk_checked() {
+      if k == mrk_checked {
         return ll_checked(e, r.op, ty, x, y)
       }
       return ll_binary(e, r.op, ty, x, y)
     }
   }
-  if k == mrk_cast() {
+  if k == mrk_cast {
     if a = r.a {
       return ll_cast(e, e.value(a), e.ov_ty, r.ty)
     }
   }
-  if k == mrk_addr() || k == mrk_addr_raw() {
+  if k == mrk_addr || k == mrk_addr_raw {
     if p = r.place {
       return e.place_ptr(p)
     }
   }
-  if k == mrk_struct() {
+  if k == mrk_struct {
     vals: Array(String) = []
     tys: Array(Int) = []
     for i in 0..r.ops.size {
@@ -1346,9 +1346,9 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
     }
     return agg
   }
-  if k == mrk_union() {
+  if k == mrk_union {
     l = e.ts.layouts[e.ts.layout_of(r.ty)]
-    agg = ll_insert(e, r.ty, "zeroinitializer", mt_i32(), "${r.op}", 0)
+    agg = ll_insert(e, r.ty, "zeroinitializer", mt_i32, "${r.op}", 0)
     if a = r.a {
       x = e.value(a)
       pi = 1 + r.op
@@ -1359,12 +1359,12 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
     }
     return agg
   }
-  if k == mrk_fnval() {
+  if k == mrk_fnval {
     if a = r.a, b = r.b {
       env = e.value(a)
       code = e.value(b)
-      agg = ll_insert(e, r.ty, "zeroinitializer", mt_ref(), env, 0)
-      return ll_insert(e, r.ty, agg, mt_ptr(), code, 1)
+      agg = ll_insert(e, r.ty, "zeroinitializer", mt_ref, env, 0)
+      return ll_insert(e, r.ty, agg, mt_ptr, code, 1)
     }
   }
   "undef"
@@ -1381,15 +1381,15 @@ fn ll_unary(e: LlEmit, r: MRvalue): String {
   if a = r.a {
     x = e.value(a)
     ty = e.ov_ty
-    if r.op == mop_neg_chk() {
+    if r.op == mop_neg_chk {
       return ll_overflow(e, "ssub", ty, "0", x)
     }
     t = e.tmp()
-    if r.op == mop_neg() && ty == mt_f64() {
+    if r.op == mop_neg && ty == mt_f64 {
       e.line("${t} = fneg double ${x}")
-    } else if r.op == mop_neg() {
+    } else if r.op == mop_neg {
       e.line("${t} = sub ${e.llt(ty)} 0, ${x}")
-    } else if ty == mt_bool() {
+    } else if ty == mt_bool {
       e.line("${t} = xor i1 ${x}, true")
     } else {
       e.line("${t} = xor ${e.llt(ty)} ${x}, -1")
@@ -1402,27 +1402,27 @@ fn ll_unary(e: LlEmit, r: MRvalue): String {
 fn ll_binary(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   signed = e.ts.is_signed_int(ty)
-  f = ty == mt_f64()
+  f = ty == mt_f64
   name = "add"
-  if op == mop_add() {
+  if op == mop_add {
     name = ll_pick(f, "fadd", "add")
-  } else if op == mop_sub() {
+  } else if op == mop_sub {
     name = ll_pick(f, "fsub", "sub")
-  } else if op == mop_mul() {
+  } else if op == mop_mul {
     name = ll_pick(f, "fmul", "mul")
-  } else if op == mop_div() {
+  } else if op == mop_div {
     name = ll_pick(f, "fdiv", ll_pick(signed, "sdiv", "udiv"))
-  } else if op == mop_rem() {
+  } else if op == mop_rem {
     name = ll_pick(f, "frem", ll_pick(signed, "srem", "urem"))
-  } else if op == mop_and() {
+  } else if op == mop_and {
     name = "and"
-  } else if op == mop_or() {
+  } else if op == mop_or {
     name = "or"
-  } else if op == mop_xor() {
+  } else if op == mop_xor {
     name = "xor"
-  } else if op == mop_shl() {
+  } else if op == mop_shl {
     name = "shl"
-  } else if op == mop_shr() {
+  } else if op == mop_shr {
     name = ll_pick(signed, "ashr", "lshr")
   }
   t = e.tmp()
@@ -1439,9 +1439,9 @@ fn ll_pick(c: Bool, a: String, b: String): String {
 
 fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   t = e.tmp()
-  if ty == mt_f64() {
+  if ty == mt_f64 {
     names = ["oeq", "une", "olt", "ole", "ogt", "oge"]
-    e.line("${t} = fcmp ${names[op - mop_eq()]} double ${x}, ${y}")
+    e.line("${t} = fcmp ${names[op - mop_eq]} double ${x}, ${y}")
     return t
   }
   signed = e.ts.is_signed_int(ty)
@@ -1449,7 +1449,7 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   if signed {
     names = ["eq", "ne", "slt", "sle", "sgt", "sge"]
   }
-  e.line("${t} = icmp ${names[op - mop_eq()]} ${e.llt(ty)} ${x}, ${y}")
+  e.line("${t} = icmp ${names[op - mop_eq]} ${e.llt(ty)} ${x}, ${y}")
   t
 }
 
@@ -1605,13 +1605,13 @@ fn ll_trap_stubs(e: LlEmit) {
 fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   signed = e.ts.is_signed_int(ty)
   s = ll_pick(signed, "s", "u")
-  if op == mop_add() {
+  if op == mop_add {
     return ll_overflow(e, "${s}add", ty, x, y)
   }
-  if op == mop_sub() {
+  if op == mop_sub {
     return ll_overflow(e, "${s}sub", ty, x, y)
   }
-  if op == mop_mul() {
+  if op == mop_mul {
     return ll_overflow(e, "${s}mul", ty, x, y)
   }
   // div.chk, rem.chk: divisor 0 traps; signed (MIN, -1) traps for div
@@ -1636,14 +1636,14 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
     e.line("${m2} = icmp eq ${lt} ${y}, -1")
     mm = e.tmp()
     e.line("${mm} = and i1 ${m1}, ${m2}")
-    if op == mop_div() {
+    if op == mop_div {
       ll_arith_trap(e, mm, false)
     } else {
       d = e.tmp()
       e.line("${d} = select i1 ${mm}, ${lt} 1, ${lt} ${y}")
     }
   }
-  name = ll_pick(op == mop_div(), ll_pick(signed, "sdiv", "udiv"), ll_pick(signed, "srem", "urem"))
+  name = ll_pick(op == mop_div, ll_pick(signed, "sdiv", "udiv"), ll_pick(signed, "srem", "urem"))
   t = e.tmp()
   e.line("${t} = ${name} ${lt} ${x}, ${d}")
   t
@@ -1654,7 +1654,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
 fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
   ts = e.ts
   name = ""
-  if src == mt_bool() && ts.is_int(dst) {
+  if src == mt_bool && ts.is_int(dst) {
     name = "zext"
   } else if ts.is_int(src) && ts.is_int(dst) {
     sb = ts.get(src).bits
@@ -1664,13 +1664,13 @@ fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
     } else if db < sb {
       name = "trunc"
     }
-  } else if ts.is_int(src) && dst == mt_f64() {
+  } else if ts.is_int(src) && dst == mt_f64 {
     name = ll_pick(ts.is_signed_int(src), "sitofp", "uitofp")
-  } else if src == mt_f64() && ts.is_int(dst) {
+  } else if src == mt_f64 && ts.is_int(dst) {
     name = ll_pick(ts.is_signed_int(dst), "fptosi", "fptoui")
-  } else if src == mt_f64() && ts.is_f32(dst) {
+  } else if src == mt_f64 && ts.is_f32(dst) {
     name = "fptrunc"
-  } else if ts.is_f32(src) && dst == mt_f64() {
+  } else if ts.is_f32(src) && dst == mt_f64 {
     name = "fpext"
   }
   if name.size == 0 {

@@ -74,24 +74,24 @@ fn st_base(shared: Bool): MirBuilder {
   m.shared = shared
   b = MirBuilder.new(m)
   b.file("t.av")
-  box = b.note_layout("main.Box", mlk_class(), st_tys(mt_str(), -1), st_names("name"))
+  box = b.note_layout("main.Box", mlk_class, st_tys(mt_str, -1), st_names("name"))
   b.type_id(box)
-  rec = b.note_layout("main.Rec", mlk_struct(), st_tys(mt_str(), -1), st_names("s"))
+  rec = b.note_layout("main.Rec", mlk_struct, st_tys(mt_str, -1), st_names("s"))
   st_maker(b, "mk")
   st_maker(b, "name")
-  st_fn(b, "churn", st_tys(-1, -1), mt_void(), mfk_frame())
+  st_fn(b, "churn", st_tys(-1, -1), mt_void, mfk_frame)
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
   b.call(-1, "avant_gc_collect", st_none())
   b.gc_leave()
   b.ret()
-  st_sink(b, "use", mt_str())
+  st_sink(b, "use", mt_str)
   st_sink(b, "Rec.m", b.addr_of(b.agg(rec)))
   b
 }
 
 fn st_maker(b: MirBuilder, name: String) {
-  st_fn(b, name, st_tys(-1, -1), mt_str(), mfk_frame())
+  st_fn(b, name, st_tys(-1, -1), mt_str, mfk_frame)
   b.set_slot(0)
   b.assign(b.pl(0), b.rv_zero())
   b.gc_enter()
@@ -102,7 +102,7 @@ fn st_maker(b: MirBuilder, name: String) {
 }
 
 fn st_sink(b: MirBuilder, name: String, param: Int) {
-  st_fn(b, name, st_tys(param, -1), mt_void(), mfk_frame())
+  st_fn(b, name, st_tys(param, -1), mt_void, mfk_frame)
   b.set_slot(1)
   b.gc_enter()
   b.gc_roots(st_ints(1, -1))
@@ -131,7 +131,7 @@ fn st_diamond(b: MirBuilder, both: Bool) {
 
 fn st_case(out: Buf, name: String, stage: Int, m: MModule) {
   sname = "lowered"
-  if stage == mst_final() {
+  if stage == mst_final {
     sname = "final"
   }
   out.push_str("case ${name} ${sname} ${mir_verify_rules(m, stage)}\n")
@@ -142,41 +142,41 @@ fn st_case(out: Buf, name: String, stage: Int, m: MModule) {
 }
 
 fn st_both(out: Buf, name: String, m: MModule) {
-  st_case(out, name, mst_lowered(), m)
-  st_case(out, name, mst_final(), m)
+  st_case(out, name, mst_lowered, m)
+  st_case(out, name, mst_final, m)
 }
 
 // ---- rejecting cases (6), one per rule, plus the second cases of V11
 // and V14 and a few more.
 fn st_rejecting(out: Buf) {
-  lo = mst_lowered()
-  fi = mst_final()
-  vd = mt_void()
+  lo = mst_lowered
+  fi = mst_final
+  vd = mt_void
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
-  l1 = b.local(mt_i32(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
+  l1 = b.local(mt_i32, "")
   b.assign(b.pl(l1), b.rv_use(b.c_i32(1)))
   st_case(out, "v1_unterminated", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
   b.goto(0)
   st_case(out, "v2_edge_to_bb0", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
   b.goto(7)
   st_case(out, "v2_missing_target", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
   b.assign(b.pl(0), b.rv_use(b.c_i32(0)))
   b.ret()
   st_case(out, "v3_void_ret_place", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_i32(), -1), mt_i32(), mfk_unset())
+  st_fn(b, "f", st_tys(mt_i32, -1), mt_i32, mfk_unset)
   b.assign(b.pl(0), b.rv_use(b.copy(b.deref(b.pl(1)))))
   b.ret()
   st_case(out, "v4_deref_int", lo, b.module)
@@ -184,26 +184,26 @@ fn st_rejecting(out: Buf) {
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
   u = b.note_union("(main.Box|Nil)", st_tys(box_ref, -1), 1)
-  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_unset)
   l2 = b.local(b.agg(u), "")
   b.assign(b.pl(l2), b.rv_use(b.copy_local(1)))
   b.ret()
   st_case(out, "v5_ref_into_union", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_i32(), mt_i64()), mt_i32(), mfk_unset())
-  b.assign(b.pl(0), b.rv_bin(mop_add(), b.copy_local(1), b.copy_local(2)))
+  st_fn(b, "f", st_tys(mt_i32, mt_i64), mt_i32, mfk_unset)
+  b.assign(b.pl(0), b.rv_bin(mop_add, b.copy_local(1), b.copy_local(2)))
   b.ret()
   st_case(out, "v6_add_i32_i64", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
   b.call(-1, "av.t/use", st_none())
   b.ret()
   st_case(out, "v7_arity", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_i32(), -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(mt_i32, -1), vd, mfk_unset)
   bb1 = b.block()
   b.branch(b.copy_local(1), bb1, bb1)
   b.at(bb1)
@@ -211,28 +211,28 @@ fn st_rejecting(out: Buf) {
   st_case(out, "v8_branch_on_i32", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), mt_i32(), mfk_unset())
-  l1 = b.local(mt_i32(), "")
+  st_fn(b, "f", st_tys(-1, -1), mt_i32, mfk_unset)
+  l1 = b.local(mt_i32, "")
   b.assign(b.pl(0), b.rv_use(b.copy_local(l1)))
   b.ret()
   st_case(out, "v9_read_before_write", lo, b.module)
 
   // _0 written on one side of a diamond only.
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_bool(), -1), mt_i32(), mfk_unset())
+  st_fn(b, "f", st_tys(mt_bool, -1), mt_i32, mfk_unset)
   st_diamond(b, false)
   st_case(out, "v9_one_path", lo, b.module)
 
   b = st_base(false)
-  ai = b.addr_of(mt_i32())
-  st_fn(b, "f", st_tys(ai, -1), ai, mfk_unset())
+  ai = b.addr_of(mt_i32)
+  st_fn(b, "f", st_tys(ai, -1), ai, mfk_unset)
   b.assign(b.pl(0), b.rv_use(b.copy_local(1)))
   b.ret()
   st_case(out, "v10_returns_addr", lo, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  l1 = b.local(mt_str, "")
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
   b.call(l1, "av.t/mk", st_none())
@@ -244,8 +244,8 @@ fn st_rejecting(out: Buf) {
 
   // Live around a back edge: the use is after the call on the next turn.
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  l1 = b.local(mt_str, "")
   bb1 = b.block()
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
@@ -259,7 +259,7 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   rec = b.types.layout_named("main.Rec")
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
   lr = b.local(b.agg(rec), "")
   la = b.local(b.addr_of(b.agg(rec)), "")
   b.gc_enter()
@@ -272,9 +272,9 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
+  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame)
   b.set_slot(1)
-  l2 = b.local(b.addr_of(mt_str()), "")
+  l2 = b.local(b.addr_of(mt_str), "")
   b.gc_enter()
   b.gc_roots(st_ints(1, -1))
   b.assign(b.pl(l2), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
@@ -286,14 +286,14 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
+  st_fn(b, "f", st_tys(box_ref, mt_str), vd, mfk_unset)
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
   st_case(out, "v13_no_barrier", lo, b.module)
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
+  st_fn(b, "f", st_tys(box_ref, mt_str), vd, mfk_unset)
   b.barrier(2)
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
@@ -302,11 +302,11 @@ fn st_rejecting(out: Buf) {
   // V13 third form, recorded: avant_pin_field of another operand than
   // the one stored.
   b = st_base(false)
-  cell0 = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
-  st_fn(b, "f", st_tys(b.ptr_to(b.agg(cell0)), mt_str()), vd, mfk_unset())
-  la0 = b.local(mt_ptr(), "")
+  cell0 = b.note_layout("c.cell", mlk_clayout, st_tys(mt_str, -1), st_names("s"))
+  st_fn(b, "f", st_tys(b.ptr_to(b.agg(cell0)), mt_str), vd, mfk_unset)
+  la0 = b.local(mt_ptr, "")
   b.assign(b.pl(la0), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
-  lv0 = b.local(mt_str(), "")
+  lv0 = b.local(mt_str, "")
   b.assign(b.pl(lv0), b.rv_use(b.copy_local(2)))
   b.call(-1, "avant_pin_field", st_two(b.copy_local(la0), b.copy_local(lv0)))
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
@@ -315,14 +315,14 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
+  st_fn(b, "f", st_tys(box_ref, mt_str), vd, mfk_unset)
   b.assign_fresh(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
   st_case(out, "v14_holder_param", lo, b.module)
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_unset())
+  st_fn(b, "f", st_tys(mt_str, -1), vd, mfk_unset)
   lh = b.local(box_ref, "")
   b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(lh)), 0), b.rv_use(b.copy_local(1)))
@@ -334,7 +334,7 @@ fn st_rejecting(out: Buf) {
   // accepted: the holder is not open at the store.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
+  st_fn(b, "f", st_tys(mt_str, -1), box_ref, mfk_frame)
   b.set_slot(0)
   b.set_slot(1)
   b.assign(b.pl(0), b.rv_zero())
@@ -348,14 +348,14 @@ fn st_rejecting(out: Buf) {
   st_case(out, "v14_closed_fill", fi, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_leaf())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_leaf)
   b.call(-1, "av.t/churn", st_none())
   b.ret()
   st_case(out, "v15_leaf_collects", fi, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  l1 = b.local(mt_str, "")
   b.set_slot(l1)
   b.gc_enter()
   b.gc_roots(st_ints(l1, -1))
@@ -365,7 +365,7 @@ fn st_rejecting(out: Buf) {
   st_case(out, "v16_slot_not_zeroed", fi, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
   b.ret()
@@ -375,8 +375,8 @@ fn st_rejecting(out: Buf) {
   // thread's first Avant frame can be (main, a C callback's thunk), slot
   // or none.
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  l1 = b.local(mt_str, "")
   b.set_slot(l1)
   b.assign(b.pl(l1), b.rv_zero())
   b.call(l1, "av.t/mk", st_none())
@@ -387,22 +387,22 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   cbf = b.begin_fn("av.t/f#cb", b.sig(st_tys(-1, -1), vd, false), b.here(2, 1), "callback")
-  b.set_kind(mfk_frame())
+  b.set_kind(mfk_frame)
   cbf.entry = true
   b.call(-1, "av.t/churn", st_none())
   b.ret()
   st_case(out, "v16_first_frame_no_record", fi, b.module)
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset)
+  l1 = b.local(mt_str, "")
   st = b.call(l1, "avant_str_from_int", st_one(b.c_i64(1)))
   st.collects = false
   b.ret()
   st_case(out, "v18_collects_marked_nocollect", lo, b.module)
 
   b = st_base(true)
-  st_fn(b, "f", st_tys(mt_str(), -1), mt_i32(), mfk_leaf())
+  st_fn(b, "f", st_tys(mt_str, -1), mt_i32, mfk_leaf)
   b.assign(b.pl(0), b.rv_use(b.c_i32(0)))
   b.ret()
   st_case(out, "v19_shared_ref_leaf", fi, b.module)
@@ -418,7 +418,7 @@ fn st_rejecting(out: Buf) {
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(-1, -1), box_ref, mfk_unset())
+  st_fn(b, "f", st_tys(-1, -1), box_ref, mfk_unset)
   b.call(0, "avant_alloc", st_two(b.c_u64(8), b.c_u32(2)))
   b.ret()
   st_case(out, "v21_wrong_type_id", lo, b.module)
@@ -427,11 +427,11 @@ fn st_rejecting(out: Buf) {
   // i32 verify, see the heap goldens), but not a partial one.
   b = st_base(false)
   ef: Array(Int) = []
-  ef.push(mt_i32())
+  ef.push(mt_i32)
   en: Array(String) = []
   en.push("")
-  el = b.note_layout("elems(Int)", mlk_elems(), ef, en)
-  st_fn(b, "f", st_tys(-1, -1), b.ref_to(el), mfk_unset())
+  el = b.note_layout("elems(Int)", mlk_elems, ef, en)
+  st_fn(b, "f", st_tys(-1, -1), b.ref_to(el), mfk_unset)
   b.call(0, "avant_alloc", st_two(b.c_u64(6), b.c_u32(0)))
   b.ret()
   st_case(out, "v21_partial_element", lo, b.module)
@@ -449,11 +449,11 @@ pub fn mir_selftest_finals: Array(String) {
 
 pub fn st_ok_module(name: String): MModule {
   b = st_base(false)
-  vd = mt_void()
+  vd = mt_void
   if name == "ok_ref_across_nocollect" {
     // A ref held across nocollect calls needs no slot.
-    st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-    l1 = b.local(mt_str(), "")
+    st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+    l1 = b.local(mt_str, "")
     b.gc_enter()
     b.gc_roots(st_ints(-1, -1))
     b.call(l1, "av.t/mk", st_none())
@@ -464,9 +464,9 @@ pub fn st_ok_module(name: String): MModule {
   } else if name == "ok_addr_in_slot" {
     // A derived address live across a collecting call, in a slot.
     box_ref = b.ref_to(st_box(b))
-    st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
+    st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame)
     b.set_slot(1)
-    l2 = b.local(b.addr_of(mt_str()), "")
+    l2 = b.local(b.addr_of(mt_str), "")
     b.set_slot(l2)
     b.assign(b.pl(l2), b.rv_zero())
     b.gc_enter()
@@ -482,14 +482,14 @@ pub fn st_ok_module(name: String): MModule {
 
 // ---- accepting cases near each boundary.
 fn st_accepting(out: Buf) {
-  lo = mst_lowered()
-  fi = mst_final()
-  vd = mt_void()
+  lo = mst_lowered
+  fi = mst_final
+  vd = mt_void
 
   st_both(out, "ok_base", st_ok_module("ok_base"))
 
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_bool(), -1), mt_i32(), mfk_unset())
+  st_fn(b, "f", st_tys(mt_bool, -1), mt_i32, mfk_unset)
   st_diamond(b, true)
   st_case(out, "ok_defined_on_all_paths", lo, b.module)
 
@@ -499,8 +499,8 @@ fn st_accepting(out: Buf) {
   // A frame function with no slot and no frame statement: it collects,
   // holds no reference across it, links no record.
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  l1 = b.local(mt_str, "")
   b.call(-1, "av.t/churn", st_none())
   b.call(l1, "av.t/mk", st_none())
   b.call(-1, "avant_str_size", st_one(b.copy_local(l1)))
@@ -512,22 +512,22 @@ fn st_accepting(out: Buf) {
   // address), a by-value push through a slot row's address.
   b = st_base(false)
   rec = b.types.layout_named("main.Rec")
-  st_fn(b, "f", st_tys(b.addr_of(b.agg(rec)), mt_str()), vd, mfk_unset())
+  st_fn(b, "f", st_tys(b.addr_of(b.agg(rec)), mt_str), vd, mfk_unset)
   b.barrier_at(1)
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
-  cell = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
-  st_fn(b, "g", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
+  cell = b.note_layout("c.cell", mlk_clayout, st_tys(mt_str, -1), st_names("s"))
+  st_fn(b, "g", st_tys(b.ptr_to(b.agg(cell)), mt_str), vd, mfk_unset)
   b.call(-1, "avant_pin", st_one(b.copy_local(2)))
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
-  st_fn(b, "k", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
-  la = b.local(mt_ptr(), "")
+  st_fn(b, "k", st_tys(b.ptr_to(b.agg(cell)), mt_str), vd, mfk_unset)
+  la = b.local(mt_ptr, "")
   b.assign(b.pl(la), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
   b.call(-1, "avant_pin_field", st_two(b.copy_local(la), b.copy_local(2)))
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
-  st_fn(b, "h", st_tys(mt_ref(), b.agg(rec)), vd, mfk_unset())
+  st_fn(b, "h", st_tys(mt_ref, b.agg(rec)), vd, mfk_unset)
   l3 = b.local(b.addr_of(b.agg(rec)), "")
   args = st_two(b.copy_local(1), b.c_u64(8))
   args.push(b.c_u32(0))
@@ -546,7 +546,7 @@ fn st_pass_report(out: Buf, name: String, m: MModule, first: Int) {
   for i in first..m.funcs.size {
     f = m.funcs[i]
     kind = "frame"
-    if f.kind == mfk_leaf() {
+    if f.kind == mfk_leaf {
       kind = "leaf"
     }
     sl = Buf.new()
@@ -557,21 +557,21 @@ fn st_pass_report(out: Buf, name: String, m: MModule, first: Int) {
     }
     out.push_str("pass ${name} ${f.symbol} ${kind} slots${sl.to_s()}\n")
   }
-  st_case(out, name, mst_final(), m)
+  st_case(out, name, mst_final, m)
 }
 
 fn st_passes(out: Buf) {
-  vd = mt_void()
-  un = mfk_unset()
+  vd = mt_void
+  un = mfk_unset
   // Liveness: _1 is live across churn and two more collecting calls, _2
   // is dead after its definition, _3 is the destination of a collecting
   // call and is read only before the next one.
   b = st_base(false)
   first = b.module.funcs.size
   st_fn(b, "f", st_tys(-1, -1), vd, un)
-  l1 = b.local(mt_str(), "")
-  l2 = b.local(mt_str(), "")
-  l3 = b.local(mt_str(), "")
+  l1 = b.local(mt_str, "")
+  l2 = b.local(mt_str, "")
+  l3 = b.local(mt_str, "")
   b.call(l1, "av.t/mk", st_none())
   b.call(l2, "av.t/mk", st_none())
   b.call(-1, "av.t/churn", st_none())
@@ -585,10 +585,10 @@ fn st_passes(out: Buf) {
   // one passed to an Avant callee and dead after it is not.
   b = st_base(false)
   first = b.module.funcs.size
-  st_fn(b, "f", st_tys(mt_str(), -1), mt_str(), un)
+  st_fn(b, "f", st_tys(mt_str, -1), mt_str, un)
   b.call(0, "avant_str_concat", st_two(b.copy_local(1), b.str_const("x")))
   b.ret()
-  st_fn(b, "g", st_tys(mt_str(), -1), vd, un)
+  st_fn(b, "g", st_tys(mt_str, -1), vd, un)
   b.call(-1, "av.t/use", st_one(b.copy_local(1)))
   b.ret()
   st_pass_report(out, "pass_args", b.module, first)
@@ -598,7 +598,7 @@ fn st_passes(out: Buf) {
   b = st_base(false)
   first = b.module.funcs.size
   rec = b.types.layout_named("main.Rec")
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  st_fn(b, "f", st_tys(mt_str, -1), vd, un)
   l2 = b.local(b.agg(rec), "")
   l3 = b.local(b.addr_of(b.agg(rec)), "")
   b.assign(b.pl(l2), b.rv_struct(rec, st_one(b.copy_local(1))))
@@ -613,10 +613,10 @@ fn st_passes(out: Buf) {
   for sh in 0..2 {
     b = st_base(sh == 1)
     first = b.module.funcs.size
-    st_fn(b, "a", st_tys(mt_str(), -1), mt_i64(), un)
+    st_fn(b, "a", st_tys(mt_str, -1), mt_i64, un)
     b.call(0, "avant_str_size", st_one(b.copy_local(1)))
     b.ret()
-    st_fn(b, "c", st_tys(-1, -1), mt_i64(), un)
+    st_fn(b, "c", st_tys(-1, -1), mt_i64, un)
     b.call(0, "av.t/a", st_one(b.str_const("q")))
     b.ret()
     st_fn(b, "d", st_tys(-1, -1), vd, un)
@@ -665,7 +665,7 @@ fn st_insert(blk: MBlock, at: Int, st: MStmt) {
 // The index of the first call to callee in blk, or -1.
 fn st_find_call(blk: MBlock, callee: String): Int {
   for i in 0..blk.stmts.size {
-    if blk.stmts[i].kind == msk_call() && blk.stmts[i].callee == callee {
+    if blk.stmts[i].kind == msk_call && blk.stmts[i].callee == callee {
       return i
     }
   }
@@ -679,16 +679,16 @@ fn st_mir(out: Buf, name: String, m: MModule) {
 }
 
 fn st_wide(out: Buf) {
-  lo = mst_lowered()
-  fi = mst_final()
-  vd = mt_void()
-  un = mfk_unset()
+  lo = mst_lowered
+  fi = mst_final
+  vd = mt_void
+  un = mfk_unset
 
   // V9 past the first word: _71 is written on one side of a diamond only;
   // _2.._70 are written first.
   b = st_base(false)
-  st_fn(b, "f", st_tys(mt_bool(), -1), mt_i32(), un)
-  st_fill(b, 70, mt_i32())
+  st_fn(b, "f", st_tys(mt_bool, -1), mt_i32, un)
+  st_fill(b, 70, mt_i32)
   k = 2
   while k <= 70 {
     b.assign(b.pl(k), b.rv_use(b.c_i32(k)))
@@ -704,17 +704,17 @@ fn st_wide(out: Buf) {
   b.at(bb2)
   b.goto(bb3)
   b.at(bb3)
-  b.assign(b.pl(0), b.rv_bin(mop_add(), b.copy_local(71), b.copy_local(66)))
+  b.assign(b.pl(0), b.rv_bin(mop_add, b.copy_local(71), b.copy_local(66)))
   b.ret()
   st_case(out, "v9_wide", lo, b.module)
 
   // V11 in both words: _3 and _70 are live across churn, neither a slot.
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  st_fill(b, 2, mt_i32())
-  l3 = b.local(mt_str(), "")
-  st_fill(b, 66, mt_i32())
-  l70 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  st_fill(b, 2, mt_i32)
+  l3 = b.local(mt_str, "")
+  st_fill(b, 66, mt_i32)
+  l70 = b.local(mt_str, "")
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
   b.call(l3, "av.t/mk", st_none())
@@ -729,10 +729,10 @@ fn st_wide(out: Buf) {
   // V12 past the first word: the derived address _69 is live across churn.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
+  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame)
   b.set_slot(1)
-  st_fill(b, 67, mt_i32())
-  l69 = b.local(b.addr_of(mt_str()), "")
+  st_fill(b, 67, mt_i32)
+  l69 = b.local(b.addr_of(mt_str), "")
   b.gc_enter()
   b.gc_roots(st_ints(1, -1))
   b.assign(b.pl(l69), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
@@ -744,9 +744,9 @@ fn st_wide(out: Buf) {
 
   // V11 around a back edge, in the second word.
   b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  st_fill(b, 64, mt_i32())
-  l65 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame)
+  st_fill(b, 64, mt_i32)
+  l65 = b.local(mt_str, "")
   bb1 = b.block()
   b.gc_enter()
   b.gc_roots(st_ints(-1, -1))
@@ -763,9 +763,9 @@ fn st_wide(out: Buf) {
   b = st_base(false)
   first = b.module.funcs.size
   st_fn(b, "f", st_tys(-1, -1), vd, un)
-  st_fill(b, 66, mt_i32())
-  l67 = b.local(mt_str(), "")
-  l68 = b.local(mt_str(), "")
+  st_fill(b, 66, mt_i32)
+  l67 = b.local(mt_str, "")
+  l68 = b.local(mt_str, "")
   b.call(l67, "av.t/mk", st_none())
   b.call(l68, "av.t/mk", st_none())
   b.call(-1, "av.t/churn", st_none())
@@ -782,8 +782,8 @@ fn st_wide(out: Buf) {
   // inner one does not.
   b = st_base(true)
   first = b.module.funcs.size
-  st_fn(b, "f", st_tys(mt_bool(), -1), vd, un)
-  l2 = b.local(mt_str(), "")
+  st_fn(b, "f", st_tys(mt_bool, -1), vd, un)
+  l2 = b.local(mt_str, "")
   bb1 = b.block()
   bb2 = b.block()
   bb3 = b.block()
@@ -797,8 +797,8 @@ fn st_wide(out: Buf) {
   b.goto(bb1)
   b.at(bb3)
   b.ret()
-  st_fn(b, "g", st_tys(mt_bool(), -1), vd, un)
-  l2 = b.local(mt_str(), "")
+  st_fn(b, "g", st_tys(mt_bool, -1), vd, un)
+  l2 = b.local(mt_str, "")
   bb1 = b.block()
   bb2 = b.block()
   bb3 = b.block()
@@ -812,8 +812,8 @@ fn st_wide(out: Buf) {
   b.at(bb3)
   b.call(-1, "av.t/use", st_one(b.copy_local(l2)))
   b.ret()
-  st_fn(b, "h", st_tys(mt_bool(), -1), vd, un)
-  l2 = b.local(mt_str(), "")
+  st_fn(b, "h", st_tys(mt_bool, -1), vd, un)
+  l2 = b.local(mt_str, "")
   bb1 = b.block()
   bb2 = b.block()
   bb3 = b.block()
@@ -840,8 +840,8 @@ fn st_wide(out: Buf) {
   b = st_base(false)
   first = b.module.funcs.size
   st_fn(b, "f", st_tys(-1, -1), vd, un)
-  l1 = b.local(mt_str(), "")
-  l2 = b.local(mt_str(), "")
+  l1 = b.local(mt_str, "")
+  l2 = b.local(mt_str, "")
   b.call(l1, "av.t/mk", st_none())
   b.call(l2, "av.t/mk", st_none())
   b.call(-1, "av.t/churn", st_none())
@@ -851,7 +851,7 @@ fn st_wide(out: Buf) {
   mir_gc_passes(m)
   blk = m.funcs[first].blocks[0]
   ix = st_find_call(blk, "av.t/churn")
-  use2 = MStmt.new(msk_call(), blk.stmts[ix].loc)
+  use2 = MStmt.new(msk_call, blk.stmts[ix].loc)
   use2.callee = "av.t/use"
   use2.args = st_one(b.copy_local(l2))
   use2.collects = true
@@ -864,8 +864,8 @@ fn st_wide(out: Buf) {
   b = st_base(false)
   first = b.module.funcs.size
   st_fn(b, "f", st_tys(-1, -1), vd, un)
-  l1 = b.local(mt_str(), "")
-  l2 = b.local(mt_str(), "")
+  l1 = b.local(mt_str, "")
+  l2 = b.local(mt_str, "")
   bb1 = b.block()
   b.call(l1, "av.t/mk", st_none())
   b.call(l2, "av.t/mk", st_none())
@@ -878,7 +878,7 @@ fn st_wide(out: Buf) {
   mir_gc_passes(m)
   blk = m.funcs[first].blocks[1]
   ix = st_find_call(blk, "av.t/churn")
-  use2 = MStmt.new(msk_call(), blk.stmts[ix].loc)
+  use2 = MStmt.new(msk_call, blk.stmts[ix].loc)
   use2.callee = "av.t/use"
   use2.args = st_one(b.copy_local(l2))
   use2.collects = true
@@ -889,7 +889,7 @@ fn st_wide(out: Buf) {
   // parameter _1, live across churn, loses its slot (and its root).
   b = st_base(false)
   first = b.module.funcs.size
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  st_fn(b, "f", st_tys(mt_str, -1), vd, un)
   b.call(-1, "av.t/churn", st_none())
   b.call(-1, "av.t/use", st_one(b.copy_local(1)))
   b.ret()
@@ -899,7 +899,7 @@ fn st_wide(out: Buf) {
   f.locals[1].slot = false
   blk = f.blocks[0]
   for i in 0..blk.stmts.size {
-    if blk.stmts[i].kind == msk_gc_roots() {
+    if blk.stmts[i].kind == msk_gc_roots {
       none: Array(Int) = []
       blk.stmts[i].locals = none
     }
@@ -918,8 +918,8 @@ fn st_wide(out: Buf) {
   // allocation not marked fresh, so _70 is not open (lowered and final).
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
-  st_fill(b, 68, mt_i32())
+  st_fn(b, "f", st_tys(mt_str, -1), vd, un)
+  st_fill(b, 68, mt_i32)
   l70 = b.local(box_ref, "")
   b.call(l70, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
@@ -928,9 +928,9 @@ fn st_wide(out: Buf) {
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_frame())
+  st_fn(b, "f", st_tys(mt_str, -1), vd, mfk_frame)
   b.set_slot(1)
-  st_fill(b, 68, mt_i32())
+  st_fill(b, 68, mt_i32)
   l70 = b.local(box_ref, "")
   b.gc_enter()
   b.gc_roots(st_ints(1, -1))
@@ -956,11 +956,11 @@ pub fn mir_selftest {
   // One verifier error in the compiler's diagnostic form.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, mt_str()), mt_void(), mfk_unset())
+  st_fn(b, "f", st_tys(box_ref, mt_str), mt_void, mfk_unset)
   b.at_loc(3, 5)
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
-  errs = mir_verify_errors(b.module, mst_lowered())
+  errs = mir_verify_errors(b.module, mst_lowered)
   out.push_str("== render\n")
   if errs.size > 0 {
     out.push_str(errs[0].render(b.module))

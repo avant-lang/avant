@@ -19,7 +19,7 @@ import mir.lower
 // Whether e contains a switch, whose arms can assign locals (the reason
 // an earlier operand is snapshotted).
 pub fn mir_has_switch(e: Expr): Bool {
-  if e.kind == ex_switch() {
+  if e.kind == ex_switch {
     return true
   }
   if l = e.left, mir_has_switch(l) {
@@ -90,43 +90,43 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
     return zero
   }
   k = e.kind
-  if k == ex_int() || k == ex_float() || k == ex_bool() || k == ex_string() {
+  if k == ex_int || k == ex_float || k == ex_bool || k == ex_string {
     return lw.literal(e, false)
   }
-  if k == ex_name() {
+  if k == ex_name {
     return lw.lower_name(e)
   }
-  if k == ex_const_ref() {
+  if k == ex_const_ref {
     return lw.lower_const_ref(e)
   }
-  if k == ex_unary() {
+  if k == ex_unary {
     return lw.lower_unary(e)
   }
-  if k == ex_binary() {
+  if k == ex_binary {
     return lw.lower_binary(e)
   }
-  if k == ex_call() {
+  if k == ex_call {
     return lw.lower_call(e)
   }
-  if k == ex_field() {
+  if k == ex_field {
     return lw.lower_field(e)
   }
-  if k == ex_enum_lit() {
+  if k == ex_enum_lit {
     // `:name`: the member of the enum the checker found, a constant.
     if t = e.ty, t.is_enum() {
       return lw.enum_const(t, e.ident)
     }
   }
-  if k == ex_switch() {
+  if k == ex_switch {
     return lw.lower_switch(e)
   }
-  if k == ex_interp() {
+  if k == ex_interp {
     return lw.lower_interp(e)
   }
-  if k == ex_struct() {
+  if k == ex_struct {
     return lw.lower_struct_lit(e)
   }
-  if k == ex_index() {
+  if k == ex_index {
     if arr = e.left, ix = e.right, at = arr.ty {
       if mir_is_str_ty(at) {
         return lw.lower_str_index(e, arr, ix)
@@ -144,25 +144,25 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
       }
     }
   }
-  if k == ex_array() {
+  if k == ex_array {
     return lw.lower_array_lit(e)
   }
-  if k == ex_hash_lit() {
+  if k == ex_hash_lit {
     return lw.lower_hash_lit(e)
   }
-  if k == ex_array_new() {
+  if k == ex_array_new {
     return lw.lower_array_new(e)
   }
-  if k == ex_hash_new() {
+  if k == ex_hash_new {
     return lw.lower_hash_new(e)
   }
-  if k == ex_nil() || k == ex_void() {
+  if k == ex_nil || k == ex_void {
     return lw.lw_b.c_i32(0)
   }
-  if k == ex_try() {
+  if k == ex_try {
     return lw.lower_try(e)
   }
-  if k == ex_lambda() {
+  if k == ex_lambda {
     return lw.lower_lambda(e)
   }
   lw.refuse(e.loc, "this expression")
@@ -178,16 +178,16 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
   if lw.failed() {
     return b.c_i32(0)
   }
-  if e.kind == ex_bool() {
+  if e.kind == ex_bool {
     return b.c_bool(e.bool_val)
   }
-  if e.kind == ex_string() {
+  if e.kind == ex_string {
     return lw.text_value(e.value_str)
   }
-  if ty == mt_f64() {
+  if ty == mt_f64 {
     v = e.float_val
     text = e.value_str
-    if e.kind == ex_int() {
+    if e.kind == ex_int {
       v = e.int_bits.to_f()
       text = "${e.int_bits}"
     } else if text.size == 0 {
@@ -199,14 +199,14 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     }
     return b.c_f64(mir_f64_bits(v), text)
   }
-  if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() || ty == mt_u8() {
+  if ty == mt_i64 || ty == mt_i32 || ty == mt_u32 || ty == mt_u8 {
     v64 = e.int_bits.wrap_i()
     if neg {
       v64 = 0 &- v64
     }
     return b.c_int(ty, v64)
   }
-  if ty == mt_u64() {
+  if ty == mt_u64 {
     return b.c_u64(e.int_bits.wrap_i())
   }
   lw.refuse(e.loc, "this literal")
@@ -243,7 +243,7 @@ pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
 pub fn (lw: MirLower) lower_unary(e: Expr): MOperand {
   b = lw.lw_b
   if inner = e.inner {
-    if e.op == tk_minus() && (inner.kind == ex_int() || inner.kind == ex_float()) {
+    if e.op == tk_minus && (inner.kind == ex_int || inner.kind == ex_float) {
       if it = inner.ty, !it.is_uint64() {
         return lw.literal(inner, true)
       }
@@ -254,14 +254,14 @@ pub fn (lw: MirLower) lower_unary(e: Expr): MOperand {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    if e.op == tk_minus() {
-      if ty == mt_i32() || ty == mt_i64() {
-        return lw.tmp(ty, b.rv_un(mop_neg_chk(), a))
+    if e.op == tk_minus {
+      if ty == mt_i32 || ty == mt_i64 {
+        return lw.tmp(ty, b.rv_un(mop_neg_chk, a))
       }
-      return lw.tmp(ty, b.rv_un(mop_neg(), a))
+      return lw.tmp(ty, b.rv_un(mop_neg, a))
     }
-    if e.op == tk_bang() || e.op == tk_tilde() {
-      return lw.tmp(ty, b.rv_un(mop_not(), a))
+    if e.op == tk_bang || e.op == tk_tilde {
+      return lw.tmp(ty, b.rv_un(mop_not, a))
     }
   }
   lw.refuse(e.loc, "this unary operator")
@@ -269,23 +269,23 @@ pub fn (lw: MirLower) lower_unary(e: Expr): MOperand {
 }
 
 pub fn mir_cmp_op(op: Int): Int {
-  if op == tk_eq_eq() {
-    return mop_eq()
+  if op == tk_eq_eq {
+    return mop_eq
   }
-  if op == tk_not_eq() {
-    return mop_ne()
+  if op == tk_not_eq {
+    return mop_ne
   }
-  if op == tk_less() {
-    return mop_lt()
+  if op == tk_less {
+    return mop_lt
   }
-  if op == tk_less_eq() {
-    return mop_le()
+  if op == tk_less_eq {
+    return mop_le
   }
-  if op == tk_greater() {
-    return mop_gt()
+  if op == tk_greater {
+    return mop_gt
   }
-  if op == tk_greater_eq() {
-    return mop_ge()
+  if op == tk_greater_eq {
+    return mop_ge
   }
   0
 }
@@ -296,12 +296,12 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
   if e.resolved.size > 0 {
     return lw.lower_op_method(e)
   }
-  if e.op == tk_question_question() {
+  if e.op == tk_question_question {
     if l0 = e.left, r0 = e.right, t0 = e.ty {
       return lw.lower_coalesce(l0, r0, t0, e.loc)
     }
   }
-  if e.op == tk_amp_amp() || e.op == tk_pipe_pipe() {
+  if e.op == tk_amp_amp || e.op == tk_pipe_pipe {
     return lw.lower_logical(e)
   }
   if l = e.left, r = e.right {
@@ -309,11 +309,11 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
     if lw.failed() {
       return zero
     }
-    if lt == mt_str() {
+    if lt == mt_str {
       return lw.lower_str_binary(e, l, r)
     }
     cop0 = mir_cmp_op(e.op)
-    if lw.lw_b.types.kind(lt) == mk_agg() || (lw.lw_b.types.is_refkind(lt) && cop0 != mop_eq() && cop0 != mop_ne()) {
+    if lw.lw_b.types.kind(lt) == mk_agg || (lw.lw_b.types.is_refkind(lt) && cop0 != mop_eq && cop0 != mop_ne) {
       lw.refuse(e.loc, "this operator on ${lw.lw_b.types.text(lt)}")
       return zero
     }
@@ -325,10 +325,10 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
     lw.at(e.loc)
     cop = mir_cmp_op(e.op)
     if cop > 0 {
-      return lw.tmp(mt_bool(), b.rv_cmp(cop, a, c))
+      return lw.tmp(mt_bool, b.rv_cmp(cop, a, c))
     }
     rt = lw.ety(r)
-    if e.op == tk_less_less() || e.op == tk_greater_greater() {
+    if e.op == tk_less_less || e.op == tk_greater_greater {
       return lw.shift(e.op, lt, rt, a, c, e.loc)
     }
     return lw.arith(e.op, lt, a, c, e.proven, e.loc)
@@ -347,7 +347,7 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    d = b.temp(mt_bool())
+    d = b.temp(mt_bool)
     b.assign(b.pl(d), b.rv_use(a))
     right = b.block()
     join = b.block()
@@ -358,13 +358,13 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
     if lw.lw_cov.on {
       short = b.block()
     }
-    if e.op == tk_amp_amp() {
+    if e.op == tk_amp_amp {
       b.branch(b.copy_local(d), right, short)
     } else {
       b.branch(b.copy_local(d), short, right)
     }
     if lw.lw_cov.on {
-      if e.op == tk_amp_amp() {
+      if e.op == tk_amp_amp {
         b.at(right)
         lw.cov_branch(e.loc)
         b.at(short)
@@ -420,16 +420,16 @@ pub fn (lw: MirLower) trap_close(ok: Int, trap: String, args: Array(MOperand), l
 }
 
 pub fn (lw: MirLower) int_const(ty: Int, v: Int): MOperand {
-  if ty == mt_i64() {
+  if ty == mt_i64 {
     return lw.lw_b.c_i64(v)
   }
-  if ty == mt_u64() {
+  if ty == mt_u64 {
     return lw.lw_b.c_u64(v)
   }
-  if ty == mt_u32() {
-    return lw.lw_b.c_int(mt_u32(), v)
+  if ty == mt_u32 {
+    return lw.lw_b.c_int(mt_u32, v)
   }
-  lw.lw_b.c_int(mt_i32(), v)
+  lw.lw_b.c_int(mt_i32, v)
 }
 
 // + - * / % &+ &- &* & | ^ on one type: checked unless Float64 or
@@ -437,49 +437,49 @@ pub fn (lw: MirLower) int_const(ty: Int, v: Int): MOperand {
 // of (MIN, -1) keeps its overflow trap.
 pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: Bool, loc: Location): MOperand {
   b = lw.lw_b
-  f = ty == mt_f64()
+  f = ty == mt_f64
   plain = f || proven
-  if op == tk_plus() || op == tk_minus() || op == tk_star() {
-    mop = mop_add()
-    if op == tk_minus() {
-      mop = mop_sub()
-    } else if op == tk_star() {
-      mop = mop_mul()
+  if op == tk_plus || op == tk_minus || op == tk_star {
+    mop = mop_add
+    if op == tk_minus {
+      mop = mop_sub
+    } else if op == tk_star {
+      mop = mop_mul
     }
     if plain {
       return lw.tmp(ty, b.rv_bin(mop, a, c))
     }
     return lw.tmp(ty, b.rv_chk(mop, a, c))
   }
-  if op == tk_amp_plus() {
-    return lw.tmp(ty, b.rv_bin(mop_add(), a, c))
+  if op == tk_amp_plus {
+    return lw.tmp(ty, b.rv_bin(mop_add, a, c))
   }
-  if op == tk_amp_minus() {
-    return lw.tmp(ty, b.rv_bin(mop_sub(), a, c))
+  if op == tk_amp_minus {
+    return lw.tmp(ty, b.rv_bin(mop_sub, a, c))
   }
-  if op == tk_amp_star() {
-    return lw.tmp(ty, b.rv_bin(mop_mul(), a, c))
+  if op == tk_amp_star {
+    return lw.tmp(ty, b.rv_bin(mop_mul, a, c))
   }
-  if op == tk_slash() {
+  if op == tk_slash {
     if plain {
-      return lw.tmp(ty, b.rv_bin(mop_div(), a, c))
+      return lw.tmp(ty, b.rv_bin(mop_div, a, c))
     }
-    return lw.tmp(ty, b.rv_chk(mop_div(), a, c))
+    return lw.tmp(ty, b.rv_chk(mop_div, a, c))
   }
-  if op == tk_percent() {
+  if op == tk_percent {
     if plain {
-      return lw.tmp(ty, b.rv_bin(mop_rem(), a, c))
+      return lw.tmp(ty, b.rv_bin(mop_rem, a, c))
     }
-    return lw.tmp(ty, b.rv_chk(mop_rem(), a, c))
+    return lw.tmp(ty, b.rv_chk(mop_rem, a, c))
   }
-  if op == tk_amp() {
-    return lw.tmp(ty, b.rv_bin(mop_and(), a, c))
+  if op == tk_amp {
+    return lw.tmp(ty, b.rv_bin(mop_and, a, c))
   }
-  if op == tk_pipe() {
-    return lw.tmp(ty, b.rv_bin(mop_or(), a, c))
+  if op == tk_pipe {
+    return lw.tmp(ty, b.rv_bin(mop_or, a, c))
   }
-  if op == tk_caret() {
-    return lw.tmp(ty, b.rv_bin(mop_xor(), a, c))
+  if op == tk_caret {
+    return lw.tmp(ty, b.rv_bin(mop_xor, a, c))
   }
   lw.refuse(loc, "this operator")
   b.c_i32(0)
@@ -496,36 +496,36 @@ pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand,
   b = lw.lw_b
   width = 64
   kind = 16
-  if ty == mt_i32() {
+  if ty == mt_i32 {
     width = 32
     kind = 17
-  } else if ty == mt_u64() {
+  } else if ty == mt_u64 {
     kind = 18
-  } else if ty == mt_u32() {
+  } else if ty == mt_u32 {
     width = 32
     kind = 19
   }
-  if c.kind != mok_int() || c.ival < 0 || c.ival >= width {
+  if c.kind != mok_int || c.ival < 0 || c.ival >= width {
     ut = at
-    if at == mt_i32() {
-      ut = mt_u32()
-    } else if at == mt_i64() {
-      ut = mt_u64()
+    if at == mt_i32 {
+      ut = mt_u32
+    } else if at == mt_i64 {
+      ut = mt_u64
     }
     u = lw.dup(c)
     if ut != at {
       u = lw.tmp(ut, b.rv_cast(u, ut))
     }
     lim = b.c_u64(width - 1)
-    if ut == mt_u32() {
+    if ut == mt_u32 {
       lim = b.c_u32((width - 1).to_i())
     }
-    ok = lw.trap_open(lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), u, lim)), true)
+    ok = lw.trap_open(lw.tmp(mt_bool, b.rv_cmp(mop_gt, u, lim)), true)
     amt64 = lw.dup(c)
-    if at != mt_i64() {
-      amt64 = lw.tmp(mt_i64(), b.rv_cast(amt64, mt_i64()))
+    if at != mt_i64 {
+      amt64 = lw.tmp(mt_i64, b.rv_cast(amt64, mt_i64))
     }
-    if at == mt_u64() || at == mt_u32() {
+    if at == mt_u64 || at == mt_u32 {
       kind += 8
     }
     lw.trap_close(ok, "avant_trap_shift", lw.two(amt64, b.c_i32(kind)), loc)
@@ -534,8 +534,8 @@ pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand,
   if at != ty {
     amt = lw.tmp(ty, b.rv_cast(c, ty))
   }
-  if op == tk_less_less() {
-    return lw.tmp(ty, b.rv_bin(mop_shl(), a, amt))
+  if op == tk_less_less {
+    return lw.tmp(ty, b.rv_bin(mop_shl, a, amt))
   }
-  lw.tmp(ty, b.rv_bin(mop_shr(), a, amt))
+  lw.tmp(ty, b.rv_bin(mop_shr, a, amt))
 }

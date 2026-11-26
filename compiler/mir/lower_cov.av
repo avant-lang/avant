@@ -26,8 +26,8 @@ import std.fs
 
 // The ranks of the thunks (functions take their index, below 1000000;
 // the constructors 1000000 and count nothing).
-pub fn mir_cov_task_rank: Int { 2000000 }
-pub fn mir_cov_lambda_rank: Int { 3000000 }
+pub const mir_cov_task_rank = 2000000
+pub const mir_cov_lambda_rank = 3000000
 
 // Records a point (kind 1 S, 2 B, 3 F, 4 L) and emits its hit; the hit's
 // operand is the point's index until cov_finish renumbers it.
@@ -127,7 +127,7 @@ pub fn (lw: MirLower) cov_finish {
   for fn0 in m.funcs {
     for blk0 in fn0.blocks {
       for st0 in blk0.stmts {
-        if st0.kind == msk_call() && st0.callee == "avant_cov_hit" && st0.args.size == 1 {
+        if st0.kind == msk_call && st0.callee == "avant_cov_hit" && st0.args.size == 1 {
           present.add(st0.args[0].ival.to_i())
         }
       }
@@ -170,7 +170,7 @@ pub fn (lw: MirLower) cov_finish {
   for fn_ in m.funcs {
     for blk in fn_.blocks {
       for st in blk.stmts {
-        if st.kind == msk_call() && st.callee == "avant_cov_hit" && st.args.size == 1 {
+        if st.kind == msk_call && st.callee == "avant_cov_hit" && st.args.size == 1 {
           ev = st.args[0].ival.to_i()
           if ev >= 0 && ev < slot_of.size {
             st.args[0] = b.c_i32(slot_of[ev])

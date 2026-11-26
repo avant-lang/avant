@@ -48,9 +48,9 @@ pub fn ll_gc_frame_layout(e: LlEmit, f: MFunc) {
   found = false
   slots: Array(Int) = []
   for st in f.blocks[0].stmts {
-    if st.kind == msk_gc_enter() {
+    if st.kind == msk_gc_enter {
       found = true
-    } else if st.kind == msk_gc_roots() {
+    } else if st.kind == msk_gc_roots {
       slots.concat(st.locals)
     }
   }
@@ -149,7 +149,7 @@ pub fn ll_shadow_slots(e: LlEmit, f: MFunc) {
   }
   for blk in f.blocks {
     for st in blk.stmts {
-      if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) {
+      if r = st.rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) {
         if p.local < e.shadow.size {
           e.shadow[p.local] = false
         }
@@ -202,7 +202,7 @@ pub fn ll_sh_inline(e: LlEmit, st: MStmt): Bool {
 // then forwards a reload made before it to the one after it; counting it
 // would move that load, and the optimized code with it.
 pub fn ll_sh_kills(e: LlEmit, st: MStmt): Bool {
-  st.kind == msk_call() && st.collects && !ll_sh_inline(e, st)
+  st.kind == msk_call && st.collects && !ll_sh_inline(e, st)
 }
 
 // Block b's transfer backward on the set w (at 0, changed in place),
@@ -534,10 +534,10 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
 fn ll_barrier_derefs(e: LlEmit, o: MOperand): Bool {
   stmts = e.f.blocks[e.bk].stmts
   k = e.si + 1
-  if k >= stmts.size || stmts[k].kind != msk_assign() {
+  if k >= stmts.size || stmts[k].kind != msk_assign {
     return false
   }
-  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() {
+  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref {
     return true
   }
   false
@@ -548,12 +548,12 @@ fn ll_barrier_derefs(e: LlEmit, o: MOperand): Bool {
 fn ll_barrier_stores_nil(e: LlEmit, o: MOperand): Bool {
   stmts = e.f.blocks[e.bk].stmts
   k = e.si + 1
-  if k >= stmts.size || stmts[k].kind != msk_assign() {
+  if k >= stmts.size || stmts[k].kind != msk_assign {
     return false
   }
-  if hp = o.place, p = stmts[k].place, r = stmts[k].rv, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref() && r.kind == mrk_use() {
+  if hp = o.place, p = stmts[k].place, r = stmts[k].rv, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 1 && p.proj[0].kind == mpk_deref && r.kind == mrk_use {
     if a = r.a {
-      return a.kind == mok_null()
+      return a.kind == mok_null
     }
   }
   false
@@ -564,10 +564,10 @@ fn ll_barrier_stores_nil(e: LlEmit, o: MOperand): Bool {
 fn ll_barrier_store(e: LlEmit, o: MOperand): Int {
   stmts = e.f.blocks[e.bk].stmts
   k = e.si + 1
-  if k >= stmts.size || stmts[k].kind != msk_assign() {
+  if k >= stmts.size || stmts[k].kind != msk_assign {
     return -1
   }
-  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index() {
+  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_index {
     return k
   }
   -1
@@ -651,7 +651,7 @@ pub fn ll_alloc_inline(e: LlEmit, args: Array(MOperand)): Bool {
   if !e.inline_fast {
     return false
   }
-  if args[0].kind == mok_int() && args[1].kind == mok_int() {
+  if args[0].kind == mok_int && args[1].kind == mok_int {
     sz = args[0].ival
     if sz == 0 {
       sz = 8
@@ -665,13 +665,13 @@ pub fn ll_alloc_inline(e: LlEmit, args: Array(MOperand)): Bool {
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
-  const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
+  const_size = args[0].kind == mok_int && args[1].kind == mok_int
   sz = args[0].ival
   tid = args[1].ival
-  if args[0].kind == mok_int() && sz == 0 {
+  if args[0].kind == mok_int && sz == 0 {
     sz = 8
     size = "8"
-  } else if args[0].kind != mok_int() {
+  } else if args[0].kind != mok_int {
     z = e.tmp()
     e.line("${z} = icmp eq i64 ${size}, 0")
     s8 = e.tmp()

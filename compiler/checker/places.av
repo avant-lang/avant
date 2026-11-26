@@ -63,13 +63,13 @@ pub fn (checker_self: Checker) clear_places {
 // own name: `xs`, `self.items` (a bare field is `self.` and its name),
 // `a.b.c`; "" for any other expression.
 pub fn (checker_self: Checker) walked_text(e: Expr): String {
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     if e.implicit_field {
       return "self.${e.ident}"
     }
     return e.ident
   }
-  if e.kind == ex_field() && !e.method_call {
+  if e.kind == ex_field && !e.method_call {
     if o = e.object {
       head = checker_self.walked_text(o)
       if head.size > 0 {
@@ -182,26 +182,26 @@ pub fn (checker_self: Checker) resolve_range_step(stmt: Stmt) {
   if t1 = stmt.pre[1].target {
     end_name = t1.ident
   }
-  incl = stmt.op == tk_dot_dot_eq()
+  incl = stmt.op == tk_dot_dot_eq
   down = false
   by = 1u64
   if e = stmt.expr {
     named = e
-    if e.kind == ex_unary() {
+    if e.kind == ex_unary {
       if inner = e.inner {
         named = inner
         down = true
       }
     }
-    what = if named.kind == ex_field() { "a module's constant" } else { named.ident }
-    if named.kind == ex_field() {
+    what = if named.kind == ex_field { "a module's constant" } else { named.ident }
+    if named.kind == ex_field {
       if o = named.object {
         what = "${o.ident}.${named.ident}"
       }
     }
     if cv = checker_self.const_named(named) {
       if checker_self.const_value(cv, named.loc) {
-        if cv.kind != cv_int() {
+        if cv.kind != cv_int {
           checker_self.fail(named.loc, "for ... by ${what}: the step is an Int; the constant ${what} is ${cv_text(cv)}")
         } else if cv.iv == 0 {
           checker_self.fail(named.loc, "for ... by ${what}: the constant ${what} is 0, and the loop would never move: the step is a nonzero integer")
@@ -397,11 +397,11 @@ pub fn (checker_self: Checker) place_use(expr: Expr, has_want: Bool, want: Ty): 
     checker_self.fail(expr.loc, "a task cannot capture ${name}: ${name} is an element of the walked array, in place; copy it first (q = ${name}) and capture the copy")
     return checker_self.lookup(name)
   }
-  arr = Expr.new(ex_name(), expr.loc)
+  arr = Expr.new(ex_name, expr.loc)
   arr.ident = checker_self.place_arrs[i]
-  ix = Expr.new(ex_name(), expr.loc)
+  ix = Expr.new(ex_name, expr.loc)
   ix.ident = checker_self.place_idxs[i]
-  expr.kind = ex_index()
+  expr.kind = ex_index
   expr.ident = ""
   expr.left = arr
   expr.right = ix
@@ -419,12 +419,12 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
     return false
   }
   c = expr.callee
-  if expr.kind == ex_field() {
+  if expr.kind == ex_field {
     c = expr.ident
   }
   // A change of the size, of the storage or of the order (array_verbs.av);
   // an overwrite in place (fill) moves no element.
-  if !array_verb_has(c, av_shrinks() + av_grows() + av_moves() + av_reorders()) {
+  if !array_verb_has(c, av_shrinks + av_grows + av_moves + av_reorders) {
     return false
   }
   text = checker_self.walked_text(recv)
@@ -435,7 +435,7 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
   // gets there: a growth or a shrink moves no element the walk has yet
   // to read (it reads the size again), but a sort or a reverse would
   // make it read some elements twice and miss others.
-  if array_verb_has(c, av_reorders()) {
+  if array_verb_has(c, av_reorders) {
     for w in checker_self.walk_texts {
       if w == text {
         checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: the walk reads the elements by their positions, so it would read some twice and miss others; ${c} it before or after the loop")
@@ -459,7 +459,7 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
 // the for variables): noted, refused once every method is checked when
 // it changes its receiver.
 pub fn (checker_self: Checker) note_copy_call(expr: Expr, recv: Expr) {
-  if checker_self.for_names.size == 0 || recv.kind != ex_name() {
+  if checker_self.for_names.size == 0 || recv.kind != ex_name {
     return
   }
   k = checker_self.for_var_kind(recv.ident)
@@ -489,7 +489,7 @@ pub fn (checker_self: Checker) check_copy_calls {
     e = checker_self.copy_calls[i]
     if rw.writes(e.resolved) {
       name = e.callee
-      if e.kind == ex_field() {
+      if e.kind == ex_field {
         name = e.ident
       }
       checker_self.fail(e.loc, "this call changes a copy: ${name} changes its receiver, and ${copy_param_what(checker_self.copy_call_names[i], checker_self.copy_call_kinds[i])}")
@@ -578,12 +578,12 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
         // names it).
         at = v1.loc
       }
-      call = Expr.new(ex_call(), at)
+      call = Expr.new(ex_call, at)
       call.callee = method
-      recv = Expr.new(ex_name(), at)
+      recv = Expr.new(ex_name, at)
       recv.ident = pt.ident
       held = true
-      if v0 = pre0.value, v0.kind == ex_name() && pty.is_class() {
+      if v0 = pre0.value, v0.kind == ex_name && pty.is_class() {
         if lv = checker_self.lookup(v0.ident) {
           assigned: Array(String) = []
           for bs in inner {
@@ -599,13 +599,13 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
         }
       }
       call.receiver = recv
-      step = Stmt.new(st_if(), stmt.loc)
+      step = Stmt.new(st_if, stmt.loc)
       step.bind = el.ident
       step.cond = call
       step.then_body = for_unadvance(inner, pi2.ident)
-      step.else_body.push(Stmt.new(st_break(), stmt.loc))
+      step.else_body.push(Stmt.new(st_break, stmt.loc))
       step.for_kind = 7
-      yes = Expr.new(ex_bool(), stmt.loc)
+      yes = Expr.new(ex_bool, stmt.loc)
       yes.bool_val = true
       stmt.cond = yes
       body: Array(Stmt) = []
@@ -670,7 +670,7 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
       }
       params.push(pos)
       params.push(el.ident)
-    } else if pty.is_array() && pos.size == 0 && v.kind == ex_call() && v.args.size == 0 && (v.callee == "keys" || v.callee == "values") {
+    } else if pty.is_array() && pos.size == 0 && v.kind == ex_call && v.args.size == 0 && (v.callee == "keys" || v.callee == "values") {
       if b0 = v.block {
         return false
       }
@@ -699,17 +699,17 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
     bl.params = params
     bl.body = for_unadvance(inner, pi.ident)
     at = stmt.loc
-    call = Expr.new(ex_call(), at)
+    call = Expr.new(ex_call, at)
     call.callee = "each"
-    recv = Expr.new(ex_name(), at)
+    recv = Expr.new(ex_name, at)
     recv.ident = pt.ident
     call.receiver = recv
     call.block = bl
-    walk = Stmt.new(st_expr(), at)
+    walk = Stmt.new(st_expr, at)
     walk.expr = call
     body: Array(Stmt) = []
     body.push(walk)
-    body.push(Stmt.new(st_break(), at))
+    body.push(Stmt.new(st_break, at))
     stmt.body = body
     stmt.cond = nil
     stmt.pre.pop()
@@ -735,15 +735,15 @@ pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter:
     inner.push(stmt.body[bi])
   }
   stmt.pre[1] = fw_assign(loc, ix, fw_int(loc, 0))
-  count = Expr.new(ex_call(), loc)
+  count = Expr.new(ex_call, loc)
   count.callee = "count"
   count.receiver = fw_name(loc, xs)
-  stmt.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), count)
+  stmt.cond = fw_bin(loc, tk_less, fw_name(loc, ix), count)
   body: Array(Stmt) = []
   body.push(fw_assign(loc, at, fw_name(loc, ix)))
-  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
+  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus, fw_name(loc, ix), fw_int(loc, 1))))
   for part in [0, 1] {
-    read = Expr.new(ex_call(), loc)
+    read = Expr.new(ex_call, loc)
     read.callee = "name_at"
     target = name
     if part == 1 {
@@ -752,8 +752,8 @@ pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter:
     }
     read.receiver = fw_name(loc, xs)
     read.args.push(fw_name(loc, at))
-    empty = Expr.new(ex_string(), loc)
-    st = fw_assign(loc, target, fw_bin(loc, tk_question_question(), read, empty))
+    empty = Expr.new(ex_string, loc)
+    st = fw_assign(loc, target, fw_bin(loc, tk_question_question, read, empty))
     st.for_kind = 11
     body.push(st)
   }
@@ -766,7 +766,7 @@ pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter:
 
 // `s.fields()` on a String: the string, else nil.
 pub fn string_of_fields(v: Expr): Expr? {
-  if v.kind == ex_call() && v.callee == "fields" && v.args.size == 0 {
+  if v.kind == ex_call && v.callee == "fields" && v.args.size == 0 {
     if r = v.receiver, rt = r.ty, rt.is_string() {
       return r
     }
@@ -804,13 +804,13 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
     }
     body: Array(Stmt) = []
     body.push(fw_scan(loc, xs, ix, cn, false))
-    stop = Stmt.new(st_if(), loc)
-    stop.cond = fw_bin(loc, tk_greater_eq(), fw_name(loc, ix), fw_size(loc, xs))
-    stop.then_body.push(Stmt.new(st_break(), loc))
+    stop = Stmt.new(st_if, loc)
+    stop.cond = fw_bin(loc, tk_greater_eq, fw_name(loc, ix), fw_size(loc, xs))
+    stop.then_body.push(Stmt.new(st_break, loc))
     body.push(stop)
     body.push(fw_assign(loc, sn, fw_name(loc, ix)))
     body.push(fw_scan(loc, xs, ix, cn, true))
-    cut = Expr.new(ex_call(), loc)
+    cut = Expr.new(ex_call, loc)
     cut.callee = "#str_slice"
     cut.derived = true
     cut.args.push(fw_name(loc, xs))
@@ -821,7 +821,7 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
     for x in for_unadvance(inner, ix) {
       body.push(x)
     }
-    yes = Expr.new(ex_bool(), loc)
+    yes = Expr.new(ex_bool, loc)
     yes.bool_val = true
     stmt.cond = yes
     stmt.body = body
@@ -830,19 +830,19 @@ pub fn (checker_self: Checker) for_fields(stmt: Stmt, src: Expr) {
 }
 
 pub fn fw_name(loc: Location, n: String): Expr {
-  e = Expr.new(ex_name(), loc)
+  e = Expr.new(ex_name, loc)
   e.ident = n
   e
 }
 
 pub fn fw_int(loc: Location, k: UInt64): Expr {
-  e = Expr.new(ex_int(), loc)
+  e = Expr.new(ex_int, loc)
   e.int_bits = k
   e
 }
 
 pub fn fw_bin(loc: Location, op: Int, l: Expr, r: Expr): Expr {
-  e = Expr.new(ex_binary(), loc)
+  e = Expr.new(ex_binary, loc)
   e.op = op
   e.left = l
   e.right = r
@@ -850,7 +850,7 @@ pub fn fw_bin(loc: Location, op: Int, l: Expr, r: Expr): Expr {
 }
 
 pub fn fw_size(loc: Location, xs: String): Expr {
-  e = Expr.new(ex_field(), loc)
+  e = Expr.new(ex_field, loc)
   e.object = fw_name(loc, xs)
   e.ident = "size"
   e
@@ -858,10 +858,10 @@ pub fn fw_size(loc: Location, xs: String): Expr {
 
 // A store of the loop's own (for_kind 3: the program cannot assign it).
 pub fn fw_assign(loc: Location, n: String, v: Expr): Stmt {
-  s = Stmt.new(st_assign(), loc)
+  s = Stmt.new(st_assign, loc)
   s.target = fw_name(loc, n)
   s.value = v
-  s.op = tk_eq()
+  s.op = tk_eq
   s.for_kind = 3
   s
 }
@@ -869,19 +869,19 @@ pub fn fw_assign(loc: Location, n: String, v: Expr): Stmt {
 // One run of the scan: past the spaces (space false) or past a field's
 // bytes (space true), stopping at the end.
 pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): Stmt {
-  w = Stmt.new(st_while(), loc)
-  w.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), fw_size(loc, xs))
-  at = Expr.new(ex_index(), loc)
+  w = Stmt.new(st_while, loc)
+  w.cond = fw_bin(loc, tk_less, fw_name(loc, ix), fw_size(loc, xs))
+  at = Expr.new(ex_index, loc)
   at.left = fw_name(loc, xs)
   at.right = fw_name(loc, ix)
   w.body.push(fw_assign(loc, cn, at))
   test: Expr? = nil
   for b in [32u64, 9, 10, 13] {
-    op = tk_not_eq()
-    join = tk_amp_amp()
+    op = tk_not_eq
+    join = tk_amp_amp
     if space {
-      op = tk_eq_eq()
-      join = tk_pipe_pipe()
+      op = tk_eq_eq
+      join = tk_pipe_pipe
     }
     one = fw_bin(loc, op, fw_name(loc, cn), fw_int(loc, b))
     if t = test {
@@ -890,22 +890,22 @@ pub fn fw_scan(loc: Location, xs: String, ix: String, cn: String, space: Bool): 
       test = one
     }
   }
-  stop = Stmt.new(st_if(), loc)
+  stop = Stmt.new(st_if, loc)
   stop.cond = test
-  stop.then_body.push(Stmt.new(st_break(), loc))
+  stop.then_body.push(Stmt.new(st_break, loc))
   w.body.push(stop)
-  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1))))
+  w.body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus, fw_name(loc, ix), fw_int(loc, 1))))
   w
 }
 
 // `s.bytes` (or `s.bytes()`) on a String: the string, else nil.
 pub fn string_of_bytes(v: Expr): Expr? {
-  if v.kind == ex_field() && v.ident == "bytes" {
+  if v.kind == ex_field && v.ident == "bytes" {
     if o = v.object, ot = o.ty, ot.is_string() {
       return o
     }
   }
-  if v.kind == ex_call() && v.callee == "bytes" && v.args.size == 0 {
+  if v.kind == ex_call && v.callee == "bytes" && v.args.size == 0 {
     if r = v.receiver, rt = r.ty, rt.is_string() {
       return r
     }
@@ -919,22 +919,22 @@ pub fn string_of_bytes(v: Expr): Expr? {
 pub fn for_unadvance(body: Array(Stmt), counter: String): Array(Stmt) {
   out: Array(Stmt) = []
   for s in body {
-    if s.kind == st_assign() && s.step && s.for_kind == 3 {
+    if s.kind == st_assign && s.step && s.for_kind == 3 {
       if t = s.target, t.ident == counter {
         continue
       }
     }
-    if s.kind == st_if() {
+    if s.kind == st_if {
       s.then_body = for_unadvance(s.then_body, counter)
       s.else_body = for_unadvance(s.else_body, counter)
       for el in s.pre {
         for_unadvance_opt(el.cond, counter)
       }
     }
-    if s.kind == st_pin() || s.kind == st_hold() {
+    if s.kind == st_pin || s.kind == st_hold {
       s.body = for_unadvance(s.body, counter)
     }
-    if s.kind != st_while() {
+    if s.kind != st_while {
       for_unadvance_opt(s.expr, counter)
       for_unadvance_opt(s.value, counter)
       for_unadvance_opt(s.target, counter)
@@ -952,10 +952,10 @@ pub fn for_unadvance_opt(e: Expr?, counter: String) {
 }
 
 pub fn for_unadvance_expr(e: Expr, counter: String) {
-  if e.kind == ex_lambda() {
+  if e.kind == ex_lambda {
     return
   }
-  if e.kind == ex_switch() {
+  if e.kind == ex_switch {
     for ci in 0..e.cases.size {
       e.cases[ci].body = for_unadvance(e.cases[ci].body, counter)
     }

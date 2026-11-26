@@ -16,12 +16,12 @@
 // and, from bit 8 on, the runtime's name of the operation for a frozen
 // array's trap plus one (avant_rt.h AVANT_FROZEN_*; 0: none).
 
-pub fn av_shrinks: Int { 1 }
-pub fn av_grows: Int { 2 }
-pub fn av_moves: Int { 4 }
-pub fn av_reorders: Int { 8 }
-pub fn av_writes: Int { 16 }
-pub fn av_stores: Int { 32 }
+pub const av_shrinks = 1
+pub const av_grows = 2
+pub const av_moves = 4
+pub const av_reorders = 8
+pub const av_writes = 16
+pub const av_stores = 32
 
 fn av_row(effects: Int, frozen_op: Int): Int {
   effects + (frozen_op + 1) * 256
@@ -30,46 +30,46 @@ fn av_row(effects: Int, frozen_op: Int): Int {
 // The row of the method name, or 0 for a method that only reads.
 pub fn array_verb_row(name: String): Int {
   if name == "push" {
-    return av_row(av_grows() + av_moves() + av_stores(), 0)
+    return av_row(av_grows + av_moves + av_stores, 0)
   }
   if name == "pop" {
-    return av_row(av_shrinks(), 1)
+    return av_row(av_shrinks, 1)
   }
   if name == "clear" {
-    return av_row(av_shrinks(), 2)
+    return av_row(av_shrinks, 2)
   }
   if name == "fill" {
-    return av_row(av_writes() + av_stores(), 3)
+    return av_row(av_writes + av_stores, 3)
   }
   if name == "sort" {
-    return av_row(av_reorders() + av_writes(), 4)
+    return av_row(av_reorders + av_writes, 4)
   }
   if name == "sort_by" {
-    return av_row(av_reorders() + av_writes(), 4)
+    return av_row(av_reorders + av_writes, 4)
   }
   if name == "reverse" {
-    return av_row(av_reorders() + av_writes(), 5)
+    return av_row(av_reorders + av_writes, 5)
   }
   if name == "reserve" {
-    return av_row(av_moves(), 6)
+    return av_row(av_moves, 6)
   }
   if name == "delete_if" {
-    return av_row(av_shrinks() + av_reorders(), 8)
+    return av_row(av_shrinks + av_reorders, 8)
   }
   if name == "insert" {
-    return av_row(av_grows() + av_moves() + av_reorders() + av_stores(), 9)
+    return av_row(av_grows + av_moves + av_reorders + av_stores, 9)
   }
   if name == "delete_at" {
-    return av_row(av_shrinks() + av_reorders(), 10)
+    return av_row(av_shrinks + av_reorders, 10)
   }
   if name == "try_delete_at" {
-    return av_row(av_shrinks() + av_reorders(), 10)
+    return av_row(av_shrinks + av_reorders, 10)
   }
   if name == "concat" {
-    return av_row(av_grows() + av_moves() + av_stores(), 11)
+    return av_row(av_grows + av_moves + av_stores, 11)
   }
   if name == "shuffle" {
-    return av_row(av_reorders() + av_writes(), 12)
+    return av_row(av_reorders + av_writes, 12)
   }
   0
 }

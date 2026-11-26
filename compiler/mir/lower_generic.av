@@ -232,7 +232,7 @@ pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
     // right operand's method (`a > b` as `b < a`); negated for `!=` and
     // its kin. The operands are evaluated left to right either way.
     v = lw.lw_b.c_i32(0)
-    if (e.op_form & op_fn()) != 0 {
+    if (e.op_form & op_fn) != 0 {
       both: Array(Expr) = []
       both.push(l)
       both.push(r)
@@ -241,8 +241,8 @@ pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
         return v
       }
       lw.at(e.loc)
-      v = lw.call_to(mt_bool(), sym, ops)
-    } else if (e.op_form & op_swap()) != 0 {
+      v = lw.call_to(mt_bool, sym, ops)
+    } else if (e.op_form & op_swap) != 0 {
       if rt = r.ty {
         one: Array(Expr) = []
         one.push(l)
@@ -256,9 +256,9 @@ pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
     if lw.failed() {
       return v
     }
-    if (e.op_form & op_not()) != 0 {
+    if (e.op_form & op_not) != 0 {
       lw.at(e.loc)
-      return lw.tmp(mt_bool(), lw.lw_b.rv_un(mop_not(), v))
+      return lw.tmp(mt_bool, lw.lw_b.rv_un(mop_not, v))
     }
     return v
   }

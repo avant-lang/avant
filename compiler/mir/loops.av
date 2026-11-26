@@ -64,7 +64,7 @@ import mir.tile
 
 // The local of a bare `copy _k` operand, or -1.
 fn lv_local(o: MOperand): Int {
-  if o.kind != mok_copy() {
+  if o.kind != mok_copy {
     return -1
   }
   if p = o.place, p.proj.size == 0 {
@@ -82,7 +82,7 @@ fn lv_opt_local(o: MOperand?): Int {
 
 // A small integer constant (|v| <= 1000000), or false.
 fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
-  if x = o, x.kind == mok_int() && x.ival <= 1000000 && x.ival >= -1000000 {
+  if x = o, x.kind == mok_int && x.ival <= 1000000 && x.ival >= -1000000 {
     out[0] = x.ival.to_i()
     return true
   }
@@ -90,19 +90,19 @@ fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
 }
 
 fn lv_copy_local(local: Int): MOperand {
-  o = MOperand.new(mok_copy(), -1)
+  o = MOperand.new(mok_copy, -1)
   o.place = MPlace.new(local)
   o
 }
 
 fn lv_c_i64(v: Int): MOperand {
-  o = MOperand.new(mok_int(), mt_i64())
+  o = MOperand.new(mok_int, mt_i64)
   o.ival = v.to_i()
   o
 }
 
 fn lv_assign(loc: MLoc, dest: Int, rv: MRvalue): MStmt {
-  st = MStmt.new(msk_assign(), loc)
+  st = MStmt.new(msk_assign, loc)
   st.place = MPlace.new(dest)
   st.rv = rv
   st
@@ -117,7 +117,7 @@ fn lv_rv2(kind: Int, op: Int, a: MOperand, b: MOperand): MRvalue {
 }
 
 fn lv_cast(a: MOperand, ty: Int): MRvalue {
-  r = MRvalue.new(mrk_cast())
+  r = MRvalue.new(mrk_cast)
   r.a = a
   r.ty = ty
   r
@@ -173,7 +173,7 @@ fn lv_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
   while k >= 0 {
     st = blk.stmts[k]
     if mir_stmt_def(st) == h {
-      return st.kind == msk_call() && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
+      return st.kind == msk_call && (st.callee == "avant_alloc" || st.callee == "avant_alloc_unzeroed")
     }
     k -= 1
   }
@@ -186,7 +186,7 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
   ty = f.locals[p.local].ty
   for pr in p.proj {
     mt = ts.get(ty)
-    if pr.kind == mpk_deref() {
+    if pr.kind == mpk_deref {
       if ts.is_refkind(ty) && mt.layout >= 0 {
         ty = ts.agg(mt.layout)
       } else {
@@ -195,12 +195,12 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
       if ty < 0 {
         return true
       }
-    } else if pr.kind == mpk_field() {
+    } else if pr.kind == mpk_field {
       if mt.layout < 0 {
         return true
       }
       lay = ts.layouts[mt.layout]
-      if (lay.kind == mlk_array() || lay.kind == mlk_buf()) && pr.field == 1 {
+      if (lay.kind == mlk_array || lay.kind == mlk_buf) && pr.field == 1 {
         return true
       }
       if pr.field >= lay.fields.size {
@@ -208,7 +208,7 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
       }
       ty = lay.fields[pr.field]
     } else {
-      if mt.kind == mk_agg() && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems() {
+      if mt.kind == mk_agg && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems {
         ty = ts.layouts[mt.layout].fields[0]
       }
     }
@@ -222,7 +222,7 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
 // header being filled) changes no object that existed before.
 fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
   st = blk.stmts[j]
-  if st.kind == msk_assign() {
+  if st.kind == msk_assign {
     if p = st.place, p.last_deref() >= 0 {
       if !lv_place_writes_size(m.types, f, p) {
         return true
@@ -231,7 +231,7 @@ fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): 
     }
     return true
   }
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return true
   }
   if fo = st.indirect {
@@ -532,7 +532,7 @@ fn lv_addr_taken(f: MFunc): Array(Bool) {
   for blk in f.blocks {
     j = 0
     while j < blk.stmts.size {
-      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() {
+      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() {
         out[p.local] = true
       }
       j += 1
@@ -546,10 +546,10 @@ fn lv_addr_taken(f: MFunc): Array(Bool) {
 // set so earlier in the block and neither changed in between.
 fn lv_increment(blk: MBlock, j: Int, v: Int): Int {
   st = blk.stmts[j]
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return 0
   }
-  if r = st.rv, r.kind == mrk_use() {
+  if r = st.rv, r.kind == mrk_use {
     t = lv_opt_local(r.a)
     if t < 0 || t == v {
       return 0
@@ -572,12 +572,12 @@ fn lv_increment(blk: MBlock, j: Int, v: Int): Int {
 
 // c when st is `_ = add[.chk] copy _v, const c` with c >= 1, else 0.
 fn lv_add_const(st: MStmt, v: Int): Int {
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return 0
   }
   if r = st.rv {
     c: Array(Int) = [0]
-    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && r.op == mop_add() && lv_opt_local(r.a) == v && lv_small_const(r.b, c) && c[0] >= 1 {
+    if (r.kind == mrk_binary || r.kind == mrk_checked) && r.op == mop_add && lv_opt_local(r.a) == v && lv_small_const(r.b, c) && c[0] >= 1 {
       return c[0]
     }
   }
@@ -606,16 +606,16 @@ fn lv_holder_kind(lp: LvLoop, ts: MTypes, h: Int, via_field: Bool): Int {
       return 0
     }
     mt = ts.get(ty)
-    if ts.kind(ty) != mk_ref() || mt.layout < 0 {
+    if ts.kind(ty) != mk_ref || mt.layout < 0 {
       return 0
     }
     k = ts.layouts[mt.layout].kind
-    if k == mlk_array() || k == mlk_buf() {
+    if k == mlk_array || k == mlk_buf {
       return 1
     }
     return 0
   }
-  if ts.kind(ty) == mk_str() {
+  if ts.kind(ty) == mk_str {
     return 2
   }
   0
@@ -623,8 +623,8 @@ fn lv_holder_kind(lp: LvLoop, ts: MTypes, h: Int, via_field: Bool): Int {
 
 // The size statement st defines (`copy (*_h).1` or `avant_str_size(_s)`).
 fn lv_size_stmt(lp: LvLoop, ts: MTypes, st: MStmt, out: LvSize) {
-  if st.kind == msk_assign() {
-    if r = st.rv, r.kind == mrk_use(), a = r.a, a.kind == mok_copy(), p = a.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 1 {
+  if st.kind == msk_assign {
+    if r = st.rv, r.kind == mrk_use, a = r.a, a.kind == mok_copy, p = a.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_field && p.proj[1].field == 1 {
       hk = lv_holder_kind(lp, ts, p.local, true)
       if hk > 0 {
         out.h = p.local
@@ -633,7 +633,7 @@ fn lv_size_stmt(lp: LvLoop, ts: MTypes, st: MStmt, out: LvSize) {
     }
     return
   }
-  if st.kind == msk_call() && st.callee == "avant_str_size" && st.args.size == 1 {
+  if st.kind == msk_call && st.callee == "avant_str_size" && st.args.size == 1 {
     s = lv_local(st.args[0])
     if s >= 0 && lv_holder_kind(lp, ts, s, false) == 2 {
       out.h = s
@@ -672,7 +672,7 @@ fn lv_size_at(lp: LvLoop, ts: MTypes, blk: MBlock, j: Int, o: MOperand, out: LvS
 fn lv_val_at(lp: LvLoop, ts: MTypes, b: Int, j: Int, o: MOperand, depth: Int, out: LvVal) {
   out.kind = 0
   c: Array(Int) = [0]
-  if o.kind == mok_int() {
+  if o.kind == mok_int {
     if lv_small_const(o, c) {
       out.kind = 3
       out.off = c[0]
@@ -708,7 +708,7 @@ fn lv_val_at(lp: LvLoop, ts: MTypes, b: Int, j: Int, o: MOperand, depth: Int, ou
 
 fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
   st = lp.f.blocks[b].stmts[k]
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return
   }
   if w = lv_widened(lp.f, st) {
@@ -717,17 +717,17 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
   }
   if r = st.rv {
     c: Array(Int) = [0]
-    if r.kind == mrk_use() {
+    if r.kind == mrk_use {
       if a = r.a {
         lv_val_at(lp, ts, b, k, a, depth + 1, out)
       }
       return
     }
-    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && (r.op == mop_add() || r.op == mop_sub()) {
+    if (r.kind == mrk_binary || r.kind == mrk_checked) && (r.op == mop_add || r.op == mop_sub) {
       if a = r.a, lv_small_const(r.b, c) {
         lv_val_at(lp, ts, b, k, a, depth + 1, out)
         if out.kind >= 1 && out.kind <= 3 {
-          if r.op == mop_add() {
+          if r.op == mop_add {
             out.off += c[0]
           } else {
             out.off -= c[0]
@@ -740,7 +740,7 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
         }
         return
       }
-      if r.op == mop_add() && lv_small_const(r.a, c) {
+      if r.op == mop_add && lv_small_const(r.a, c) {
         if bo = r.b {
           lv_val_at(lp, ts, b, k, bo, depth + 1, out)
           if out.kind >= 1 && out.kind <= 3 {
@@ -755,21 +755,21 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
       }
       return
     }
-    if r.kind == mrk_binary() && r.op == mop_and() {
+    if r.kind == mrk_binary && r.op == mop_and {
       if (lv_small_const(r.b, c) || lv_small_const(r.a, c)) && c[0] >= 0 {
         out.kind = 4
         out.off = c[0]
       }
       return
     }
-    if r.kind == mrk_cast() && (r.ty == mt_i32() || r.ty == mt_i64()) {
+    if r.kind == mrk_cast && (r.ty == mt_i32 || r.ty == mt_i64) {
       y = lv_opt_local(r.a)
       if y >= 0 {
         yt = lp.f.locals[y].ty
-        if yt == mt_u8() {
+        if yt == mt_u8 {
           out.kind = 4
           out.off = 255
-        } else if yt == mt_bool() {
+        } else if yt == mt_bool {
           out.kind = 4
           out.off = 1
         }
@@ -850,13 +850,13 @@ pub class LvTerms {
 fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
   f = lp.f
   hb = f.blocks[lp.header]
-  t = MTerm.new(mtk_goto(), f.loc)
+  t = MTerm.new(mtk_goto, f.loc)
   if tt = hb.term {
     t = tt
   } else {
     return false
   }
-  if t.kind != mtk_branch() || t.targets.size != 2 || hb.stmts.size == 0 {
+  if t.kind != mtk_branch || t.targets.size != 2 || hb.stmts.size == 0 {
     return false
   }
   if !lp.body[t.targets[0]] || t.targets[0] == t.targets[1] || t.targets[0] == lp.header {
@@ -864,16 +864,16 @@ fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
   }
   cl = lv_opt_local(t.cond)
   cmp = hb.stmts[hb.stmts.size - 1]
-  if cl < 0 || mir_stmt_def(cmp) != cl || cmp.kind != msk_assign() {
+  if cl < 0 || mir_stmt_def(cmp) != cl || cmp.kind != msk_assign {
     return false
   }
-  r = MRvalue.new(mrk_zero())
+  r = MRvalue.new(mrk_zero)
   if rr = cmp.rv {
     r = rr
   } else {
     return false
   }
-  if r.kind != mrk_cmp() || (r.op != mop_lt() && r.op != mop_le()) {
+  if r.kind != mrk_cmp || (r.op != mop_lt && r.op != mop_le) {
     return false
   }
   i = lv_opt_local(r.a)
@@ -881,7 +881,7 @@ fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
     return false
   }
   lp.ind = i
-  lp.le = r.op == mop_le()
+  lp.le = r.op == mop_le
   // Every write of the variable in the loop is an increment; when all
   // add the same constant s, every value is entry + m * s.
   lp.step = 0
@@ -928,7 +928,7 @@ fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
 fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: Int): Bool {
   f = lp.f
   c: Array(Int) = [0]
-  if o.kind == mok_int() {
+  if o.kind == mok_int {
     if lv_small_const(o, c) {
       lp.bkind = 1
       lp.bval = c[0]
@@ -957,21 +957,21 @@ fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: In
         lp.bhk = sz.hk
         return true
       }
-      if st.kind != msk_assign() {
+      if st.kind != msk_assign {
         return false
       }
       if w = lv_widened(f, st) {
         return lv_bound(lp, ts, hb, k, w, depth + 1)
       }
       if rv = st.rv {
-        if rv.kind == mrk_use() {
+        if rv.kind == mrk_use {
           if a = rv.a {
             return lv_bound(lp, ts, hb, k, a, depth + 1)
           }
         }
-        if (rv.kind == mrk_binary() || rv.kind == mrk_checked()) && (rv.op == mop_add() || rv.op == mop_sub()) && lv_small_const(rv.b, c) {
+        if (rv.kind == mrk_binary || rv.kind == mrk_checked) && (rv.op == mop_add || rv.op == mop_sub) && lv_small_const(rv.b, c) {
           if a = rv.a {
-            if rv.op == mop_add() {
+            if rv.op == mop_add {
               lp.boff += c[0]
             } else {
               lp.boff -= c[0]
@@ -1089,7 +1089,7 @@ fn lv_check_only(f: MFunc): Array(Bool) {
     defs: Array(Int) = []
     for st in blk.stmts {
       reads: Array(Int) = []
-      if st.kind == msk_check_bounds() && st.args.size == 2 {
+      if st.kind == msk_check_bounds && st.args.size == 2 {
         mir_operand_reads(st.args[0], reads)
         sz = lv_local(st.args[1])
         if sz >= 0 {
@@ -1150,7 +1150,7 @@ fn lv_checks(m: MModule, lp: LvLoop, lps: LvLoops, terms: LvTerms) {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        if st.kind == msk_check_bounds() && st.args.size == 2 {
+        if st.kind == msk_check_bounds && st.args.size == 2 {
           sz = LvSize.new()
           lv_size_at(lp, ts, blk, j, st.args[1], sz)
           iv = LvVal.new()
@@ -1201,7 +1201,7 @@ fn lv_drop_sizes(lp: LvLoop, ts: MTypes, blk: MBlock, row: Array(Bool), only: Ar
         j = k + 1
         while j < blk.stmts.size {
           st = blk.stmts[j]
-          if st.kind == msk_check_bounds() && st.args.size == 2 && lv_local(st.args[1]) == v && !row[j] {
+          if st.kind == msk_check_bounds && st.args.size == 2 && lv_local(st.args[1]) == v && !row[j] {
             all = false
           }
           if mir_stmt_def(st) == v {
@@ -1232,7 +1232,7 @@ fn lv_new_local(f: MFunc, ty: Int): Int {
 }
 
 fn lv_goto(loc: MLoc, target: Int): MTerm {
-  t = MTerm.new(mtk_goto(), loc)
+  t = MTerm.new(mtk_goto, loc)
   t.targets.push(target)
   t
 }
@@ -1240,7 +1240,7 @@ fn lv_goto(loc: MLoc, target: Int): MTerm {
 // Ends blk with `branch copy _g, next, fail` and returns next.
 fn lv_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
   nx = lv_new_block(f)
-  t = MTerm.new(mtk_branch(), loc)
+  t = MTerm.new(mtk_branch, loc)
   t.cond = lv_copy_local(g)
   t.targets.push(nx.id)
   t.targets.push(fail)
@@ -1252,26 +1252,26 @@ fn lv_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
 // the block to continue in (sizes[0] receives the i64 local).
 fn lv_holder_size(f: MFunc, loc: MLoc, blk0: MBlock, h: Int, hk: Int, fail: Int, out: Array(Int)): MBlock {
   blk = blk0
-  g = lv_new_local(f, mt_bool())
-  blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ne(), lv_copy_local(h), MOperand.new(mok_null(), f.locals[h].ty))))
+  g = lv_new_local(f, mt_bool)
+  blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp, mop_ne, lv_copy_local(h), MOperand.new(mok_null, f.locals[h].ty))))
   blk = lv_test(f, loc, blk, g, fail)
   if hk == 1 {
-    s32 = lv_new_local(f, mt_i32())
+    s32 = lv_new_local(f, mt_i32)
     p = MPlace.new(h)
-    p.proj.push(MProj.new(mpk_deref(), 0))
-    p.proj.push(MProj.new(mpk_field(), 1))
-    o = MOperand.new(mok_copy(), -1)
+    p.proj.push(MProj.new(mpk_deref, 0))
+    p.proj.push(MProj.new(mpk_field, 1))
+    o = MOperand.new(mok_copy, -1)
     o.place = p
-    r = MRvalue.new(mrk_use())
+    r = MRvalue.new(mrk_use)
     r.a = o
     blk.stmts.push(lv_assign(loc, s32, r))
-    s64 = lv_new_local(f, mt_i64())
-    blk.stmts.push(lv_assign(loc, s64, lv_cast(lv_copy_local(s32), mt_i64())))
+    s64 = lv_new_local(f, mt_i64)
+    blk.stmts.push(lv_assign(loc, s64, lv_cast(lv_copy_local(s32), mt_i64)))
     out[0] = s64
     return blk
   }
-  sz = lv_new_local(f, mt_i64())
-  call = MStmt.new(msk_call(), loc)
+  sz = lv_new_local(f, mt_i64)
+  call = MStmt.new(msk_call, loc)
   call.dest = sz
   call.callee = "avant_str_size"
   call.args.push(lv_copy_local(h))
@@ -1282,8 +1282,8 @@ fn lv_holder_size(f: MFunc, loc: MLoc, blk0: MBlock, h: Int, hk: Int, fail: Int,
 }
 
 fn lv_widen(f: MFunc, loc: MLoc, blk: MBlock, v: Int): Int {
-  w = lv_new_local(f, mt_i64())
-  blk.stmts.push(lv_assign(loc, w, lv_cast(lv_copy_local(v), mt_i64())))
+  w = lv_new_local(f, mt_i64)
+  blk.stmts.push(lv_assign(loc, w, lv_cast(lv_copy_local(v), mt_i64)))
   w
 }
 
@@ -1296,32 +1296,32 @@ fn lv_widen_in(f: MFunc, loc: MLoc, blk0: MBlock, v: Int, fail: Int, out: Array(
   blk = blk0
   w = lv_widen(f, loc, blk, v)
   out[0] = w
-  if f.locals[v].ty != mt_i64() {
+  if f.locals[v].ty != mt_i64 {
     return blk
   }
-  g1 = lv_new_local(f, mt_bool())
-  blk.stmts.push(lv_assign(loc, g1, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(w), lv_c_i64(0 - 2147483647 - 1))))
+  g1 = lv_new_local(f, mt_bool)
+  blk.stmts.push(lv_assign(loc, g1, lv_rv2(mrk_cmp, mop_ge, lv_copy_local(w), lv_c_i64(0 - 2147483647 - 1))))
   blk = lv_test(f, loc, blk, g1, fail)
-  g2 = lv_new_local(f, mt_bool())
-  blk.stmts.push(lv_assign(loc, g2, lv_rv2(mrk_cmp(), mop_le(), lv_copy_local(w), lv_c_i64(2147483647))))
+  g2 = lv_new_local(f, mt_bool)
+  blk.stmts.push(lv_assign(loc, g2, lv_rv2(mrk_cmp, mop_le, lv_copy_local(w), lv_c_i64(2147483647))))
   lv_test(f, loc, blk, g2, fail)
 }
 
 // A local of an integer type the pass reasons about (i32, or i64: Int).
 fn lv_int_local(f: MFunc, v: Int): Bool {
   t = f.locals[v].ty
-  t == mt_i32() || t == mt_i64()
+  t == mt_i32 || t == mt_i64
 }
 
 // The operand a statement widens without changing its value (`_d = cast
 // copy _y` from i32, u8 or bool to i64), or nil.
 fn lv_widened(f: MFunc, st: MStmt): MOperand? {
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return nil
   }
-  if r = st.rv, r.kind == mrk_cast() && r.ty == mt_i64(), a = r.a {
+  if r = st.rv, r.kind == mrk_cast && r.ty == mt_i64, a = r.a {
     y = lv_local(a)
-    if y >= 0 && f.locals[y].ty == mt_i32() {
+    if y >= 0 && f.locals[y].ty == mt_i32 {
       return a
     }
   }
@@ -1338,7 +1338,7 @@ fn lv_freeze_test(f: MFunc, b: Int): Int {
   blk = f.blocks[b]
   n = blk.stmts.size
   t = blk.term ?? return -1
-  if t.kind != mtk_branch() || t.targets.size != 2 || n < 2 {
+  if t.kind != mtk_branch || t.targets.size != 2 || n < 2 {
     return -1
   }
   f_st = blk.stmts[n - 1]
@@ -1349,15 +1349,15 @@ fn lv_freeze_test(f: MFunc, b: Int): Int {
     return -1
   }
   h = -1
-  if r = w_st.rv, r.kind == mrk_use(), a = r.a, p = a.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 2 {
+  if r = w_st.rv, r.kind == mrk_use, a = r.a, p = a.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_field && p.proj[1].field == 2 {
     h = p.local
   }
-  if r = f_st.rv, b2 = r.b, r.kind == mrk_cmp() && r.op == mop_lt() && lv_opt_local(r.a) == wl && b2.kind == mok_int() && b2.ival.to_i() == 0 {
+  if r = f_st.rv, b2 = r.b, r.kind == mrk_cmp && r.op == mop_lt && lv_opt_local(r.a) == wl && b2.kind == mok_int && b2.ival.to_i() == 0 {
   } else {
     return -1
   }
   tb = f.blocks[t.targets[0]]
-  if tb.stmts.size == 1 && tb.stmts[0].kind == msk_call() && tb.stmts[0].callee == "avant_trap_frozen" {
+  if tb.stmts.size == 1 && tb.stmts[0].kind == msk_call && tb.stmts[0].callee == "avant_trap_frozen" {
     return h
   }
   -1
@@ -1376,7 +1376,7 @@ fn lv_freezes(lp: LvLoop, hs: Array(Int)): Array(Int) {
   for b in 0..lp.body.size {
     if lp.body[b] {
       for st in f.blocks[b].stmts {
-        if st.kind == msk_call() && st.collects {
+        if st.kind == msk_call && st.collects {
           return out
         }
       }
@@ -1422,8 +1422,8 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   if terms.uses_bound() {
     x64 = -1
     if lp.bkind == 1 {
-      x64 = lv_new_local(f, mt_i64())
-      ru = MRvalue.new(mrk_use())
+      x64 = lv_new_local(f, mt_i64)
+      ru = MRvalue.new(mrk_use)
       ru.a = lv_c_i64(lp.bval)
       blk.stmts.push(lv_assign(loc, x64, ru))
     } else if lp.bkind == 2 {
@@ -1436,14 +1436,14 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       x64 = out[0]
     }
     if lp.boff != 0 {
-      xo = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, xo, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(x64), lv_c_i64(lp.boff))))
+      xo = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, xo, lv_rv2(mrk_binary, mop_add, lv_copy_local(x64), lv_c_i64(lp.boff))))
       x64 = xo
     }
     xp = x64
     if !lp.le {
-      xp = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, xp, lv_rv2(mrk_binary(), mop_sub(), lv_copy_local(x64), lv_c_i64(1))))
+      xp = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, xp, lv_rv2(mrk_binary, mop_sub, lv_copy_local(x64), lv_c_i64(1))))
     }
     if lp.step > 1 {
       // The largest value the variable reaches below the bound:
@@ -1452,14 +1452,14 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       eo: Array(Int) = [0]
       blk = lv_widen_in(f, loc, blk, lp.ind, hdr, eo)
       e64 = eo[0]
-      d = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, d, lv_rv2(mrk_binary(), mop_sub(), lv_copy_local(xp), lv_copy_local(e64))))
-      q = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, q, lv_rv2(mrk_binary(), mop_div(), lv_copy_local(d), lv_c_i64(lp.step))))
-      qs = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, qs, lv_rv2(mrk_binary(), mop_mul(), lv_copy_local(q), lv_c_i64(lp.step))))
-      xl = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, xl, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(e64), lv_copy_local(qs))))
+      d = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, d, lv_rv2(mrk_binary, mop_sub, lv_copy_local(xp), lv_copy_local(e64))))
+      q = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, q, lv_rv2(mrk_binary, mop_div, lv_copy_local(d), lv_c_i64(lp.step))))
+      qs = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, qs, lv_rv2(mrk_binary, mop_mul, lv_copy_local(q), lv_c_i64(lp.step))))
+      xl = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, xl, lv_rv2(mrk_binary, mop_add, lv_copy_local(e64), lv_copy_local(qs))))
       xp = xl
     }
   }
@@ -1471,10 +1471,10 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       blk = lv_widen_in(f, loc, blk, terms.lo_bv[i2], hdr, bo)
     }
     base = bo[0]
-    s = lv_new_local(f, mt_i64())
-    blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.lo_off[i2]))))
-    g = lv_new_local(f, mt_bool())
-    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(s), lv_c_i64(0))))
+    s = lv_new_local(f, mt_i64)
+    blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary, mop_add, lv_copy_local(base), lv_c_i64(terms.lo_off[i2]))))
+    g = lv_new_local(f, mt_bool)
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp, mop_ge, lv_copy_local(s), lv_c_i64(0))))
     blk = lv_test(f, loc, blk, g, hdr)
   }
   for ix in 0..terms.up_h.size {
@@ -1486,12 +1486,12 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
         blk = lv_widen_in(f, loc, blk, terms.up_bv[ix], hdr, uo)
         base = uo[0]
       }
-      s = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.up_off[ix]))))
+      s = lv_new_local(f, mt_i64)
+      blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary, mop_add, lv_copy_local(base), lv_c_i64(terms.up_off[ix]))))
       a = lv_copy_local(s)
     }
-    g = lv_new_local(f, mt_bool())
-    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_lt(), a, lv_copy_local(sizes[terms.up_h[ix]]))))
+    g = lv_new_local(f, mt_bool)
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp, mop_lt, a, lv_copy_local(sizes[terms.up_h[ix]]))))
     blk = lv_test(f, loc, blk, g, hdr)
   }
   // The freeze tests the copy does without (lv_freezes), each array
@@ -1499,22 +1499,22 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   fhs: Array(Int) = []
   fbs = lv_freezes(lp, fhs)
   for h in fhs {
-    nn = lv_new_local(f, mt_bool())
-    blk.stmts.push(lv_assign(loc, nn, lv_rv2(mrk_cmp(), mop_ne(), lv_copy_local(h), MOperand.new(mok_null(), f.locals[h].ty))))
+    nn = lv_new_local(f, mt_bool)
+    blk.stmts.push(lv_assign(loc, nn, lv_rv2(mrk_cmp, mop_ne, lv_copy_local(h), MOperand.new(mok_null, f.locals[h].ty))))
     blk = lv_test(f, loc, blk, nn, hdr)
-    w = lv_new_local(f, mt_i32())
+    w = lv_new_local(f, mt_i32)
     wp = MPlace.new(h)
-    wp.proj.push(MProj.new(mpk_deref(), 0))
-    wp.proj.push(MProj.new(mpk_field(), 2))
-    wo = MOperand.new(mok_copy(), -1)
+    wp.proj.push(MProj.new(mpk_deref, 0))
+    wp.proj.push(MProj.new(mpk_field, 2))
+    wo = MOperand.new(mok_copy, -1)
     wo.place = wp
-    wr = MRvalue.new(mrk_use())
+    wr = MRvalue.new(mrk_use)
     wr.a = wo
     blk.stmts.push(lv_assign(loc, w, wr))
-    g = lv_new_local(f, mt_bool())
-    wz = MOperand.new(mok_int(), mt_i32())
+    g = lv_new_local(f, mt_bool)
+    wz = MOperand.new(mok_int, mt_i32)
     wz.ival = 0.to_i()
-    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(w), wz)))
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp, mop_ge, lv_copy_local(w), wz)))
     blk = lv_test(f, loc, blk, g, hdr)
   }
   fskip = mir_bools(n0, false)
@@ -1575,7 +1575,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   // vectorizer away from the fast loop's natural vector width).
   for b in 0..n0 {
     if lp.body[b] {
-      if t = f.blocks[b].term, t.kind == mtk_goto() || t.kind == mtk_branch() {
+      if t = f.blocks[b].term, t.kind == mtk_goto || t.kind == mtk_branch {
         for target in t.targets {
           if target == hdr {
             t.cold = hdr + 1
@@ -1754,10 +1754,10 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && !lv_has(again, st.dest) && (quiet || reformable)
-        if data || (st.kind == msk_call() && (st.callee == "avant_str_size" || st.callee == "avant_str_view_test") && st.args.size == 1 && st.dest >= 0) {
+        data = st.kind == msk_call && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && !lv_has(again, st.dest) && (quiet || reformable)
+        if data || (st.kind == msk_call && (st.callee == "avant_str_size" || st.callee == "avant_str_view_test") && st.args.size == 1 && st.dest >= 0) {
           v = lv_local(st.args[0])
-          if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
+          if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str {
             k = 0
             while k < strs.size && !(strs[k] == v && kinds[k] == st.callee) {
               k += 1
@@ -1765,16 +1765,16 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
             if k == strs.size {
               strs.push(v)
               kinds.push(st.callee)
-              rt = mt_i64()
+              rt = mt_i64
               if st.callee == "avant_str_view_test" {
-                rt = mt_i32()
+                rt = mt_i32
               }
               if data {
                 rt = f.locals[st.dest].ty
               }
               h = lv_new_local(f, rt)
               held.push(h)
-              call = MStmt.new(msk_call(), loc)
+              call = MStmt.new(msk_call, loc)
               call.dest = h
               call.callee = st.callee
               call.args.push(lv_copy_local(v))
@@ -1782,8 +1782,8 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
               if data {
                 // The address of the bytes, formed once: its view test
                 // first, in the preheader too.
-                vt = lv_new_local(f, mt_i32())
-                tc = MStmt.new(msk_call(), loc)
+                vt = lv_new_local(f, mt_i32)
+                tc = MStmt.new(msk_call, loc)
                 tc.dest = vt
                 tc.callee = "avant_str_view_test"
                 tc.args.push(lv_copy_local(v))
@@ -1797,7 +1797,7 @@ fn lv_hoist_one(m: MModule, f: MFunc, body: Array(Bool), hdr: Int, shared: Bool,
               }
               pre.stmts.push(call)
             }
-            r = MRvalue.new(mrk_use())
+            r = MRvalue.new(mrk_use)
             r.a = lv_copy_local(held[k])
             blk.stmts[j] = lv_assign(st.loc, st.dest, r)
           }
@@ -1844,7 +1844,7 @@ fn lv_reform_after_calls(m: MModule, f: MFunc, body: Array(Bool), n0: Int, refor
         out.push(st)
         if mir_lv_call_collects(m, st, coll) {
           for c in reform {
-            again = MStmt.new(msk_call(), st.loc)
+            again = MStmt.new(msk_call, st.loc)
             again.dest = c.dest
             again.callee = c.callee
             again.args.concat(c.args)
@@ -1862,7 +1862,7 @@ fn lv_reform_after_calls(m: MModule, f: MFunc, body: Array(Bool), n0: Int, refor
 // function of the module that, with everything it calls, never does
 // (coll, mir_lv_collects).
 pub fn mir_lv_call_collects(m: MModule, st: MStmt, coll: Array(Bool)): Bool {
-  if st.kind != msk_call() || !st.collects {
+  if st.kind != msk_call || !st.collects {
     return false
   }
   if fo = st.indirect {
@@ -1954,7 +1954,7 @@ pub fn mir_loop_pass(m: MModule) {
   pure = mir_tile_pure(m)
   coll = mir_lv_collects(m)
   for f in m.funcs {
-    if f.kind == mfk_unset() && f.blocks.size > 1 {
+    if f.kind == mfk_unset && f.blocks.size > 1 {
       recs: Array(TlRec) = []
       lv_func(m, f, keep, recs)
       if recs.size >= 1 {

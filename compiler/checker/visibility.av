@@ -991,11 +991,11 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
   }
   if ty.rec {
     // A recursive alias is its members, each checked once.
-    if ty_walk_enter(ty, wk_pub()) {
+    if ty_walk_enter(ty, wk_pub) {
       for m in ty.members {
         checker_self.ensure_pub_sig_ty(m, loc, fnn)
       }
-      ty_walk_leave(ty, wk_pub())
+      ty_walk_leave(ty, wk_pub)
     }
     return
   }
@@ -1110,10 +1110,10 @@ pub fn (checker_self: Checker) lookup_module_type(mod: String, name: String, loc
 }
 
 pub fn (checker_self: Checker) type_from_recv(recv: Expr, loc: Location): Ty? {
-  if recv.kind == ex_name() {
+  if recv.kind == ex_name {
     return checker_self.lookup_named_type(recv.ident, recv.loc, "")
   }
-  if recv.kind == ex_field() {
+  if recv.kind == ex_field {
     if obj = recv.object {
       object = checker_self.check_expr(obj)
       if !object.is_module() {
@@ -1285,21 +1285,21 @@ pub fn module_last_name(m: String): String {
 // name; the readers after this see the whole name, as written.
 pub fn (checker_self: Checker) qualify_last_name(expr: Expr) {
   root = expr
-  if root.kind == ex_call() {
+  if root.kind == ex_call {
     if r = root.receiver {
       root = r
     } else {
       return
     }
   }
-  while root.kind == ex_field() {
+  while root.kind == ex_field {
     if o = root.object {
       root = o
     } else {
       return
     }
   }
-  if root.kind != ex_name() || root.type_args.size > 0 || root.ident.size == 0 {
+  if root.kind != ex_name || root.type_args.size > 0 || root.ident.size == 0 {
     return
   }
   q = root.ident

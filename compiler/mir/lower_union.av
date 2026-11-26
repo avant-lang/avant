@@ -106,7 +106,7 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
 
 // v lowered and converted to want (the MIR type ty of a place).
 pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
-  if v.kind == ex_nil() && want.is_union() && want.includes_nil() {
+  if v.kind == ex_nil && want.is_union() && want.includes_nil() {
     // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
@@ -252,7 +252,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
   b.assign(b.pl(d), b.rv_zero())
-  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  tag = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int) = []
   targets: Array(Int) = []
   arms: Array(Int) = []
@@ -315,7 +315,7 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     b.assign(b.pl(d), b.rv_use(lw.opt_nil(tty)))
     k = from.tag_of(tm)
     if k >= 0 {
-      tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+      tag = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.pl(src), 0))))
       arm = b.block()
       values: Array(Int) = [k.to_i()]
       targets: Array(Int) = [arm]
@@ -336,24 +336,24 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
 fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
   b = lw.lw_b
   ty = b.func.locals[src].ty
-  op = mop_eq()
+  op = mop_eq
   if !eq {
-    op = mop_ne()
+    op = mop_ne
   }
-  if b.types.kind(ty) == mk_agg() {
+  if b.types.kind(ty) == mk_agg {
     // The code word as an untyped pointer (a code value fits a `ptr`
     // place), compared with null.
-    code = lw.tmp(mt_ptr(), b.rv_use(b.copy(b.field(b.pl(src), 1))))
-    return lw.tmp(mt_bool(), b.rv_cmp(op, code, b.c_null(mt_ptr())))
+    code = lw.tmp(mt_ptr, b.rv_use(b.copy(b.field(b.pl(src), 1))))
+    return lw.tmp(mt_bool, b.rv_cmp(op, code, b.c_null(mt_ptr)))
   }
-  lw.tmp(mt_bool(), b.rv_cmp(op, b.copy_local(src), b.c_null(ty)))
+  lw.tmp(mt_bool, b.rv_cmp(op, b.copy_local(src), b.c_null(ty)))
 }
 
 // The nil of an optional without a tag of MIR type ty (mir_opt_word): the
 // null pointer, or a function value's pair of zeros.
 pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
   b = lw.lw_b
-  if b.types.kind(ty) == mk_agg() {
+  if b.types.kind(ty) == mk_agg {
     return lw.tmp(ty, b.rv_zero())
   }
   b.c_null(ty)
@@ -385,12 +385,12 @@ pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   if r = mir_opt_word(uty) {
     return lw.ref_is_null(src, eq == uty.members[k].no_payload())
   }
-  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
-  op = mop_eq()
+  tag = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  op = mop_eq
   if !eq {
-    op = mop_ne()
+    op = mop_ne
   }
-  lw.tmp(mt_bool(), b.rv_cmp(op, tag, b.c_i32(k)))
+  lw.tmp(mt_bool, b.rv_cmp(op, tag, b.c_i32(k)))
 }
 
 // ---- `switch` over a union
@@ -411,7 +411,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   lw.at(e.loc)
   src = lw.hold(cv, uty_m)
   dest = -1
-  if rty != mt_void() {
+  if rty != mt_void {
     dest = b.temp(rty)
     b.assign(b.pl(dest), b.rv_zero())
   }
@@ -490,7 +490,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
     }
     b.branch(lw.ref_is_null(src, true), tn, tr)
   } else {
-    tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+    tag = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.pl(src), 0))))
     values: Array(Int) = []
     targets: Array(Int) = []
     for k2 in 0..entry.size {
@@ -510,7 +510,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   for i3 in 0..e.cases.size {
     arm = e.cases[i3]
     b.at(arms[i3])
-    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && arm.labels[0].bind.size > 0 {
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type && arm.labels[0].bind.size > 0 {
       k3 = arm.labels[0].int_val
       mt = uty.members[k3]
       lw.at(arm.labels[0].loc)
@@ -566,7 +566,7 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
       lw.branch_failure(src, uty, fails, bnil, bval)
     }
     b.at(bnil)
-    if r.kind == ex_switch() && r.op == tk_return() {
+    if r.kind == ex_switch && r.op == tk_return {
       // `?? return v`, `?? break`, `?? continue`: the statement
       // leaves; nothing reaches the join from here. An else guard
       // (`n = f() else e { ... }`) binds its name to the failure
@@ -676,7 +676,7 @@ pub fn (lw: MirLower) bind_failure(name: String, src: Int, uty: Ty, fails: Array
 // fails (several failure members), else to bok: one switch on the tag.
 pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail: Int, bok: Int) {
   b = lw.lw_b
-  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  tag = lw.tmp(mt_i32, b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int) = []
   targets: Array(Int) = []
   for f in fails {
@@ -942,12 +942,12 @@ pub fn (lw: MirLower) lower_branch_in(body: Array(Stmt), mode: Int, dest: Int, w
     }
     st = body[i]
     if i == body.size - 1 {
-      if st.kind == st_if() && st.else_body.size > 0 {
+      if st.kind == st_if && st.else_body.size > 0 {
         lw.cov_stmt(st)
         lw.lower_if_general(st, mode, dest, want)
         return
       }
-      if st.kind == st_expr() && !ast_stmt_exits(st) {
+      if st.kind == st_expr && !ast_stmt_exits(st) {
         if e = st.expr {
           lw.cov_stmt(st)
           if mode == 2 {
@@ -1026,20 +1026,20 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
 // `found == 1` of an out-parameter local.
 pub fn (lw: MirLower) found_is(f: Int): MOperand {
   b = lw.lw_b
-  lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(f), b.c_i32(1)))
+  lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(f), b.c_i32(1)))
 }
 
 // A fresh `found` local, 0, and its raw address for the runtime.
 pub fn (lw: MirLower) found_local: Int {
   b = lw.lw_b
-  f = b.temp(mt_i32())
+  f = b.temp(mt_i32)
   b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
   f
 }
 
 pub fn (lw: MirLower) found_ptr(f: Int): MOperand {
   b = lw.lw_b
-  lw.tmp(b.types.ptr_to(mt_i32()), b.rv_addr_raw(b.pl(f)))
+  lw.tmp(b.types.ptr_to(mt_i32), b.rv_addr_raw(b.pl(f)))
 }
 
 // The bounded reads `s.get(i)`, `b.get(i)`, `xs.get(i)`
@@ -1068,12 +1068,12 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    ix = lw.hold(iv, mt_int())
+    ix = lw.hold(iv, mt_int)
     n = b.c_i64(0)
     if rt.is_array() || rt.is_buf() {
       n = lw.seq_size(h)
     } else {
-      n = lw.call_to(mt_int(), "avant_str_size", lw.one(b.copy_local(h)))
+      n = lw.call_to(mt_int, "avant_str_size", lw.one(b.copy_local(h)))
     }
     oref = mir_is_opt_word(t)
     l = -1
@@ -1086,9 +1086,9 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else {
       b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     }
-    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0)))
-    c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
-    c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+    c1 = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(ix), b.c_i64(0)))
+    c2 = lw.tmp(mt_bool, b.rv_cmp(mop_lt, b.copy_local(ix), n))
+    c = lw.tmp(mt_bool, b.rv_bin(mop_and, c1, c2))
     bt = b.block()
     join = b.block()
     b.branch(c, bt, join)
@@ -1110,12 +1110,12 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else if rt.is_buf() {
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
       b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
-      byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
-      v = lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
+      byte = lw.tmp(mt_u8, b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
+      v = lw.tmp(mt_int, b.rv_cast(byte, mt_int))
     } else {
       pk = lw.str_data(b.copy_local(h))
-      byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
-      v = lw.tmp(mt_int(), b.rv_cast(byte2, mt_int()))
+      byte2 = lw.tmp(mt_u8, b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
+      v = lw.tmp(mt_int, b.rv_cast(byte2, mt_int))
     }
     if oref || t.same_as(elt) {
       // An optional reference, or an element that is already the result
@@ -1153,8 +1153,8 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     if name == "index_of" && args.size == 1 {
       // An Array(UInt32) is searched by its bits, as Int32's.
       cet = et
-      if et == mt_u32() {
-        cet = mt_i32()
+      if et == mt_u32 {
+        cet = mt_i32
       }
       f = lw.kind_fn("avant_array_index", cet, true)
       if f.size == 0 {
@@ -1167,16 +1167,16 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
         return b.c_i32(0)
       }
       lw.at(e.loc)
-      if et == mt_bool() || et == mt_u32() {
-        v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+      if et == mt_bool || et == mt_u32 {
+        v = lw.tmp(mt_i32, b.rv_cast(v, mt_i32))
       }
-      ix = lw.call_to(mt_int(), f, lw.two(a, v))
-      k = lw.hold(ix, mt_int())
-      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i64(0)))
+      ix = lw.call_to(mt_int, f, lw.two(a, v))
+      k = lw.hold(ix, mt_int)
+      c = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(k), b.c_i64(0)))
       return lw.opt_of(t, c, b.copy_local(k), ty_int(), e.loc)
     }
     mf = lw.kind_fn("avant_array_${name}", et, false)
-    if args.size > 0 || mf.size == 0 || et == mt_bool() {
+    if args.size > 0 || mf.size == 0 || et == mt_bool {
       lw.refuse(e.loc, "Array.${name} on ${want.show()}")
       return b.c_i32(0)
     }
@@ -1269,7 +1269,7 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
     }
     lw.at(e.loc)
     ops.push(lw.found_ptr(fl))
-    v = lw.call_to(mt_str(), f, ops)
+    v = lw.call_to(mt_str, f, ops)
     return lw.opt_of(t, lw.found_is(fl), v, ty_string(), e.loc)
   }
   lw.refuse(e.loc, "an untyped ${e.callee}")
@@ -1306,8 +1306,8 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   }
   lw.at(e.loc)
   if c == "#file_exists" {
-    r = lw.call_to(mt_i32(), f, ops)
-    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+    r = lw.call_to(mt_i32, f, ops)
+    return lw.tmp(mt_bool, b.rv_cmp(mop_eq, r, b.c_i32(1)))
   }
   lw.call_to(ty, f, ops)
 }

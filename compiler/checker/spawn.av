@@ -144,12 +144,12 @@ pub fn (checker_self: Checker) handle_stores(body: Array(Stmt), in_init: String)
     if checker_self.has_err() {
       return
     }
-    if st.kind == st_assign() {
-      if t = st.target, t.kind == ex_field() {
+    if st.kind == st_assign {
+      if t = st.target, t.kind == ex_field {
         if obj = t.object, ot = obj.ty {
           for i in 0..checker_self.handle_tys.size {
             ht = checker_self.handle_tys[i]
-            if ot.is_class() && ot.name == ht.name && ot.mod_name == ht.mod_name && !(in_init == "${ht.mod_name}.${ht.name}" && obj.kind == ex_name() && obj.ident == "self") {
+            if ot.is_class() && ot.name == ht.name && ot.mod_name == ht.mod_name && !(in_init == "${ht.mod_name}.${ht.name}" && obj.kind == ex_name && obj.ident == "self") {
               at = checker_self.handle_at[i]
               checker_self.fail(at, "${checker_self.handle_what[i]}: a ${ht.show()}, a class of Mutex and Channel fields, crosses as a handle only when no field of it is assigned after initialize, and ${ht.show()}.${t.ident} is assigned at ${t.loc.line()}:${t.loc.column()}; set its fields in initialize, or keep the changing value in one of its Mutexes")
               return
@@ -421,10 +421,10 @@ pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
 // or an Array's `.parallel` block, and both are checked by the walk
 // below (node is the spawn or the `.parallel` call).
 pub fn task_word(node: Expr): String {
-  if node.kind == ex_call() && node.callee == "parallel" {
+  if node.kind == ex_call && node.callee == "parallel" {
     return ".parallel"
   }
-  if node.kind == ex_lambda() {
+  if node.kind == ex_lambda {
     return handler_word(node)
   }
   "spawn"
@@ -475,14 +475,14 @@ pub fn handler_runs(node: Expr): String {
 // Who shares a captured Array with the code around node, and what a
 // mutable object must not reach, in node's words.
 pub fn task_whom(node: Expr): String {
-  if node.kind == ex_lambda() {
+  if node.kind == ex_lambda {
     return "server's loop threads"
   }
   "task"
 }
 
 pub fn task_unit(node: Expr): String {
-  if node.kind == ex_lambda() {
+  if node.kind == ex_lambda {
     return "thread"
   }
   "task"
@@ -514,13 +514,13 @@ pub fn (checker_self: Checker) frozen_lookup(name: String): Ty? {
 
 // Until when a captured Array is read-only, in node's words.
 pub fn frozen_until(node: Expr): String {
-  if node.kind == ex_call() && node.callee == "parallel" {
+  if node.kind == ex_call && node.callee == "parallel" {
     return "read-only while the bodies run"
   }
-  if node.kind == ex_lambda() && (node.callee == "every" || node.callee == "on_close") {
+  if node.kind == ex_lambda && (node.callee == "every" || node.callee == "on_close") {
     return "read-only once it is registered, since ${handler_runs(node)}"
   }
-  if node.kind == ex_lambda() {
+  if node.kind == ex_lambda {
     return "read-only once the handler is registered, since the server runs the handler on each of its loop threads at once"
   }
   "read-only until join"
@@ -541,13 +541,13 @@ pub fn (checker_self: Checker) walk_spawn_stmts(body: Array(Stmt), node: Expr, s
 
 pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Hash(String, Int)) {
   k = stmt.kind
-  if k == st_return() {
+  if k == st_return {
     if e = stmt.expr {
       checker_self.walk_spawn_expr(e, node, seen)
     }
     return
   }
-  if k == st_if() {
+  if k == st_if {
     checker_self.walk_spawn_stmts(stmt.pre, node, seen)
     if c = stmt.cond {
       checker_self.walk_spawn_expr(c, node, seen)
@@ -556,7 +556,7 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     checker_self.walk_spawn_stmts(stmt.else_body, node, seen)
     return
   }
-  if k == st_while() {
+  if k == st_while {
     checker_self.walk_spawn_stmts(stmt.pre, node, seen)
     if c = stmt.cond {
       checker_self.walk_spawn_expr(c, node, seen)
@@ -564,11 +564,11 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     checker_self.walk_spawn_stmts(stmt.body, node, seen)
     return
   }
-  if k == st_assign() {
+  if k == st_assign {
     if target = stmt.target {
-      if target.kind == ex_name() {
+      if target.kind == ex_name {
         if ty = checker_self.lookup(target.ident) {
-          if node.kind == ex_lambda() {
+          if node.kind == ex_lambda {
             checker_self.fail(target.loc, "${handler_word(node)} cannot assign to ${target.ident}: ${handler_runs_one(node)}, so the captured variable would be written by several threads; keep a value the handlers change in a Mutex")
           } else if task_word(node) == "spawn" {
             checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join")
@@ -589,13 +589,13 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     }
     return
   }
-  if k == st_expr() {
+  if k == st_expr {
     if e = stmt.expr {
       checker_self.walk_spawn_expr(e, node, seen)
     }
     return
   }
-  if k == st_pin() || k == st_release() || k == st_hold() || k == st_defer() {
+  if k == st_pin || k == st_release || k == st_hold || k == st_defer {
     // A `pin` block's value and body, and `release`'s place, are walked
     // like any statement's (before, a name used only there was not
     // captured, and the back end stopped with L0001).
@@ -608,16 +608,16 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
 
 pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Hash(String, Int)) {
   k = expr.kind
-  if k == ex_name() {
+  if k == ex_name {
     checker_self.note_spawn_capture(expr, node, seen)
     return
   }
-  if k == ex_call() {
+  if k == ex_call {
     if inner = expr.inner {
       checker_self.walk_spawn_expr(inner, node, seen)
     }
     if expr.indirect && expr.callee.size > 0 {
-      name = Expr.new(ex_name(), expr.loc)
+      name = Expr.new(ex_name, expr.loc)
       name.ident = expr.callee
       checker_self.note_spawn_capture(name, node, seen)
     }
@@ -645,13 +645,13 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_unary() {
+  if k == ex_unary {
     if inner = expr.inner {
       checker_self.walk_spawn_expr(inner, node, seen)
     }
     return
   }
-  if k == ex_binary() {
+  if k == ex_binary {
     if l = expr.left {
       checker_self.walk_spawn_expr(l, node, seen)
     }
@@ -660,7 +660,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_field() {
+  if k == ex_field {
     if obj = expr.object {
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
@@ -673,7 +673,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_index() {
+  if k == ex_index {
     if l = expr.left {
       checker_self.walk_spawn_expr(l, node, seen)
     }
@@ -682,19 +682,19 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_struct() {
+  if k == ex_struct {
     for i in 0..expr.field_exprs.size {
       checker_self.walk_spawn_expr(expr.field_exprs[i], node, seen)
     }
     return
   }
-  if k == ex_array() || k == ex_hash_lit() {
+  if k == ex_array || k == ex_hash_lit {
     for i in 0..expr.elems.size {
       checker_self.walk_spawn_expr(expr.elems[i], node, seen)
     }
     return
   }
-  if k == ex_array_new() {
+  if k == ex_array_new {
     if size = expr.size_expr {
       checker_self.walk_spawn_expr(size, node, seen)
     }
@@ -703,13 +703,13 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_try() {
+  if k == ex_try {
     if inner = expr.inner {
       checker_self.walk_spawn_expr(inner, node, seen)
     }
     return
   }
-  if k == ex_interp() {
+  if k == ex_interp {
     for part in expr.parts {
       if inner = part.expr {
         checker_self.walk_spawn_expr(inner, node, seen)
@@ -717,7 +717,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_switch() {
+  if k == ex_switch {
     if c = expr.cond {
       checker_self.walk_spawn_expr(c, node, seen)
     }
@@ -729,7 +729,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     }
     return
   }
-  if k == ex_lambda() {
+  if k == ex_lambda {
     if b = expr.block {
       mark = checker_self.spawn_skip.size
       checker_self.spawn_skip.concat(b.params)
@@ -752,7 +752,7 @@ pub fn (checker_self: Checker) spawn_skip_has(name: String): Bool {
 
 pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
   k = expr.kind
-  if k == ex_name() {
+  if k == ex_name {
     // A walk's hidden array (checker/places.av) is the array it holds,
     // and a place, the element itself, is reached from it.
     if root = checker_self.place_roots.get(expr.ident) {
@@ -766,12 +766,12 @@ pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
     }
     return expr.ident
   }
-  if k == ex_field() {
+  if k == ex_field {
     if obj = expr.object {
       return checker_self.expr_root_name(obj)
     }
   }
-  if k == ex_index() {
+  if k == ex_index {
     if l = expr.left {
       return checker_self.expr_root_name(l)
     }
@@ -803,13 +803,13 @@ pub fn hash_mutator(name: String): Bool {
 // it; nil for any other expression (a field, a call) and for a name the
 // block declares.
 pub fn (checker_self: Checker) place_ty(expr: Expr): Ty? {
-  if expr.kind == ex_name() {
+  if expr.kind == ex_name {
     if checker_self.spawn_skip_has(expr.ident) {
       return nil
     }
     return checker_self.frozen_lookup(expr.ident)
   }
-  if expr.kind == ex_index() {
+  if expr.kind == ex_index {
     if l = expr.left, lt = checker_self.place_ty(l) {
       if lt.is_array() {
         return lt.inner
@@ -829,7 +829,7 @@ pub fn (checker_self: Checker) place_ty(expr: Expr): Ty? {
 // (`h.keys`), nothing.
 pub fn (checker_self: Checker) changes_frozen(name: String, recv: Expr): Bool {
   // A hash has no fields: `h.keys` is a new array.
-  if recv.kind == ex_field() {
+  if recv.kind == ex_field {
     if obj = recv.object, ot = checker_self.place_ty(obj), ot.is_hash() {
       return false
     }
@@ -838,7 +838,7 @@ pub fn (checker_self: Checker) changes_frozen(name: String, recv: Expr): Bool {
     if t.is_hash() {
       return hash_mutator(name)
     }
-    if !t.is_array() && recv.kind == ex_index() {
+    if !t.is_array() && recv.kind == ex_index {
       if l = recv.left, lt = checker_self.place_ty(l), lt.is_hash() {
         return false
       }
@@ -853,7 +853,7 @@ pub fn (checker_self: Checker) changes_frozen(name: String, recv: Expr): Bool {
 // (`xs.pop`, `xs.clear`, `xs.sort`, `xs.reverse`) is a field node, and
 // this tells it from a struct field of the same name.
 pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
-  if expr.kind == ex_name() {
+  if expr.kind == ex_name {
     if checker_self.spawn_skip_has(expr.ident) {
       return nil
     }
@@ -864,7 +864,7 @@ pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
     }
     return nil
   }
-  if expr.kind == ex_index() {
+  if expr.kind == ex_index {
     if l = expr.left {
       if at = checker_self.indexed_array_ty(l) {
         if e = at.inner {
@@ -880,7 +880,7 @@ pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
 
 // Whether a field node is an Array mutator written without parentheses.
 pub fn (checker_self: Checker) field_mutates_array(expr: Expr): Bool {
-  if expr.kind != ex_field() {
+  if expr.kind != ex_field {
     return false
   }
   if obj = expr.object {
@@ -961,7 +961,7 @@ pub fn (checker_self: Checker) scan_pending_stmt(stmt: Stmt) {
 }
 
 pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
-  if target.kind == ex_name() {
+  if target.kind == ex_name {
     if checker_self.pending_by_handler(target.ident) {
       // A lambda captures the variable itself: a new array assigned
       // here would reach the handler unfrozen.
@@ -1002,12 +1002,12 @@ pub fn (checker_self: Checker) pending_mutate_msg(root: String): String {
 
 // A walk's place (checker/places.av), named: an element of the array.
 pub fn (checker_self: Checker) is_place_name(e: Expr): Bool {
-  e.kind == ex_name() && checker_self.place_at(e.ident) >= 0
+  e.kind == ex_name && checker_self.place_at(e.ident) >= 0
 }
 
 pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
-  if k == ex_field() && checker_self.field_mutates_array(expr) {
+  if k == ex_field && checker_self.field_mutates_array(expr) {
     if obj = expr.object {
       root = checker_self.expr_root_name(obj)
       if root.size > 0 && checker_self.pending_has_array(root) {
@@ -1015,25 +1015,25 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
       }
     }
   }
-  if k == ex_field() {
+  if k == ex_field {
     // A method on an element of a pending array (`xs[0].bump`), told
     // from a field read once the program is checked.
-    if obj = expr.object, obj.kind == ex_index() || obj.kind == ex_field() || checker_self.is_place_name(obj) {
+    if obj = expr.object, obj.kind == ex_index || obj.kind == ex_field || checker_self.is_place_name(obj) {
       root = checker_self.expr_root_name(obj)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.note_element_call(expr, obj, 2)
       }
     }
     if expr.ident == "join" {
-      if obj = expr.object, obj.kind == ex_name() {
+      if obj = expr.object, obj.kind == ex_name {
         checker_self.pending_join(obj.ident)
         return
       }
     }
   }
-  if k == ex_call() {
+  if k == ex_call {
     if expr.callee == "join" {
-      if recv = expr.receiver, recv.kind == ex_name() {
+      if recv = expr.receiver, recv.kind == ex_name {
         checker_self.pending_join(recv.ident)
       }
     }
@@ -1049,7 +1049,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
         checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
       }
     }
-    if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() || checker_self.is_place_name(recv) {
+    if recv = expr.receiver, recv.kind == ex_index || recv.kind == ex_field || checker_self.is_place_name(recv) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.note_element_call(expr, recv, 2)
@@ -1149,10 +1149,10 @@ pub fn (checker_self: Checker) scan_pending_if_head(stmt: Stmt) {
 }
 
 pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
-  if stmt.kind == st_assign() {
-    if v = stmt.value, v.kind == ex_call(), v.callee == "spawn" {
+  if stmt.kind == st_assign {
+    if v = stmt.value, v.kind == ex_call, v.callee == "spawn" {
       handle = ""
-      if t = stmt.target, t.kind == ex_name() {
+      if t = stmt.target, t.kind == ex_name {
         handle = t.ident
       }
       for i in 0..v.cap_names.size {
@@ -1164,7 +1164,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
       return
     }
   }
-  if e = stmt.expr, e.kind == ex_call(), e.callee == "spawn" {
+  if e = stmt.expr, e.kind == ex_call, e.callee == "spawn" {
     for i in 0..e.cap_names.size {
       if e.cap_tys[i].is_array() || e.cap_tys[i].is_hash() {
         checker_self.pending_handles.push("")
@@ -1179,7 +1179,7 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     return
   }
   if ty = checker_self.lookup(expr.ident) {
-    if node.kind == ex_lambda() && checker_self.handler_shares(ty) {
+    if node.kind == ex_lambda && checker_self.handler_shares(ty) {
       if ty.is_array() {
         if prev = seen.get(expr.ident) {
           return
@@ -1224,7 +1224,7 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
           return
         }
       }
-      if node.kind == ex_lambda() {
+      if node.kind == ex_lambda {
         checker_self.fail(expr.loc, "${handler_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and ${handler_runs(node)}; numbers, Bool, String, Bytes, enums, structs of them, Arrays and Hashes of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
         return
       }
@@ -1290,15 +1290,15 @@ pub fn (checker_self: Checker) check_element_writes {
     side = checker_self.elem_sides[i]
     i += 1
     recv: Expr? = nil
-    if e.kind == ex_call() {
+    if e.kind == ex_call {
       recv = e.receiver
-    } else if e.kind == ex_field() && e.method_call {
+    } else if e.kind == ex_field && e.method_call {
       recv = e.object
     }
     if r = recv, rt = r.ty, rt.is_struct(), e.resolved.size > 0, rw_element_place(r) {
       if rw.writes(e.resolved) {
         name = e.callee
-        if e.kind == ex_field() {
+        if e.kind == ex_field {
           name = e.ident
         }
         if side == 1 {
@@ -1345,13 +1345,13 @@ pub fn (checker_self: Checker) check_handler_args(expr: Expr) {
     if checker_self.has_err() {
       return
     }
-    if arg.kind == ex_lambda() {
+    if arg.kind == ex_lambda {
       checker_self.check_handler_lambda(arg, expr.callee)
     } else if at = arg.ty, at.is_fn() {
-      if arg.kind == ex_name() && arg.fn_ref {
+      if arg.kind == ex_name && arg.fn_ref {
         continue
       }
-      node = Expr.new(ex_lambda(), arg.loc)
+      node = Expr.new(ex_lambda, arg.loc)
       node.callee = expr.callee
       checker_self.fail(arg.loc, "${handler_word(node)} must be a lambda written at the call or a named function: ${handler_runs_fn(node)}, and what a function value captures is not checked")
     }
@@ -1359,7 +1359,7 @@ pub fn (checker_self: Checker) check_handler_args(expr: Expr) {
 }
 
 pub fn (checker_self: Checker) check_handler_lambda(lam: Expr, method: String) {
-  node = Expr.new(ex_lambda(), lam.loc)
+  node = Expr.new(ex_lambda, lam.loc)
   node.callee = method
   seen = Hash(String, Int).new()
   if b = lam.block {

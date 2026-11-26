@@ -44,7 +44,7 @@ import mir.flow
 
 // Whether st collects (an allocation, a collecting call, an indirect call).
 fn mir_fresh_collects(st: MStmt): Bool {
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return false
   }
   if ind = st.indirect {
@@ -55,7 +55,7 @@ fn mir_fresh_collects(st: MStmt): Bool {
 
 // Whether st is a call of an allocation external.
 fn mir_fresh_is_alloc(m: MModule, st: MStmt): Bool {
-  if st.kind == msk_call() && st.dest >= 0 {
+  if st.kind == msk_call && st.dest >= 0 {
     if fo = st.indirect {
       return false
     }
@@ -68,7 +68,7 @@ fn mir_fresh_is_alloc(m: MModule, st: MStmt): Bool {
 
 // The holder of `barrier copy _h`, or -1.
 fn mir_fresh_holder(st: MStmt): Int {
-  if st.kind == msk_barrier() && st.args.size == 1 {
+  if st.kind == msk_barrier && st.args.size == 1 {
     if p = st.args[0].place, p.proj.size == 0 {
       return p.local
     }
@@ -80,11 +80,11 @@ fn mir_fresh_holder(st: MStmt): Int {
 // store of h's buffer: the emitter's slot form (ll_barrier_store).
 pub fn mir_fresh_slot_form(stmts: Array(MStmt), j: Int, h: Int): Bool {
   k = j + 1
-  if k >= stmts.size || stmts[k].kind != msk_assign() {
+  if k >= stmts.size || stmts[k].kind != msk_assign {
     return false
   }
   if p = stmts[k].place {
-    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index()
+    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_index
   }
   false
 }
@@ -110,7 +110,7 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
         served = false
         if j + 1 < blk.stmts.size {
           nx = blk.stmts[j + 1]
-          if p = nx.place, nx.kind == msk_assign() && p.local == h && !p.frame_local() {
+          if p = nx.place, nx.kind == msk_assign && p.local == h && !p.frame_local() {
             served = true
             if edit {
               nx.fresh = true
@@ -135,7 +135,7 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
       // A store already marked fresh through an open holder relies on
       // the openness from here on, so the allocation is barriered at
       // birth.
-      if st.fresh && st.kind == msk_assign() {
+      if st.fresh && st.kind == msk_assign {
         if p = st.place, p.local >= 0 && p.local < n && mir_bit(open, 0, p.local) {
           mir_bit_on(removed, 0, p.local)
         }
@@ -165,7 +165,7 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
 
 // Whether st calls an `initialize` (MFunc.fresh_self) of this module.
 fn mir_fresh_init_call(m: MModule, st: MStmt): Bool {
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return false
   }
   if fo = st.indirect {
@@ -196,8 +196,8 @@ fn mir_fresh_init_barriers(m: MModule, f: MFunc) {
             have = true
           }
           if !have {
-            bst = MStmt.new(msk_barrier(), st.loc)
-            o = MOperand.new(mok_copy(), -1)
+            bst = MStmt.new(msk_barrier, st.loc)
+            o = MOperand.new(mok_copy, -1)
             o.place = MPlace.new(p.local)
             bst.args.push(o)
             out.push(bst)
@@ -222,7 +222,7 @@ fn mir_fresh_func(m: MModule, f: MFunc, edit: Bool): Array(UInt64) {
   any = false
   for blk in f.blocks {
     for st in blk.stmts {
-      if st.kind == msk_barrier() {
+      if st.kind == msk_barrier {
         any = true
       }
     }

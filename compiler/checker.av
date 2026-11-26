@@ -765,7 +765,7 @@ pub class Checker {
     // A `Void | E` result: the end of the body is the success, as a bare
     // `return` is (check_stmt).
     if !fnn.entry_void && ret.is_union() && ret.includes_void() && fallthrough(fnn.body) {
-      fnn.body.push(stmt_expr(fnn.loc, Expr.new(ex_void(), fnn.loc)))
+      fnn.body.push(stmt_expr(fnn.loc, Expr.new(ex_void, fnn.loc)))
     }
     if !ret.is_void() && fnn.body.size == 0 {
       fail(fnn.loc, "missing return value")
@@ -980,7 +980,7 @@ pub class Checker {
       if at_tail && i == body.size - 1 {
         last = true
       }
-      if body[i].kind == st_while() && i > 0 {
+      if body[i].kind == st_while && i > 0 {
         annotate_vstep(body[i - 1], body[i])
       }
       self.clear_poison()
@@ -1046,16 +1046,16 @@ pub class Checker {
       return true
     }
     last = body[body.size - 1]
-    if last.kind == st_return() || ast_stmt_exits(last) {
+    if last.kind == st_return || ast_stmt_exits(last) {
       return false
     }
-    if last.kind == st_hold() || last.kind == st_pin() {
+    if last.kind == st_hold || last.kind == st_pin {
       // A `gc.hold` or `pin(x)` block ends its function when its own
       // body does (before, a `pin` block whose body returned was
       // "missing return value" at a function's tail).
       return fallthrough(last.body)
     }
-    if last.kind == st_if() {
+    if last.kind == st_if {
       if last.else_body.size == 0 {
         return true
       }
@@ -1075,7 +1075,7 @@ pub class Checker {
       return
     }
     k = stmt.kind
-    if k == st_return() {
+    if k == st_return {
       if self.try_in == defer_context() {
         fail(stmt.loc, defer_exit_message("return"))
         return
@@ -1118,7 +1118,7 @@ pub class Checker {
         check_expr_as(zero, expected)
       } else if expected.is_union() && expected.includes_void() {
         // A bare return of a `Void | E` result is the success.
-        none = Expr.new(ex_void(), stmt.loc)
+        none = Expr.new(ex_void, stmt.loc)
         stmt.expr = none
         check_expr_as(none, expected)
       } else {
@@ -1128,7 +1128,7 @@ pub class Checker {
       }
       return
     }
-    if k == st_if() {
+    if k == st_if {
       if at_tail && stmt.else_body.size > 0 && self.lambda_infer && (fallthrough(stmt.then_body) || fallthrough(stmt.else_body)) {
         // The final if/else of a lambda whose result type is inferred is
         // its value when its branches end in values, as in a function
@@ -1207,7 +1207,7 @@ pub class Checker {
       }
       return
     }
-    if k == st_release() {
+    if k == st_release {
       if e = stmt.expr {
         et = check_expr(e)
         if !self.has_err() {
@@ -1219,11 +1219,11 @@ pub class Checker {
       }
       return
     }
-    if k == st_defer() {
+    if k == st_defer {
       check_defer(stmt)
       return
     }
-    if k == st_hold() {
+    if k == st_hold {
       check_hold(stmt)
       check_block(stmt.body, expected, false)
       if at_tail && !(expected.is_void() || !fallthrough(stmt.body)) {
@@ -1231,7 +1231,7 @@ pub class Checker {
       }
       return
     }
-    if k == st_pin() {
+    if k == st_pin {
       if e = stmt.expr {
         et = check_expr(e)
         heap = et.is_string() || et.is_bytes() || et.is_buf() || et.is_array() || et.is_hash() || et.is_class() || et.is_fn() || et.is_join()
@@ -1245,8 +1245,8 @@ pub class Checker {
       }
       return
     }
-    if k == st_while() {
-      if stmt.for_kind == range_kind_pending() {
+    if k == st_while {
+      if stmt.for_kind == range_kind_pending {
         resolve_range_step(stmt)
       }
       has_pre = stmt.pre.size > 0
@@ -1343,7 +1343,7 @@ pub class Checker {
       }
       return
     }
-    if k == st_break() {
+    if k == st_break {
       if self.loop_depth == 0 {
         if self.try_in == defer_context() {
           fail(stmt.loc, defer_exit_message("break"))
@@ -1360,7 +1360,7 @@ pub class Checker {
       }
       return
     }
-    if k == st_continue() {
+    if k == st_continue {
       if self.loop_depth == 0 {
         if self.try_in == defer_context() {
           fail(stmt.loc, defer_exit_message("continue"))
@@ -1377,17 +1377,17 @@ pub class Checker {
       }
       return
     }
-    if k == st_assign() {
+    if k == st_assign {
       check_assign(stmt)
       if at_tail && !expected.is_void() {
         fail(stmt.loc, "missing return value")
       }
       return
     }
-    if k == st_expr() {
+    if k == st_expr {
       if expr = stmt.expr {
         if at_tail {
-          if expr.kind == ex_lambda() && !expected.is_void() {
+          if expr.kind == ex_lambda && !expected.is_void() {
             got = check_expr_as(expr, expected)
             return
           }
@@ -1398,15 +1398,15 @@ pub class Checker {
           }
         }
         got = t_int()
-        if expr.kind == ex_call() && expr.callee == "with" && (!at_tail || expected.is_void()) {
+        if expr.kind == ex_call && expr.callee == "with" && (!at_tail || expected.is_void()) {
           // A `with` whose value nobody uses: its block ends
           // without a value (check_mutex_with).
           self.with_drop = expr.loc.show()
         }
-        if expr.kind == ex_switch() && expr.op != tk_if() && expr.op != tk_return() && (!at_tail || expected.is_void()) {
+        if expr.kind == ex_switch && expr.op != tk_if && expr.op != tk_return && (!at_tail || expected.is_void()) {
           self.switch_stmt = true
         }
-        tail_switch = at_tail && !expected.is_void() && expr.kind == ex_switch() && expr.op != tk_return()
+        tail_switch = at_tail && !expected.is_void() && expr.kind == ex_switch && expr.op != tk_return
         if at_tail && !expected.is_void() && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
           // (an Int32 function may end in `0`).
@@ -1423,7 +1423,7 @@ pub class Checker {
         if !self.has_err() && (!at_tail || expected.is_void()) {
           refuse_dropped_error(got, stmt.loc)
         }
-        if !self.has_err() && !got.is_void() && expr.kind == ex_binary() && expr.op == tk_question_question() {
+        if !self.has_err() && !got.is_void() && expr.kind == ex_binary && expr.op == tk_question_question {
           if r = expr.right, expr_is_else_guard(r) {
             // `f() else e { ... }` as a statement is for a success that is
             // nothing (Void | E); a value is named (`v = f() else e`).
@@ -1437,7 +1437,7 @@ pub class Checker {
             // middle. A line starting with `-` or `[` there is a
             // dangling line (such a line always begins a new
             // statement), as in the middle.
-            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array() || expr.kind == ex_hash_lit()) {
+            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary || expr.kind == ex_array || expr.kind == ex_hash_lit) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else if got.is_void() && tail_switch && block_leaves([stmt]) {
@@ -1560,7 +1560,7 @@ pub class Checker {
   // `m.f` read as a value, m a module this one may qualify with and not a
   // local, a field or a parameter: m's function f (lambda.av), or nil.
   pub fn check_module_fn_value(expr: Expr, has_want: Bool, want: Ty): Ty? {
-    if obj = expr.object, obj.kind == ex_name() && obj.type_args.size == 0 {
+    if obj = expr.object, obj.kind == ex_name && obj.type_args.size == 0 {
       if v = lookup(obj.ident) {
         return nil
       }
@@ -1595,7 +1595,7 @@ pub class Checker {
   // `_ = expr`: the value is computed and dropped on purpose, an error
   // included; `_` binds nothing and cannot be read.
   pub fn check_discard(stmt: Stmt) {
-    if stmt.op != tk_eq() {
+    if stmt.op != tk_eq {
       fail(stmt.loc, "_ discards a value with _ = ...; it holds nothing to read or update")
       return
     }
@@ -1620,10 +1620,10 @@ pub class Checker {
   // leaves (`?`, `?? return`).
   pub fn no_effect(e: Expr): Bool {
     k = e.kind
-    if k == ex_int() || k == ex_float() || k == ex_bool() || k == ex_nil() || k == ex_string() || k == ex_name() || k == ex_lambda() {
+    if k == ex_int || k == ex_float || k == ex_bool || k == ex_nil || k == ex_string || k == ex_name || k == ex_lambda {
       return true
     }
-    if k == ex_interp() {
+    if k == ex_interp {
       for part in e.parts {
         if pe = part.expr, !no_effect(pe) {
           return false
@@ -1634,31 +1634,31 @@ pub class Checker {
     if e.method_call || e.resolved.size > 0 || e.op_form != 0 {
       return false
     }
-    if k == ex_field() {
+    if k == ex_field {
       if o = e.object {
         return no_effect(o)
       }
       return e.implicit_field
     }
-    if k == ex_unary() {
+    if k == ex_unary {
       if inner = e.inner {
         return no_effect(inner)
       }
       return false
     }
-    if k == ex_binary() {
+    if k == ex_binary {
       if l = e.left, r = e.right {
         return no_effect(l) && no_effect(r)
       }
       return false
     }
-    if k == ex_index() {
+    if k == ex_index {
       if o = e.left, i = e.right {
         return no_effect(o) && no_effect(i)
       }
       return false
     }
-    if k == ex_array() || k == ex_hash_lit() {
+    if k == ex_array || k == ex_hash_lit {
       for el in e.elems {
         if !no_effect(el) {
           return false
@@ -1666,7 +1666,7 @@ pub class Checker {
       }
       return true
     }
-    if k == ex_struct() {
+    if k == ex_struct {
       for fe in e.field_exprs {
         if !no_effect(fe) {
           return false
@@ -1682,7 +1682,7 @@ pub class Checker {
   // cause is the missing result, and a bare function name a missing call.
   pub fn refuse_no_effect(e: Expr, stmt: Stmt, got: Ty, at_tail: Bool) {
     at = start_loc(e)
-    if e.kind == ex_name() && e.fn_ref {
+    if e.kind == ex_name && e.fn_ref {
       fail(at, "${e.ident} alone is the function as a value; to call it, write ${e.ident}()")
       return
     }
@@ -1702,12 +1702,12 @@ pub class Checker {
   // Where an expression starts in the source: its leftmost operand's
   // position (an operator's own position is its operator's).
   pub fn start_loc(e: Expr): Location {
-    if e.kind == ex_binary() || e.kind == ex_index() {
+    if e.kind == ex_binary || e.kind == ex_index {
       if l = e.left {
         return start_loc(l)
       }
     }
-    if e.kind == ex_field() {
+    if e.kind == ex_field {
       if o = e.object {
         return start_loc(o)
       }
@@ -1718,7 +1718,7 @@ pub class Checker {
   // After "cannot bind a Void value": the called function's name when it
   // was declared with no result type (`fn two { 2 }`), the likely cause.
   pub fn void_callee_note(value: Expr): String {
-    if value.kind != ex_call() || value.resolved.size == 0 {
+    if value.kind != ex_call || value.resolved.size == 0 {
       return ""
     }
     for sig in self.functions {
@@ -1853,7 +1853,7 @@ pub class Checker {
   }
 
   pub fn check_assign(stmt: Stmt) {
-    if t0 = stmt.target, t0.kind == ex_name() && t0.ident == "_" {
+    if t0 = stmt.target, t0.kind == ex_name && t0.ident == "_" {
       check_discard(stmt)
       return
     }
@@ -1871,7 +1871,7 @@ pub class Checker {
       }
       return
     }
-    if t2 = stmt.target, t2.kind == ex_name() && self.place_names.size > 0 && place_at(t2.ident) >= 0 {
+    if t2 = stmt.target, t2.kind == ex_name && self.place_names.size > 0 && place_at(t2.ident) >= 0 {
       // `p = other` on the element itself: a whole-element store, the
       // index of the walk taking the value (checker/places.av).
       mark = self.err_count()
@@ -1887,7 +1887,7 @@ pub class Checker {
   }
 
   pub fn check_assign_stmt(stmt: Stmt) {
-    if stmt.op != tk_eq() {
+    if stmt.op != tk_eq {
       check_compound_assign(stmt)
       return
     }
@@ -1895,7 +1895,7 @@ pub class Checker {
       if refuse_const_write(target) {
         return
       }
-      if target.kind == ex_name() {
+      if target.kind == ex_name {
         if target.ident == "self" {
           fail(stmt.loc, "cannot assign to self")
           return
@@ -1917,7 +1917,7 @@ pub class Checker {
             return
           }
           early = false
-          if value.kind == ex_lambda() {
+          if value.kind == ex_lambda {
             bind(target.ident, want)
             target.ty = want
             early = true
@@ -1968,7 +1968,7 @@ pub class Checker {
         fail(stmt.loc, "type annotation only belongs on a new name")
         return
       }
-      if target.kind == ex_index() {
+      if target.kind == ex_index {
         if arr = target.left, ix = target.right {
           self.carray_ok = true
           container = check_expr(arr)
@@ -1979,7 +1979,7 @@ pub class Checker {
               set_args = index_args(target)
               set_args.push(value)
               call = op_method_call(target.loc, arr, "[]=", set_args)
-              stmt.kind = st_expr()
+              stmt.kind = st_expr
               stmt.expr = call
               stmt.target = nil
               stmt.value = nil
@@ -2020,11 +2020,11 @@ pub class Checker {
       self.target_expr = target
       place = check_expr(target)
       self.target_expr = nil
-      if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
+      if (target.kind == ex_field && target.method_call) || target.kind == ex_call {
         fail(stmt.loc, "cannot assign to a method")
         return
       }
-      if target.kind == ex_name() && target.implicit_field {
+      if target.kind == ex_name && target.implicit_field {
         refuse_bare_field_write(target, stmt.loc)
         return
       }
@@ -2054,11 +2054,11 @@ pub class Checker {
       return
     }
     read = clone_expr(target)
-    opx = Expr.new(ex_binary(), stmt.loc)
+    opx = Expr.new(ex_binary, stmt.loc)
     opx.op = binop
     opx.left = read
     opx.right = value
-    stmt.op = tk_eq()
+    stmt.op = tk_eq
     stmt.value = opx
     check_assign_stmt(stmt)
   }
@@ -2067,19 +2067,19 @@ pub class Checker {
   // twice in a row: a name, a field of such a place, an element of one at
   // a name or a literal.
   pub fn simple_place(e: Expr): Bool {
-    if e.kind == ex_name() {
+    if e.kind == ex_name {
       return true
     }
-    if e.kind == ex_field() && !e.method_call {
+    if e.kind == ex_field && !e.method_call {
       if o = e.object {
         return simple_place(o)
       }
       return false
     }
-    if e.kind == ex_index() {
+    if e.kind == ex_index {
       if l = e.left {
         for x in index_args(e) {
-          if !(x.kind == ex_name() || x.kind == ex_int()) {
+          if !(x.kind == ex_name || x.kind == ex_int) {
             return false
           }
         }
@@ -2098,7 +2098,7 @@ pub class Checker {
       if refuse_const_write(target) {
         return
       }
-      if target.kind == ex_name() {
+      if target.kind == ex_name {
         if target.ident == "self" {
           fail(stmt.loc, "cannot assign to self")
           return
@@ -2109,27 +2109,27 @@ pub class Checker {
       place = check_expr(target)
       self.target_expr = nil
       binop = compound_binop(stmt.op)
-      if target.kind == ex_call() && target.callee == "[]" && orig.kind == ex_index() {
+      if target.kind == ex_call && target.callee == "[]" && orig.kind == ex_index {
         // `c[i] op= v` on a type with [] and []=: `c[i] = c[i] op v`.
         if !simple_place(orig) {
           fail(stmt.loc, "compound assignment to an element of a type's [] needs an index read without side effects (a name or a literal); write the assignment out: c[i] = c[i] ${fn_op_name(binop)} v")
           return
         }
-        opx = Expr.new(ex_binary(), stmt.loc)
+        opx = Expr.new(ex_binary, stmt.loc)
         opx.op = binop
         opx.left = target
         opx.right = value
-        stmt.op = tk_eq()
+        stmt.op = tk_eq
         stmt.target = orig
         stmt.value = opx
         check_assign_stmt(stmt)
         return
       }
-      if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
+      if (target.kind == ex_field && target.method_call) || target.kind == ex_call {
         fail(stmt.loc, "cannot assign to a method")
         return
       }
-      if target.kind == ex_name() && target.implicit_field {
+      if target.kind == ex_name && target.implicit_field {
         refuse_bare_field_write(target, stmt.loc)
         return
       }
@@ -2148,7 +2148,7 @@ pub class Checker {
         fail(stmt.loc, "compound assignment ${compound_text(stmt.op)} needs ${place.show()} to define fn ${fn_op_name(binop)}")
         return
       }
-      if place.is_string() && binop == tk_plus() {
+      if place.is_string() && binop == tk_plus {
         // `s += t` is `s = s + t`: a new string.
         compound_through_method(stmt, target, value, binop, place)
         return
@@ -2171,7 +2171,7 @@ pub class Checker {
       }
       // The operator's own rules (`%=` and the bitwise forms on integers
       // only, a shift's amount), checked as the binary expression is.
-      opx = Expr.new(ex_binary(), stmt.loc)
+      opx = Expr.new(ex_binary, stmt.loc)
       opx.op = binop
       res = binary_typed(opx, target, value, binop, place, got)
       if self.has_err() {
@@ -2181,25 +2181,25 @@ pub class Checker {
         fail(stmt.loc, "cannot assign ${res.show()} to ${place.show()}")
         return
       }
-      if binop == tk_percent() || shift_op(binop) || bitwise_op(binop) {
+      if binop == tk_percent || shift_op(binop) || bitwise_op(binop) {
         stmt.proven = opx.proven
       }
-      if target.kind == ex_name() {
-        if value.kind == ex_int() {
-          if stmt.op == tk_plus_eq() {
+      if target.kind == ex_name {
+        if value.kind == ex_int {
+          if stmt.op == tk_plus_eq {
             s = fact_any_slack(target.ident)
             if s >= 0 && value.int_bits <= s.to_u64() + 1 {
               stmt.proven = true
             }
           }
-          if stmt.op == tk_minus_eq() && (fact_any_slack(target.ident) >= 0 || nn_has(target.ident)) {
+          if stmt.op == tk_minus_eq && (fact_any_slack(target.ident) >= 0 || nn_has(target.ident)) {
             stmt.proven = true
           }
         }
-        if (stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq()) && compound_proven(stmt.op, target.ident, value, place) {
+        if (stmt.op == tk_plus_eq || stmt.op == tk_minus_eq || stmt.op == tk_star_eq) && compound_proven(stmt.op, target.ident, value, place) {
           stmt.proven = true
         }
-        if stmt.op == tk_slash_eq() && divisor_proven(value) {
+        if stmt.op == tk_slash_eq && divisor_proven(value) {
           stmt.proven = true
         }
       }
@@ -2236,62 +2236,62 @@ pub class Checker {
 
   pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
-    if k == ex_name() || k == ex_field() || k == ex_call() {
+    if k == ex_name || k == ex_field || k == ex_call {
       qualify_last_name(expr)
     }
     // Only the expression a C array's reader names directly may be one.
     carray_flag = self.carray_ok
     self.carray_ok = false
-    if k == ex_field() && layout_size_form(expr) {
+    if k == ex_field && layout_size_form(expr) {
       return check_integer(expr, has_want, want)
     }
-    if k == ex_int() {
+    if k == ex_int {
       return check_integer(expr, has_want, want)
     }
-    if k == ex_float() {
+    if k == ex_float {
       return t_float()
     }
-    if k == ex_string() {
+    if k == ex_string {
       return t_string()
     }
-    if k == ex_bool() {
+    if k == ex_bool {
       return t_bool()
     }
-    if k == ex_nil() {
+    if k == ex_nil {
       return t_nil()
     }
-    if k == ex_void() {
+    if k == ex_void {
       return t_void()
     }
-    if k == ex_name() {
+    if k == ex_name {
       return check_name(expr, has_want, want)
     }
-    if k == ex_enum_lit() {
+    if k == ex_enum_lit {
       return check_enum_lit(expr, has_want, want)
     }
-    if k == ex_const_ref() {
+    if k == ex_const_ref {
       return const_ref_ty(expr)
     }
-    if k == ex_lambda() {
+    if k == ex_lambda {
       return check_lambda(expr, has_want, want)
     }
-    if k == ex_call() {
+    if k == ex_call {
       if b0 = expr.bare_name {
         // `T.new` written without parentheses.
         bare_call(expr, b0, "new")
       }
       return check_call(expr, has_want, want)
     }
-    if k == ex_unary() {
+    if k == ex_unary {
       return check_unary(expr, has_want, want)
     }
-    if k == ex_binary() {
+    if k == ex_binary {
       return check_binary(expr, has_want, want)
     }
-    if k == ex_switch() {
+    if k == ex_switch {
       return check_switch(expr, has_want, want)
     }
-    if k == ex_field() {
+    if k == ex_field {
       if inline_const(expr) {
         return check_expr_core(expr, has_want, want)
       }
@@ -2310,32 +2310,32 @@ pub class Checker {
       }
       return got_field
     }
-    if k == ex_struct() {
+    if k == ex_struct {
       return check_struct_literal(expr, has_want, want)
     }
-    if k == ex_index() {
+    if k == ex_index {
       return check_index(expr)
     }
-    if k == ex_array_new() {
+    if k == ex_array_new {
       return check_array_new(expr)
     }
-    if k == ex_array() {
+    if k == ex_array {
       return check_array_literal(expr, has_want, want)
     }
-    if k == ex_hash_lit() {
+    if k == ex_hash_lit {
       return check_hash_literal(expr, has_want, want)
     }
-    if k == ex_hash_new() {
+    if k == ex_hash_new {
       if b0 = expr.bare_name {
         // `Hash(K, V).new` written without parentheses.
         bare_call(expr, b0, "new")
       }
       return check_hash_new(expr)
     }
-    if k == ex_try() {
+    if k == ex_try {
       return check_try(expr)
     }
-    if k == ex_interp() {
+    if k == ex_interp {
       return check_interp(expr)
     }
     fail(expr.loc, "unknown expression")
@@ -2430,17 +2430,17 @@ pub class Checker {
     }
     last = body[body.size - 1]
     k = last.kind
-    if k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(last) {
+    if k == st_return || k == st_break || k == st_continue || ast_stmt_exits(last) {
       return true
     }
-    if k == st_hold() || k == st_pin() {
+    if k == st_hold || k == st_pin {
       return block_leaves(last.body)
     }
-    if k == st_if() {
+    if k == st_if {
       return last.else_body.size > 0 && block_leaves(last.then_body) && block_leaves(last.else_body)
     }
-    if k == st_expr() {
-      if e = last.expr, e.kind == ex_switch() && e.op != tk_return() && e.op != tk_if() {
+    if k == st_expr {
+      if e = last.expr, e.kind == ex_switch && e.op != tk_return && e.op != tk_if {
         for cs in e.cases {
           if !block_leaves(cs.body) {
             return false
@@ -2473,7 +2473,7 @@ pub class Checker {
 
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
     fails = ty_failures(left)
-    if right_expr.kind == ex_switch() && right_expr.op == tk_return() {
+    if right_expr.kind == ex_switch && right_expr.op == tk_return {
       // `x ?? return v`, `?? break`, `?? continue`: the statement runs
       // on any failure and leaves; the value is the success part.
       payload = ty_without_nil(left)
@@ -2501,7 +2501,7 @@ pub class Checker {
       return payload
     }
     payload = ty_without_nil(left)
-    if right_expr.kind == ex_nil() {
+    if right_expr.kind == ex_nil {
       check_expr(right_expr)
       return left
     }
@@ -2660,7 +2660,7 @@ pub class Checker {
           // An error prints its message: the part becomes the call of
           // the method the parser added to the type (parser.av
           // error_text_method); inner is checked once.
-          fa = Expr.new(ex_field(), inner.loc)
+          fa = Expr.new(ex_field, inner.loc)
           fa.object = inner
           fa.ident = "__avant_error_text"
           arg_tys: Array(Ty) = []
@@ -2723,7 +2723,7 @@ pub class Checker {
   // the text interpolation prints; nil, with the error given, when the
   // method is not that signature.
   pub fn own_text_call(inner: Expr, ty: Ty): Expr? {
-    fa = Expr.new(ex_field(), inner.loc)
+    fa = Expr.new(ex_field, inner.loc)
     fa.object = inner
     fa.ident = "to_s"
     arg_tys: Array(Ty) = []
@@ -2745,7 +2745,7 @@ pub class Checker {
   // (an enum marked Error: its error text), checked; inner is checked
   // already.
   pub fn enum_text_call(inner: Expr, ty: Ty): Expr? {
-    fa = Expr.new(ex_field(), inner.loc)
+    fa = Expr.new(ex_field, inner.loc)
     fa.object = inner
     fa.ident = "name"
     if ty.error_mark {
@@ -2813,7 +2813,7 @@ pub class Checker {
   // reads "no method name on T".
   pub fn field_as_call(expr: Expr, object: Ty): Ty {
     if obj = expr.object {
-      expr.kind = ex_call()
+      expr.kind = ex_call
       expr.callee = expr.ident
       expr.receiver = obj
       expr.object = nil
@@ -2892,12 +2892,12 @@ pub class Checker {
   // call becomes: `n.to_s` is the interpolation "${n}"), or marked it
   // one; a builtin read-only property (`size`, `bytes`) is not one.
   pub fn member_is_call(expr: Expr): Bool {
-    if expr.kind == ex_int() || expr.kind == ex_float() || expr.kind == ex_unary() {
+    if expr.kind == ex_int || expr.kind == ex_float || expr.kind == ex_unary {
       // A C array's `.size`, or a type's constant (`Int.min`,
       // `Float64.pi`), written in place as its literal.
       return false
     }
-    if expr.kind == ex_call() && expr.callee == "message" && expr.args.size == 0 {
+    if expr.kind == ex_call && expr.callee == "message" && expr.args.size == 0 {
       // An error's message is read as `e.message` on every type marked
       // Error, whether the type keeps it in a field or computes it in a
       // method: the one thing every error has, spelled one way.
@@ -2905,7 +2905,7 @@ pub class Checker {
         return false
       }
     }
-    if expr.kind != ex_field() {
+    if expr.kind != ex_field {
       return true
     }
     if !expr.method_call {
@@ -2945,7 +2945,7 @@ pub class Checker {
   // its magnitude, as `-9223372036854775808` is written); nil for any
   // other name.
   pub fn builtin_type_constant(obj: Expr, expr: Expr): Ty? {
-    if obj.kind != ex_name() || obj.type_args.size > 0 {
+    if obj.kind != ex_name || obj.type_args.size > 0 {
       return nil
     }
     if v = lookup(obj.ident) {
@@ -2954,7 +2954,7 @@ pub class Checker {
     n = obj.ident
     f = expr.ident
     if n == "Float64" && (f == "pi" || f == "e") {
-      expr.kind = ex_float()
+      expr.kind = ex_float
       expr.object = nil
       if f == "pi" {
         expr.float_val = 3.141592653589793
@@ -2972,11 +2972,11 @@ pub class Checker {
     max = 9223372036854775807u64
     min = 9223372036854775808u64
     if n == "Int32" {
-      ty = Ty.new(tyk_int32())
+      ty = Ty.new(tyk_int32)
       max = 2147483647u64
       min = 2147483648u64
     } else if n == "UInt32" {
-      ty = Ty.new(tyk_uint32())
+      ty = Ty.new(tyk_uint32)
       max = 4294967295u64
       min = 0u64
     } else if n == "UInt64" {
@@ -2988,18 +2988,18 @@ pub class Checker {
     }
     expr.object = nil
     if f == "max" || min == 0 {
-      expr.kind = ex_int()
+      expr.kind = ex_int
       expr.int_bits = max
       if f == "min" {
         expr.int_bits = 0
       }
       return ty
     }
-    mag = Expr.new(ex_int(), expr.loc)
+    mag = Expr.new(ex_int, expr.loc)
     mag.int_bits = min
     mag.ty = ty
-    expr.kind = ex_unary()
-    expr.op = tk_minus()
+    expr.kind = ex_unary
+    expr.op = tk_minus
     expr.inner = mag
     ty
   }
@@ -3025,13 +3025,13 @@ pub class Checker {
         // A type-level function in field form (`Money.zero`, declared
         // `fn self.zero: Money`), as a method without parameters is called
         // `a.twice`: the expression becomes that call.
-        expr.kind = ex_call()
+        expr.kind = ex_call
         expr.callee = expr.ident
         expr.receiver = obj
         expr.object = nil
         return check_type_call(expr, ty)
       }
-      if obj.kind == ex_name() && obj.type_args.size > 0 {
+      if obj.kind == ex_name && obj.type_args.size > 0 {
         if is_generic_template_in(obj.ident, obj.mod_name) {
           take_type_app(obj)
         } else {
@@ -3050,7 +3050,7 @@ pub class Checker {
         return t_int()
       }
       mark = err_count()
-      self.recv_name = obj.kind == ex_name()
+      self.recv_name = obj.kind == ex_name
       self.recv_type = ""
       self.carray_ok = expr.ident == "size"
       object = check_expr(obj)
@@ -3059,7 +3059,7 @@ pub class Checker {
       if object.is_carray() {
         if expr.ident == "size" {
           // `r.vtype.size`: N, a constant.
-          expr.kind = ex_int()
+          expr.kind = ex_int
           expr.int_bits = object.count.to_u64()
           expr.object = nil
           return t_int()
@@ -3356,7 +3356,7 @@ pub class Checker {
       }
     }
     if ty.is_union() {
-      if !ty_walk_enter(ty, wk_clayout()) {
+      if !ty_walk_enter(ty, wk_clayout) {
         return ""
       }
       found = ""
@@ -3365,7 +3365,7 @@ pub class Checker {
         found = clayout_value_name(ty.members[i])
         i += 1
       }
-      ty_walk_leave(ty, wk_clayout())
+      ty_walk_leave(ty, wk_clayout)
       return found
     }
     ""
@@ -3410,7 +3410,7 @@ pub class Checker {
   pub fn check_release(e: Expr, et: Ty) {
     in_c = false
     name = ""
-    if e.kind == ex_field() && !e.method_call {
+    if e.kind == ex_field && !e.method_call {
       if obj = e.object, ot = obj.ty {
         in_c = ot.is_ptr() || ot.is_clayout()
       }
@@ -3463,7 +3463,7 @@ pub class Checker {
   // its arguments, and the MIR verifier stopped the build).
   pub fn paren_call_of(expr: Expr): Ty {
     if recv = expr.object {
-      expr.kind = ex_call()
+      expr.kind = ex_call
       expr.callee = expr.ident
       expr.receiver = recv
       expr.object = nil
@@ -3500,7 +3500,7 @@ pub class Checker {
   // The type name an argument written as a type spells (`Pair`, `UInt8`,
   // `Ptr(Node)`, `Ptr(Node)?`, `mod.Pair`), or nil.
   pub fn expr_type_name(e: Expr): TypeName? {
-    if e.kind == ex_try() {
+    if e.kind == ex_try {
       // `Ptr(Node)?` reads as a `?` after the type: an optional pointer.
       if i = e.inner, tn0 = expr_type_name(i) {
         tn0.nilable = true
@@ -3508,18 +3508,18 @@ pub class Checker {
       }
       return nil
     }
-    if e.kind == ex_name() && e.type_args.size == 0 {
+    if e.kind == ex_name && e.type_args.size == 0 {
       tn = TypeName.new(e.loc, e.ident)
       tn.mod_name = e.mod_name
       return tn
     }
-    if e.kind == ex_name() && e.type_args.size > 0 {
+    if e.kind == ex_name && e.type_args.size > 0 {
       tn2 = TypeName.new(e.loc, e.ident)
       tn2.mod_name = e.mod_name
       tn2.args.concat(e.type_args)
       return tn2
     }
-    if e.kind == ex_call() && e.args.size == 1 {
+    if e.kind == ex_call && e.args.size == 1 {
       if r = e.receiver {
         return nil
       }
@@ -3626,18 +3626,18 @@ pub class Checker {
 
   pub fn check_index(expr: Expr): Ty {
     if arr = expr.left, ix = expr.right {
-      if arr.kind == ex_name() && !arr.implicit_field {
+      if arr.kind == ex_name && !arr.implicit_field {
         cont = arr.ident
-        if ix.kind == ex_name() {
+        if ix.kind == ex_name {
           fi = fact_best(ix.ident, cont)
           if fi >= 0 {
             expr.proven = true
             log_use(fi, expr)
           }
-        } else if ix.kind == ex_binary() {
-          if ix.op == tk_plus() {
+        } else if ix.kind == ex_binary {
+          if ix.op == tk_plus {
             if il = ix.left, ir = ix.right {
-              if il.kind == ex_name() && lit_small(ir) {
+              if il.kind == ex_name && lit_small(ir) {
                 fi = fact_best(il.ident, cont)
                 if fi >= 0 && ir.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
@@ -3645,7 +3645,7 @@ pub class Checker {
                   log_use(fi, expr)
                 }
               }
-              if ir.kind == ex_name() && lit_small(il) {
+              if ir.kind == ex_name && lit_small(il) {
                 fi = fact_best(ir.ident, cont)
                 if fi >= 0 && il.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
@@ -3657,8 +3657,8 @@ pub class Checker {
           }
         }
       }
-      if ix.kind == ex_binary() && (ix.op == tk_plus() || ix.op == tk_minus()) {
-        if il = ix.left, ir = ix.right, il.kind == ex_int() || ir.kind == ex_int() {
+      if ix.kind == ex_binary && (ix.op == tk_plus || ix.op == tk_minus) {
+        if il = ix.left, ir = ix.right, il.kind == ex_int || ir.kind == ex_int {
           ix.proven = true
         }
       }
@@ -3755,7 +3755,7 @@ pub class Checker {
       // One value for every element: when it is a reference to an
       // object that can change, the elements would share that object
       // (a grid built this way had one row). `nil` shares nothing.
-      if !self.has_err() && expr.elems[0].kind != ex_nil() && type.ty_holds_mutable_ref(elem) {
+      if !self.has_err() && expr.elems[0].kind != ex_nil && type.ty_holds_mutable_ref(elem) {
         fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n, (i) { ... })")
       }
     } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
@@ -3916,7 +3916,7 @@ pub class Checker {
   // only then, so a failed operand reports once).
   pub fn set_for_operand(pre: Stmt) {
     if v = pre.value, t = pre.target, st = lookup(t.ident), st.is_set() {
-      call = Expr.new(ex_call(), v.loc)
+      call = Expr.new(ex_call, v.loc)
       call.callee = "values"
       call.receiver = v
       pre.value = call
@@ -4453,10 +4453,10 @@ pub class Checker {
       if self.lam_exprs.size > 0 {
         // Inside a lambda a bare field reads it through the captured
         // receiver: the name becomes self.name.
-        r0 = Expr.new(ex_name(), expr.loc)
+        r0 = Expr.new(ex_name, expr.loc)
         r0.ident = self.self_name
         dummy0 = check_expr(r0)
-        expr.kind = ex_field()
+        expr.kind = ex_field
         expr.object = r0
         return field_ty
       }
@@ -4471,7 +4471,7 @@ pub class Checker {
     }
     // A bare method name is a call on the receiver.
     if r = bare_method_call(expr, expr.ident, 0) {
-      expr.kind = ex_call()
+      expr.kind = ex_call
       expr.callee = expr.ident
       expr.receiver = r
       if b0 = expr.bare_name {
@@ -4632,20 +4632,20 @@ pub class Checker {
   // An integer literal, or a negated one: its type adopts the other
   // operand's.
   pub fn is_int_literal(e: Expr): Bool {
-    if e.kind == ex_int() {
+    if e.kind == ex_int {
       return true
     }
     // A constant is its value written as a literal (checker/consts.av),
     // so it adopts the other operand's type as one.
-    if (e.kind == ex_name() || e.kind == ex_field()) && inline_const(e) {
+    if (e.kind == ex_name || e.kind == ex_field) && inline_const(e) {
       return is_int_literal(e)
     }
-    if e.kind == ex_unary() && e.op == tk_minus() {
+    if e.kind == ex_unary && e.op == tk_minus {
       if inner = e.inner {
-        if (inner.kind == ex_name() || inner.kind == ex_field()) && inline_const(inner) {
-          return inner.kind == ex_int()
+        if (inner.kind == ex_name || inner.kind == ex_field) && inline_const(inner) {
+          return inner.kind == ex_int
         }
-        return inner.kind == ex_int()
+        return inner.kind == ex_int
       }
     }
     false
@@ -4659,13 +4659,13 @@ pub class Checker {
     if is_int_literal(e) {
       return true
     }
-    if e.kind == ex_unary() && (e.op == tk_minus() || e.op == tk_tilde()) {
+    if e.kind == ex_unary && (e.op == tk_minus || e.op == tk_tilde) {
       if inner = e.inner {
         return is_lit_expr(inner)
       }
       return false
     }
-    if e.kind == ex_binary() && (arith_op(e.op) || shift_op(e.op)) {
+    if e.kind == ex_binary && (arith_op(e.op) || shift_op(e.op)) {
       if l = e.left, r = e.right {
         return is_lit_expr(l) && is_lit_expr(r)
       }
@@ -4675,7 +4675,7 @@ pub class Checker {
 
   // `[]` written with no element, or `[:]`.
   pub fn is_empty_array(e: Expr): Bool {
-    (e.kind == ex_array() || e.kind == ex_hash_lit()) && e.elems.size == 0
+    (e.kind == ex_array || e.kind == ex_hash_lit) && e.elems.size == 0
   }
 
   // The stand-in of `[:]` as `empty_array_ty` is of `[]`: a hash of Void
@@ -4700,7 +4700,7 @@ pub class Checker {
   // The stand-in type of a `:name` argument before its parameter is
   // known: an enum without members named `:name`, which no value has.
   pub fn enum_lit_arg_ty(name: String): Ty {
-    t = Ty.new(tyk_enum())
+    t = Ty.new(tyk_enum)
     t.name = ":${name}"
     t
   }
@@ -4751,7 +4751,7 @@ pub class Checker {
   // A call's argument, checked before the call picks its function: a bare
   // integer literal may be above Int's range (the parameter decides).
   pub fn check_call_arg(e: Expr): Ty {
-    if e.kind == ex_enum_lit() {
+    if e.kind == ex_enum_lit {
       // `:name` takes its parameter's enum (fit_call_arg).
       return enum_lit_arg_ty(e.ident)
     }
@@ -4759,12 +4759,12 @@ pub class Checker {
       // `[]` takes its parameter's type (fit_call_arg); until the call
       // picks its function it stands for an array of any element (`[:]`
       // for a hash of any key and value).
-      if e.kind == ex_hash_lit() {
+      if e.kind == ex_hash_lit {
         return empty_hash_ty()
       }
       return empty_array_ty()
     }
-    if e.kind == ex_array() && e.elems.size > 0 {
+    if e.kind == ex_array && e.elems.size > 0 {
       // `[1, 2]` may still become the Set its parameter asks for: its
       // type is marked as a literal's until the call picks its function.
       got = check_expr(e)
@@ -4777,7 +4777,7 @@ pub class Checker {
       }
       return got
     }
-    if e.kind != ex_int() {
+    if e.kind != ex_int {
       return check_expr(e)
     }
     saved = self.lit_arg
@@ -4790,7 +4790,7 @@ pub class Checker {
   // A call of the operator method name on recv with args, for an operator
   // a type defines (`c[i]`, `c[i] = v`, `-x`).
   pub fn op_method_call(loc: Location, recv: Expr, name: String, args: Array(Expr)): Expr {
-    call = Expr.new(ex_call(), loc)
+    call = Expr.new(ex_call, loc)
     call.callee = name
     call.receiver = recv
     call.args = args
@@ -4809,7 +4809,7 @@ pub class Checker {
 
   // expr, in place, becomes the call of the operator method name on recv.
   pub fn rewrite_op_call(expr: Expr, recv: Expr, name: String, args: Array(Expr)) {
-    expr.kind = ex_call()
+    expr.kind = ex_call
     expr.callee = name
     expr.receiver = recv
     expr.args = args
@@ -4822,7 +4822,7 @@ pub class Checker {
   }
 
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if expr.op == tk_amp() {
+    if expr.op == tk_amp {
       // `&x` was checked with the C call it is an argument of
       // (check_out_args); anywhere else it is refused.
       if t = expr.ty, expr.proven {
@@ -4832,20 +4832,20 @@ pub class Checker {
       return t_int()
     }
     if inner = expr.inner {
-      if inner.kind == ex_name() || inner.kind == ex_field() {
+      if inner.kind == ex_name || inner.kind == ex_field {
         _ = inline_const(inner)
       }
-      if expr.op == tk_minus() && inner.kind == ex_int() {
+      if expr.op == tk_minus && inner.kind == ex_int {
         return check_negated_literal(expr, inner, has_want, want)
       }
       got = t_int()
-      if has_want && (want.is_integer() || (want.is_float() && expr.op == tk_minus())) && is_lit_expr(inner) {
+      if has_want && (want.is_integer() || (want.is_float() && expr.op == tk_minus)) && is_lit_expr(inner) {
         // `-(2 - 1)` and `~0` take their context's type (`u: UInt64 = ~0`).
         got = check_expr_as(inner, want)
       } else {
         got = check_expr(inner)
       }
-      if expr.op == tk_minus() {
+      if expr.op == tk_minus {
         if got.is_unsigned() {
           // As a negated literal is: an unsigned type has no negatives.
           fail(expr.loc, "unary minus of an unsigned value: ${got.show()} has no negative values (to wrap, write 0 &- x)")
@@ -4863,14 +4863,14 @@ pub class Checker {
         fail(expr.loc, "unary minus expects Int or Float64")
         return t_int()
       }
-      if expr.op == tk_bang() {
+      if expr.op == tk_bang {
         if got.is_bool() {
           return t_bool()
         }
         fail(expr.loc, "! expects Bool")
         return t_bool()
       }
-      if expr.op == tk_tilde() {
+      if expr.op == tk_tilde {
         if got.is_integer() {
           return got
         }
@@ -4884,38 +4884,38 @@ pub class Checker {
   }
 
   pub fn bitwise_op(op: Int): Bool {
-    if op == tk_amp() {
+    if op == tk_amp {
       return true
     }
-    if op == tk_pipe() {
+    if op == tk_pipe {
       return true
     }
-    if op == tk_caret() {
+    if op == tk_caret {
       return true
     }
-    if op == tk_less_less() {
+    if op == tk_less_less {
       return true
     }
-    op == tk_greater_greater()
+    op == tk_greater_greater
   }
 
   // + - * / % & | ^ and the wrapping operators: their result is their
   // operands' type.
   pub fn arith_op(op: Int): Bool {
-    if op == tk_plus() || op == tk_minus() || op == tk_star() || op == tk_slash() || op == tk_percent() {
+    if op == tk_plus || op == tk_minus || op == tk_star || op == tk_slash || op == tk_percent {
       return true
     }
-    if op == tk_amp() || op == tk_pipe() || op == tk_caret() {
+    if op == tk_amp || op == tk_pipe || op == tk_caret {
       return true
     }
-    op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star()
+    op == tk_amp_plus || op == tk_amp_minus || op == tk_amp_star
   }
 
   pub fn shift_op(op: Int): Bool {
-    if op == tk_less_less() {
+    if op == tk_less_less {
       return true
     }
-    op == tk_greater_greater()
+    op == tk_greater_greater
   }
 
   // A shift by a literal amount outside 0..width - 1 (a negated literal
@@ -4924,13 +4924,13 @@ pub class Checker {
   pub fn check_shift_amount(r: Expr, left: Ty, loc: Location) {
     neg = false
     lit = r
-    if r.kind == ex_unary() && r.op == tk_minus() {
-      if inner = r.inner, inner.kind == ex_int() {
+    if r.kind == ex_unary && r.op == tk_minus {
+      if inner = r.inner, inner.kind == ex_int {
         neg = true
         lit = inner
       }
     }
-    if lit.kind != ex_int() {
+    if lit.kind != ex_int {
       return
     }
     top = 63u64
@@ -4949,34 +4949,34 @@ pub class Checker {
   }
 
   pub fn int_binary(op: Int, ty: Ty): Ty {
-    if op == tk_plus() {
+    if op == tk_plus {
       return ty
     }
-    if op == tk_minus() {
+    if op == tk_minus {
       return ty
     }
-    if op == tk_star() {
+    if op == tk_star {
       return ty
     }
-    if op == tk_slash() {
+    if op == tk_slash {
       return ty
     }
-    if op == tk_eq_eq() {
+    if op == tk_eq_eq {
       return t_bool()
     }
-    if op == tk_not_eq() {
+    if op == tk_not_eq {
       return t_bool()
     }
-    if op == tk_less() {
+    if op == tk_less {
       return t_bool()
     }
-    if op == tk_less_eq() {
+    if op == tk_less_eq {
       return t_bool()
     }
-    if op == tk_greater() {
+    if op == tk_greater {
       return t_bool()
     }
-    if op == tk_greater_eq() {
+    if op == tk_greater_eq {
       return t_bool()
     }
     fail(self.program.loc, "unsupported operator")
@@ -4984,34 +4984,34 @@ pub class Checker {
   }
 
   pub fn float_binary(op: Int, loc: Location): Ty {
-    if op == tk_plus() {
+    if op == tk_plus {
       return t_float()
     }
-    if op == tk_minus() {
+    if op == tk_minus {
       return t_float()
     }
-    if op == tk_star() {
+    if op == tk_star {
       return t_float()
     }
-    if op == tk_slash() {
+    if op == tk_slash {
       return t_float()
     }
-    if op == tk_eq_eq() {
+    if op == tk_eq_eq {
       return t_bool()
     }
-    if op == tk_not_eq() {
+    if op == tk_not_eq {
       return t_bool()
     }
-    if op == tk_less() {
+    if op == tk_less {
       return t_bool()
     }
-    if op == tk_less_eq() {
+    if op == tk_less_eq {
       return t_bool()
     }
-    if op == tk_greater() {
+    if op == tk_greater {
       return t_bool()
     }
-    if op == tk_greater_eq() {
+    if op == tk_greater_eq {
       return t_bool()
     }
     fail(loc, "unsupported operator on Float64")
@@ -5021,7 +5021,7 @@ pub class Checker {
   pub fn check_binary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if l = expr.left, r = expr.right {
       op = expr.op
-      if op == tk_question_question() {
+      if op == tk_question_question {
         if expr_is_else_guard(r) {
           return check_else_guard(l, r)
         }
@@ -5035,7 +5035,7 @@ pub class Checker {
         }
         return left
       }
-      if op == tk_amp_amp() {
+      if op == tk_amp_amp {
         left = check_expr(l)
         right = check_expr(r)
         if left.is_bool() && right.is_bool() {
@@ -5044,7 +5044,7 @@ pub class Checker {
         fail(expr.loc, "&& expects Bool operands")
         return t_bool()
       }
-      if op == tk_pipe_pipe() {
+      if op == tk_pipe_pipe {
         left = check_expr(l)
         right = check_expr(r)
         if left.is_bool() && right.is_bool() {
@@ -5054,12 +5054,12 @@ pub class Checker {
         return t_bool()
       }
       // `t == :write`: the short member takes the other operand's enum.
-      if (op == tk_eq_eq() || op == tk_not_eq()) && (l.kind == ex_enum_lit()) != (r.kind == ex_enum_lit()) {
-        known = if l.kind == ex_enum_lit() { r } else { l }
-        short = if l.kind == ex_enum_lit() { l } else { r }
+      if (op == tk_eq_eq || op == tk_not_eq) && (l.kind == ex_enum_lit) != (r.kind == ex_enum_lit) {
+        known = if l.kind == ex_enum_lit { r } else { l }
+        short = if l.kind == ex_enum_lit { l } else { r }
         kt = check_expr(known)
         st = check_expr_as(short, kt)
-        if l.kind == ex_enum_lit() {
+        if l.kind == ex_enum_lit {
           return binary_typed(expr, l, r, op, st, kt)
         }
         return binary_typed(expr, l, r, op, kt, st)
@@ -5123,14 +5123,14 @@ pub class Checker {
     // Two values of one enum compare with == and !=; an enum has no
     // order and no arithmetic, and is never a number.
     if left.is_enum() && right.is_enum() && left.same_as(right) {
-      if op == tk_eq_eq() || op == tk_not_eq() {
+      if op == tk_eq_eq || op == tk_not_eq {
         return t_bool()
       }
       fail(expr.loc, "only == and != apply to ${left.show()}: an enum has no order and no arithmetic")
       return t_bool()
     }
     if left.is_enum() || right.is_enum() {
-      if op == tk_eq_eq() || op == tk_not_eq() {
+      if op == tk_eq_eq || op == tk_not_eq {
         fail(expr.loc, "cannot compare ${left.show()} with ${right.show()}: == and != compare two values of one enum")
       } else {
         et = left
@@ -5142,37 +5142,37 @@ pub class Checker {
       return t_bool()
     }
     if left.is_fn() {
-      if op == tk_eq_eq() {
+      if op == tk_eq_eq {
         fail(expr.loc, "cannot compare fn values")
         return t_bool()
       }
-      if op == tk_not_eq() {
+      if op == tk_not_eq {
         fail(expr.loc, "cannot compare fn values")
         return t_bool()
       }
     }
     if right.is_fn() {
-      if op == tk_eq_eq() {
+      if op == tk_eq_eq {
         fail(expr.loc, "cannot compare fn values")
         return t_bool()
       }
-      if op == tk_not_eq() {
+      if op == tk_not_eq {
         fail(expr.loc, "cannot compare fn values")
         return t_bool()
       }
     }
     if left.is_bool() && right.is_bool() {
-      if op == tk_eq_eq() {
+      if op == tk_eq_eq {
         return t_bool()
       }
-      if op == tk_not_eq() {
+      if op == tk_not_eq {
         return t_bool()
       }
       fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
       return t_bool()
     }
     if left.is_string() && right.is_string() {
-      if op == tk_plus() {
+      if op == tk_plus {
         return t_string()
       }
       // == and != compare the bytes; <, <=, > and >= order them byte by
@@ -5184,23 +5184,23 @@ pub class Checker {
       return t_string()
     }
     if left.is_bytes() && right.is_bytes() {
-      if op == tk_eq_eq() {
+      if op == tk_eq_eq {
         return t_bool()
       }
-      if op == tk_not_eq() {
+      if op == tk_not_eq {
         return t_bool()
       }
       fail(expr.loc, "unsupported operator on Bytes")
       return t_bool()
     }
-    if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
+    if op == tk_amp_plus || op == tk_amp_minus || op == tk_amp_star {
       if left.is_integer() && right.same_as(left) {
         return left
       }
       fail(expr.loc, "wrapping operator expects matching integer operands")
       return left
     }
-    if op == tk_percent() {
+    if op == tk_percent {
       if left.is_integer() && right.same_as(left) {
         if divisor_proven(r) {
           expr.proven = true
@@ -5229,27 +5229,27 @@ pub class Checker {
     }
     if left.is_integer() && right.is_integer() {
       if left.same_as(right) {
-        if op == tk_plus() {
-          if l.kind == ex_name() && r.kind == ex_int() {
+        if op == tk_plus {
+          if l.kind == ex_name && r.kind == ex_int {
             s = fact_any_slack(l.ident)
             if s >= 0 && r.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
-          if r.kind == ex_name() && l.kind == ex_int() {
+          if r.kind == ex_name && l.kind == ex_int {
             s = fact_any_slack(r.ident)
             if s >= 0 && l.int_bits <= s.to_u64() + 1 {
               expr.proven = true
             }
           }
         }
-        if op == tk_minus() && l.kind == ex_name() && r.kind == ex_int() && (fact_any_slack(l.ident) >= 0 || nn_has(l.ident)) {
+        if op == tk_minus && l.kind == ex_name && r.kind == ex_int && (fact_any_slack(l.ident) >= 0 || nn_has(l.ident)) {
           expr.proven = true
         }
-        if (op == tk_plus() || op == tk_star() || op == tk_minus()) && arith_proven(op, l, r, left) {
+        if (op == tk_plus || op == tk_star || op == tk_minus) && arith_proven(op, l, r, left) {
           expr.proven = true
         }
-        if op == tk_slash() && divisor_proven(r) {
+        if op == tk_slash && divisor_proven(r) {
           expr.proven = true
         }
         return int_binary(op, left)
@@ -5274,7 +5274,7 @@ pub class Checker {
     if left.is_float() && right.is_float() {
       return float_binary(op, expr.loc)
     }
-    if op == tk_eq_eq() || op == tk_not_eq() {
+    if op == tk_eq_eq || op == tk_not_eq {
       // `x == nil`: an optional is opened or tested, not compared.
       if right.is_nil() && left.is_nilable() {
         fail(expr.loc, nil_compare_text(l, left))
@@ -5297,7 +5297,7 @@ pub class Checker {
         return t_bool()
       }
     }
-    if op == tk_plus() && left.is_array() && right.is_array() {
+    if op == tk_plus && left.is_array() && right.is_array() {
       if left.same_as(right) {
         return array_join(expr, l, r, left)
       }
@@ -5314,7 +5314,7 @@ pub class Checker {
       opname = fn_op_name(op)
       if !left.same_as(right) {
         fail_hint(expr.loc, "cannot compare ${left.show()} with ${right.show()}: ${opname} compares two values of one type", hint)
-      } else if op == tk_eq_eq() || op == tk_not_eq() {
+      } else if op == tk_eq_eq || op == tk_not_eq {
         seen2: Array(String) = []
         fail_hint(expr.loc, eq_refusal(left, eq_missing(left, seen2)), hint)
       } else {
@@ -5409,7 +5409,7 @@ pub class Checker {
   // (checker/match.av place_named_args), as a positional one would be.
   pub fn check_named_arg(arg: Expr, param: Ty): Ty {
     if param.is_fn() {
-      if arg.kind == ex_name() {
+      if arg.kind == ex_name {
         if local = lookup(arg.ident) {
           return check_expr_as(arg, param)
         }
@@ -5640,10 +5640,10 @@ pub class Checker {
   }
 
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
-    if expr.kind == ex_enum_lit() {
+    if expr.kind == ex_enum_lit {
       return check_expr_as(expr, want)
     }
-    if got.lit_arr && expr.kind == ex_array() {
+    if got.lit_arr && expr.kind == ex_array {
       if lit_set_fits(got, want) {
         return adopt_set_literal(expr, want)
       }
@@ -5656,7 +5656,7 @@ pub class Checker {
       if empty_fits(got, want) && !type.ty_has_var(want) && !is_empty_array_ty(want) {
         return check_expr_as(expr, want)
       }
-      if expr.kind == ex_hash_lit() {
+      if expr.kind == ex_hash_lit {
         if !want.is_hash() && !type.ty_has_var(want) {
           fail(expr.loc, "[:] is a hash, expected ${want.show()}")
           return want
@@ -5674,7 +5674,7 @@ pub class Checker {
     if ty_assignable(got, want) {
       return got
     }
-    if expr.kind == ex_int() {
+    if expr.kind == ex_int {
       widened = check_integer(expr, true, want)
       if ty_assignable(widened, want) {
         expr.ty = widened
@@ -5683,7 +5683,7 @@ pub class Checker {
     }
     // A negated literal adopts the parameter too (`f(-5)` with an Int32
     // parameter was refused).
-    if is_int_literal(expr) && expr.kind == ex_unary() && want.is_integer() {
+    if is_int_literal(expr) && expr.kind == ex_unary && want.is_integer() {
       if inner = expr.inner {
         widened = check_negated_literal(expr, inner, true, want)
         if ty_assignable(widened, want) {
@@ -5709,7 +5709,7 @@ pub class Checker {
       call_arg = expr.args[i]
       got = t_int()
       if params[i].is_fn() {
-        if call_arg.kind == ex_name() {
+        if call_arg.kind == ex_name {
           if local = lookup(call_arg.ident) {
             got = check_expr_as(call_arg, params[i])
           } else {
@@ -5731,11 +5731,11 @@ pub class Checker {
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_type_chain(recv)
-    if recv.kind == ex_name() && recv.ident == "Hasher" && recv.mod_name.size == 0 {
+    if recv.kind == ex_name && recv.ident == "Hasher" && recv.mod_name.size == 0 {
       fail(expr.loc, hasher_made_text())
       return t_int()
     }
-    if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
+    if recv.kind == ex_name && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new`, `Buf.new(cap)` and `Buf.new(n, byte)`: the builtin
       // #buf_new, a name no program can write.
       expr.callee = "#buf_new"
@@ -5743,7 +5743,7 @@ pub class Checker {
       expr.receiver = nil
       return check_call(expr, has_want, want)
     }
-    if recv.kind == ex_name() {
+    if recv.kind == ex_name {
       if cdef = find_class_template(recv.ident, recv.mod_name), recv.mod_name.size > 0 || cdef.mod_name == self.current_module || !cdef.mod_name.starts_with("std.") {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
@@ -5760,8 +5760,8 @@ pub class Checker {
         return infer_new(expr, recv, cdef, cdef.mod_name, has_want, want)
       }
     }
-    if recv.kind == ex_field() {
-      if obj = recv.object, obj.kind == ex_name(), cdef = find_class_template(recv.ident, obj.ident) {
+    if recv.kind == ex_field {
+      if obj = recv.object, obj.kind == ex_name, cdef = find_class_template(recv.ident, obj.ident) {
         return infer_new(expr, recv, cdef, obj.ident, has_want, want)
       }
     }
@@ -5923,7 +5923,7 @@ pub class Checker {
   pub fn check_out_args(expr: Expr, params: Array(Ty), what: String): Bool {
     for i in 0..expr.args.size {
       arg = expr.args[i]
-      if arg.kind == ex_unary() && arg.op == tk_amp() {
+      if arg.kind == ex_unary && arg.op == tk_amp {
         if i >= params.size {
           return true
         }
@@ -5941,7 +5941,7 @@ pub class Checker {
           return false
         }
         if x = arg.inner {
-          if x.kind != ex_name() || x.implicit_field || x.ident == "self" {
+          if x.kind != ex_name || x.implicit_field || x.ident == "self" {
             fail(x.loc, "&x takes a local, not a field, an element or a value: copy it into a local, pass &local, then store it back")
             return false
           }
@@ -6015,7 +6015,7 @@ pub class Checker {
       for i in 0..expr.args.size {
         if sig.params[i].is_fn() {
           arg = expr.args[i]
-          if arg.kind == ex_lambda() {
+          if arg.kind == ex_lambda {
             if arg.cap_names.size > 0 {
               fail(arg.loc, "C callback cannot capture ${arg.cap_names[0]}")
             }
@@ -6034,26 +6034,26 @@ pub class Checker {
   pub fn type_name_as_expr(arg: TypeName): Expr {
     if arg.fn_type {
       fail(arg.loc, "type argument expected")
-      return Expr.new(ex_name(), arg.loc)
+      return Expr.new(ex_name, arg.loc)
     }
     if arg.nilable {
       fail(arg.loc, "type argument expected")
-      return Expr.new(ex_name(), arg.loc)
+      return Expr.new(ex_name, arg.loc)
     }
     if arg.members.size > 0 {
       fail(arg.loc, "type argument expected")
-      return Expr.new(ex_name(), arg.loc)
+      return Expr.new(ex_name, arg.loc)
     }
     if arg.args.size == 0 {
-      n = Expr.new(ex_name(), arg.loc)
+      n = Expr.new(ex_name, arg.loc)
       n.ident = arg.name
       n.mod_name = arg.mod_name
       return n
     }
-    call = Expr.new(ex_call(), arg.loc)
+    call = Expr.new(ex_call, arg.loc)
     call.callee = arg.name
     if arg.mod_name.size > 0 {
-      mod = Expr.new(ex_name(), arg.loc)
+      mod = Expr.new(ex_name, arg.loc)
       mod.ident = arg.mod_name
       call.receiver = mod
     }
@@ -6073,14 +6073,14 @@ pub class Checker {
   // (flatten_module_receiver). The arguments are the parser's expression
   // reading when it had one (`o.node`, `x?`), else rebuilt from the types.
   pub fn type_app_as_call(recv: Expr): Expr {
-    call = Expr.new(ex_call(), recv.loc)
+    call = Expr.new(ex_call, recv.loc)
     call.callee = recv.ident
     if recv.mod_name.size > 0 {
       segs = recv.mod_name.split(".")
-      path = Expr.new(ex_name(), recv.loc)
+      path = Expr.new(ex_name, recv.loc)
       path.ident = segs[0]
       for i in 1..segs.size {
-        fa = Expr.new(ex_field(), recv.loc)
+        fa = Expr.new(ex_field, recv.loc)
         fa.object = path
         fa.ident = segs[i]
         path = fa
@@ -6100,7 +6100,7 @@ pub class Checker {
   // The type reading of `Name(T).member`: the parser's call reading of the
   // arguments (type_app_as_call) is dropped so no later walk meets it.
   pub fn take_type_app(recv: Expr) {
-    if recv.kind == ex_name() && recv.type_args.size > 0 {
+    if recv.kind == ex_name && recv.type_args.size > 0 {
       none: Array(Expr) = []
       recv.args = none
     }
@@ -6113,11 +6113,11 @@ pub class Checker {
   }
 
   pub fn ident_chain(expr: Expr, segs: Array(String)): Bool {
-    if expr.kind == ex_name() {
+    if expr.kind == ex_name {
       segs.push(expr.ident)
       return true
     }
-    if expr.kind == ex_field() {
+    if expr.kind == ex_field {
       if obj = expr.object, ident_chain(obj, segs) {
         segs.push(expr.ident)
         return true
@@ -6170,7 +6170,7 @@ pub class Checker {
       best = longest_module(segs, true)
       if best == segs.size {
         mod = join_segs(segs, best)
-        name_expr = Expr.new(ex_name(), recv.loc)
+        name_expr = Expr.new(ex_name, recv.loc)
         name_expr.ident = mod
         return name_expr
       }
@@ -6182,7 +6182,7 @@ pub class Checker {
   // (`type Mutex = sync.Mutex`, then `Mutex(Int).new(1)`) is rewritten
   // in place to the generic's own name and module.
   pub fn expand_generic_alias_recv(recv: Expr) {
-    if recv.kind != ex_name() || recv.type_args.size == 0 {
+    if recv.kind != ex_name || recv.type_args.size == 0 {
       return
     }
     tn = TypeName.new(recv.loc, recv.ident)
@@ -6203,9 +6203,9 @@ pub class Checker {
       best = longest_module(segs, false)
       if best > 0 && best == segs.size - 1 {
         mod = join_segs(segs, best)
-        name_expr = Expr.new(ex_name(), recv.loc)
+        name_expr = Expr.new(ex_name, recv.loc)
         name_expr.ident = mod
-        flat = Expr.new(ex_field(), recv.loc)
+        flat = Expr.new(ex_field, recv.loc)
         flat.object = name_expr
         flat.ident = segs[best]
         return flat
@@ -6240,14 +6240,14 @@ pub class Checker {
 
   pub fn check_method_call_of(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_module_receiver(recv)
-    if recv.kind == ex_name() && recv.mod_name.size == 0 && recv.type_args.size == 0 {
+    if recv.kind == ex_name && recv.mod_name.size == 0 && recv.type_args.size == 0 {
       // A type alias used as a value stands for the type it names.
       if t = alias_value_target(recv.ident, recv.loc) {
         if t.mod_name.size > 0 && t.args.size == 0 {
           // Written as the qualified name it stands for (`regex.Regex`).
-          m = Expr.new(ex_name(), recv.loc)
+          m = Expr.new(ex_name, recv.loc)
           m.ident = t.mod_name
-          q = Expr.new(ex_field(), recv.loc)
+          q = Expr.new(ex_field, recv.loc)
           q.object = m
           q.ident = t.name
           recv = q
@@ -6269,7 +6269,7 @@ pub class Checker {
     }
     expr.receiver = recv
     expand_generic_alias_recv(recv)
-    if recv.kind == ex_name() && recv.type_args.size > 0 && recv.mod_name.size == 0 {
+    if recv.kind == ex_name && recv.type_args.size > 0 && recv.mod_name.size == 0 {
       // A std module's generic type named bare (`Mutex(Int).new`): the
       // program's own or an import's is meant, else the qualified
       // spelling is asked for (`sync.Mutex(Int).new`).
@@ -6287,7 +6287,7 @@ pub class Checker {
         }
       }
     }
-    if recv.kind == ex_name() && recv.type_args.size > 0 {
+    if recv.kind == ex_name && recv.type_args.size > 0 {
       if is_generic_template_in(recv.ident, recv.mod_name) {
         take_type_app(recv)
         if expr.callee == "new" {
@@ -6317,7 +6317,7 @@ pub class Checker {
         return rewrite_type_app_call(expr, recv, has_want, want)
       }
     }
-    if recv.kind == ex_name() {
+    if recv.kind == ex_name {
       if found = lookup(recv.ident) {
       } else {
         if !(recv.type_args.size > 0) {
@@ -6368,13 +6368,13 @@ pub class Checker {
     if expr.callee == "new" {
       return check_constructor(expr, recv, has_want, want)
     }
-    if recv.kind == ex_name() && (recv.ident == "String" || recv.ident == "Bytes") && expr.callee == "from_c" {
+    if recv.kind == ex_name && (recv.ident == "String" || recv.ident == "Bytes") && expr.callee == "from_c" {
       if found = lookup(recv.ident) {
       } else {
         return check_from_c(expr, recv.ident)
       }
     }
-    if recv.kind == ex_name() && recv.ident == "Float64" && expr.callee == "from_bits" {
+    if recv.kind == ex_name && recv.ident == "Float64" && expr.callee == "from_bits" {
       if found = lookup(recv.ident) {
       } else {
         // `Float64.from_bits(u)`: the float whose 64 bits are u.
@@ -6389,7 +6389,7 @@ pub class Checker {
         return t_float()
       }
     }
-    if recv.kind == ex_name() {
+    if recv.kind == ex_name {
       if recv.ident == "String" {
         if expr.callee == "from_utf8" {
           if expr.args.size != 1 {
@@ -6422,7 +6422,7 @@ pub class Checker {
     mark = err_count()
     object = t_int()
     if tn.size == 0 {
-      self.recv_name = recv.kind == ex_name()
+      self.recv_name = recv.kind == ex_name
       self.recv_type = ""
       self.carray_ok = expr.callee == "to_s" && expr.args.size == 0
       object = check_expr(recv)
@@ -6443,7 +6443,7 @@ pub class Checker {
     if object.is_carray() {
       // `r.message.to_s()`: a C char array's text, up to its first NUL
       // or its N bytes.
-      if ce = object.inner, ce.c_scalar == cs_int8() || ce.c_scalar == cs_uint8() {
+      if ce = object.inner, ce.c_scalar == cs_int8 || ce.c_scalar == cs_uint8 {
         if expr.callee == "to_s" && expr.args.size == 0 {
           expr.resolved = "carray.to_s"
           return t_string()
@@ -6622,7 +6622,7 @@ pub class Checker {
     self.switch_stmt = false
     tail_mode = self.switch_tail
     self.switch_tail = false
-    if expr.op == tk_if() && expr.else_body.size == 1 {
+    if expr.op == tk_if && expr.else_body.size == 1 {
       if t = check_if_value(expr.else_body[0], has_want, want) {
         return t
       }
@@ -6670,7 +6670,7 @@ pub class Checker {
         if !check_case_label(label, disc) {
           continue
         }
-        if label.kind == lb_range() {
+        if label.kind == lb_range {
           ranges.push(label)
           has_range = true
           continue
@@ -6678,7 +6678,7 @@ pub class Checker {
         if disc.is_integer() {
           ranges.push(label)
         }
-        if label.kind == lb_string() {
+        if label.kind == lb_string {
           if prev_s = seen_str.get(label.text) {
             fail(label.loc, "duplicate case ${quote_label(label.text)}")
           }
@@ -6687,11 +6687,11 @@ pub class Checker {
         }
         lab = label.int_val
         if prev = seen.get(lab) {
-          if label.kind == lb_type() || label.kind == lb_nil() {
+          if label.kind == lb_type || label.kind == lb_nil {
             fail(label.loc, "duplicate case ${union_case_name(disc, lab)}")
-          } else if label.kind == lb_member() {
+          } else if label.kind == lb_member {
             fail(label.loc, "duplicate case ${label.text}")
-          } else if label.kind == lb_bool() {
+          } else if label.kind == lb_bool {
             fail(label.loc, "duplicate case ${label.int_val != 0}")
           } else {
             fail(arm.loc, "duplicate case ${int_label_text(label)}")
@@ -6805,18 +6805,18 @@ pub class Checker {
   // integer discriminant's are integer literals. False when the label
   // was refused.
   pub fn check_case_label(label: CaseLabel, disc: Ty): Bool {
-    if label.kind == lb_range() {
+    if label.kind == lb_range {
       return check_range_label(label, disc)
     }
     if disc.is_union() {
       return check_union_label(label, disc)
     }
-    if label.kind == lb_type() || label.kind == lb_nil() {
+    if label.kind == lb_type || label.kind == lb_nil {
       fail(label.loc, "a member-type or nil label needs a union to switch over, got ${disc.show()}")
       return false
     }
     if disc.is_enum() {
-      if label.kind != lb_member() {
+      if label.kind != lb_member {
         fail(label.loc, "a case label of a switch over ${disc.show()} is one of its members, written bare (case ${disc.enum_names()[0]})")
         return false
       }
@@ -6834,13 +6834,13 @@ pub class Checker {
     }
     if disc.is_bool() {
       // `case true` and `case false`.
-      if label.kind == lb_bool() {
+      if label.kind == lb_bool {
         return true
       }
-      if label.kind == lb_member() {
+      if label.kind == lb_member {
         return check_const_label(label, disc)
       }
-      if label.kind == lb_int() && !label.neg && label.bits <= 1 {
+      if label.kind == lb_int && !label.neg && label.bits <= 1 {
         word = "false"
         if label.bits == 1 {
           word = "true"
@@ -6851,24 +6851,24 @@ pub class Checker {
       fail(label.loc, "a case label of a switch over Bool is true or false")
       return false
     }
-    if label.kind == lb_bool() {
+    if label.kind == lb_bool {
       fail(label.loc, "true and false label a switch over Bool, not ${disc.show()}")
       return false
     }
     if disc.is_string() {
-      if label.kind != lb_string() {
+      if label.kind != lb_string {
         fail(label.loc, "a case label of a switch over String is a string literal")
         return false
       }
       return true
     }
-    if label.kind == lb_member() && label.value_of.size > 0 && disc.is_int() {
+    if label.kind == lb_member && label.value_of.size > 0 && disc.is_int() {
       return check_enum_value_label(label)
     }
-    if label.kind == lb_member() {
+    if label.kind == lb_member {
       return check_const_label(label, disc)
     }
-    if label.kind != lb_int() {
+    if label.kind != lb_int {
       fail(label.loc, "case label must be an integer literal")
       return false
     }
@@ -6946,7 +6946,7 @@ pub class Checker {
 
   // An integer, name or range label as written, for messages.
   pub fn case_label_text(label: CaseLabel): String {
-    if label.kind == lb_range() {
+    if label.kind == lb_range {
       op = ".."
       if label.incl {
         op = "..="
@@ -6961,7 +6961,7 @@ pub class Checker {
       }
       return "${lo_text}${op}${hi_text}"
     }
-    if label.kind == lb_member() {
+    if label.kind == lb_member {
       if label.qual.size > 0 {
         return "${label.qual}.${label.text}"
       }
@@ -6978,15 +6978,15 @@ pub class Checker {
       b = labels[j]
       for i in 0..j {
         a = labels[i]
-        if a.kind != lb_range() && b.kind != lb_range() {
+        if a.kind != lb_range && b.kind != lb_range {
           continue
         }
         a_hi = a.int_val
-        if a.kind == lb_range() {
+        if a.kind == lb_range {
           a_hi = a.hi_val
         }
         b_hi = b.int_val
-        if b.kind == lb_range() {
+        if b.kind == lb_range {
           b_hi = b.hi_val
         }
         lo = case_ord(a.int_val, disc)
@@ -7037,7 +7037,7 @@ pub class Checker {
   // A label in a message about its value: as written, and a constant's
   // value beside its name.
   pub fn int_fit_text(label: CaseLabel): String {
-    if label.kind == lb_member() {
+    if label.kind == lb_member {
       return "${case_label_text(label)} = ${int_label_text(label)}"
     }
     int_label_text(label)
@@ -7047,7 +7047,7 @@ pub class Checker {
   // or `nil`; int_val becomes the member's index in the union (its
   // tag).
   pub fn check_union_label(label: CaseLabel, disc: Ty): Bool {
-    if label.kind == lb_nil() {
+    if label.kind == lb_nil {
       if !disc.includes_nil() {
         fail(label.loc, "case nil: ${disc.show()} has no nil member")
         return false
@@ -7055,7 +7055,7 @@ pub class Checker {
       label.int_val = disc.tag_of(ty_nil())
       return true
     }
-    if label.kind != lb_type() {
+    if label.kind != lb_type {
       fail(label.loc, "a case label of a switch over ${disc.show()} is one of its member types, with or without a binding (case n: ${union_case_name(disc, first_payload_index(disc))}), or nil")
       return false
     }
@@ -7109,14 +7109,14 @@ pub class Checker {
   // The name an arm's one label binds ("" for none), and its type: the
   // union member it names.
   pub fn arm_binding(arm: SwitchCase): String {
-    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && arm.labels[0].bind != "_" {
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type && arm.labels[0].bind != "_" {
       return arm.labels[0].bind
     }
     ""
   }
 
   pub fn arm_binding_ty(arm: SwitchCase, disc: Ty): Ty {
-    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && disc.is_union() {
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type && disc.is_union() {
       idx = arm.labels[0].int_val
       if idx >= 0 && idx < disc.members.size {
         return disc.members[idx]
@@ -7253,7 +7253,7 @@ pub class Checker {
   pub fn check_spawn_value(block: Block): Ty {
     if block.body.size > 0 {
       last = block.body[block.body.size - 1]
-      gives = last.kind == st_expr() || (last.kind == st_if() && last.else_body.size > 0)
+      gives = last.kind == st_expr || (last.kind == st_if && last.else_body.size > 0)
       if !gives {
         self.push_scope()
         for stmt in block.body {
@@ -7262,8 +7262,8 @@ pub class Checker {
         self.pop_scope()
         return t_void()
       }
-      if last.kind == st_expr() {
-        if e = last.expr, e.kind == ex_call() || e.kind == ex_field() {
+      if last.kind == st_expr {
+        if e = last.expr, e.kind == ex_call || e.kind == ex_field {
           // A call that gives nothing ends a Void block.
           self.push_scope()
           i = 0
@@ -7298,9 +7298,9 @@ pub class Checker {
       return t_int()
     }
     tail = block.body[block.body.size - 1]
-    if tail.kind == st_if() && tail.else_body.size > 0 {
-      ife = Expr.new(ex_switch(), tail.loc)
-      ife.op = tk_if()
+    if tail.kind == st_if && tail.else_body.size > 0 {
+      ife = Expr.new(ex_switch, tail.loc)
+      ife.op = tk_if
       ife.has_else = true
       ife.else_body.push(tail)
       block.body[block.body.size - 1] = stmt_expr(tail.loc, ife)
@@ -7311,7 +7311,7 @@ pub class Checker {
     while i < block.body.size {
       stmt = block.body[i]
       if i == block.body.size - 1 {
-        if stmt.kind == st_expr() {
+        if stmt.kind == st_expr {
           if e = stmt.expr {
             scan_pending_expr(e)
             ty = check_expr_flag(e, has_want, want)
@@ -7324,7 +7324,7 @@ pub class Checker {
             return ty
           }
         }
-        if stmt.kind == st_return() && self.inline_what.size > 0 {
+        if stmt.kind == st_return && self.inline_what.size > 0 {
           // A lambda's last statement may be its `return`.
           if x = stmt.expr {
             check_block_stmt(stmt, self.return_type, false)
@@ -7354,13 +7354,13 @@ pub class Checker {
     i = 0
     while i < n {
       st = b.body[i]
-      if i == n - 1 && want_value && st.kind == st_expr() {
+      if i == n - 1 && want_value && st.kind == st_expr {
         if e = st.expr {
           scan_pending_expr(e)
           return check_expr(e)
         }
       }
-      if st.kind == st_while() && i > 0 {
+      if st.kind == st_while && i > 0 {
         annotate_vstep(b.body[i - 1], st)
       }
       self.clear_poison()
@@ -7379,7 +7379,7 @@ pub class Checker {
   // which return from themselves).
   pub fn leaves_by_return(body: Array(Stmt)): Bool {
     for st in body {
-      if st.kind == st_return() {
+      if st.kind == st_return {
         return true
       }
       if leaves_by_return(st.pre) || leaves_by_return(st.then_body) || leaves_by_return(st.else_body) || leaves_by_return(st.body) {
@@ -7399,10 +7399,10 @@ pub class Checker {
   }
 
   pub fn expr_has_try(e: Expr): Bool {
-    if e.kind == ex_try() || e.kind == ex_lambda() {
-      return e.kind == ex_try()
+    if e.kind == ex_try || e.kind == ex_lambda {
+      return e.kind == ex_try
     }
-    if e.kind == ex_switch() && e.op == tk_return() {
+    if e.kind == ex_switch && e.op == tk_return {
       return leaves_by_return(e.else_body)
     }
     if x1 = e.left, expr_has_try(x1) {
@@ -7529,7 +7529,7 @@ pub class Checker {
           written = inline_result(b)
           if !written.is_void() && !self.has_err() {
             who = "m"
-            if o = expr.object, o.kind == ex_name() {
+            if o = expr.object, o.kind == ex_name {
               who = o.ident
             }
             fail(b.loc, "this ${expr.callee}'s value is unused: it is a statement, and its lambda declares the result ${written.show()}; to drop the value, write `_ = ${who}.${expr.callee}(...)`, or remove the result type")
@@ -7626,7 +7626,7 @@ pub class Checker {
       // The gate is a word in its object: the call takes the field, whose
       // address the lowering passes.
       a = expr.args[0]
-      if !(a.kind == ex_field() || (a.kind == ex_name() && a.implicit_field)) {
+      if !(a.kind == ex_field || (a.kind == ex_name && a.implicit_field)) {
         fail(a.loc, "${expr.callee} takes the object's gate field (a UInt64 field holding avant_gate_new())")
       }
       if expr.callee == "avant_gate_poisoned" {
@@ -7707,7 +7707,7 @@ pub class Checker {
     while i < body.size {
       stmt = body[i]
       if i == body.size - 1 {
-        if stmt.kind == st_expr() && !ast_stmt_exits(stmt) {
+        if stmt.kind == st_expr && !ast_stmt_exits(stmt) {
           if e = stmt.expr {
             use_want = false
             use_ty = t_int()
@@ -7850,7 +7850,7 @@ pub class Checker {
       st = body[i]
       if i == body.size - 1 {
         k = st.kind
-        if k == st_expr() && !ast_stmt_exits(st) {
+        if k == st_expr && !ast_stmt_exits(st) {
           if e = st.expr {
             use_want = false
             use_ty = t_int()
@@ -7861,12 +7861,12 @@ pub class Checker {
             scan_pending_expr(e)
             result = check_expr_flag(e, use_want, use_ty)
           }
-        } else if k == st_if() && st.else_body.size > 0 {
+        } else if k == st_if && st.else_body.size > 0 {
           scan_pending_if_head(st)
           result = check_if_value(st, has_want, want)
         } else {
           check_block_stmt(st, self.return_type, false)
-          if k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(st) {
+          if k == st_return || k == st_break || k == st_continue || ast_stmt_exits(st) {
             result = nil
           }
         }
@@ -7905,11 +7905,11 @@ pub fn arm_leaves(body: Array(Stmt)): Bool {
     return false
   }
   k = body[body.size - 1].kind
-  k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(body[body.size - 1])
+  k == st_return || k == st_break || k == st_continue || ast_stmt_exits(body[body.size - 1])
 }
 
 pub fn lead_spelling(lead: Int): String {
-  if lead == tk_minus() {
+  if lead == tk_minus {
     return "-"
   }
   "["

@@ -47,7 +47,7 @@ pub fn (lw: MirLower) lower_args_rev(args: Array(Expr)): Array(MOperand) {
 }
 
 pub fn (lw: MirLower) str_call(callee: String, args: Array(MOperand)): MOperand {
-  lw.call_to(mt_str(), callee, args)
+  lw.call_to(mt_str, callee, args)
 }
 
 pub fn (lw: MirLower) str_call1(callee: String, a: MOperand): MOperand {
@@ -59,14 +59,14 @@ pub fn (lw: MirLower) str_call1(callee: String, a: MOperand): MOperand {
 pub fn (lw: MirLower) i32_call1(callee: String, a: MOperand): MOperand {
   args: Array(MOperand) = []
   args.push(a)
-  lw.call_to(mt_i32(), callee, args)
+  lw.call_to(mt_i32, callee, args)
 }
 
 // A call with one argument that returns an Int (i64).
 pub fn (lw: MirLower) int_call1(callee: String, a: MOperand): MOperand {
   args: Array(MOperand) = []
   args.push(a)
-  lw.call_to(mt_int(), callee, args)
+  lw.call_to(mt_int, callee, args)
 }
 
 // A scalar's text (the old back end): String as is; Int, Int32, UInt32, UInt64,
@@ -81,7 +81,7 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
   }
   if t.is_int32() || t.is_uint32() {
     // Its value as an Int (extended by its sign).
-    w32 = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
+    w32 = lw.tmp(mt_int, b.rv_cast(v, mt_int))
     return lw.str_call1("avant_str_from_int", w32)
   }
   if t.is_uint64() {
@@ -91,7 +91,7 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
     return lw.str_call1("avant_str_from_float", v)
   }
   if t.is_bool() {
-    w = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+    w = lw.tmp(mt_i32, b.rv_cast(v, mt_i32))
     return lw.str_call1("avant_str_from_bool", w)
   }
   lw.refuse(lw.lw_fn_loc, "interpolation of ${t.show()}")
@@ -188,7 +188,7 @@ pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
         s = lw.to_str(v, it)
         if mir_part_has_switch(e, i + 1) {
           if p = s.place {
-            s = lw.tmp(mt_str(), b.rv_use(s))
+            s = lw.tmp(mt_str, b.rv_use(s))
           }
         }
         pieces.push(s)
@@ -225,23 +225,23 @@ pub fn (lw: MirLower) lower_str_binary(e: Expr, l: Expr, r: Expr): MOperand {
   args: Array(MOperand) = []
   args.push(a)
   args.push(c)
-  if e.op == tk_plus() {
+  if e.op == tk_plus {
     return lw.str_call("avant_str_concat", args)
   }
-  if e.op == tk_eq_eq() || e.op == tk_not_eq() {
-    q = lw.call_to(mt_i32(), "avant_str_eq", args)
+  if e.op == tk_eq_eq || e.op == tk_not_eq {
+    q = lw.call_to(mt_i32, "avant_str_eq", args)
     want = 1
-    if e.op == tk_not_eq() {
+    if e.op == tk_not_eq {
       want = 0
     }
-    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(want)))
+    return lw.tmp(mt_bool, b.rv_cmp(mop_eq, q, b.c_i32(want)))
   }
   // A String's order: avant_str_cmp's -1, 0 or 1
   // against 0.
   cop = mir_cmp_op(e.op)
   if cop > 0 {
-    q2 = lw.call_to(mt_i32(), "avant_str_cmp", args)
-    return lw.tmp(mt_bool(), b.rv_cmp(cop, q2, b.c_i32(0)))
+    q2 = lw.call_to(mt_i32, "avant_str_cmp", args)
+    return lw.tmp(mt_bool, b.rv_cmp(cop, q2, b.c_i32(0)))
   }
   lw.refuse(e.loc, "this operator on String")
   b.c_i32(0)
@@ -266,8 +266,8 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
     b.check_bounds(lw.dup(i), n)
   }
   pv = lw.str_data(s)
-  byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
-  lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
+  byte = lw.tmp(mt_u8, b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
+  lw.tmp(mt_int, b.rv_cast(byte, mt_int))
 }
 
 // The address of string s's bytes as a `ptr u8` local, used at once (no
@@ -279,8 +279,8 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
 // base and offset.
 pub fn (lw: MirLower) str_data(s: MOperand): Int {
   b = lw.lw_b
-  t = lw.call_to(mt_i32(), "avant_str_view_test", lw.one(lw.dup(s)))
-  pv = b.temp(b.ptr_to(mt_u8()))
+  t = lw.call_to(mt_i32, "avant_str_view_test", lw.one(lw.dup(s)))
+  pv = b.temp(b.ptr_to(mt_u8))
   args: Array(MOperand) = []
   args.push(s)
   args.push(t)
@@ -303,7 +303,7 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    h = lw.hold(ops1[0], mt_str())
+    h = lw.hold(ops1[0], mt_str)
     n = lw.int_call1("avant_str_size", b.copy_local(h))
     sargs: Array(MOperand) = []
     sargs.push(b.copy_local(h))
@@ -320,8 +320,8 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     if mir_has_switch(recv) {
-      ops[0] = lw.tmp(mt_int(), b.rv_use(ops[0]))
-      ops[1] = lw.tmp(mt_int(), b.rv_use(ops[1]))
+      ops[0] = lw.tmp(mt_int, b.rv_use(ops[0]))
+      ops[1] = lw.tmp(mt_int, b.rv_use(ops[1]))
     }
     cargs: Array(MOperand) = []
     cargs.push(s)
@@ -444,9 +444,9 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
   }
   // str_to_f_slice: strict, Float64? like String.to_f. NaN is "absent"
   // (a parsed float is never NaN).
-  v = lw.hold(lw.call_to(mt_f64(), "avant_str_parse_f64_slice", ops), mt_f64())
+  v = lw.hold(lw.call_to(mt_f64, "avant_str_parse_f64_slice", ops), mt_f64)
   if t = e.ty {
-    got = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(v), b.copy_local(v)))
+    got = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(v), b.copy_local(v)))
     return lw.opt_of(t, got, b.copy_local(v), ty_float(), e.loc)
   }
   lw.refuse(e.loc, "an untyped str_to_f_slice")
@@ -471,23 +471,23 @@ pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(E
   ops: Array(MOperand) = []
   ops.push(s)
   vt = ty_float()
-  mt = mt_f64()
+  mt = mt_f64
   f = "avant_str_parse_f64"
   if name == "to_i" {
     // Int is 64-bit.
     vt = ty_int()
-    mt = mt_int()
+    mt = mt_int
     f = "avant_str_parse_i64"
   } else if name == "to_u64" {
     vt = ty_uint64()
-    mt = mt_u64()
+    mt = mt_u64
     f = "avant_str_parse_u64"
   }
   if name == "to_f" {
     // NaN is "absent" (a parsed float is never NaN).
     fv = lw.hold(lw.call_to(mt, f, ops), mt)
     if t0 = e.ty {
-      got = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(fv), b.copy_local(fv)))
+      got = lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(fv), b.copy_local(fv)))
       return lw.opt_of(t0, got, b.copy_local(fv), vt, e.loc)
     }
   }
@@ -554,14 +554,14 @@ pub fn (lw: MirLower) seq_search(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   cargs.push(from)
   cargs.push(b.c_i32(mode))
-  r = lw.hold(lw.call_to(mt_int(), f, cargs), mt_int())
+  r = lw.hold(lw.call_to(mt_int, f, cargs), mt_int)
   if name == "count" {
     return b.copy_local(r)
   }
   if name == "starts_with" || name == "ends_with" || name == "eq_ignore_ascii_case" {
-    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(r), b.c_i64(1)))
+    return lw.tmp(mt_bool, b.rv_cmp(mop_eq, b.copy_local(r), b.c_i64(1)))
   }
-  found = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(r), b.c_i64(0)))
+  found = lw.tmp(mt_bool, b.rv_cmp(mop_ge, b.copy_local(r), b.c_i64(0)))
   if name == "contains" {
     return found
   }

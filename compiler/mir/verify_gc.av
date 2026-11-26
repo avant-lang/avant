@@ -34,12 +34,12 @@ fn mir_is_indirect(st: MStmt): Bool {
 }
 
 fn mir_is_gc_stmt(st: MStmt): Bool {
-  st.kind == msk_gc_enter() || st.kind == msk_gc_roots() || st.kind == msk_gc_leave()
+  st.kind == msk_gc_enter || st.kind == msk_gc_roots || st.kind == msk_gc_leave
 }
 
 fn mir_v15(v: MVerifier) {
   f = v.func
-  if f.kind != mfk_leaf() {
+  if f.kind != mfk_leaf {
     return
   }
   b = 0
@@ -48,7 +48,7 @@ fn mir_v15(v: MVerifier) {
     j = 0
     while j < blk.stmts.size {
       st = blk.stmts[j]
-      if st.kind == msk_call() && (st.collects || mir_is_indirect(st)) {
+      if st.kind == msk_call && (st.collects || mir_is_indirect(st)) {
         v.err(15, b, j, st.loc, "a leaf makes a collecting or indirect call")
       } else if mir_is_gc_stmt(st) {
         v.err(15, b, j, st.loc, "a leaf has a frame statement")
@@ -77,11 +77,11 @@ fn mir_v15(v: MVerifier) {
 // checks the returns of a function that links one.
 fn mir_v16(v: MVerifier) {
   f = v.func
-  if f.kind == mfk_unset() {
+  if f.kind == mfk_unset {
     v.ferr(16, "the function has no kind (the frame pass has not run)")
     return
   }
-  if f.kind != mfk_frame() {
+  if f.kind != mfk_frame {
     return
   }
   slots: Array(Int) = []
@@ -114,8 +114,8 @@ fn mir_v16(v: MVerifier) {
     }
     k += 1
   }
-  ok = ok && idx < bb0.stmts.size && bb0.stmts[idx].kind == msk_gc_enter()
-  ok = ok && idx + 1 < bb0.stmts.size && bb0.stmts[idx + 1].kind == msk_gc_roots() && mir_same_ints(bb0.stmts[idx + 1].locals, slots)
+  ok = ok && idx < bb0.stmts.size && bb0.stmts[idx].kind == msk_gc_enter
+  ok = ok && idx + 1 < bb0.stmts.size && bb0.stmts[idx + 1].kind == msk_gc_roots && mir_same_ints(bb0.stmts[idx + 1].locals, slots)
   if !ok {
     v.ferr(16, "bb0 does not begin with the zeroed non-parameter slots, gc.enter, and gc.roots of every slot in local order")
     return
@@ -126,7 +126,7 @@ fn mir_v16(v: MVerifier) {
     j = 0
     while j < blk.stmts.size {
       st = blk.stmts[j]
-      if (st.kind == msk_gc_enter() || st.kind == msk_gc_roots()) && !(b == 0 && (j == idx || j == idx + 1)) {
+      if (st.kind == msk_gc_enter || st.kind == msk_gc_roots) && !(b == 0 && (j == idx || j == idx + 1)) {
         v.err(16, b, j, st.loc, "gc.enter or gc.roots outside the prologue")
       }
       j += 1
@@ -149,11 +149,11 @@ fn mir_has_gc_stmt(f: MFunc): Bool {
 }
 
 fn mir_is_zero_of(st: MStmt, l: Int): Bool {
-  if st.kind != msk_assign() {
+  if st.kind != msk_assign {
     return false
   }
   if p = st.place, r = st.rv {
-    return p.proj.size == 0 && p.local == l && r.kind == mrk_zero()
+    return p.proj.size == 0 && p.local == l && r.kind == mrk_zero
   }
   false
 }
@@ -176,7 +176,7 @@ fn mir_same_ints(a: Array(Int), b: Array(Int)): Bool {
 // allowed) and has nothing to unlink.
 fn mir_v17(v: MVerifier) {
   f = v.func
-  if f.kind != mfk_frame() {
+  if f.kind != mfk_frame {
     return
   }
   if !mir_has_gc_stmt(f) {
@@ -187,15 +187,15 @@ fn mir_v17(v: MVerifier) {
     blk = f.blocks[b]
     is_ret = false
     if t = blk.term {
-      is_ret = t.kind == mtk_return()
+      is_ret = t.kind == mtk_return
       n = blk.stmts.size
-      if is_ret && (n == 0 || blk.stmts[n - 1].kind != msk_gc_leave()) {
+      if is_ret && (n == 0 || blk.stmts[n - 1].kind != msk_gc_leave) {
         v.err(17, b, -1, t.loc, "a return of a frame function without gc.leave before it")
       }
     }
     j = 0
     while j < blk.stmts.size {
-      if blk.stmts[j].kind == msk_gc_leave() && !(is_ret && j == blk.stmts.size - 1) {
+      if blk.stmts[j].kind == msk_gc_leave && !(is_ret && j == blk.stmts.size - 1) {
         v.err(17, b, j, blk.stmts[j].loc, "gc.leave not immediately before a return")
       }
       j += 1
@@ -206,7 +206,7 @@ fn mir_v17(v: MVerifier) {
 
 fn mir_v19(v: MVerifier) {
   f = v.func
-  if !v.m.shared || f.kind != mfk_leaf() {
+  if !v.m.shared || f.kind != mfk_leaf {
     return
   }
   k = 0
@@ -264,7 +264,7 @@ fn mir_v9_check(v: MVerifier, cur: Array(UInt64), reads: Array(Int), b: Int, j: 
 fn mir_has_collecting_call(f: MFunc): Bool {
   for blk in f.blocks {
     for stmt in blk.stmts {
-      if stmt.kind == msk_call() && stmt.collects {
+      if stmt.kind == msk_call && stmt.collects {
         return true
       }
     }
@@ -315,10 +315,10 @@ fn mir_v11_addr_only(v: MVerifier) {
 fn mir_v11_addr(v: MVerifier, b: Int, j: Int, st: MStmt) {
   f = v.func
   ts = v.ts
-  if f.kind == mfk_frame() && st.kind == msk_assign() {
+  if f.kind == mfk_frame && st.kind == msk_assign {
     if r = st.rv, p = r.place {
       l = p.local
-      if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
+      if (r.kind == mrk_addr || r.kind == mrk_addr_raw) && p.frame_local() && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
         v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
       }
     }
@@ -372,7 +372,7 @@ fn mir_v11_walk(v: MVerifier, lv: MLive, check: Bool): Bool {
     j = blk.stmts.size - 1
     while j >= 0 {
       st = blk.stmts[j]
-      if st.kind == msk_call() && st.collects {
+      if st.kind == msk_call && st.collects {
         d = st.dest
         for w in 0..nw {
           x = live[w] & cand[w]
@@ -503,7 +503,7 @@ fn mir_v14(v: MVerifier) {
 
 // Whether st calls an `initialize` (MFunc.fresh_self) of this module.
 fn mir_v14_init_call(v: MVerifier, st: MStmt): Bool {
-  if st.kind != msk_call() {
+  if st.kind != msk_call {
     return false
   }
   if fo = st.indirect {
@@ -544,11 +544,11 @@ fn mir_v14_op_in(f: MFunc, b: Int, preds: Array(Array(Int)), op_out: Array(UInt6
 // which marks one card), so it opens nothing.
 fn mir_v14_slot_form(stmts: Array(MStmt), j: Int, h: Int): Bool {
   k = j + 1
-  if k >= stmts.size || stmts[k].kind != msk_assign() {
+  if k >= stmts.size || stmts[k].kind != msk_assign {
     return false
   }
   if p = stmts[k].place {
-    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index()
+    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref && p.proj[1].kind == mpk_index
   }
   false
 }
@@ -556,13 +556,13 @@ fn mir_v14_slot_form(stmts: Array(MStmt), j: Int, h: Int): Bool {
 // The open set's transfer of one statement, in place.
 fn mir_v14_op_step(v: MVerifier, blk: MBlock, j: Int, op: Array(UInt64)) {
   st = blk.stmts[j]
-  if st.kind == msk_barrier() && st.args.size == 1 {
+  if st.kind == msk_barrier && st.args.size == 1 {
     h = mir_bare_local(st.args[0])
     if h >= 0 && !mir_v14_slot_form(blk.stmts, j, h) {
       mir_bit_on(op, 0, h)
     }
   }
-  if st.kind == msk_call() && (st.collects || mir_is_indirect(st)) {
+  if st.kind == msk_call && (st.collects || mir_is_indirect(st)) {
     for w in 0..op.size {
       op[w] = 0
     }
@@ -570,7 +570,7 @@ fn mir_v14_op_step(v: MVerifier, blk: MBlock, j: Int, op: Array(UInt64)) {
   d = mir_stmt_def(st)
   if d >= 0 {
     mir_bit_off(op, 0, d)
-    if st.kind == msk_call() && st.fresh {
+    if st.kind == msk_call && st.fresh {
       if e = v.m.ext(st.callee), e.alloc {
         mir_bit_on(op, 0, d)
       }
@@ -587,7 +587,7 @@ fn mir_v14_block(v: MVerifier, b: Int, op: Array(UInt64), report: Bool) {
   j = 0
   while j < blk.stmts.size {
     st = blk.stmts[j]
-    if report && v.stage == mst_final() && mir_v14_init_call(v, st) {
+    if report && v.stage == mst_final && mir_v14_init_call(v, st) {
       h = -1
       if st.args.size > 0 {
         h = mir_bare_local(st.args[0])
@@ -596,7 +596,7 @@ fn mir_v14_block(v: MVerifier, b: Int, op: Array(UInt64), report: Bool) {
         v.err(14, b, j, st.loc, "the receiver of a call to ${st.callee} is not open (an object just allocated, or barriered, with no collecting call since)")
       }
     }
-    if report && st.fresh && st.kind == msk_assign() {
+    if report && st.fresh && st.kind == msk_assign {
       if p = st.place {
         if p.last_deref() != 0 {
           v.err(14, b, j, st.loc, "the holder of a fresh store is not a local")

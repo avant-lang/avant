@@ -35,21 +35,21 @@ pub fn enum_synth_fn(loc: Location, owner: String, name: String, ret: TypeName):
 }
 
 pub fn enum_name_expr(loc: Location, ident: String): Expr {
-  e = Expr.new(ex_name(), loc)
+  e = Expr.new(ex_name, loc)
   e.ident = ident
   e
 }
 
 // `Owner.member`.
 pub fn enum_member_expr(loc: Location, owner: String, member: String): Expr {
-  e = Expr.new(ex_field(), loc)
+  e = Expr.new(ex_field, loc)
   e.object = enum_name_expr(loc, owner)
   e.ident = member
   e
 }
 
 pub fn enum_str_expr(loc: Location, text: String): Expr {
-  e = Expr.new(ex_string(), loc)
+  e = Expr.new(ex_string, loc)
   e.value_str = text
   e
 }
@@ -63,10 +63,10 @@ pub fn enum_arm(loc: Location, label: CaseLabel, value: Expr): SwitchCase {
 
 pub fn enum_name_method(loc: Location, owner: String, decl: EnumDecl): Function {
   fnn = enum_synth_fn(loc, owner, "name", TypeName.new(loc, "String"))
-  sw = Expr.new(ex_switch(), loc)
+  sw = Expr.new(ex_switch, loc)
   sw.cond = enum_name_expr(loc, "self")
   for i in 0..decl.names.size {
-    label = CaseLabel.new(lb_member(), loc)
+    label = CaseLabel.new(lb_member, loc)
     label.text = decl.names[i]
     sw.cases.push(enum_arm(loc, label, enum_str_expr(loc, decl.names[i])))
   }
@@ -86,10 +86,10 @@ pub fn enum_from_i_method(loc: Location, owner: String, decl: EnumDecl): Functio
   fnn.params.push(Param.new(loc, "n", TypeName.new(loc, "Int")))
   // switch n { case v { return Owner.m } ... }; nil, each label the
   // member's value, which the checker gives it (value_of)
-  sw = Expr.new(ex_switch(), loc)
+  sw = Expr.new(ex_switch, loc)
   sw.cond = enum_name_expr(loc, "n")
   for i in 0..decl.names.size {
-    label = CaseLabel.new(lb_member(), loc)
+    label = CaseLabel.new(lb_member, loc)
     label.text = decl.names[i]
     label.value_of = owner
     arm = SwitchCase.new(loc)
@@ -98,7 +98,7 @@ pub fn enum_from_i_method(loc: Location, owner: String, decl: EnumDecl): Functio
     sw.cases.push(arm)
   }
   fnn.body.push(stmt_expr(loc, sw))
-  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
+  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil, loc)))
   fnn
 }
 
@@ -108,10 +108,10 @@ pub fn enum_from_name_method(loc: Location, owner: String, decl: EnumDecl): Func
   fnn.params.push(Param.new(loc, "s", TypeName.new(loc, "String")))
   // switch s { case "m" { return Owner.m } ... }; nil (a String switch:
   // the size, then one memcmp per name of that size)
-  sw = Expr.new(ex_switch(), loc)
+  sw = Expr.new(ex_switch, loc)
   sw.cond = enum_name_expr(loc, "s")
   for i in 0..decl.names.size {
-    label = CaseLabel.new(lb_string(), loc)
+    label = CaseLabel.new(lb_string, loc)
     label.text = decl.names[i]
     arm = SwitchCase.new(loc)
     arm.labels.push(label)
@@ -119,7 +119,7 @@ pub fn enum_from_name_method(loc: Location, owner: String, decl: EnumDecl): Func
     sw.cases.push(arm)
   }
   fnn.body.push(stmt_expr(loc, sw))
-  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
+  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil, loc)))
   fnn
 }
 
@@ -128,7 +128,7 @@ pub fn enum_members_method(loc: Location, owner: String, decl: EnumDecl): Functi
   ret.args.push(TypeName.new(loc, owner))
   fnn = enum_synth_fn(loc, owner, "members", ret)
   fnn.type_method = true
-  arr = Expr.new(ex_array(), loc)
+  arr = Expr.new(ex_array, loc)
   for i in 0..decl.names.size {
     arr.elems.push(enum_member_expr(loc, owner, decl.names[i]))
   }
@@ -140,7 +140,7 @@ pub fn enum_members_method(loc: Location, owner: String, decl: EnumDecl): Functi
 // member's name.
 pub fn enum_message_method(loc: Location, owner: String): Function {
   fnn = enum_synth_fn(loc, owner, "message", TypeName.new(loc, "String"))
-  self_name = Expr.new(ex_field(), loc)
+  self_name = Expr.new(ex_field, loc)
   self_name.object = enum_name_expr(loc, "self")
   self_name.ident = "name"
   fnn.body.push(stmt_expr(loc, self_name))

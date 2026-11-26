@@ -278,9 +278,9 @@ pub fn (checker_self: Checker) derive_hash_method(sty: Ty, loc: Location) {
   fnn.lazy = true
   fnn.params.push(Param.new(sloc, "__avant_h", TypeName.new(sloc, "Hasher")))
   for f in sty.fields {
-    call = Expr.new(ex_call(), sloc)
+    call = Expr.new(ex_call, sloc)
     call.callee = "add"
-    hn = Expr.new(ex_name(), sloc)
+    hn = Expr.new(ex_name, sloc)
     hn.ident = "__avant_h"
     call.receiver = hn
     call.args.push(eq_field_of(sloc, "self", f.name))
@@ -393,18 +393,18 @@ pub fn (checker_self: Checker) derive_lt_method(sty: Ty, loc: Location) {
   fnn.lazy = true
   fnn.return_type = TypeName.new(loc, "Bool")
   fnn.params.push(Param.new(loc, "other", ty_to_type_name(sty, loc)))
-  call = Expr.new(ex_call(), loc)
+  call = Expr.new(ex_call, loc)
   call.callee = "compare"
-  me = Expr.new(ex_name(), loc)
+  me = Expr.new(ex_name, loc)
   me.ident = "self"
   call.receiver = me
-  o = Expr.new(ex_name(), loc)
+  o = Expr.new(ex_name, loc)
   o.ident = "other"
   call.args.push(o)
-  zero = Expr.new(ex_int(), loc)
+  zero = Expr.new(ex_int, loc)
   zero.int_bits = 0
-  lt = Expr.new(ex_binary(), loc)
-  lt.op = tk_less()
+  lt = Expr.new(ex_binary, loc)
+  lt.op = tk_less
   lt.left = call
   lt.right = zero
   fnn.body.push(stmt_expr(loc, lt))
@@ -433,14 +433,14 @@ pub fn (checker_self: Checker) check_equals_call(expr: Expr, left: Ty): Ty {
   if recv = expr.receiver {
     r = expr.args[0]
     args: Array(Expr) = []
-    expr.kind = ex_binary()
-    expr.op = tk_eq_eq()
+    expr.kind = ex_binary
+    expr.op = tk_eq_eq
     expr.left = recv
     expr.right = r
     expr.receiver = nil
     expr.args = args
     expr.callee = ""
-    if got = checker_self.check_agg_compare(expr, r, tk_eq_eq(), "==", left) {
+    if got = checker_self.check_agg_compare(expr, r, tk_eq_eq, "==", left) {
       return got
     }
   }
@@ -577,20 +577,20 @@ pub fn (checker_self: Checker) derive_eq_method(sty: Ty, loc: Location) {
   fnn.lazy = true
   fnn.return_type = TypeName.new(sloc, "Bool")
   fnn.params.push(Param.new(sloc, "other", ty_to_type_name(sty, sloc)))
-  body = Expr.new(ex_bool(), sloc)
+  body = Expr.new(ex_bool, sloc)
   body.bool_val = true
   first = true
   for f in sty.fields {
-    cmp = Expr.new(ex_binary(), sloc)
-    cmp.op = tk_eq_eq()
+    cmp = Expr.new(ex_binary, sloc)
+    cmp.op = tk_eq_eq
     cmp.left = eq_field_of(sloc, "self", f.name)
     cmp.right = eq_field_of(sloc, "other", f.name)
     if first {
       body = cmp
       first = false
     } else {
-      both = Expr.new(ex_binary(), sloc)
-      both.op = tk_amp_amp()
+      both = Expr.new(ex_binary, sloc)
+      both.op = tk_amp_amp
       both.left = body
       both.right = cmp
       body = both
@@ -623,9 +623,9 @@ pub fn ty_seen_key(ty: Ty): String {
 }
 
 pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
-  o = Expr.new(ex_name(), loc)
+  o = Expr.new(ex_name, loc)
   o.ident = obj
-  f = Expr.new(ex_field(), loc)
+  f = Expr.new(ex_field, loc)
   f.object = o
   f.ident = name
   f
@@ -726,9 +726,9 @@ pub fn (checker_self: Checker) eq_by_function(expr: Expr, ty: Ty): Bool {
     subst.push(arg)
     if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
       expr.resolved = inst.node.emit_name
-      expr.op_form = op_fn()
-      if expr.op == tk_not_eq() {
-        expr.op_form = op_fn() + op_not()
+      expr.op_form = op_fn
+      if expr.op == tk_not_eq {
+        expr.op_form = op_fn + op_not
       }
       return true
     }
@@ -737,7 +737,7 @@ pub fn (checker_self: Checker) eq_by_function(expr: Expr, ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) eq_is_compare(op: Int): Bool {
-  op == tk_eq_eq() || op == tk_not_eq() || op == tk_less() || op == tk_less_eq() || op == tk_greater() || op == tk_greater_eq()
+  op == tk_eq_eq || op == tk_not_eq || op == tk_less || op == tk_less_eq || op == tk_greater || op == tk_greater_eq
 }
 
 // A comparison whose left operand is a struct or class (check_binary,
@@ -775,7 +775,7 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
     checker_self.fail_hint(expr.loc, "cannot compare ${left.show()} with ${right.show()}: ${opname} compares two values of one type", checker_self.open_hint(r, right))
     return checker_self.t_bool()
   }
-  if op == tk_eq_eq() || op == tk_not_eq() {
+  if op == tk_eq_eq || op == tk_not_eq {
     if !checker_self.user_op(left, "==") {
       if left.is_class() {
         // Identity: the lowering compares the references.
@@ -790,8 +790,8 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
       checker_self.derive_eq_method(left, expr.loc)
     }
     if checker_self.resolve_compare(expr, left, right, "==") {
-      if op == tk_not_eq() {
-        expr.op_form = op_not()
+      if op == tk_not_eq {
+        expr.op_form = op_not
       }
     }
     return checker_self.t_bool()
@@ -801,12 +801,12 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
     return checker_self.t_bool()
   }
   if checker_self.resolve_compare(expr, left, right, "<") {
-    if op == tk_greater() {
-      expr.op_form = op_swap()
-    } else if op == tk_less_eq() {
-      expr.op_form = op_swap() + op_not()
-    } else if op == tk_greater_eq() {
-      expr.op_form = op_not()
+    if op == tk_greater {
+      expr.op_form = op_swap
+    } else if op == tk_less_eq {
+      expr.op_form = op_swap + op_not
+    } else if op == tk_greater_eq {
+      expr.op_form = op_not
     }
   }
   checker_self.t_bool()
@@ -848,12 +848,12 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
       blk = Block.new(expr.loc)
       blk.params.push("__avant_a")
       blk.params.push("__avant_b")
-      a = Expr.new(ex_name(), expr.loc)
+      a = Expr.new(ex_name, expr.loc)
       a.ident = "__avant_a"
-      b = Expr.new(ex_name(), expr.loc)
+      b = Expr.new(ex_name, expr.loc)
       b.ident = "__avant_b"
-      lt = Expr.new(ex_binary(), expr.loc)
-      lt.op = tk_less()
+      lt = Expr.new(ex_binary, expr.loc)
+      lt.op = tk_less
       lt.left = a
       lt.right = b
       blk.body.push(stmt_expr(expr.loc, lt))

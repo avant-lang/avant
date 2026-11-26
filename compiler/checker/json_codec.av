@@ -322,7 +322,7 @@ pub fn (checker_self: Checker) json_not_a_type(arg: Expr): Ty {
 // The type an argument names: `Point`, `geo.Point`, `Box(Int)`,
 // `Array(Point)`, `Hash(String, Point)`; nil for any other expression.
 pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
-  if e.kind == ex_name() {
+  if e.kind == ex_name {
     if found = checker_self.lookup(e.ident) {
       return nil
     }
@@ -331,7 +331,7 @@ pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
     tn.args.concat(e.type_args)
     return tn
   }
-  if e.kind == ex_field() {
+  if e.kind == ex_field {
     checker_self.qualify_last_name(e)
     segs: Array(String) = []
     if !checker_self.ident_chain(e, segs) || segs.size < 2 {
@@ -344,7 +344,7 @@ pub fn (checker_self: Checker) json_type_arg(e: Expr): TypeName? {
     tn.mod_name = checker_self.join_segs(segs, segs.size - 1)
     return tn
   }
-  if e.kind == ex_call() && e.field_exprs.size == 0 {
+  if e.kind == ex_call && e.field_exprs.size == 0 {
     if b = e.block {
       return nil
     }
@@ -481,9 +481,9 @@ pub fn json_mark_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeNam
 }
 
 pub fn json_mark_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
-  if e.kind == ex_struct() || e.kind == ex_name() {
+  if e.kind == ex_struct || e.kind == ex_name {
     for i in 0..from.size {
-      if (e.kind == ex_struct() && e.type_name == from[i]) || (e.kind == ex_name() && e.ident == from[i]) {
+      if (e.kind == ex_struct && e.type_name == from[i]) || (e.kind == ex_name && e.ident == from[i]) {
         e.derived = true
         e.elem_type = clone_type_name(to[i])
       }

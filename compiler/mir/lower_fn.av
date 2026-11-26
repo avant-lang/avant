@@ -42,13 +42,13 @@ pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
     return known
   }
   ps: Array(Int) = []
-  ps.push(mt_ref())
+  ps.push(mt_ref)
   i = 0
   while i < t.members.size {
     ps.push(lw.ty_at(t.members[i], loc, "an fn parameter"))
     i += 1
   }
-  ret = mt_void()
+  ret = mt_void
   if r = t.inner {
     ret = lw.ty_at(r, loc, "an fn result")
   }
@@ -57,12 +57,12 @@ pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
   }
   b = lw.lw_b
   fields: Array(Int) = []
-  fields.push(mt_ref())
+  fields.push(mt_ref)
   fields.push(b.code(b.sig(ps, ret, false)))
   names: Array(String) = []
   names.push("env")
   names.push("code")
-  b.note_layout(name, mlk_fnval(), fields, names)
+  b.note_layout(name, mlk_fnval, fields, names)
 }
 
 // The signature of an fn type's code word (its thunks and trampolines).
@@ -86,7 +86,7 @@ pub fn (lw: MirLower) box_layout(t: Ty, loc: Location): Int {
   fields.push(ft)
   names: Array(String) = []
   names.push("v")
-  lw.lw_b.note_layout(name, mlk_record(), fields, names)
+  lw.lw_b.note_layout(name, mlk_record, fields, names)
 }
 
 // The environment of a lambda's thunk: `%env(<thunk>)`, one `ref
@@ -118,7 +118,7 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
     fields.push(lw.lw_m.types.ref_to(bl))
     names.push(e.cap_names[i])
   }
-  lw.lw_b.note_layout(name, mlk_record(), fields, names)
+  lw.lw_b.note_layout(name, mlk_record, fields, names)
 }
 
 // ---- the prewalk (decl.av collect_arrays, collect_stmts, collect_expr):
@@ -148,24 +148,24 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
   while i < body.size && !lw.failed() {
     st = body[i]
     k = st.kind
-    if k == st_if() {
+    if k == st_if {
       lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.then_body, encl)
       lw.prewalk_stmts(st.else_body, encl)
-    } else if k == st_while() {
+    } else if k == st_while {
       lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.body, encl)
-    } else if k == st_pin() || k == st_hold() || k == st_defer() {
+    } else if k == st_pin || k == st_hold || k == st_defer {
       lw.prewalk_opt(st.expr, encl)
       lw.prewalk_stmts(st.body, encl)
-    } else if k == st_release() {
+    } else if k == st_release {
       lw.prewalk_opt(st.expr, encl)
-    } else if k == st_assign() {
+    } else if k == st_assign {
       lw.prewalk_opt(st.target, encl)
       lw.prewalk_opt(st.value, encl)
-    } else if k == st_expr() || k == st_return() {
+    } else if k == st_expr || k == st_return {
       lw.prewalk_opt(st.expr, encl)
     }
     i += 1
@@ -191,7 +191,7 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     return
   }
   k = e.kind
-  if k == ex_call() {
+  if k == ex_call {
     lw.prewalk_opt(e.inner, encl)
     // The spawn and .parallel records at the old points (decl.av
     // collect_expr): a .parallel's after its receiver, a spawn's before
@@ -213,32 +213,32 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     if b = e.block {
       lw.prewalk_stmts(b.body, encl)
     }
-  } else if k == ex_unary() || k == ex_try() {
+  } else if k == ex_unary || k == ex_try {
     lw.prewalk_opt(e.inner, encl)
-  } else if k == ex_binary() || k == ex_index() {
+  } else if k == ex_binary || k == ex_index {
     lw.prewalk_opt(e.left, encl)
     lw.prewalk_opt(e.right, encl)
-  } else if k == ex_field() {
+  } else if k == ex_field {
     lw.prewalk_opt(e.object, encl)
     if e.method_call {
       if obj = e.object {
         lw.prewalk_hold(e, obj)
       }
     }
-  } else if k == ex_struct() {
+  } else if k == ex_struct {
     lw.prewalk_list(e.field_exprs, encl)
-  } else if k == ex_array() || k == ex_hash_lit() {
+  } else if k == ex_array || k == ex_hash_lit {
     lw.prewalk_list(e.elems, encl)
-  } else if k == ex_array_new() {
+  } else if k == ex_array_new {
     lw.prewalk_opt(e.size_expr, encl)
     lw.prewalk_list(e.elems, encl)
-  } else if k == ex_interp() {
+  } else if k == ex_interp {
     for pt in e.parts {
       lw.prewalk_opt(pt.expr, encl)
     }
-  } else if k == ex_lambda() {
+  } else if k == ex_lambda {
     lw.prewalk_lambda(e, encl)
-  } else if k == ex_switch() {
+  } else if k == ex_switch {
     lw.prewalk_opt(e.cond, encl)
     for cas in e.cases {
       lw.prewalk_stmts(cas.body, encl)
@@ -485,7 +485,7 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
     lw.ensure_box(t.ident, tt, t.loc)
   }
   if v = st.value {
-    if st.op == tk_eq() {
+    if st.op == tk_eq {
       val = lw.lower_coerced(v, ty, tt)
       if lw.failed() {
         return
@@ -522,7 +522,7 @@ pub fn (lw: MirLower) lower_fn_ref(e: Expr): MOperand {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    return lw.tmp(b.types.agg(l), b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn("${sym}#fnval")))
+    return lw.tmp(b.types.agg(l), b.rv_fnval(l, b.c_null(mt_ref), b.c_fn("${sym}#fnval")))
   }
   lw.refuse(e.loc, "the function value ${e.ident}")
   b.c_i32(0)
@@ -563,7 +563,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   fty = b.types.agg(l)
   if e.cap_names.size == 0 {
     lw.at(e.loc)
-    return lw.tmp(fty, b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn(sym)))
+    return lw.tmp(fty, b.rv_fnval(l, b.c_null(mt_ref), b.c_fn(sym)))
   }
   el = lw.env_layout(e, sym)
   if lw.failed() {
@@ -581,7 +581,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     if name == "self" {
       // The receiver's value: the method's self, or the enclosing
       // thunk's captured one.
-      se = Expr.new(ex_name(), e.loc)
+      se = Expr.new(ex_name, e.loc)
       se.ident = "self"
       se.ty = e.cap_tys[i]
       sv = lw.lower_expr(se)
@@ -669,7 +669,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
     if lw.failed() {
       return zero
     }
-    ne = Expr.new(ex_name(), e.loc)
+    ne = Expr.new(ex_name, e.loc)
     ne.ident = e.callee
     ne.ty = nt
     f = lw.lower_name(ne)
@@ -689,7 +689,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   if lw.failed() {
     return zero
   }
-  if ret == mt_void() {
+  if ret == mt_void {
     b.call_indirect(-1, b.copy_local(h), args)
     return zero
   }
@@ -726,9 +726,9 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     s = b.types.sigs[sig]
     b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
     lw.lw_cl.base = lam.sym
-    lw.lw_cov.rank = mir_cov_lambda_rank() + 999999
+    lw.lw_cov.rank = mir_cov_lambda_rank + 999999
     if li = lw.lw_cov.lam_index.get(lam.sym) {
-      lw.lw_cov.rank = mir_cov_lambda_rank() + li
+      lw.lw_cov.rank = mir_cov_lambda_rank + li
     }
     b.name_param(1, "env")
     lw.lw_ret = s.ret
@@ -799,7 +799,7 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
       if sym = lw.lw_fn_syms.get(f.emit_name), fs = lw.lw_syms.find_fn(f.emit_name) {
         lw.begin_function(f)
         ps: Array(Int) = []
-        ps.push(mt_ref())
+        ps.push(mt_ref)
         for param in fs.params {
           ps.push(lw.ty_at(param, f.loc, "a parameter"))
         }
@@ -817,7 +817,7 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           }
           args.push(b.copy_local(j + 2))
         }
-        if ret == mt_void() {
+        if ret == mt_void {
           b.call(-1, sym, args)
         } else {
           r = b.temp(ret)
